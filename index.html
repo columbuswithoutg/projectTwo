@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MCU Tracker — Login</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="auth-page">
+
+  <div class="auth-modal-static">
+    <div class="auth-box">
+      <h1>MCU Watch Order</h1>
+      <p class="auth-subtitle">Track your Marvel journey</p>
+
+      <!-- Tab switcher -->
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="login">Login</button>
+        <button class="auth-tab" data-tab="register">Register</button>
+      </div>
+
+      <input id="auth-username" type="text" placeholder="Username" />
+      <input id="auth-password" type="password" placeholder="Password" />
+      <p class="auth-error" style="color:red; display:none;"></p>
+      <button id="auth-submit">Login</button>
+    </div>
+  </div>
+
+  <script src="auth.js"></script>
+</body>
+</html>
