@@ -1,4 +1,4 @@
-const API = "/api";
+const API = window.location.origin + "/api";
 
 const usernameEl = document.getElementById("auth-username");
 const passwordEl = document.getElementById("auth-password");
@@ -53,6 +53,7 @@ submitBtn.addEventListener("click", async () => {
 
     if (currentMode === "login") {
       localStorage.setItem("mcu_token", data.token);
+      localStorage.setItem("mcu_username", data.username);
       window.location.href = "/app.html"; // ← redirect to tracker
     } else {
       // After register, auto-switch to login tab

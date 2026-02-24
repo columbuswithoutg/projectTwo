@@ -25,10 +25,11 @@ const PHASE_UNLOCKERS = {
 /************************************************
  * AUTH HELPERS
  ************************************************/
-const API = "/api"; // relative path since Express serves your HTML too
+const API = window.location.origin + "/api";
 
 const Auth = {
   getToken: () => localStorage.getItem("mcu_token"),
+  getUsername: () => localStorage.getItem("mcu_username"),
   setToken: (t) => localStorage.setItem("mcu_token", t),
   clearToken: () => localStorage.removeItem("mcu_token"),
   isLoggedIn: () => !!localStorage.getItem("mcu_token"),
@@ -55,7 +56,7 @@ const Auth = {
 
   logout() {
     Auth.clearToken();
-    // Reload so the page resets to guest mode
+    localStorage.removeItem("mcu_username");
     window.location.reload();
   }
 };
@@ -175,20 +176,6 @@ class WatchState {
   }
 
   // Everything below is UNCHANGED from your original
-  isWatched(id) { return !!this.data.get(id); }
-
-  toggle(id) {
-    const current = this.isWatched(id);
-    this.data.set(id, !current);
-    this.save();
-    return !current;
-  }
-
-  setWatched(id, value) {
-    this.data.set(id, value);
-    this.save();
-  }
-
   getLastWatchedId() {
     const watched = [];
     for (const [id, isWatched] of this.data) {
@@ -543,11 +530,20 @@ class MapRenderer {
 
   ${isWatched ? `
     <p class="watch-count">Watched ${count} time${count !== 1 ? 's' : ''}</p>
-    ${watchedWith.length ? `
-      <p class="watched-with-info">
-        Watched with: <span>${watchedWith.join(', ')}</span>
-      </p>
-    ` : ''}
+${watchedWith.length ? (() => {
+          const currentUsername = Auth.getUsername();
+          const formatted = watchedWith.map(name =>
+            name === currentUsername ? '<span class="watched-with-you">you</span>' : `<span>${name}</span>`
+          );
+          return `
+    <div class="watched-with-info">
+      <p class="watched-with-label">Watched with:</p>
+      <div class="watched-with-list">
+        ${formatted.map(f => `<div class="watched-with-entry">${f}</div>`).join('')}
+      </div>
+    </div>
+  `;
+        })() : ''}
   ` : ''}
 
 ${!isReadonly ? `
@@ -567,9 +563,9 @@ ${!isReadonly ? `
         ${memories.map((m, i) => `
           <div class="memory-item" data-index="${i}">
             ${m.type === 'video'
-        ? `<video src="${m.url}" preload="metadata"></video>`
-        : `<img src="${m.url}" alt="${m.caption}" />`
-      }
+            ? `<video src="${m.url}" preload="metadata"></video>`
+            : `<img src="${m.url}" alt="${m.caption}" />`
+          }
             <div class="memory-overlay">
               <button class="memory-view-btn" data-index="${i}">View</button>
               ${!isReadonly ? `<button class="memory-delete" data-url="${m.url}">✕</button>` : ''}
@@ -654,6 +650,24 @@ document.addEventListener("DOMContentLoaded", async () => {
   state.initProjects(projects);
   renderer.init();
 
+  // Drawer open/close
+  const drawer = document.getElementById('nav-drawer');
+
+  const openDrawer = () => drawer.classList.add('open');
+  const closeDrawer = () => drawer.classList.remove('open');
+
+  document.getElementById('nav-toggle').addEventListener('click', openDrawer);
+  document.getElementById('close-drawer').addEventListener('click', closeDrawer);
+  document.getElementById('nav-drawer-overlay').addEventListener('click', closeDrawer);
+  document.getElementById('characters-btn')?.addEventListener('click', () => {
+    window.location.href = '/characters.html';
+  });
+  // Close drawer after any button is clicked
+  document.querySelectorAll('#nav-drawer-content nav button').forEach(btn => {
+    btn.addEventListener('click', closeDrawer);
+  });
+
+  // Existing button listeners
   $("#markAllWatchedBtn")?.addEventListener("click", () => renderer.markAllWatched());
 
   $("#clear-progress")?.addEventListener("click", () => {
@@ -663,6 +677,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   $("#logout-btn")?.addEventListener("click", () => {
     localStorage.removeItem("mcu_token");
+    localStorage.removeItem("mcu_username");
     window.location.href = "/index.html";
   });
 
@@ -738,14 +753,14 @@ function showAuthModal(mode) {
  ************************************************/
 const Friends = {
   async search(username) {
-    const res = await fetch(`/api/friends/search?username=${encodeURIComponent(username)}`, {
+    const res = await fetch(`${API}/friends/search?username=${encodeURIComponent(username)}`, {
       headers: { Authorization: `Bearer ${Auth.getToken()}` }
     });
     return res.json();
   },
 
   async sendRequest(recipientId) {
-    const res = await fetch('/api/friends/request', {
+    const res = await fetch(`${API}/friends/request`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -757,14 +772,14 @@ const Friends = {
   },
 
   async getPending() {
-    const res = await fetch('/api/friends/pending', {
+    const res = await fetch(`${API}/friends/pending`, {
       headers: { Authorization: `Bearer ${Auth.getToken()}` }
     });
     return res.json();
   },
 
   async respond(requestId, action) {
-    const res = await fetch('/api/friends/respond', {
+    const res = await fetch(`${API}/friends/respond`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -776,26 +791,26 @@ const Friends = {
   },
 
   async getList() {
-    const res = await fetch('/api/friends/list', {
+    const res = await fetch(`${API}/friends/list`, {
       headers: { Authorization: `Bearer ${Auth.getToken()}` }
     });
     return res.json();
   },
 
   async getProgress(friendId) {
-    const res = await fetch(`/api/friends/progress/${friendId}`, {
+    const res = await fetch(`${API}/friends/progress/${friendId}`, {
       headers: { Authorization: `Bearer ${Auth.getToken()}` }
     });
     return res.json();
   },
 
   async remove(friendId) {
-    const res = await fetch(`/api/friends/remove/${friendId}`, {
+    const res = await fetch(`${API}/friends/remove/${friendId}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${Auth.getToken()}` }
     });
     return res.json();
-  },
+  }
 };
 
 function showFriendsPanel() {
@@ -1005,6 +1020,7 @@ async function viewFriendProgress(friendId, friendName) {
   data.watchedProjects.forEach(entry => {
     state.data.set(entry.projectId, {
       count: entry.count,
+      watchedWith: entry.watchedWith || [],
       memories: entry.memories || []
     });
   });
@@ -1072,7 +1088,7 @@ async function showWatchedWithFriendModal(project) {
       }
 
       // Send watch request to friend
-      const res = await fetch('/api/friends/watch-request', {
+      const res = await fetch(`${API}/friends/watch-request`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1153,7 +1169,7 @@ async function showAddMemoryModal(project) {
       const formData = new FormData();
       formData.append('file', file);
 
-      const uploadRes = await fetch('/api/upload', {
+      const uploadRes = await fetch(`${API}/upload`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${Auth.getToken()}` },
         body: formData
@@ -1162,7 +1178,7 @@ async function showAddMemoryModal(project) {
       if (error) throw new Error(error);
 
       // Save memory to MongoDB
-      const saveRes = await fetch('/api/progress/memory', {
+      const saveRes = await fetch(`${API}/progress/memory`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1253,7 +1269,7 @@ function showRemoveConfirm(friendId, friendName, panel) {
     btn.textContent = 'Removing...';
 
     try {
-      const res = await fetch(`/api/friends/remove/${friendId}`, {
+      const res = await fetch(`${API}/friends/remove/${friendId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${Auth.getToken()}` }
       });

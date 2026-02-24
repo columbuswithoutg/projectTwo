@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MCU Characters</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <header id="header">
+    <button id="back-btn" onclick="window.location.href='/app.html'">← Back</button>
+    <h1>Characters</h1>
+    <div style="width:48px"></div>
+  </header>
+
+  <div id="characters-wrapper">
+    <div id="characters-filter">
+      <input id="search-input" type="text" placeholder="Search characters..." />
+      <p id="unlocked-count"></p>
+    </div>
+    <div id="characters-grid"></div>
+  </div>
+
+  <script src="characters.js"></script>
+  <script src="characters-page.js"></script>
+</body>
+</html>

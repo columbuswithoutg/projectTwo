@@ -10,11 +10,24 @@
 <body>
 
   <header id="header">
+    <button id="nav-toggle">☰</button>
     <h1>Watch Order Progression</h1>
-    <button id="friends-btn">Friends</button>
-    <button id="logout-btn">Logout</button><!--
-    <button id="clear-progress">Clear Progress</button>
-    <button id="markAllWatchedBtn">Mark All as Watched</button>-->
+    <div style="width:40px"></div> <!-- spacer to keep h1 centered -->
+
+    <!-- Navigation Drawer -->
+    <div id="nav-drawer">
+      <div id="nav-drawer-overlay"></div>
+      <div id="nav-drawer-content">
+        <button id="close-drawer">✕</button>
+        <nav>
+          <button id="characters-btn">🦸 Characters</button>
+          <button id="friends-btn">👥 Friends</button>
+          <button id="clear-progress">🗑 Clear Progress</button>
+          <!--<button id="markAllWatchedBtn">✔ Mark All as Watched</button>-->
+          <button id="logout-btn">🚪 Logout</button>
+        </nav>
+      </div>
+    </div>
   </header>
 
   <div id="map-wrapper">

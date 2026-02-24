@@ -34,9 +34,20 @@ router.post('/request', auth, async (req, res) => {
         return res.status(400).json({ error: "You can't add yourself" });
 
     const existing = await Friend.findOne({
-        $or: [
-            { requester: req.user.id, recipient: recipientId },
-            { requester: recipientId, recipient: req.user.id }
+        $and: [
+            {
+                $or: [
+                    { requester: req.user.id, recipient: recipientId },
+                    { requester: recipientId, recipient: req.user.id }
+                ]
+            },
+            {
+                $or: [
+                    { type: 'friend' },
+                    { type: { $exists: false } },
+                    { type: null }
+                ]
+            }
         ]
     });
     if (existing) return res.status(400).json({ error: 'Request already exists' });
@@ -50,7 +61,7 @@ router.get('/pending', auth, async (req, res) => {
     const requests = await Friend.find({
         recipient: req.user.id,
         status: 'pending'
-    }).populate('requester', 'username');
+    }).populate('requester', 'username').lean(); // .lean() returns plain objects with all fields
     res.json(requests);
 });
 
@@ -144,6 +155,60 @@ router.get('/list', auth, async (req, res) => {
 
 // View a friend's progress
 router.get('/progress/:friendId', auth, async (req, res) => {
+    try {
+        const friendship = await Friend.findOne({
+            $and: [
+                {
+                    $or: [
+                        { requester: req.user.id, recipient: req.params.friendId },
+                        { requester: req.params.friendId, recipient: req.user.id }
+                    ]
+                },
+                { status: 'accepted' },
+                {
+                    $or: [
+                        { type: 'friend' },
+                        { type: { $exists: false } },
+                        { type: null }
+                    ]
+                }
+            ]
+        });
+        if (!friendship) return res.status(403).json({ error: 'Not friends' });
+
+        const friend = await User.findById(req.params.friendId)
+            .select('username watchedProjects');
+        if (!friend) return res.status(404).json({ error: 'User not found' });
+
+        // Normalize data shape — handle both old string array and new object array
+        const watchedProjects = friend.watchedProjects.map(entry => {
+            if (typeof entry === 'string') {
+                return { projectId: entry, count: 1, watchedWith: [], memories: [] };
+            }
+            return {
+                projectId: entry.projectId,
+                count: entry.count || 1,
+                watchedWith: entry.watchedWith || [],
+                memories: entry.memories || []
+            };
+        });
+
+        res.json({ username: friend.username, watchedProjects });
+    } catch (e) {
+        console.error('Progress route error:', e);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Send a "watched with friend" request
+router.post('/watch-request', auth, async (req, res) => {
+    const { recipientId, projectId, projectTitle } = req.body;
+
+    // Temporary debug log
+    console.log('watch-request hit');
+    console.log('requester:', req.user.id);
+    console.log('recipient:', recipientId);
+
     const friendship = await Friend.findOne({
         $and: [
             {
@@ -162,47 +227,11 @@ router.get('/progress/:friendId', auth, async (req, res) => {
             }
         ]
     });
+
+    // Temporary debug log
+    console.log('friendship found:', friendship);
+
     if (!friendship) return res.status(403).json({ error: 'Not friends' });
-
-    const friend = await User.findById(req.params.friendId)
-        .select('username watchedProjects'); // watchedProjects now includes memories
-    if (!friend) return res.status(404).json({ error: 'User not found' });
-
-    res.json({ username: friend.username, watchedProjects: friend.watchedProjects });
-});
-
-// Send a "watched with friend" request
-router.post('/watch-request', auth, async (req, res) => {
-  const { recipientId, projectId, projectTitle } = req.body;
-
-  // Temporary debug log
-  console.log('watch-request hit');
-  console.log('requester:', req.user.id);
-  console.log('recipient:', recipientId);
-
-  const friendship = await Friend.findOne({
-    $and: [
-      {
-        $or: [
-          { requester: req.user.id, recipient: recipientId },
-          { requester: recipientId, recipient: req.user.id }
-        ]
-      },
-      { status: 'accepted' },
-      {
-        $or: [
-          { type: 'friend' },
-          { type: { $exists: false } },
-          { type: null }
-        ]
-      }
-    ]
-  });
-
-  // Temporary debug log
-  console.log('friendship found:', friendship);
-  
-  if (!friendship) return res.status(403).json({ error: 'Not friends' });
 
     const existing = await Friend.findOne({
         requester: req.user.id,
