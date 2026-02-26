@@ -11,6 +11,12 @@ const CONFIG = {
   STORAGE_KEY: "watchProgress_v2"
 };
 
+// Widen spacing on mobile
+if (window.innerWidth <= 640) {
+  CONFIG.H_SPACING = 220;
+  CONFIG.V_SPACING = 240;
+}
+
 const PHASE_UNLOCKERS = {
   2: "avengers1",
   3: "ageofultron",
