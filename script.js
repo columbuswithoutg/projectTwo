@@ -11,10 +11,13 @@ const CONFIG = {
   STORAGE_KEY: "watchProgress_v2"
 };
 
-// Widen spacing on mobile
-if (window.innerWidth <= 640) {
-  CONFIG.H_SPACING = 220;
-  CONFIG.V_SPACING = 240;
+// Scale down for mobile — zoomed out feel
+const isMobile = window.matchMedia('(max-width: 640px)').matches;
+if (isMobile) {
+  CONFIG.H_SPACING = 100;
+  CONFIG.V_SPACING = 140;
+  CONFIG.NODE_WIDTH = 75;
+  CONFIG.NODE_HEIGHT = 110;
 }
 
 const PHASE_UNLOCKERS = {

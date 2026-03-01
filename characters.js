@@ -32,7 +32,6 @@ const characters = [
   { id: "malekith",       name: "Malekith",                   debut: "thor2",         image: "malekith.jpg" },
   { id: "falcon",         name: "Falcon",                     debut: "cap2",          image: "falcon.jpg" },
   { id: "wintersolider",  name: "Winter Soldier",             debut: "cap2",          image: "wintersoldier.jpg" },
-  { id: "shield",         name: "Alexander Pierce",           debut: "cap2",          image: "pierce.jpg" },
   { id: "starlord",       name: "Star-Lord",                  debut: "guardians1",    image: "starlord.jpg" },
   { id: "gamora",         name: "Gamora",                     debut: "guardians1",    image: "gamora.jpg" },
   { id: "drax",           name: "Drax",                       debut: "guardians1",    image: "drax.jpg" },
@@ -41,7 +40,7 @@ const characters = [
   { id: "nebula",         name: "Nebula",                     debut: "guardians1",    image: "nebula.jpg" },
   { id: "ronan",          name: "Ronan the Accuser",          debut: "guardians1",    image: "ronan.jpg" },
   { id: "yondu",          name: "Yondu",                      debut: "guardians1",    image: "yondu.jpg" },
-  { id: "scarletwitch",   name: "Scarlet Witch",              debut: "ageofultron",   image: "scarletwitch.jpg" },
+  { id: "wanda_wv",       name: "Wanda Maximoff",             debut: "ageofultron",   image: "wanda.jpg" },
   { id: "quicksilver",    name: "Quicksilver",                debut: "ageofultron",   image: "quicksilver.jpg" },
   { id: "vision",         name: "Vision",                     debut: "ageofultron",   image: "vision.jpg" },
   { id: "ultron",         name: "Ultron",                     debut: "ageofultron",   image: "ultron.jpg" },
@@ -73,7 +72,6 @@ const characters = [
   { id: "mysterio",       name: "Mysterio",                   debut: "farfromhome",   image: "mysterio.jpg" },
 
   // ─── PHASE 4 ───────────────────────────────
-  { id: "wanda_wv",       name: "Wanda Maximoff",             debut: "wandavision",   image: "wanda.jpg" },
   { id: "agatha",         name: "Agatha Harkness",            debut: "wandavision",   image: "agatha.jpg" },
   { id: "monica",         name: "Monica Rambeau",             debut: "wandavision",   image: "monica.jpg" },
   { id: "samwilson",      name: "Captain America (Sam)",      debut: "falconws",      image: "samwilson.jpg" },

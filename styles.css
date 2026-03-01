@@ -1385,3 +1385,11 @@ body.auth-page {
   padding: 60px 0;
   font-size: 0.95rem;
 }
+
+@media (max-width: 640px) {
+  :root {
+    --header-height: 64px;
+    --node-width: 75px;
+    --node-height: 110px;
+  }
+}
