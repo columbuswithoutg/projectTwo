@@ -13,16 +13,21 @@ const isPhaseUnlocked = (p) => {
   return unlockerId && state.isWatched(unlockerId);
 };
 
+const allPrereqs = (p) => [
+  ...(p.prerequisites || []),
+  ...(p.hiddenPrerequisites || [])
+];
+
 const isUnlocked = (p) => {
   if (p.phaseNum === 1) return true;
   if (!isPhaseUnlocked(p)) return false;
-  return (p.prerequisites || []).every(id => state.isWatched(id));
+  return allPrereqs(p).every(id => state.isWatched(id));
 };
 
 const isVisible = (p) => {
   if (p.id === CONFIG.START_NODE_ID) return true;
   if (state.isWatched(p.id)) return true;
-  return (p.prerequisites || []).every(id => state.isWatched(id));
+  return allPrereqs(p).every(id => state.isWatched(id));
 };
 
 const getHighestUnlockedPhase = () => {

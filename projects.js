@@ -71,7 +71,7 @@ const projects = [
 
   // NETFLIX SAGA (MCU STREET-LEVEL ERA)
   // DAREDEVIL
-  { id: "daredevil1", title: "Daredevil", release: "2015-04-10", prerequisites: ["ironman1"], phase: "Phase 1", gridX: 5, gridY: 1, watched: false, image: "daredevil1.png" },
+  { id: "daredevil1", title: "Daredevil", release: "2015-04-10", prerequisites: [], hiddenPrerequisites: ["ironman1"], phase: "Phase 1", gridX: 5, gridY: 1, watched: false, image: "daredevil1.png" },
   { id: "daredevil2", title: "Daredevil | Season 2", release: "2016-03-18", prerequisites: ["daredevil1"], phase: "Phase 1", gridX: 5, gridY: 2, watched: false, image: "daredevils2.png" },
   { id: "daredevil3", title: "Daredevil | Season 3", release: "2018-10-19", prerequisites: ["defenders"], phase: "Phase 1", gridX: 5, gridY: 5, watched: false, image: "daredevils3.png" },
   // JESSICA JONES

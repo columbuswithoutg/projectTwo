@@ -15,7 +15,8 @@ const WatchEntrySchema = new mongoose.Schema({
 const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  watchedProjects: { type: [WatchEntrySchema], default: [] }
+  watchedProjects: { type: [WatchEntrySchema], default: [] },
+  profilePicture: { type: String, default: '' }
 });
 
 module.exports = mongoose.model('User', UserSchema);

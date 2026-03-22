@@ -13,7 +13,6 @@
   <header id="header">
     <button id="nav-toggle">☰</button>
     <h1>Watch Order Progression</h1>
-    <div style="width:40px"></div> <!-- spacer to keep h1 centered -->
 
     <!-- Navigation Drawer -->
     <div id="nav-drawer">
@@ -21,6 +20,7 @@
       <div id="nav-drawer-content">
         <button id="close-drawer">✕</button>
         <nav>
+          <button id="profile-btn">👤 Profile</button>
           <button id="characters-btn">🦸 Characters</button>
           <button id="friends-btn">👥 Friends</button>
           <button id="clear-progress">🗑 Clear Progress</button>
@@ -29,6 +29,10 @@
         </nav>
       </div>
     </div>
+    <button id="header-profile-btn" title="Profile">
+      <img id="header-avatar" src="" alt="" style="display:none" />
+      <span id="header-avatar-initials">👤</span>
+    </button>
   </header>
 
   <div id="map-wrapper">

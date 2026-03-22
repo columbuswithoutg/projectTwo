@@ -15,6 +15,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById('nav-toggle').addEventListener('click', openDrawer);
   document.getElementById('close-drawer').addEventListener('click', closeDrawer);
   document.getElementById('nav-drawer-overlay').addEventListener('click', closeDrawer);
+  document.getElementById('profile-btn')?.addEventListener('click', () => {
+    window.location.href = '/profile.html';
+  });
   document.getElementById('characters-btn')?.addEventListener('click', () => {
     window.location.href = '/characters.html';
   });
@@ -41,4 +44,25 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   renderer.setCenterTarget(state.getLastWatchedId());
   renderer.render();
+
+  // Load profile picture into header
+  if (Auth.isLoggedIn()) {
+    fetch(`${API}/profile`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` }
+    }).then(r => r.json()).then(data => {
+      const img      = document.getElementById('header-avatar');
+      const initials = document.getElementById('header-avatar-initials');
+      if (data.profilePicture && img) {
+        img.src = data.profilePicture;
+        img.style.display = 'block';
+        if (initials) initials.style.display = 'none';
+      } else if (initials && data.username) {
+        initials.textContent = data.username[0].toUpperCase();
+      }
+    }).catch(() => {});
+  }
+
+  document.getElementById('header-profile-btn')?.addEventListener('click', () => {
+    window.location.href = '/profile.html';
+  });
 });
