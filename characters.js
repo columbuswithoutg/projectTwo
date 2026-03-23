@@ -65,9 +65,7 @@ const characters = [
   { id: "killmonger",     name: "Killmonger",                 debut: "blackpanther",  image: "killmonger.jpg" },
   { id: "mshields",       name: "M'Baku",                     debut: "blackpanther",  image: "mbaku.jpg" },
   { id: "captainmarvel",  name: "Captain Marvel",             debut: "captainmarvel", image: "captainmarvel.jpg" },
-  { id: "nickfury_young", name: "Young Nick Fury",            debut: "captainmarvel", image: "youngfury.jpg" },
   { id: "talos",          name: "Talos",                      debut: "captainmarvel", image: "talos.jpg" },
-  { id: "wasp2",          name: "The Wasp",                   debut: "antmanwasp",    image: "wasp.jpg" },
   { id: "ghost",          name: "Ghost",                      debut: "antmanwasp",    image: "ghost.jpg" },
   { id: "mysterio",       name: "Mysterio",                   debut: "farfromhome",   image: "mysterio.jpg" },
 
