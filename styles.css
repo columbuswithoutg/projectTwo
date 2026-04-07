@@ -1613,6 +1613,59 @@ body.auth-page {
   display: block;
 }
 
+/* ── Walker Speech Bubbles ── */
+.walker-speech-bubble {
+  max-width: 160px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(13, 16, 32, 0.92);
+  border: 1px solid var(--gold-03);
+  color: #e0d6c2;
+  font-family: var(--font-display);
+  font-size: 11px;
+  line-height: 1.35;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(-100%);
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), 0 0 8px rgba(201, 162, 39, 0.15);
+  animation: bubbleFadeIn 0.3s ease-out;
+}
+
+.walker-speech-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid var(--gold-03);
+}
+
+.walker-speech-bubble.left {
+  transform: translateX(-80%) translateY(-100%);
+}
+
+.walker-speech-bubble.left::after {
+  left: 75%;
+}
+
+.walker-speech-bubble.right {
+  transform: translateX(-20%) translateY(-100%);
+}
+
+.walker-speech-bubble.right::after {
+  left: 25%;
+}
+
+@keyframes bubbleFadeIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-90%); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(-100%); }
+}
+
 /* ==========================================
    RESPONSIVE — MOBILE (max-width: 640px)
 ========================================== */
@@ -1912,6 +1965,12 @@ body.auth-page {
 
   .stat-value {
     font-size: 1.6rem;
+  }
+
+  .walker-speech-bubble {
+    max-width: 110px;
+    font-size: 9px;
+    padding: 4px 7px;
   }
 }
 
