@@ -9,14 +9,16 @@
 
 const Walkers = (() => {
   const STORAGE_KEY = 'mcu_walkers';
-  const WALKER_SIZE = 24;             // px diameter
-  const SPEED = 40;                   // px per second
+  const WALKER_SIZE = isMobile ? 18 : 24;           // px diameter
+  const SPEED = isMobile ? 30 : 40;                 // px per second
   const PAUSE_MIN = 800;              // ms pause at node
   const PAUSE_MAX = 2500;
+  const ORBIT_RADIUS = isMobile ? 12 : 20;          // how far walkers wander from node center
+  const ENCOUNTER_SEP = isMobile ? 20 : 35;         // px separation before dialogue
 
   const ENCOUNTER_COOLDOWN = 30000;    // ms before same pair can chat again
   const ENCOUNTER_CHECK_INTERVAL = 500; // ms between encounter checks
-  const LINE_DURATION = 2500;          // ms per dialogue line
+  const LINE_DURATION = isMobile ? 2000 : 2500;     // ms per dialogue line
 
   let activeWalkers = [];              // { id, charId, charImg, charName, el, currentNode, targetNode, progress, paused, pauseEnd, pathX1, pathY1, pathX2, pathY2, inEncounter }
   let animFrameId = null;
@@ -237,8 +239,36 @@ const Walkers = (() => {
     // Center the map between the two walkers
     centerBetweenWalkers(w1, w2);
 
-    const scrollDelay = 600;   // let smooth scroll finish
-    const startDelay = scrollDelay + 300;
+    // --- Separate walkers so they stand side by side ---
+    const nodeCenter = getNodeCenter(w1.currentNode);
+    if (nodeCenter) {
+      // Smoothly slide them apart using CSS transition
+      w1.el.style.transition = 'left 0.4s ease, top 0.4s ease';
+      w2.el.style.transition = 'left 0.4s ease, top 0.4s ease';
+
+      const leftX = nodeCenter.x - ENCOUNTER_SEP;
+      const rightX = nodeCenter.x + ENCOUNTER_SEP;
+      const y = nodeCenter.y;
+
+      w1.el.style.left = (leftX - WALKER_SIZE / 2) + 'px';
+      w1.el.style.top = (y - WALKER_SIZE / 2) + 'px';
+      w2.el.style.left = (rightX - WALKER_SIZE / 2) + 'px';
+      w2.el.style.top = (y - WALKER_SIZE / 2) + 'px';
+
+      // Update path coords so bubble tracking works
+      w1.pathX1 = leftX; w1.pathY1 = y; w1.pathX2 = leftX; w1.pathY2 = y; w1.progress = 1;
+      w2.pathX1 = rightX; w2.pathY1 = y; w2.pathX2 = rightX; w2.pathY2 = y; w2.progress = 1;
+
+      // Remove transition after animation completes so normal walking isn't affected
+      setTimeout(() => {
+        if (w1.el) w1.el.style.transition = 'none';
+        if (w2.el) w2.el.style.transition = 'none';
+      }, 450);
+    }
+
+    const sepDelay = 500;       // wait for separation animation
+    const scrollDelay = 600;    // let smooth scroll finish
+    const startDelay = Math.max(sepDelay, scrollDelay) + 300;
     const totalDuration = startDelay + dialogue.length * LINE_DURATION + 500;
 
     // Extend their pause for the full dialogue duration
@@ -328,6 +358,15 @@ const Walkers = (() => {
     });
   }
 
+  /* ---- orbital offset ---- */
+
+  // Give each walker a random offset around the node center so they don't stack
+  function randomOrbitOffset() {
+    const angle = Math.random() * Math.PI * 2;
+    const r = ORBIT_RADIUS * (0.4 + Math.random() * 0.6);
+    return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+  }
+
   /* ---- animation loop ---- */
 
   function positionWalker(w) {
@@ -341,7 +380,6 @@ const Walkers = (() => {
   function pickNextTarget(w, graph) {
     const neighbors = graph.get(w.currentNode) || [];
     if (neighbors.length === 0) return w.currentNode;
-    // Prefer not going back to previous node (unless it's the only option)
     const filtered = neighbors.filter(n => n !== w.previousNode);
     return pickRandom(filtered.length ? filtered : neighbors);
   }
@@ -357,12 +395,19 @@ const Walkers = (() => {
       return;
     }
 
+    // Start from current visual position (includes orbit offset)
+    const curX = parseFloat(w.el.style.left) + WALKER_SIZE / 2;
+    const curY = parseFloat(w.el.style.top) + WALKER_SIZE / 2;
+
+    // Destination gets a new random orbit offset
+    const destOffset = randomOrbitOffset();
+
     w.previousNode = w.currentNode;
     w.targetNode = target;
-    w.pathX1 = from.x;
-    w.pathY1 = from.y;
-    w.pathX2 = to.x;
-    w.pathY2 = to.y;
+    w.pathX1 = curX;
+    w.pathY1 = curY;
+    w.pathX2 = to.x + destOffset.x;
+    w.pathY2 = to.y + destOffset.y;
     w.progress = 0;
     w.paused = false;
 
@@ -469,11 +514,12 @@ const Walkers = (() => {
         inEncounter: false
       };
 
-      // Position at start node
+      // Position at start node with orbit offset
       const pos = getNodeCenter(startNode);
       if (pos) {
-        w.pathX1 = pos.x; w.pathY1 = pos.y;
-        w.pathX2 = pos.x; w.pathY2 = pos.y;
+        const off = randomOrbitOffset();
+        w.pathX1 = pos.x + off.x; w.pathY1 = pos.y + off.y;
+        w.pathX2 = pos.x + off.x; w.pathY2 = pos.y + off.y;
         positionWalker(w);
       }
 
