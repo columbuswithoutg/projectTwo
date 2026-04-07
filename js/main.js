@@ -42,8 +42,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   $("#friends-btn")?.addEventListener("click", () => showFriendsPanel());
 
+  $("#walkers-btn")?.addEventListener("click", () => Walkers.showWalkerPicker());
+
   renderer.setCenterTarget(state.getLastWatchedId());
   renderer.render();
+
+  // Init walkers after first render
+  Walkers.init();
+  setTimeout(() => Walkers.deploy(), 500);
 
   // Load profile picture into header
   if (Auth.isLoggedIn()) {

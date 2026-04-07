@@ -136,19 +136,6 @@ class MapRenderer {
 
     const containerRect = this.mapContainer.getBoundingClientRect();
 
-    // Build projectId → first character image map from global characters array
-    const debutMap = new Map();
-    if (typeof characters !== 'undefined') {
-      characters.forEach(c => {
-        if (!debutMap.has(c.debut)) {
-          debutMap.set(c.debut, `assets/characters/${c.image}`);
-        }
-      });
-    }
-
-    const maxWalkers = isMobile ? 10 : 20;
-    let walkerIndex = 0;
-
     projects.forEach(parent => {
       if (!isVisible(parent)) return;
 
@@ -162,13 +149,11 @@ class MapRenderer {
         const toNode = this.nodeElements.get(childId);
         if (!toNode) return;
 
-        const charImg = walkerIndex < maxWalkers ? (debutMap.get(parent.id) || null) : null;
-        const elements = this.createArrow(fromNode, toNode, containerRect, parent.id, childId, charImg, walkerIndex);
+        const elements = this.createArrow(fromNode, toNode, containerRect, parent.id, childId);
         elements.forEach(el => {
           this.svg.appendChild(el);
           this.arrowElements.push(el);
         });
-        if (charImg) walkerIndex++;
       });
     });
   }
@@ -193,7 +178,7 @@ class MapRenderer {
     this.svg.appendChild(defs);
   }
 
-  createArrow(fromNode, toNode, containerRect, fromId, toId, charImg, walkerIndex) {
+  createArrow(fromNode, toNode, containerRect, fromId, toId) {
     const a = fromNode.getBoundingClientRect();
     const b = toNode.getBoundingClientRect();
 
@@ -241,49 +226,6 @@ class MapRenderer {
     dash.setAttribute("stroke-dasharray", "6 8");
     dash.setAttribute("fill", "none");
     elements.push(dash);
-
-    // Walking character avatar
-    if (charImg) {
-      const group = document.createElementNS(ns, "g");
-
-      const bg = document.createElementNS(ns, "circle");
-      bg.setAttribute("cx", "0");
-      bg.setAttribute("cy", "0");
-      bg.setAttribute("r", "11");
-      bg.setAttribute("fill", "rgba(7, 8, 15, 0.85)");
-      group.appendChild(bg);
-
-      const img = document.createElementNS(ns, "image");
-      img.setAttribute("href", charImg);
-      img.setAttribute("x", "-10");
-      img.setAttribute("y", "-10");
-      img.setAttribute("width", "20");
-      img.setAttribute("height", "20");
-      img.style.clipPath = "circle(10px at 50% 50%)";
-      group.appendChild(img);
-
-      const ring = document.createElementNS(ns, "circle");
-      ring.setAttribute("cx", "0");
-      ring.setAttribute("cy", "0");
-      ring.setAttribute("r", "11");
-      ring.setAttribute("fill", "none");
-      ring.setAttribute("stroke", "rgba(201, 162, 39, 0.9)");
-      ring.setAttribute("stroke-width", "1.5");
-      group.appendChild(ring);
-
-      const motion = document.createElementNS(ns, "animateMotion");
-      motion.setAttribute("dur", "6s");
-      motion.setAttribute("repeatCount", "indefinite");
-      motion.setAttribute("begin", `${walkerIndex * 0.6}s`);
-
-      const mpath = document.createElementNS(ns, "mpath");
-      mpath.setAttribute("href", `#${pathId}`);
-      mpath.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", `#${pathId}`);
-      motion.appendChild(mpath);
-      group.appendChild(motion);
-
-      elements.push(group);
-    }
 
     return elements;
   }
