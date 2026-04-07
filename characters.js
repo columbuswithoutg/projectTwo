@@ -77,7 +77,6 @@ const characters = [
   { id: "sylvie",         name: "Sylvie",                     debut: "loki1",         image: "sylvie.jpg" },
   { id: "mobius",         name: "Mobius",                     debut: "loki1",         image: "mobius.jpg" },
   { id: "he_who_remains", name: "He Who Remains",             debut: "loki1",         image: "hewhoremains.jpg" },
-  { id: "natasha",        name: "Natasha Romanoff",           debut: "blackwidow",    image: "natasha.jpg" },
   { id: "yelena",         name: "Yelena Belova",              debut: "blackwidow",    image: "yelena.jpg" },
   { id: "redguardian",    name: "Red Guardian",               debut: "blackwidow",    image: "redguardian.jpg" },
   { id: "taskmaster",     name: "Taskmaster",                 debut: "blackwidow",    image: "taskmaster.jpg" },
@@ -85,8 +84,6 @@ const characters = [
   { id: "xialing",        name: "Xu Xialing",                 debut: "shangchi",      image: "xialing.jpg" },
   { id: "wenwu",          name: "Xu Wenwu",                   debut: "shangchi",      image: "wenwu.jpg" },
   { id: "kate",           name: "Kate Bishop",                debut: "hawkeye",       image: "kate.jpg" },
-  { id: "eleanor",        name: "Eleanor Bishop",             debut: "hawkeye",       image: "eleanor.jpg" },
-  { id: "nowayhome_doc",  name: "Doctor Strange (NWH)",       debut: "nowayhome",     image: "strangenWH.jpg" },
 
   // ─── PHASE 5 ───────────────────────────────
   { id: "moonknight_mk",  name: "Moon Knight",                debut: "moonknight",    image: "moonknight.jpg" },
@@ -150,8 +147,6 @@ const characters = [
   { id: "ironfist",       name: "Iron Fist",                  debut: "ironfist1",     image: "ironfist.jpg" },
   { id: "colleen",        name: "Colleen Wing",               debut: "ironfist1",     image: "colleen.jpg" },
   { id: "mistynight",     name: "Misty Knight",               debut: "lukecage1",     image: "misty.jpg" },
-  { id: "mariah",         name: "Mariah Dillard",             debut: "lukecage1",     image: "mariah.jpg" },
   { id: "cottonmouth",    name: "Cottonmouth",                debut: "lukecage1",     image: "cottonmouth.jpg" },
-  { id: "frank",          name: "Frank Castle",               debut: "punisher1",     image: "frank.jpg" },
 
 ];
