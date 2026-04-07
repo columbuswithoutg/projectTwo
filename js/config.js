@@ -14,10 +14,10 @@ const CONFIG = {
 // Scale down for mobile — zoomed out feel
 const isMobile = window.matchMedia('(max-width: 640px)').matches;
 if (isMobile) {
-  CONFIG.H_SPACING = 100;
-  CONFIG.V_SPACING = 140;
-  CONFIG.NODE_WIDTH = 75;
-  CONFIG.NODE_HEIGHT = 110;
+  CONFIG.H_SPACING = 110;
+  CONFIG.V_SPACING = 130;
+  CONFIG.NODE_WIDTH = 55;
+  CONFIG.NODE_HEIGHT = 82;
 }
 
 const PHASE_UNLOCKERS = {
