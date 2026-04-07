@@ -278,10 +278,11 @@ const Walkers = (() => {
 
     dialogue.forEach((line, i) => {
       setTimeout(() => {
-        // Remove previous bubbles for these walkers
         clearBubblesFor(w1.charId, w2.charId);
 
-        const walker = line.speaker === w1.charId ? w1 : w2;
+        // Match speaker to the correct walker by charId
+        const walker = activeWalkers.find(w => w.charId === line.speaker) ||
+                       (line.speaker === w1.charId ? w1 : w2);
         const bubble = createSpeechBubble(walker, line.text);
         activeBubbles.push({ el: bubble, owner: line.speaker, walker });
       }, startDelay + i * LINE_DURATION);
