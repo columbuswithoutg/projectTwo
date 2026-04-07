@@ -2,127 +2,152 @@
  * WALKER DIALOGUES
  * Character pair conversations when walkers meet
  * Key format: "id1|id2" (alphabetically sorted)
+ * Even-indexed lines (0, 2, 4...) = alphabetically first ID
+ * Odd-indexed lines (1, 3, 5...)  = alphabetically second ID
  ************************************************/
 const WALKER_DIALOGUES = (() => {
 
-  // Each entry: [charA_line, charB_line, charA_line, ...]
-  // charA = alphabetically first ID, charB = second
   const pairs = {
 
     // ── Iron Man relationships ──
+    // cap (even) | ironman (odd)
     "cap|ironman": [
       ["We need a plan of attack.", "I have a plan... attack."],
       ["You know, I'm not the one who needs to watch their back.", "Is that a threat, Cap?", "It's a promise."],
       ["Language!", "...It was one time, Steve."],
       ["You could've called.", "You could've not dropped an airport on me."]
     ],
+    // ironman (even) | spiderman (odd)
     "ironman|spiderman": [
-      ["Mr. Stark! Is this an Avengers mission?", "No, this is a walk, kid. Relax."],
-      ["I'm nothing without the suit...", "If you're nothing without the suit, you shouldn't have it."],
-      ["Hey Mr. Stark, do you have any snacks?", "Do I look like a vending machine?", "...A little bit, yeah."],
-      ["Can I be an Avenger now?", "We'll talk about it later.", "You always say that!"]
+      ["No, this is a walk, kid. Relax.", "Mr. Stark! Is this an Avengers mission?"],
+      ["If you're nothing without the suit, you shouldn't have it.", "I'm nothing without the suit..."],
+      ["Do I look like a vending machine?", "...A little bit, yeah.", "Watch it, kid."],
+      ["We'll talk about it later.", "Can I be an Avenger now?", "I said later, kid."]
     ],
+    // ironman (even) | pepper (odd)
     "ironman|pepper": [
-      ["Tony, you promised no more suits.", "This isn't a suit... it's a walking outfit."],
+      ["This isn't a suit... it's a walking outfit.", "Tony, you promised no more suits."],
       ["I love you 3000.", "I love you more than 3000."],
-      ["You're going to be late for dinner.", "I'm never late. Everyone else is just early."]
+      ["I'm never late. Everyone else is just early.", "You're going to be late for dinner."]
     ],
+    // ironman (even) | rhodey (odd)
     "ironman|rhodey": [
       ["Next time, baby.", "You always say that.", "And I always mean it."],
-      ["BOOM! You looking for this?", "That's your story? Really?"],
-      ["I think I need an upgrade.", "You ARE an upgrade, Rhodey."]
+      ["That's your story? Really?", "BOOM! You looking for this?", "...Tell it again."],
+      ["You ARE an upgrade, Rhodey.", "I think I need an upgrade."]
     ],
+    // ironman (even) | thor (odd)
     "ironman|thor": [
       ["Point Break! Long time no see.", "I am not Point Break.", "Sure you are, big guy."],
       ["Doth mother know you weareth her drapes?", "...That was ONE time, Stark."]
     ],
-    "ironman|hulk": [
-      ["We've got a code green.", "I'm always angry.", "That's my secret too... coffee."],
-      ["Sun's getting real low, big guy.", "That only works when Natasha does it."]
-    ],
-    "ironman|drstrange": [
-      ["Do you concur, Doctor?", "I'm not that kind of doctor.", "Then what's with the cape?"],
+    // drstrange (even) | ironman (odd)
+    "drstrange|ironman": [
+      ["I'm not that kind of doctor.", "Do you concur, Doctor?", "...No."],
       ["Nice facial hair.", "...Right back at you."]
+    ],
+    // hulk (even) | ironman (odd)
+    "hulk|ironman": [
+      ["I'm always angry.", "We've got a code green.", "That's my secret too... coffee."],
+      ["That only works when Natasha does it.", "Sun's getting real low, big guy.", "Not gonna happen, Stark."]
     ],
 
     // ── Thor relationships ──
+    // loki (even) | thor (odd)
     "loki|thor": [
       ["Brother!", "I am NOT your brother.", "...Adopted."],
-      ["I thought you were dead!", "I get that a lot."],
-      ["Get help.", "No.", "GET HELP!!", "I hate this plan."],
+      ["I get that a lot.", "I thought you were dead!", "Surprise."],
+      ["No.", "Get help.", "Absolutely not.", "GET HELP!!"],
       ["We're not doing 'Get Help.'", "We are absolutely doing 'Get Help.'"]
     ],
+    // hulk (even) | thor (odd)
     "hulk|thor": [
-      ["FRIEND FROM WORK!", "We are NOT friends from work!", "...But we are?"],
+      ["Hulk know you.", "FRIEND FROM WORK!", "...We are?"],
       ["Thor sad.", "I'm not sad! ...Okay maybe a little."],
       ["Hulk like raging fire. Thor like smoldering fire.", "That's... actually kind of nice."]
     ],
+    // thor (even) | valkyrie (odd)
     "thor|valkyrie": [
       ["Your Majesty.", "Don't call me that. Makes me feel old.", "You ARE old.", "...Fair point."],
       ["I need a drink.", "It's 10 in the morning.", "And?"]
     ],
+    // heimdall (even) | thor (odd)
     "heimdall|thor": [
       ["I can see everything.", "Can you see why I skipped breakfast?", "...You didn't. You had Pop-Tarts."]
     ],
+    // hela (even) | thor (odd)
     "hela|thor": [
       ["Kneel.", "I don't really kneel.", "He really doesn't.", "...Who asked you?"]
     ],
 
     // ── Cap relationships ──
+    // bucky (even) | cap (odd)
     "bucky|cap": [
       ["I'm with you till the end of the line.", "...Right back at ya, pal."],
       ["You pulled me from the river. Why?", "Because you're my friend.", "...You're my mission.", "Then finish it."],
-      ["How's the arm?", "Not bad. Wakandan engineering.", "Show-off."]
+      ["Not bad. Wakandan engineering.", "How's the arm?", "Show-off."]
     ],
+    // cap (even) | falcon (odd)
     "cap|falcon": [
       ["On your left.", "Oh, come on!", "On your left.", "I HEARD YOU THE FIRST TIME."],
       ["Take care of the shield.", "I will.", "I know you will."]
     ],
+    // cap (even) | peggy (odd)
     "cap|peggy": [
       ["I had a date.", "You're late.", "Couldn't call... bad reception in the ice."]
     ],
+    // blackwidow (even) | cap (odd)
     "blackwidow|cap": [
-      ["You know, you're kind of scary sometimes.", "Thank you.", "...That wasn't a compliment."]
+      ["Thank you.", "You know, you're kind of scary sometimes.", "...That wasn't a compliment."]
     ],
 
     // ── Guardians ──
+    // groot (even) | rocket (odd)
     "groot|rocket": [
       ["I am Groot.", "I know, buddy.", "I am Groot.", "Well that's just rude."],
       ["I am Groot!", "No, you cannot have a gun.", "I am Groot.", "ESPECIALLY not that one."],
       ["I am Groot.", "Yeah, yeah, I love you too. Don't make it weird."]
     ],
+    // gamora (even) | starlord (odd)
     "gamora|starlord": [
-      ["I'm gonna make some weird faces.", "...Was that supposed to be charming?"],
-      ["Dance with me.", "I don't dance.", "Everyone dances.", "NOT me."],
+      ["...Was that supposed to be charming?", "I'm gonna make some weird faces.", "Please don't."],
+      ["I don't dance.", "Dance with me.", "Everyone dances.", "NOT me."],
       ["I like your plan. Except it sucks.", "Tell me how you really feel."]
     ],
+    // gamora (even) | nebula (odd)
     "gamora|nebula": [
-      ["You were always the favorite.", "That's not true.", "Father made me watch while he—", "I know. I'm sorry."],
+      ["That's not true.", "You were always the favorite.", "Father made me watch while he—", "I know. I'm sorry."],
       ["Sister.", "...Sister.", "This is progress.", "Don't push it."]
     ],
+    // drax (even) | starlord (odd)
     "drax|starlord": [
       ["Nothing goes over my head. My reflexes are too fast.", "That's... not what that means."],
-      ["I can see you. You're eating a cracker.", "I thought I was invisible!", "...You were not."]
+      ["...You were not.", "I thought I was invisible!", "I can see you. You're eating a cracker."]
     ],
+    // groot (even) | starlord (odd)
     "groot|starlord": [
       ["I am Groot.", "...I understood that!", "I am Groot.", "Wait, never mind."]
     ],
-    "mantis|drax": [
+    // drax (even) | mantis (odd)
+    "drax|mantis": [
       ["You are horrifying to look at.", "...Thank you?", "That was not a compliment.", "I'll take it anyway."]
     ],
 
     // ── Wanda & Vision ──
+    // vision (even) | wanda_wv (odd)
     "vision|wanda_wv": [
       ["What is grief, if not love persevering?", "...That's beautiful, Vis."],
       ["Wanda, we can't stay here.", "Just five more minutes.", "You said that an hour ago."],
       ["I just feel you.", "And I feel you."]
     ],
+    // quicksilver (even) | wanda_wv (odd)
     "quicksilver|wanda_wv": [
       ["You didn't see that coming?", "I hate when you say that.", "You didn't see THAT coming either."],
       ["Keep up, old lady.", "We're TWINS!", "Yeah, but I'm faster."]
     ],
 
     // ── Black Widow & Hawkeye ──
+    // blackwidow (even) | hawkeye (odd)
     "blackwidow|hawkeye": [
       ["Just like Budapest all over again.", "You and I remember Budapest very differently."],
       ["I've got red in my ledger.", "We all do, Nat."],
@@ -130,27 +155,32 @@ const WALKER_DIALOGUES = (() => {
     ],
 
     // ── Spider-Man ──
+    // drstrange (even) | spiderman (odd)
     "drstrange|spiderman": [
       ["The Multiverse is not a concept you can just—", "Yeah yeah, I opened a portal once!", "That was an accident."],
-      ["Scooby-Doo this crap.", "Please never say that again."]
+      ["Please never say that again.", "Scooby-Doo this crap.", "...I said don't."]
     ],
+    // mysterio (even) | spiderman (odd)
     "mysterio|spiderman": [
       ["People need to believe.", "In you? Hard pass.", "You wound me, Spider-Man."]
     ],
 
     // ── Loki variants ──
+    // loki_tva (even) | sylvie (odd)
     "loki_tva|sylvie": [
       ["What makes Loki a Loki?", "Independence. Authority. Style.", "...I was going to say trust issues."],
       ["I've been pruned, stabbed, and betrayed.", "Welcome to being a Loki."],
       ["For you.", "...For us."]
     ],
+    // loki_tva (even) | mobius (odd)
     "loki_tva|mobius": [
-      ["Wow.", "Wow what?", "Just... wow.", "You're being weird, Mobius."],
-      ["I believe in you, Loki.", "That makes one of us.", "Then I'll believe enough for both."],
+      ["What's so great about jet skis anyway?", "Wow.", "...That's not an answer.", "It's the only answer."],
+      ["That makes one of us.", "I believe in you, Loki.", "Then I'll believe enough for both."],
       ["Jet ski?", "JET SKI!", "...We really need better hobbies."]
     ],
 
     // ── Doctor Strange ──
+    // drstrange (even) | wong (odd)
     "drstrange|wong": [
       ["Wong.", "Strange.", "...That's still funny to me.", "It's really not."],
       ["I'm the Sorcerer Supreme.", "Actually, that's me now.", "On a technicality!", "Still counts."],
@@ -158,24 +188,29 @@ const WALKER_DIALOGUES = (() => {
     ],
 
     // ── Ant-Man ──
+    // antman (even) | falcon (odd)
     "antman|falcon": [
       ["I'm a big fan!", "...Who are you?", "I'm Ant-Man!", "Oh. The guy who shrinks."],
       ["You're an Avenger?", "I am! Surprised?", "...A little bit, yeah."]
     ],
+    // antman (even) | wasp_hope (odd)
     "antman|wasp_hope": [
       ["I know a guy.", "You mean me.", "I mean you.", "Say my name.", "...The Wasp."]
     ],
 
     // ── Black Panther ──
+    // blackpanther (even) | shuri (odd)
     "blackpanther|shuri": [
-      ["What are THOSE?!", "They're my shoes, Shuri.", "Old man shoes!", "I am your KING."],
-      ["Another broken white boy to fix.", "Shuri, please.", "What? I'm just saying."]
+      ["They're my shoes, Shuri.", "What are THOSE?!", "Old man shoes!", "I am your KING."],
+      ["Shuri, please.", "Another broken white boy to fix.", "What? I'm just saying."]
     ],
+    // blackpanther (even) | okoye (odd)
     "blackpanther|okoye": [
       ["Wakanda forever.", "Forever.", "...That never gets old.", "No. It does not."]
     ],
 
     // ── Deadpool & Wolverine ──
+    // deadpool (even) | wolverine (odd)
     "deadpool|wolverine": [
       ["Hey, buddy! Wanna team up?", "No.", "Too late, we're already walking together!"],
       ["You're the best there is at what you do.", "And what's that?", "Looking angry. It's a gift."],
@@ -184,47 +219,58 @@ const WALKER_DIALOGUES = (() => {
     ],
 
     // ── Netflix / Street-Level ──
+    // daredevil (even) | punisher (odd)
     "daredevil|punisher": [
-      ["You're one bad day away from being me.", "No, Frank. I'm not.", "Keep telling yourself that, Red."],
+      ["No, Frank. I'm not.", "You're one bad day away from being me.", "Keep telling yourself that, Red."],
       ["Justice isn't a weapon.", "No, but I am.", "...Frank."]
     ],
+    // daredevil (even) | fisk (odd)
     "daredevil|fisk": [
-      ["This city needs me.", "This city will be your GRAVE.", "...You always were dramatic, Fisk."]
+      ["This city doesn't belong to you.", "This city will be your GRAVE.", "...You always were dramatic, Fisk."]
     ],
+    // jessicajones (even) | lukecage (odd)
     "jessicajones|lukecage": [
       ["You look good.", "I know.", "Humble as ever.", "Always."],
-      ["Sweet Christmas.", "Did you just say 'sweet Christmas'?", "...Maybe."]
+      ["Did you just say 'sweet Christmas'?", "Sweet Christmas.", "...Maybe."]
     ],
+    // daredevil (even) | jessicajones (odd)
     "daredevil|jessicajones": [
       ["I'm a lawyer.", "I'm a PI.", "We should NOT be friends.", "Absolutely not."]
     ],
+    // ironfist (even) | lukecage (odd)
     "ironfist|lukecage": [
       ["Heroes for Hire?", "I told you, we're not calling it that.", "But it sounds cool!", "It really doesn't."]
     ],
 
     // ── Captain Marvel ──
+    // captainmarvel (even) | nick_fury (odd)
     "captainmarvel|nick_fury": [
-      ["Where have you BEEN?", "Saving other planets.", "...A text would've been nice."],
+      ["Saving other planets.", "Where have you BEEN?", "...A text would've been nice."],
       ["Higher, further, faster.", "Just don't break my stuff.", "No promises."]
     ],
 
     // ── Shang-Chi ──
+    // shangchi (even) | xialing (odd)
     "shangchi|xialing": [
-      ["You ran away.", "I came back!", "After TEN years.", "...I needed some time."]
+      ["I came back!", "You ran away.", "After TEN years.", "...I needed some time."]
     ],
+    // shangchi (even) | wong (odd)
     "shangchi|wong": [
       ["Karaoke later?", "I'm the Sorcerer Supreme. I don't do karaoke.", "...Hotel California?", "I'll get my coat."]
     ],
 
     // ── Others ──
-    "nick_fury|coulson": [
-      ["Agent Coulson, report.", "Everything's fine, sir.", "When you say fine...", "I mean controlled chaos."]
+    // coulson (even) | nick_fury (odd)
+    "coulson|nick_fury": [
+      ["Everything's fine, sir.", "Agent Coulson, report.", "I mean controlled chaos.", "When you say fine..."]
     ],
+    // hawkeye (even) | kate (odd)
     "hawkeye|kate": [
-      ["I learned from the best.", "That's sweet, Kate.", "I was talking about the YouTube videos.", "...I'm standing right here."]
+      ["That's sweet, Kate.", "I learned from the best.", "...I'm standing right here.", "I was talking about the YouTube videos."]
     ],
+    // blackwidow (even) | yelena (odd)
     "blackwidow|yelena": [
-      ["You're such a poser.", "I'm your older sister. Show some respect.", "Make me.", "...I walked into that one."]
+      ["I'm your older sister. Show some respect.", "You're such a poser.", "Make me.", "...I walked into that one."]
     ]
   };
 

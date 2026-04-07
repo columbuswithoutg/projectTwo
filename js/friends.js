@@ -63,6 +63,13 @@ const Friends = {
   }
 };
 
+// Escape HTML to prevent XSS from user-controlled strings (usernames, titles)
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
 /************************************************
  * FRIENDS PANEL UI
  ************************************************/
@@ -165,8 +172,8 @@ function showFriendsPanel() {
   <div class="friend-row">
     <span>
       ${r.type === 'watch'
-        ? `<strong>${r.requester.username}</strong> wants to watch <em style="color:rgba(46,255,81,0.8)">${r.projectTitle || r.projectId}</em> together`
-        : `<strong>${r.requester.username}</strong> sent you a friend request`
+        ? `<strong>${esc(r.requester.username)}</strong> wants to watch <em style="color:rgba(46,255,81,0.8)">${esc(r.projectTitle || r.projectId)}</em> together`
+        : `<strong>${esc(r.requester.username)}</strong> sent you a friend request`
       }
     </span>
     <div style="display:flex; gap:6px; flex-shrink:0">
@@ -232,10 +239,10 @@ function loadFriendList(panel) {
     }
     container.innerHTML = friends.map(f => `
       <div class="friend-row" data-id="${f.id}">
-        <span>${f.username}</span>
+        <span>${esc(f.username)}</span>
         <div style="display:flex; gap:6px">
-          <button class="friend-view-btn" data-id="${f.id}" data-name="${f.username}">View Progress</button>
-          <button class="friend-remove-btn" data-id="${f.id}" data-name="${f.username}">Remove</button>
+          <button class="friend-view-btn" data-id="${f.id}" data-name="${esc(f.username)}">View Progress</button>
+          <button class="friend-remove-btn" data-id="${f.id}" data-name="${esc(f.username)}">Remove</button>
         </div>
       </div>
     `).join('');
@@ -278,7 +285,7 @@ async function viewFriendProgress(friendId, friendName) {
   const banner = document.createElement('header');
   banner.id = 'header';
   banner.innerHTML = `
-    <h1>Viewing <strong>${friendName}</strong>'s Progress</h1>
+    <h1>Viewing <strong>${esc(friendName)}</strong>'s Progress</h1>
     <button id="exit-friend-view">← Back to My Progress</button>
   `;
 
@@ -289,11 +296,13 @@ async function viewFriendProgress(friendId, friendName) {
     originalHeader.style.display = '';
     renderer.nodesContainer.classList.remove('readonly');
     renderer.render();
+    Walkers.restoreSelections();
   };
 
   document.body.insertBefore(banner, document.getElementById('map-wrapper'));
   renderer.nodesContainer.classList.add('readonly');
   renderer.render();
+  Walkers.deployWithSelections(data.walkers || []);
 }
 
 async function showWatchedWithFriendModal(project) {
@@ -305,13 +314,13 @@ async function showWatchedWithFriendModal(project) {
     <div class="auth-box">
       <button class="popup-close">✕</button>
       <h3>Watched with a Friend</h3>
-      <p style="color:#aaa; font-size:0.9rem">Select a friend to mark <strong style="color:#fff">${project.title}</strong> as watched for them too.</p>
+      <p style="color:#aaa; font-size:0.9rem">Select a friend to mark <strong style="color:#fff">${esc(project.title)}</strong> as watched for them too.</p>
       <div id="watch-friends-list">
         ${!friends.length
           ? '<p style="color:#666">No friends yet</p>'
           : friends.map(f => `
             <div class="friend-row">
-              <span>${f.username}</span>
+              <span>${esc(f.username)}</span>
               <button class="watch-with-btn" data-id="${f.id}">Send Request</button>
             </div>
           `).join('')
@@ -369,7 +378,7 @@ function showRemoveConfirm(friendId, friendName, panel) {
   confirm.innerHTML = `
     <div class="auth-box" style="text-align:center; gap:16px">
       <h3>Remove Friend</h3>
-      <p style="color:#aaa">Are you sure you want to remove <strong style="color:#fff">${friendName}</strong> as a friend?</p>
+      <p style="color:#aaa">Are you sure you want to remove <strong style="color:#fff">${esc(friendName)}</strong> as a friend?</p>
       <p class="auth-error" style="display:none; color:red"></p>
       <div style="display:flex; gap:8px">
         <button id="confirm-remove" style="flex:1; padding:10px; border-radius:8px; border:none; background:rgba(255,80,80,0.8); color:#fff; font-weight:bold; cursor:pointer">

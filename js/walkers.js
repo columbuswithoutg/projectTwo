@@ -28,8 +28,10 @@ const Walkers = (() => {
   let activeBubbles = [];              // { el, owner }
   let encounterQueue = [];             // { w1, w2 }
   let encounterRunning = false;
+  let encounterTimers = [];            // setTimeout IDs for active dialogue, cleared on destroy
   let deployTime = 0;                  // timestamp of last deploy, used for grace period
   const DEPLOY_GRACE = 5000;           // ms — no encounters right after deploy
+  let overrideSelections = null;       // when set, deploy uses these instead of localStorage
 
   /* ---- persistence ---- */
 
@@ -277,7 +279,7 @@ const Walkers = (() => {
     w2.pauseEnd = holdUntil;
 
     dialogue.forEach((line, i) => {
-      setTimeout(() => {
+      encounterTimers.push(setTimeout(() => {
         clearBubblesFor(w1.charId, w2.charId);
 
         // Match speaker to the correct walker by charId
@@ -285,11 +287,11 @@ const Walkers = (() => {
                        (line.speaker === w1.charId ? w1 : w2);
         const bubble = createSpeechBubble(walker, line.text);
         activeBubbles.push({ el: bubble, owner: line.speaker, walker });
-      }, startDelay + i * LINE_DURATION);
+      }, startDelay + i * LINE_DURATION));
     });
 
     // Clean up after dialogue ends, then run next queued encounter
-    setTimeout(() => {
+    encounterTimers.push(setTimeout(() => {
       clearBubblesFor(w1.charId, w2.charId);
       w1.inEncounter = false;
       w2.inEncounter = false;
@@ -299,8 +301,8 @@ const Walkers = (() => {
       w2.pauseEnd = performance.now() + randBetween(300, 800);
 
       // Brief pause before next queued encounter
-      setTimeout(() => runNextEncounter(), 800);
-    }, totalDuration);
+      encounterTimers.push(setTimeout(() => runNextEncounter(), 800));
+    }, totalDuration));
   }
 
   function queueEncounter(w1, w2) {
@@ -397,8 +399,10 @@ const Walkers = (() => {
     }
 
     // Start from current visual position (includes orbit offset)
-    const curX = parseFloat(w.el.style.left) + WALKER_SIZE / 2;
-    const curY = parseFloat(w.el.style.top) + WALKER_SIZE / 2;
+    const rawX = parseFloat(w.el.style.left);
+    const rawY = parseFloat(w.el.style.top);
+    const curX = isNaN(rawX) ? from.x : rawX + WALKER_SIZE / 2;
+    const curY = isNaN(rawY) ? from.y : rawY + WALKER_SIZE / 2;
 
     // Destination gets a new random orbit offset
     const destOffset = randomOrbitOffset();
@@ -466,7 +470,7 @@ const Walkers = (() => {
   /* ---- public API ---- */
 
   function getSelectedIds() {
-    const saved = loadSelections();
+    const saved = overrideSelections !== null ? overrideSelections : loadSelections();
     const maxSlots = getMaxSlots();
     const unlocked = new Set(getUnlockedCharacters().map(c => c.id));
     // Filter out any that are no longer unlocked, and cap at max slots
@@ -535,6 +539,8 @@ const Walkers = (() => {
   function destroy() {
     if (animFrameId) cancelAnimationFrame(animFrameId);
     animFrameId = null;
+    encounterTimers.forEach(t => clearTimeout(t));
+    encounterTimers = [];
     activeWalkers.forEach(w => w.el?.remove());
     activeWalkers = [];
     activeBubbles.forEach(b => b.el.remove());
@@ -649,6 +655,18 @@ const Walkers = (() => {
     overlay.querySelector('#walker-picker-close').addEventListener('click', () => overlay.remove());
   }
 
+  /* ---- friend view support ---- */
+
+  function deployWithSelections(ids) {
+    overrideSelections = Array.isArray(ids) ? ids : [];
+    deploy();
+  }
+
+  function restoreSelections() {
+    overrideSelections = null;
+    deploy();
+  }
+
   /* ---- re-deploy on state change ---- */
   async function init() {
     await loadFromServer();
@@ -658,5 +676,5 @@ const Walkers = (() => {
     });
   }
 
-  return { init, deploy, destroy, showWalkerPicker, getSelectedIds, getMaxSlots, getUnlockedCharacters, toggleCharacter, setSelections };
+  return { init, deploy, destroy, showWalkerPicker, getSelectedIds, getMaxSlots, getUnlockedCharacters, toggleCharacter, setSelections, deployWithSelections, restoreSelections };
 })();

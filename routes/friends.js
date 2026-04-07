@@ -177,7 +177,7 @@ router.get('/progress/:friendId', auth, async (req, res) => {
         if (!friendship) return res.status(403).json({ error: 'Not friends' });
 
         const friend = await User.findById(req.params.friendId)
-            .select('username watchedProjects');
+            .select('username watchedProjects walkers');
         if (!friend) return res.status(404).json({ error: 'User not found' });
 
         // Normalize data shape — handle both old string array and new object array
@@ -193,7 +193,7 @@ router.get('/progress/:friendId', auth, async (req, res) => {
             };
         });
 
-        res.json({ username: friend.username, watchedProjects });
+        res.json({ username: friend.username, watchedProjects, walkers: friend.walkers || [] });
     } catch (e) {
         console.error('Progress route error:', e);
         res.status(500).json({ error: 'Server error' });
