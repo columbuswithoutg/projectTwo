@@ -28,6 +28,30 @@ const Walkers = (() => {
 
   function saveSelections(ids) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
+    // Persist to server if logged in
+    if (Auth.isLoggedIn()) {
+      fetch(`${API}/progress/walkers`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${Auth.getToken()}`
+        },
+        body: JSON.stringify({ walkers: ids })
+      }).catch(() => {});
+    }
+  }
+
+  async function loadFromServer() {
+    if (!Auth.isLoggedIn()) return;
+    try {
+      const res = await fetch(`${API}/progress/walkers`, {
+        headers: { Authorization: `Bearer ${Auth.getToken()}` }
+      });
+      const data = await res.json();
+      if (Array.isArray(data.walkers) && data.walkers.length > 0) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data.walkers));
+      }
+    } catch { /* offline — use localStorage */ }
   }
 
   /* ---- helpers ---- */
@@ -371,7 +395,8 @@ const Walkers = (() => {
   }
 
   /* ---- re-deploy on state change ---- */
-  function init() {
+  async function init() {
+    await loadFromServer();
     state.subscribe(() => {
       // Small delay so nodes render first
       setTimeout(() => deploy(), 300);

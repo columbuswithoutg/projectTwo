@@ -63,4 +63,18 @@ router.delete('/memory', auth, async (req, res) => {
   res.json({ message: 'Deleted' });
 });
 
+// Load walker selections
+router.get('/walkers', auth, async (req, res) => {
+  const user = await User.findById(req.user.id);
+  res.json({ walkers: user.walkers || [] });
+});
+
+// Save walker selections
+router.post('/walkers', auth, async (req, res) => {
+  const { walkers } = req.body;
+  if (!Array.isArray(walkers)) return res.status(400).json({ error: 'walkers must be an array' });
+  await User.findByIdAndUpdate(req.user.id, { walkers });
+  res.json({ message: 'Saved' });
+});
+
 module.exports = router;

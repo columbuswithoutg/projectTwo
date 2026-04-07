@@ -47,8 +47,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderer.setCenterTarget(state.getLastWatchedId());
   renderer.render();
 
-  // Init walkers after first render
-  Walkers.init();
+  // Init walkers after first render (loads selections from server)
+  await Walkers.init();
   setTimeout(() => Walkers.deploy(), 500);
 
   // Load profile picture into header
