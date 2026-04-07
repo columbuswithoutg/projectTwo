@@ -1645,22 +1645,6 @@ body.auth-page {
   border-top: 6px solid var(--gold-03);
 }
 
-.walker-speech-bubble.left {
-  transform: translateX(-80%) translateY(-100%);
-}
-
-.walker-speech-bubble.left::after {
-  left: 75%;
-}
-
-.walker-speech-bubble.right {
-  transform: translateX(-20%) translateY(-100%);
-}
-
-.walker-speech-bubble.right::after {
-  left: 25%;
-}
-
 @keyframes bubbleFadeIn {
   from { opacity: 0; transform: translateX(-50%) translateY(-90%); }
   to   { opacity: 1; transform: translateX(-50%) translateY(-100%); }

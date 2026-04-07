@@ -147,24 +147,46 @@ const Walkers = (() => {
 
   /* ---- encounters & speech bubbles ---- */
 
-  function centerOnNode(nodeId) {
-    renderer.setCenterTarget(nodeId);
-    renderer.centerOnTarget();
+  function centerBetweenWalkers(w1, w2) {
+    // Center the viewport on the midpoint between two walkers
+    const pos1 = getNodeCenter(w1.currentNode);
+    const pos2 = getNodeCenter(w2.currentNode);
+    if (!pos1 || !pos2) return;
+
+    const midX = (pos1.x + pos2.x) / 2;
+    const midY = (pos1.y + pos2.y) / 2;
+
+    const wrapper = renderer.container;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const containerRect = renderer.mapContainer.getBoundingClientRect();
+
+    const scrollLeft = wrapper.scrollLeft + (containerRect.left - wrapperRect.left) + midX - wrapperRect.width / 2;
+    const scrollTop = wrapper.scrollTop + (containerRect.top - wrapperRect.top) + midY - wrapperRect.height / 2;
+
+    wrapper.scrollTo({
+      left: Math.max(0, scrollLeft),
+      top: Math.max(0, scrollTop),
+      behavior: 'smooth'
+    });
   }
 
-  function createSpeechBubble(w, text, side) {
+  function positionBubbleAboveWalker(bubble, w) {
+    if (!w.el) return;
+    const wx = parseFloat(w.el.style.left) + WALKER_SIZE / 2;
+    const wy = parseFloat(w.el.style.top);
+    bubble.style.left = wx + 'px';
+    bubble.style.top = (wy - 8) + 'px';
+  }
+
+  function createSpeechBubble(w, text) {
     const bubble = document.createElement('div');
-    bubble.className = 'walker-speech-bubble ' + side;
+    bubble.className = 'walker-speech-bubble';
     bubble.textContent = text;
     bubble.style.position = 'absolute';
     bubble.style.zIndex = '60';
     renderer.mapContainer.appendChild(bubble);
 
-    // Position near the walker
-    const wx = parseFloat(w.el.style.left) + WALKER_SIZE / 2;
-    const wy = parseFloat(w.el.style.top);
-    bubble.style.left = wx + 'px';
-    bubble.style.top = (wy - 8) + 'px';
+    positionBubbleAboveWalker(bubble, w);
 
     return bubble;
   }
@@ -186,9 +208,9 @@ const Walkers = (() => {
     }
 
     encounterRunning = true;
-    const { w1, w2, nodeId } = encounterQueue.shift();
+    const { w1, w2 } = encounterQueue.shift();
 
-    // Verify both walkers are still active and at the expected node
+    // Verify both walkers are still active
     if (!activeWalkers.includes(w1) || !activeWalkers.includes(w2)) {
       runNextEncounter();
       return;
@@ -210,8 +232,8 @@ const Walkers = (() => {
     const key = WALKER_DIALOGUES.getKey(w1.charId, w2.charId);
     encounterCooldowns.set(key, performance.now() + ENCOUNTER_COOLDOWN);
 
-    // Center the map on the encounter node, then start dialogue after scroll settles
-    centerOnNode(nodeId);
+    // Center the map between the two walkers
+    centerBetweenWalkers(w1, w2);
 
     const scrollDelay = 600;   // let smooth scroll finish
     const startDelay = scrollDelay + 300;
@@ -228,9 +250,8 @@ const Walkers = (() => {
         clearBubblesFor(w1.charId, w2.charId);
 
         const walker = line.speaker === w1.charId ? w1 : w2;
-        const side = line.speaker === w1.charId ? 'left' : 'right';
-        const bubble = createSpeechBubble(walker, line.text, side);
-        activeBubbles.push({ el: bubble, owner: line.speaker });
+        const bubble = createSpeechBubble(walker, line.text);
+        activeBubbles.push({ el: bubble, owner: line.speaker, walker });
       }, startDelay + i * LINE_DURATION);
     });
 
@@ -249,14 +270,14 @@ const Walkers = (() => {
     }, totalDuration);
   }
 
-  function queueEncounter(w1, w2, nodeId) {
+  function queueEncounter(w1, w2) {
     // Don't queue duplicates
     const isDuplicate = encounterQueue.some(e =>
       (e.w1 === w1 && e.w2 === w2) || (e.w1 === w2 && e.w2 === w1)
     );
     if (isDuplicate) return;
 
-    encounterQueue.push({ w1, w2, nodeId });
+    encounterQueue.push({ w1, w2 });
 
     // If nothing is running, start immediately
     if (!encounterRunning) {
@@ -264,42 +285,41 @@ const Walkers = (() => {
     }
   }
 
-  function checkEncounters(now) {
+  function areNeighbors(nodeA, nodeB, graph) {
+    if (nodeA === nodeB) return true;
+    const neighbors = graph.get(nodeA) || [];
+    return neighbors.includes(nodeB);
+  }
+
+  function checkEncounters(now, graph) {
     if (now - lastEncounterCheck < ENCOUNTER_CHECK_INTERVAL) return;
     lastEncounterCheck = now;
 
-    // Group walkers by current node (only those paused at a node, not mid-walk)
-    const atNode = new Map();
-    activeWalkers.forEach(w => {
-      if (!w.paused || w.inEncounter) return;
-      if (w.progress < 1) return;  // still mid-walk
-      const list = atNode.get(w.currentNode) || [];
-      list.push(w);
-      atNode.set(w.currentNode, list);
-    });
+    // Collect walkers that are paused at a node (finished walking)
+    const idle = activeWalkers.filter(w =>
+      w.paused && !w.inEncounter && w.progress >= 1
+    );
 
-    // Check each node for pairs
-    atNode.forEach((walkers, nodeId) => {
-      if (walkers.length < 2) return;
-      for (let i = 0; i < walkers.length - 1; i++) {
-        for (let j = i + 1; j < walkers.length; j++) {
-          const w1 = walkers[i];
-          const w2 = walkers[j];
-          const key = WALKER_DIALOGUES.getKey(w1.charId, w2.charId);
+    // Check all pairs for same-node or adjacent-node encounters
+    for (let i = 0; i < idle.length - 1; i++) {
+      for (let j = i + 1; j < idle.length; j++) {
+        const w1 = idle[i];
+        const w2 = idle[j];
 
-          // Check cooldown
-          const cooldownEnd = encounterCooldowns.get(key) || 0;
-          if (now < cooldownEnd) continue;
+        if (!areNeighbors(w1.currentNode, w2.currentNode, graph)) continue;
 
-          // Hold both walkers at this node while queued/playing
-          const holdTime = 15000;
-          w1.pauseEnd = Math.max(w1.pauseEnd, now + holdTime);
-          w2.pauseEnd = Math.max(w2.pauseEnd, now + holdTime);
+        const key = WALKER_DIALOGUES.getKey(w1.charId, w2.charId);
+        const cooldownEnd = encounterCooldowns.get(key) || 0;
+        if (now < cooldownEnd) continue;
 
-          queueEncounter(w1, w2, nodeId);
-        }
+        // Hold both walkers while queued/playing
+        const holdTime = 15000;
+        w1.pauseEnd = Math.max(w1.pauseEnd, now + holdTime);
+        w2.pauseEnd = Math.max(w2.pauseEnd, now + holdTime);
+
+        queueEncounter(w1, w2);
       }
-    });
+    }
   }
 
   /* ---- animation loop ---- */
@@ -351,7 +371,7 @@ const Walkers = (() => {
 
     const graph = buildGraph();
 
-    checkEncounters(now);
+    checkEncounters(now, graph);
 
     activeWalkers.forEach(w => {
       if (w.inEncounter) return;  // frozen during dialogue
@@ -381,6 +401,11 @@ const Walkers = (() => {
       }
 
       positionWalker(w);
+    });
+
+    // Keep speech bubbles positioned above their walkers
+    activeBubbles.forEach(b => {
+      if (b.walker) positionBubbleAboveWalker(b.el, b.walker);
     });
 
     animFrameId = requestAnimationFrame(tick);
