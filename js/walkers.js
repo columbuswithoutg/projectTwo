@@ -24,8 +24,10 @@ const Walkers = (() => {
   let lastEncounterCheck = 0;
   let encounterCooldowns = new Map();  // "id1|id2" -> timestamp
   let activeBubbles = [];              // { el, owner }
-  let encounterQueue = [];             // { w1, w2, nodeId }
+  let encounterQueue = [];             // { w1, w2 }
   let encounterRunning = false;
+  let deployTime = 0;                  // timestamp of last deploy, used for grace period
+  const DEPLOY_GRACE = 5000;           // ms — no encounters right after deploy
 
   /* ---- persistence ---- */
 
@@ -285,41 +287,45 @@ const Walkers = (() => {
     }
   }
 
-  function areNeighbors(nodeA, nodeB, graph) {
-    if (nodeA === nodeB) return true;
-    const neighbors = graph.get(nodeA) || [];
-    return neighbors.includes(nodeB);
-  }
-
   function checkEncounters(now, graph) {
     if (now - lastEncounterCheck < ENCOUNTER_CHECK_INTERVAL) return;
     lastEncounterCheck = now;
 
-    // Collect walkers that are paused at a node (finished walking)
-    const idle = activeWalkers.filter(w =>
-      w.paused && !w.inEncounter && w.progress >= 1
-    );
+    // Don't trigger encounters right after deploy
+    if (now - deployTime < DEPLOY_GRACE) return;
 
-    // Check all pairs for same-node or adjacent-node encounters
-    for (let i = 0; i < idle.length - 1; i++) {
-      for (let j = i + 1; j < idle.length; j++) {
-        const w1 = idle[i];
-        const w2 = idle[j];
+    // Group walkers by current node — must be paused, arrived, and have walked at least once
+    const atNode = new Map();
+    activeWalkers.forEach(w => {
+      if (!w.paused || w.inEncounter) return;
+      if (w.progress < 1) return;          // still mid-walk
+      if (!w.previousNode) return;         // hasn't moved yet (just spawned)
+      const list = atNode.get(w.currentNode) || [];
+      list.push(w);
+      atNode.set(w.currentNode, list);
+    });
 
-        if (!areNeighbors(w1.currentNode, w2.currentNode, graph)) continue;
+    // Check each node for pairs
+    atNode.forEach((walkers) => {
+      if (walkers.length < 2) return;
+      for (let i = 0; i < walkers.length - 1; i++) {
+        for (let j = i + 1; j < walkers.length; j++) {
+          const w1 = walkers[i];
+          const w2 = walkers[j];
 
-        const key = WALKER_DIALOGUES.getKey(w1.charId, w2.charId);
-        const cooldownEnd = encounterCooldowns.get(key) || 0;
-        if (now < cooldownEnd) continue;
+          const key = WALKER_DIALOGUES.getKey(w1.charId, w2.charId);
+          const cooldownEnd = encounterCooldowns.get(key) || 0;
+          if (now < cooldownEnd) continue;
 
-        // Hold both walkers while queued/playing
-        const holdTime = 15000;
-        w1.pauseEnd = Math.max(w1.pauseEnd, now + holdTime);
-        w2.pauseEnd = Math.max(w2.pauseEnd, now + holdTime);
+          // Hold both walkers while queued/playing
+          const holdTime = 15000;
+          w1.pauseEnd = Math.max(w1.pauseEnd, now + holdTime);
+          w2.pauseEnd = Math.max(w2.pauseEnd, now + holdTime);
 
-        queueEncounter(w1, w2);
+          queueEncounter(w1, w2);
+        }
       }
-    }
+    });
   }
 
   /* ---- animation loop ---- */
@@ -475,6 +481,7 @@ const Walkers = (() => {
     });
 
     lastTime = 0;
+    deployTime = performance.now();
     animFrameId = requestAnimationFrame(tick);
   }
 
