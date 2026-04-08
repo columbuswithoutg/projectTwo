@@ -502,6 +502,7 @@ const Walkers = (() => {
   }
 
   function deploy() {
+    if (!renderer.mapContainer) return;  // view not mounted
     // Remove old walkers
     destroy();
 
@@ -666,7 +667,7 @@ const Walkers = (() => {
 
       card.innerHTML = `
         <div class="walker-card-img">
-          <img src="assets/characters/${displayImg}" alt="${char.name}" />
+          <img src="assets/characters/${displayImg}" alt="${char.name}" loading="lazy" />
           <span class="walker-check">✔</span>
         </div>
         <span class="walker-card-name">${char.name}</span>
@@ -762,13 +763,21 @@ const Walkers = (() => {
   }
 
   /* ---- re-deploy on state change ---- */
+  let _walkerInitDone = false;
   async function init() {
-    await loadFromServer();
-    state.subscribe(() => {
-      // Small delay so nodes render first
-      setTimeout(() => deploy(), 300);
-    });
+    if (!_walkerInitDone) {
+      await loadFromServer();
+      state.subscribe(() => {
+        // Small delay so nodes render first
+        setTimeout(() => deploy(), 300);
+      });
+      _walkerInitDone = true;
+    }
   }
 
-  return { init, deploy, destroy, showWalkerPicker, getSelectedIds, getSelectedEntries, getMaxSlots, getUnlockedCharacters, toggleCharacter, setCharacterStage, setSelections, deployWithSelections, restoreSelections };
+  function resetInit() {
+    _walkerInitDone = false;
+  }
+
+  return { init, deploy, destroy, resetInit, showWalkerPicker, getSelectedIds, getSelectedEntries, getMaxSlots, getUnlockedCharacters, toggleCharacter, setCharacterStage, setSelections, deployWithSelections, restoreSelections };
 })();

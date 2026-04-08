@@ -864,29 +864,44 @@ body.auth-page {
 
 /* Friend progress view header */
 .friend-view-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  background: var(--gold-01);
-  border-bottom: 1px solid var(--gold-035);
-  padding: 10px 20px;
+  height: var(--header-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 0 16px;
+  background: linear-gradient(180deg, #0f0f1a 0%, #07080f 100%);
+  border-bottom: 1px solid var(--gold-025);
+  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.6);
   color: #fff;
   z-index: 999;
-  font-size: 0.95rem;
-  min-height: var(--header-height);
+}
+
+.friend-view-banner h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.friend-view-banner h1 strong {
+  color: var(--gold);
 }
 
 .friend-view-banner button {
-  padding: 6px 14px;
+  padding: 8px 16px;
   border-radius: 8px;
   border: none;
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 /* ======================

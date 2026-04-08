@@ -31,6 +31,10 @@ const Auth = {
   logout() {
     Auth.clearToken();
     localStorage.removeItem("mcu_username");
-    window.location.reload();
+    if (typeof Router !== 'undefined') {
+      Router.go('/');
+    } else {
+      window.location.reload();
+    }
   }
 };

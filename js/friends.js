@@ -283,7 +283,7 @@ async function viewFriendProgress(friendId, friendName) {
   originalHeader.style.display = 'none';
 
   const banner = document.createElement('header');
-  banner.id = 'header';
+  banner.className = 'friend-view-banner';
   banner.innerHTML = `
     <h1>Viewing <strong>${esc(friendName)}</strong>'s Progress</h1>
     <button id="exit-friend-view">← Back to My Progress</button>
@@ -299,7 +299,8 @@ async function viewFriendProgress(friendId, friendName) {
     Walkers.restoreSelections();
   };
 
-  document.body.insertBefore(banner, document.getElementById('map-wrapper'));
+  const mapWrapper = document.getElementById('map-wrapper');
+  mapWrapper.parentNode.insertBefore(banner, mapWrapper);
   renderer.nodesContainer.classList.add('readonly');
   renderer.render();
   Walkers.deployWithSelections(data.walkers || []);

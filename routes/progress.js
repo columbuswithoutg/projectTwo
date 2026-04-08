@@ -73,8 +73,10 @@ router.get('/walkers', auth, async (req, res) => {
 router.post('/walkers', auth, async (req, res) => {
   const { walkers } = req.body;
   if (!Array.isArray(walkers)) return res.status(400).json({ error: 'walkers must be an array' });
-  // Cap at 200 entries and ensure all values are strings
-  const clean = walkers.slice(0, 200).filter(w => typeof w === 'string');
+  // Cap at 200 entries, accept strings or { id, stage } objects
+  const clean = walkers.slice(0, 200).filter(w =>
+    typeof w === 'string' || (w && typeof w.id === 'string')
+  );
   await User.findByIdAndUpdate(req.user.id, { walkers: clean });
   res.json({ message: 'Saved' });
 });

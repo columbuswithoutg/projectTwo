@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 app.use(cors({
@@ -9,7 +10,16 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
-app.use(express.static('.'));  // serves your HTML/CSS/JS files
+
+// SPA routes — BEFORE static middleware so they take priority over index.html
+const spaFile = path.join(__dirname, 'spa.html');
+['/', '/app', '/profile', '/characters'].forEach(route => {
+  app.get(route, (req, res) => res.sendFile(spaFile));
+});
+
+// Cache images for 7 days
+app.use('/assets', express.static('assets', { maxAge: '7d' }));
+app.use(express.static('.'));
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('MongoDB connected'))

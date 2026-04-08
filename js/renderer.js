@@ -3,18 +3,28 @@
  ************************************************/
 class MapRenderer {
   constructor() {
-    this.container = $("#map-wrapper");
-    this.mapContainer = $("#map-container");
-    this.nodesContainer = $("#nodes");
-    this.svg = $("#connections");
+    this.container = null;
+    this.mapContainer = null;
+    this.nodesContainer = null;
+    this.svg = null;
     this.nodeElements = new Map();
     this.arrowElements = [];
     this.pendingCenterTarget = null;
   }
 
   init() {
+    this.container = $("#map-wrapper");
+    this.mapContainer = $("#map-container");
+    this.nodesContainer = $("#nodes");
+    this.svg = $("#connections");
+    this.nodeElements = new Map();
+    this.arrowElements = [];
     this.setupEventDelegation();
-    state.subscribe(() => this.render());
+    // Only subscribe once
+    if (!this._subscribed) {
+      state.subscribe(() => this.render());
+      this._subscribed = true;
+    }
   }
 
   setupEventDelegation() {
@@ -36,6 +46,7 @@ class MapRenderer {
   }
 
   render() {
+    if (!this.nodesContainer) return;  // view not mounted
     const bounds = getBounds();
     if (!bounds) return;
 

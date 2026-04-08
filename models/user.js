@@ -17,7 +17,7 @@ const UserSchema = new mongoose.Schema({
   password: { type: String, required: true },
   watchedProjects: { type: [WatchEntrySchema], default: [] },
   profilePicture: { type: String, default: '' },
-  walkers: { type: [String], default: [] }
+  walkers: { type: mongoose.Schema.Types.Mixed, default: [] }
 });
 
 module.exports = mongoose.model('User', UserSchema);

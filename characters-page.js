@@ -74,6 +74,7 @@ async function init() {
                class="character-avatar-img"
                src="assets/characters/${img}"
                alt="${c.name}"
+               loading="lazy"
                onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'"
              />
              <div class="character-avatar" style="display:none">
