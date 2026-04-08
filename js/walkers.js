@@ -34,16 +34,25 @@ const Walkers = (() => {
   let overrideSelections = null;       // when set, deploy uses these instead of localStorage
 
   /* ---- persistence ---- */
+  // Storage format: [{ id: "thor", stage: 1 }, { id: "cap", stage: 0 }, ...]
+  // Backward compat: plain string "thor" → { id: "thor", stage: -1 } (-1 = highest unlocked)
+
+  function normalizeEntry(entry) {
+    if (typeof entry === 'string') return { id: entry, stage: -1 };
+    if (entry && typeof entry.id === 'string') return { id: entry.id, stage: entry.stage ?? -1 };
+    return null;
+  }
 
   function loadSelections() {
     try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+      return raw.map(normalizeEntry).filter(Boolean);
     } catch { return []; }
   }
 
-  function saveSelections(ids) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
-    // Persist to server if logged in
+  function saveSelections(entries) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    // Persist to server if logged in — store as JSON-serializable array
     if (Auth.isLoggedIn()) {
       fetch(`${API}/progress/walkers`, {
         method: 'POST',
@@ -51,7 +60,7 @@ const Walkers = (() => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${Auth.getToken()}`
         },
-        body: JSON.stringify({ walkers: ids })
+        body: JSON.stringify({ walkers: entries })
       }).catch(() => {});
     }
   }
@@ -67,6 +76,15 @@ const Walkers = (() => {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data.walkers));
       }
     } catch { /* offline — use localStorage */ }
+  }
+
+  // Resolve which image to use for a walker entry
+  function resolveWalkerImage(entry, char) {
+    const stages = getCharStages(char, state);
+    if (entry.stage === -1 || entry.stage >= stages.length) {
+      return stages[stages.length - 1].image; // highest unlocked
+    }
+    return stages[Math.max(0, entry.stage)].image;
   }
 
   /* ---- helpers ---- */
@@ -227,7 +245,7 @@ const Walkers = (() => {
     const charB = charMap.get(w2.charId);
     if (!charA || !charB) { runNextEncounter(); return; }
 
-    const dialogue = WALKER_DIALOGUES.getDialogue(charA, charB);
+    const dialogue = WALKER_DIALOGUES.getDialogue(charA, charB, state);
     if (!dialogue || dialogue.length === 0) { runNextEncounter(); return; }
 
     // Mark both walkers as in encounter
@@ -469,20 +487,26 @@ const Walkers = (() => {
 
   /* ---- public API ---- */
 
-  function getSelectedIds() {
-    const saved = overrideSelections !== null ? overrideSelections : loadSelections();
+  function getSelectedEntries() {
+    const raw = overrideSelections !== null
+      ? overrideSelections.map(normalizeEntry).filter(Boolean)
+      : loadSelections();
     const maxSlots = getMaxSlots();
     const unlocked = new Set(getUnlockedCharacters().map(c => c.id));
-    // Filter out any that are no longer unlocked, and cap at max slots
-    return saved.filter(id => unlocked.has(id)).slice(0, maxSlots);
+    return raw.filter(e => unlocked.has(e.id)).slice(0, maxSlots);
+  }
+
+  // Backward-compat: return just the IDs for external consumers
+  function getSelectedIds() {
+    return getSelectedEntries().map(e => e.id);
   }
 
   function deploy() {
     // Remove old walkers
     destroy();
 
-    const selectedIds = getSelectedIds();
-    if (selectedIds.length === 0) return;
+    const entries = getSelectedEntries();
+    if (entries.length === 0) return;
 
     const charMap = new Map(characters.map(c => [c.id, c]));
     const visibleIds = getVisibleNodes().map(p => p.id);
@@ -491,11 +515,12 @@ const Walkers = (() => {
     const graph = buildGraph();
     const container = renderer.mapContainer;
 
-    selectedIds.forEach((charId, i) => {
-      const char = charMap.get(charId);
+    entries.forEach((entry, i) => {
+      const char = charMap.get(entry.id);
       if (!char) return;
 
-      const img = `assets/characters/${char.image}`;
+      const imgFile = resolveWalkerImage(entry, char);
+      const img = `assets/characters/${imgFile}`;
       const el = createWalkerElement(img);
       container.appendChild(el);
 
@@ -503,8 +528,8 @@ const Walkers = (() => {
       let startNode = visibleIds.includes(char.debut) ? char.debut : pickRandom(visibleIds);
 
       const w = {
-        id: charId,
-        charId,
+        id: entry.id,
+        charId: entry.id,
         charImg: img,
         charName: char.name,
         el,
@@ -550,27 +575,38 @@ const Walkers = (() => {
     encounterCooldowns.clear();
   }
 
-  function toggleCharacter(charId) {
-    const current = getSelectedIds();
+  function toggleCharacter(charId, stageIndex = -1) {
+    const current = getSelectedEntries();
     const maxSlots = getMaxSlots();
 
-    if (current.includes(charId)) {
+    const idx = current.findIndex(e => e.id === charId);
+    if (idx !== -1) {
       // Remove
-      const updated = current.filter(id => id !== charId);
-      saveSelections(updated);
+      current.splice(idx, 1);
+      saveSelections(current);
     } else {
       if (current.length >= maxSlots) return false; // no slots
-      current.push(charId);
+      current.push({ id: charId, stage: stageIndex });
       saveSelections(current);
     }
     deploy();
     return true;
   }
 
-  function setSelections(ids) {
+  function setCharacterStage(charId, stageIndex) {
+    const current = getSelectedEntries();
+    const entry = current.find(e => e.id === charId);
+    if (entry) {
+      entry.stage = stageIndex;
+      saveSelections(current);
+      deploy();
+    }
+  }
+
+  function setSelections(entries) {
     const maxSlots = getMaxSlots();
     const unlocked = new Set(getUnlockedCharacters().map(c => c.id));
-    const valid = ids.filter(id => unlocked.has(id)).slice(0, maxSlots);
+    const valid = entries.map(normalizeEntry).filter(e => e && unlocked.has(e.id)).slice(0, maxSlots);
     saveSelections(valid);
     deploy();
   }
@@ -582,7 +618,8 @@ const Walkers = (() => {
     document.getElementById('walker-picker-overlay')?.remove();
 
     const maxSlots = getMaxSlots();
-    const selected = new Set(getSelectedIds());
+    const selectedEntries = getSelectedEntries();
+    const selectedIds = new Set(selectedEntries.map(e => e.id));
     const unlocked = getUnlockedCharacters();
 
     if (unlocked.length === 0) {
@@ -596,7 +633,7 @@ const Walkers = (() => {
       <div id="walker-picker">
         <div class="walker-picker-header">
           <h2>Choose Your Walkers</h2>
-          <p class="walker-slots-info">${selected.size} / ${maxSlots} slots used</p>
+          <p class="walker-slots-info">${selectedIds.size} / ${maxSlots} slots used</p>
           <button id="walker-picker-close">✕</button>
         </div>
         <div id="walker-picker-grid"></div>
@@ -607,21 +644,82 @@ const Walkers = (() => {
 
     const grid = overlay.querySelector('#walker-picker-grid');
 
+    function updateSlotCount() {
+      const count = getSelectedEntries().length;
+      overlay.querySelector('.walker-slots-info').textContent =
+        `${count} / ${getMaxSlots()} slots used`;
+    }
+
     unlocked.forEach(char => {
-      const isSelected = selected.has(char.id);
+      const isSelected = selectedIds.has(char.id);
+      const stages = getCharStages(char, state);
+      const currentEntry = selectedEntries.find(e => e.id === char.id);
+      const currentStageIdx = currentEntry ? currentEntry.stage : -1;
+      // Resolve display image: selected stage or highest unlocked
+      const displayImg = currentEntry
+        ? resolveWalkerImage(currentEntry, char)
+        : stages[stages.length - 1].image;
+
       const card = document.createElement('div');
       card.className = 'walker-card' + (isSelected ? ' selected' : '');
       card.dataset.charId = char.id;
 
       card.innerHTML = `
         <div class="walker-card-img">
-          <img src="assets/characters/${char.image}" alt="${char.name}" />
+          <img src="assets/characters/${displayImg}" alt="${char.name}" />
           <span class="walker-check">✔</span>
         </div>
         <span class="walker-card-name">${char.name}</span>
       `;
 
-      card.addEventListener('click', () => {
+      // Stage selector row (only if multiple stages unlocked)
+      if (stages.length > 1) {
+        const stageRow = document.createElement('div');
+        stageRow.className = 'walker-stage-row';
+        stages.forEach((s, si) => {
+          const dot = document.createElement('img');
+          dot.src = `assets/characters/${s.image}`;
+          dot.className = 'walker-stage-dot';
+          dot.title = s.label;
+          // Highlight active stage
+          const activeIdx = currentStageIdx === -1 ? stages.length - 1 : currentStageIdx;
+          if (si === activeIdx) dot.classList.add('active');
+
+          dot.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // If not selected yet, select it first
+            if (!getSelectedIds().includes(char.id)) {
+              const entries = getSelectedEntries();
+              if (entries.length >= getMaxSlots()) {
+                const info = overlay.querySelector('.walker-slots-info');
+                info.style.color = '#E23636';
+                setTimeout(() => info.style.color = '', 600);
+                return;
+              }
+              const newEntries = [...entries, { id: char.id, stage: si }];
+              saveSelections(newEntries);
+              deploy();
+              card.classList.add('selected');
+            } else {
+              setCharacterStage(char.id, si);
+            }
+            // Update main image on card
+            card.querySelector('.walker-card-img img').src = `assets/characters/${stages[si].image}`;
+            // Update active dot
+            stageRow.querySelectorAll('.walker-stage-dot').forEach((d, di) => {
+              d.classList.toggle('active', di === si);
+            });
+            updateSlotCount();
+          });
+          stageRow.appendChild(dot);
+        });
+        card.appendChild(stageRow);
+      }
+
+      card.addEventListener('click', (e) => {
+        // Don't toggle if clicking a stage dot
+        if (e.target.classList.contains('walker-stage-dot')) return;
+
         const currentSelected = new Set(getSelectedIds());
         const currentMax = getMaxSlots();
 
@@ -630,7 +728,6 @@ const Walkers = (() => {
           card.classList.remove('selected');
         } else {
           if (currentSelected.size >= currentMax) {
-            // Flash the slots info
             const info = overlay.querySelector('.walker-slots-info');
             info.style.color = '#E23636';
             setTimeout(() => info.style.color = '', 600);
@@ -640,10 +737,7 @@ const Walkers = (() => {
           card.classList.add('selected');
         }
 
-        // Update slot count
-        const newSelected = getSelectedIds();
-        overlay.querySelector('.walker-slots-info').textContent =
-          `${newSelected.length} / ${getMaxSlots()} slots used`;
+        updateSlotCount();
       });
 
       grid.appendChild(card);
@@ -676,5 +770,5 @@ const Walkers = (() => {
     });
   }
 
-  return { init, deploy, destroy, showWalkerPicker, getSelectedIds, getMaxSlots, getUnlockedCharacters, toggleCharacter, setSelections, deployWithSelections, restoreSelections };
+  return { init, deploy, destroy, showWalkerPicker, getSelectedIds, getSelectedEntries, getMaxSlots, getUnlockedCharacters, toggleCharacter, setCharacterStage, setSelections, deployWithSelections, restoreSelections };
 })();

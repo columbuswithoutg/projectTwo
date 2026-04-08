@@ -65,12 +65,14 @@ async function init() {
             return;
         }
 
-        grid.innerHTML = filtered.map(c => `
+        grid.innerHTML = filtered.map(c => {
+            const img = typeof getCharImage === 'function' ? getCharImage(c, watchedIds) : c.image;
+            return `
       <div class="character-card">
-        ${c.image
+        ${img
                 ? `<img
                class="character-avatar-img"
-               src="assets/characters/${c.image}"
+               src="assets/characters/${img}"
                alt="${c.name}"
                onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'"
              />
@@ -83,7 +85,7 @@ async function init() {
             }
         <p class="character-name">${c.name}</p>
       </div>
-    `).join('');
+    `}).join('');
     }
 
     renderGrid();

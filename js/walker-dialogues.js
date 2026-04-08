@@ -1,276 +1,276 @@
 /************************************************
  * WALKER DIALOGUES
  * Character pair conversations when walkers meet
+ *
  * Key format: "id1|id2" (alphabetically sorted)
- * Even-indexed lines (0, 2, 4...) = alphabetically first ID
- * Odd-indexed lines (1, 3, 5...)  = alphabetically second ID
+ * Each exchange: { requires, lines, startsWith? }
+ *   - requires: node ID of the movie/show the dialogue references
+ *   - lines[0] spoken by the initiator, lines[1] by the other, alternating
+ *   - startsWith: (optional) character ID who speaks first
+ *     If omitted, the alphabetically first ID speaks first
  ************************************************/
 const WALKER_DIALOGUES = (() => {
 
   const pairs = {
 
     // ── Iron Man relationships ──
-    // cap (even) | ironman (odd)
     "cap|ironman": [
-      ["We need a plan of attack.", "I have a plan... attack."],
-      ["You know, I'm not the one who needs to watch their back.", "Is that a threat, Cap?", "It's a promise."],
-      ["Language!", "...It was one time, Steve."],
-      ["You could've called.", "You could've not dropped an airport on me."]
+      { requires: "avengers1", lines: ["We need a plan of attack.", "I have a plan... attack."] },
+      { requires: "avengers1", startsWith: "ironman", lines: ["Doth mother know you weareth her drapes?", "...That was ONE time, Stark."] },
+      { requires: "ageofultron", lines: ["Language!", "...It was one time, Steve."] },
+      { requires: "ageofultron", startsWith: "ironman", lines: ["No way we all get through this.", "I got no plans tomorrow night.", "...I'll pick you up at 7."] },
+      { requires: "civilwar", lines: ["You could've called.", "You could've not dropped an airport on me."] },
+      { requires: "civilwar", startsWith: "ironman", lines: ["Sometimes I wanna punch you in your perfect teeth.", "...I get that a lot."] }
     ],
-    // ironman (even) | spiderman (odd)
+
     "ironman|spiderman": [
-      ["No, this is a walk, kid. Relax.", "Mr. Stark! Is this an Avengers mission?"],
-      ["If you're nothing without the suit, you shouldn't have it.", "I'm nothing without the suit..."],
-      ["Do I look like a vending machine?", "...A little bit, yeah.", "Watch it, kid."],
-      ["We'll talk about it later.", "Can I be an Avenger now?", "I said later, kid."]
+      { requires: "civilwar", lines: ["Kid, relax. This is just a walk.", "But Mr. Stark, is this an Avengers mission?", "No. Definitely not."] },
+      { requires: "spiderman1", lines: ["If you're nothing without the suit, you shouldn't have it.", "I'm nothing without the suit...", "That's the point, kid."] },
+      { requires: "spiderman1", startsWith: "spiderman", lines: ["Mr. Stark! Do I look like a vending machine?", "...A little bit, yeah.", "Watch it, kid."] },
+      { requires: "spiderman1", startsWith: "spiderman", lines: ["Can I be an Avenger now?", "We'll talk about it later.", "You always say that!"] },
+      { requires: "infinitywar", lines: ["You should not be here.", "I know, but I couldn't just stay behind!", "...Kid, you're gonna give me a heart attack."] }
     ],
-    // ironman (even) | pepper (odd)
+
     "ironman|pepper": [
-      ["This isn't a suit... it's a walking outfit.", "Tony, you promised no more suits."],
-      ["I love you 3000.", "I love you more than 3000."],
-      ["I'm never late. Everyone else is just early.", "You're going to be late for dinner."]
+      { requires: "ironman1", lines: ["This isn't a suit... it's a walking outfit.", "Tony, you promised no more suits.", "Technically, it's armor."] },
+      { requires: "endgame", lines: ["I love you 3000.", "I love you more than 3000."] },
+      { requires: "ironman3", startsWith: "pepper", lines: ["How many suits is 'a few', Tony?", "...Forty-two.", "TONY!"] },
+      { requires: "ironman1", startsWith: "pepper", lines: ["You're going to be late for dinner.", "I'm never late. Everyone else is just early.", "...That doesn't even make sense."] }
     ],
-    // ironman (even) | rhodey (odd)
+
     "ironman|rhodey": [
-      ["Next time, baby.", "You always say that.", "And I always mean it."],
-      ["That's your story? Really?", "BOOM! You looking for this?", "...Tell it again."],
-      ["You ARE an upgrade, Rhodey.", "I think I need an upgrade."]
+      { requires: "ironman1", lines: ["Next time, baby.", "You always say that.", "And I always mean it."] },
+      { requires: "ageofultron", startsWith: "rhodey", lines: ["BOOM! You looking for this?", "That story again?", "It's a GOOD story!", "...Tell it one more time."] },
+      { requires: "ironman2", startsWith: "rhodey", lines: ["I think I need a better suit.", "Rhodey, you ARE the upgrade.", "...That's sweet, Tones."] }
     ],
-    // ironman (even) | thor (odd)
+
     "ironman|thor": [
-      ["Point Break! Long time no see.", "I am not Point Break.", "Sure you are, big guy."],
-      ["Doth mother know you weareth her drapes?", "...That was ONE time, Stark."]
+      { requires: "avengers1", lines: ["Point Break! Long time no see.", "I am not Point Break.", "Sure you are, big guy."] },
+      { requires: "avengers1", lines: ["Doth mother know you weareth her drapes?", "...That was ONE time, Stark."] },
+      { requires: "ageofultron", startsWith: "thor", lines: ["You dare lift my hammer?", "It's a party trick.", "It is NOT a party trick!"] }
     ],
-    // drstrange (even) | ironman (odd)
+
     "drstrange|ironman": [
-      ["I'm not that kind of doctor.", "Do you concur, Doctor?", "...No."],
-      ["Nice facial hair.", "...Right back at you."]
+      { requires: "infinitywar", startsWith: "ironman", lines: ["Do you concur, Doctor?", "I'm not that kind of doctor.", "Then what's with the cape?"] },
+      { requires: "infinitywar", lines: ["Nice facial hair.", "...Right back at you.", "We should start a club."] },
+      { requires: "infinitywar", lines: ["We're in the endgame now.", "Please don't say that.", "I've seen 14 million outcomes.", "And how many do we win?", "...You don't want to know."] }
     ],
-    // hulk (even) | ironman (odd)
+
     "hulk|ironman": [
-      ["I'm always angry.", "We've got a code green.", "That's my secret too... coffee."],
-      ["That only works when Natasha does it.", "Sun's getting real low, big guy.", "Not gonna happen, Stark."]
+      { requires: "avengers1", lines: ["I'm always angry.", "That's my secret too... coffee."] },
+      { requires: "ageofultron", startsWith: "ironman", lines: ["Sun's getting real low, big guy.", "That only works when Natasha does it.", "Worth a shot."] },
+      { requires: "endgame", lines: ["Hulk gave you taco.", "Thanks, big guy.", "Hulk want taco back.", "...No."] }
     ],
 
     // ── Thor relationships ──
-    // loki (even) | thor (odd)
     "loki|thor": [
-      ["Brother!", "I am NOT your brother.", "...Adopted."],
-      ["I get that a lot.", "I thought you were dead!", "Surprise."],
-      ["No.", "Get help.", "Absolutely not.", "GET HELP!!"],
-      ["We're not doing 'Get Help.'", "We are absolutely doing 'Get Help.'"]
+      { requires: "thor1", lines: ["Brother!", "I am NOT your brother.", "...Adopted."] },
+      { requires: "thor2", startsWith: "thor", lines: ["I thought you were dead!", "I get that a lot.", "Loki, I swear—", "Surprise."] },
+      { requires: "thor3", startsWith: "thor", lines: ["We're doing 'Get Help.'", "We are NOT doing 'Get Help.'", "GET HELP!!", "I hate you."] },
+      { requires: "thor3", lines: ["We're not doing 'Get Help.'", "We are absolutely doing 'Get Help.'"] },
+      { requires: "avengers1", lines: ["I have an army.", "We have a Hulk.", "...I hate the Hulk."] }
     ],
-    // hulk (even) | thor (odd)
+
     "hulk|thor": [
-      ["Hulk know you.", "FRIEND FROM WORK!", "...We are?"],
-      ["Thor sad.", "I'm not sad! ...Okay maybe a little."],
-      ["Hulk like raging fire. Thor like smoldering fire.", "That's... actually kind of nice."]
+      { requires: "thor3", startsWith: "thor", lines: ["FRIEND FROM WORK!", "Hulk know tiny god.", "I'm not tiny!", "...Little bit tiny."] },
+      { requires: "endgame", lines: ["Thor okay?", "I'm not sad! ...Okay maybe a little."] },
+      { requires: "thor3", lines: ["Hulk like raging fire. Thor like smoldering fire.", "That's... actually kind of nice."] }
     ],
-    // thor (even) | valkyrie (odd)
+
     "thor|valkyrie": [
-      ["Your Majesty.", "Don't call me that. Makes me feel old.", "You ARE old.", "...Fair point."],
-      ["I need a drink.", "It's 10 in the morning.", "And?"]
+      { requires: "thor3", lines: ["Your Majesty.", "Don't call me that. Makes me feel old.", "You ARE old.", "...Fair point."] },
+      { requires: "thor3", startsWith: "valkyrie", lines: ["I need a drink.", "It's 10 in the morning.", "And?", "...Fair point."] }
     ],
-    // heimdall (even) | thor (odd)
+
     "heimdall|thor": [
-      ["I can see everything.", "Can you see why I skipped breakfast?", "...You didn't. You had Pop-Tarts."]
+      { requires: "thor1", lines: ["I can see everything.", "Can you see why I skipped breakfast?", "...You didn't. You had Pop-Tarts."] }
     ],
-    // hela (even) | thor (odd)
+
     "hela|thor": [
-      ["Kneel.", "I don't really kneel.", "He really doesn't.", "...Who asked you?"]
+      { requires: "thor3", lines: ["Kneel before your queen.", "I don't really kneel.", "You will.", "Not today."] }
     ],
 
     // ── Cap relationships ──
-    // bucky (even) | cap (odd)
     "bucky|cap": [
-      ["I'm with you till the end of the line.", "...Right back at ya, pal."],
-      ["You pulled me from the river. Why?", "Because you're my friend.", "...You're my mission.", "Then finish it."],
-      ["Not bad. Wakandan engineering.", "How's the arm?", "Show-off."]
+      { requires: "cap1", lines: ["Don't do anything stupid until I get back.", "How can I? You're taking all the stupid with you.", "...Punk.", "Jerk."] },
+      { requires: "cap2", lines: ["You pulled me from the river. Why?", "Because you're my friend.", "...You're my mission.", "Then finish it."] },
+      { requires: "blackpanther", startsWith: "cap", lines: ["The arm looks good.", "Wakandan vibranium. Not bad.", "Better than 'not bad.'"] },
+      { requires: "cap1", startsWith: "cap", lines: ["I'm with you till the end of the line.", "...Right back at ya, pal."] }
     ],
-    // cap (even) | falcon (odd)
+
     "cap|falcon": [
-      ["On your left.", "Oh, come on!", "On your left.", "I HEARD YOU THE FIRST TIME."],
-      ["Take care of the shield.", "I will.", "I know you will."]
+      { requires: "cap2", lines: ["On your left.", "Oh, come on!", "On your left.", "I HEARD YOU THE FIRST TIME."] },
+      { requires: "endgame", lines: ["Take care of the shield.", "I will.", "I know you will."] }
     ],
-    // cap (even) | peggy (odd)
+
     "cap|peggy": [
-      ["I had a date.", "You're late.", "Couldn't call... bad reception in the ice."]
+      { requires: "cap1", lines: ["I had a date.", "You're late.", "Couldn't call... bad reception in the ice."] }
     ],
-    // blackwidow (even) | cap (odd)
+
     "blackwidow|cap": [
-      ["Thank you.", "You know, you're kind of scary sometimes.", "...That wasn't a compliment."]
+      { requires: "avengers1", lines: ["Do you trust me?", "I do.", "...That makes one of us."] },
+      { requires: "cap2", startsWith: "cap", lines: ["Where did Captain America learn to steal a car?", "Nazi Germany.", "...Noted."] }
     ],
 
     // ── Guardians ──
-    // groot (even) | rocket (odd)
     "groot|rocket": [
-      ["I am Groot.", "I know, buddy.", "I am Groot.", "Well that's just rude."],
-      ["I am Groot!", "No, you cannot have a gun.", "I am Groot.", "ESPECIALLY not that one."],
-      ["I am Groot.", "Yeah, yeah, I love you too. Don't make it weird."]
+      { requires: "guardians1", lines: ["I am Groot.", "I know, buddy.", "I am Groot.", "Well that's just rude."] },
+      { requires: "guardians1", lines: ["I am Groot!", "No, you cannot have a gun.", "I am Groot.", "ESPECIALLY not that one."] },
+      { requires: "guardians1", lines: ["I am Groot.", "Yeah, yeah, I love you too. Don't make it weird."] }
     ],
-    // gamora (even) | starlord (odd)
+
     "gamora|starlord": [
-      ["...Was that supposed to be charming?", "I'm gonna make some weird faces.", "Please don't."],
-      ["I don't dance.", "Dance with me.", "Everyone dances.", "NOT me."],
-      ["I like your plan. Except it sucks.", "Tell me how you really feel."]
+      { requires: "guardians1", startsWith: "starlord", lines: ["I'm gonna make some weird faces.", "...Was that supposed to be charming?", "Definitely.", "It wasn't."] },
+      { requires: "guardians1", startsWith: "starlord", lines: ["Dance with me.", "I don't dance.", "Come on, everyone dances.", "NOT me."] },
+      { requires: "guardians1", lines: ["I like your plan. Except it sucks.", "Tell me how you really feel."] }
     ],
-    // gamora (even) | nebula (odd)
+
     "gamora|nebula": [
-      ["That's not true.", "You were always the favorite.", "Father made me watch while he—", "I know. I'm sorry."],
-      ["Sister.", "...Sister.", "This is progress.", "Don't push it."]
+      { requires: "guardians2", lines: ["Sister.", "...Sister.", "This is progress.", "Don't push it."] },
+      { requires: "guardians2", startsWith: "nebula", lines: ["You were always the favorite.", "I wasn't. Not really.", "Father made me watch while he—", "I know. I'm sorry."] }
     ],
-    // drax (even) | starlord (odd)
+
     "drax|starlord": [
-      ["Nothing goes over my head. My reflexes are too fast.", "That's... not what that means."],
-      ["...You were not.", "I thought I was invisible!", "I can see you. You're eating a cracker."]
+      { requires: "guardians1", lines: ["Nothing goes over my head. My reflexes are too fast.", "That's... not what that means."] },
+      { requires: "infinitywar", lines: ["I am standing perfectly still.", "Drax, I can literally see you.", "No, you cannot. I am invisible.", "...You're eating chips."] }
     ],
-    // groot (even) | starlord (odd)
+
     "groot|starlord": [
-      ["I am Groot.", "...I understood that!", "I am Groot.", "Wait, never mind."]
+      { requires: "guardians1", lines: ["I am Groot.", "...I understood that!", "I am Groot.", "Wait, never mind."] }
     ],
-    // drax (even) | mantis (odd)
+
     "drax|mantis": [
-      ["You are horrifying to look at.", "...Thank you?", "That was not a compliment.", "I'll take it anyway."]
+      { requires: "guardians2", lines: ["You are horrifying to look at.", "...Thank you?", "That was not a compliment.", "I'll take it anyway."] }
     ],
 
     // ── Wanda & Vision ──
-    // vision (even) | wanda_wv (odd)
     "vision|wanda_wv": [
-      ["What is grief, if not love persevering?", "...That's beautiful, Vis."],
-      ["Wanda, we can't stay here.", "Just five more minutes.", "You said that an hour ago."],
-      ["I just feel you.", "And I feel you."]
+      { requires: "wandavision", lines: ["What is grief, if not love persevering?", "...That's beautiful, Vis."] },
+      { requires: "wandavision", lines: ["Wanda, we can't stay here.", "Just five more minutes.", "You said that an hour ago."] },
+      { requires: "wandavision", lines: ["I just feel you.", "And I feel you."] }
     ],
-    // quicksilver (even) | wanda_wv (odd)
+
     "quicksilver|wanda_wv": [
-      ["You didn't see that coming?", "I hate when you say that.", "You didn't see THAT coming either."],
-      ["Keep up, old lady.", "We're TWINS!", "Yeah, but I'm faster."]
+      { requires: "ageofultron", lines: ["You didn't see that coming?", "I hate when you say that.", "You didn't see THAT coming either."] },
+      { requires: "ageofultron", lines: ["Keep up, old lady.", "We're TWINS!", "Yeah, but I'm faster."] }
     ],
 
     // ── Black Widow & Hawkeye ──
-    // blackwidow (even) | hawkeye (odd)
     "blackwidow|hawkeye": [
-      ["Just like Budapest all over again.", "You and I remember Budapest very differently."],
-      ["I've got red in my ledger.", "We all do, Nat."],
-      ["Don't you dare miss.", "I never miss.", "Show-off."]
+      { requires: "avengers1", lines: ["Just like Budapest all over again.", "You and I remember Budapest very differently."] },
+      { requires: "avengers1", lines: ["I've got red in my ledger.", "We all do, Nat."] },
+      { requires: "avengers1", lines: ["Don't you dare miss.", "I never miss.", "Show-off."] }
     ],
 
     // ── Spider-Man ──
-    // drstrange (even) | spiderman (odd)
     "drstrange|spiderman": [
-      ["The Multiverse is not a concept you can just—", "Yeah yeah, I opened a portal once!", "That was an accident."],
-      ["Please never say that again.", "Scooby-Doo this crap.", "...I said don't."]
+      { requires: "nowayhome", lines: ["The Multiverse is not a concept you can just—", "Yeah yeah, I opened a portal once!", "That was an accident."] },
+      { requires: "nowayhome", startsWith: "spiderman", lines: ["Scooby-Doo this crap!", "Please never say that again.", "...Too late."] }
     ],
-    // mysterio (even) | spiderman (odd)
+
     "mysterio|spiderman": [
-      ["People need to believe.", "In you? Hard pass.", "You wound me, Spider-Man."]
+      { requires: "farfromhome", lines: ["People need to believe.", "In you? Hard pass.", "You wound me, Spider-Man."] }
     ],
 
     // ── Loki variants ──
-    // loki_tva (even) | sylvie (odd)
     "loki_tva|sylvie": [
-      ["What makes Loki a Loki?", "Independence. Authority. Style.", "...I was going to say trust issues."],
-      ["I've been pruned, stabbed, and betrayed.", "Welcome to being a Loki."],
-      ["For you.", "...For us."]
+      { requires: "loki1", lines: ["What makes Loki a Loki?", "Independence. Authority. Style.", "...I was going to say trust issues."] },
+      { requires: "loki1", lines: ["I've been pruned, stabbed, and betrayed.", "Welcome to being a Loki."] },
+      { requires: "loki1", lines: ["For you.", "...For us."] }
     ],
-    // loki_tva (even) | mobius (odd)
+
     "loki_tva|mobius": [
-      ["What's so great about jet skis anyway?", "Wow.", "...That's not an answer.", "It's the only answer."],
-      ["That makes one of us.", "I believe in you, Loki.", "Then I'll believe enough for both."],
-      ["Jet ski?", "JET SKI!", "...We really need better hobbies."]
+      { requires: "loki1", lines: ["What's so great about jet skis anyway?", "Wow.", "...That's not an answer.", "It's the only answer."] },
+      { requires: "loki2", startsWith: "mobius", lines: ["I believe in you, Loki.", "...That makes one of us.", "Then I'll believe enough for both."] },
+      { requires: "loki1", lines: ["Jet ski?", "JET SKI!", "...We really need better hobbies."] }
     ],
 
     // ── Doctor Strange ──
-    // drstrange (even) | wong (odd)
     "drstrange|wong": [
-      ["Wong.", "Strange.", "...That's still funny to me.", "It's really not."],
-      ["I'm the Sorcerer Supreme.", "Actually, that's me now.", "On a technicality!", "Still counts."],
-      ["Want to get food?", "I thought you'd never ask."]
+      { requires: "doctorstrange", lines: ["Wong.", "Strange.", "...That's still funny to me.", "It's really not."] },
+      { requires: "nowayhome", lines: ["I'm the Sorcerer Supreme.", "Actually, that's me now.", "On a technicality!", "Still counts."] },
+      { requires: "doctorstrange", lines: ["Want to get food?", "I thought you'd never ask."] }
     ],
 
     // ── Ant-Man ──
-    // antman (even) | falcon (odd)
     "antman|falcon": [
-      ["I'm a big fan!", "...Who are you?", "I'm Ant-Man!", "Oh. The guy who shrinks."],
-      ["You're an Avenger?", "I am! Surprised?", "...A little bit, yeah."]
+      { requires: "civilwar", lines: ["I'm a big fan!", "...Do I know you?", "I'm Ant-Man!", "Oh. The guy who shrinks."] },
+      { requires: "civilwar", lines: ["So am I an Avenger now?", "Buddy, you shrink.", "That's a yes, right?", "...No."] }
     ],
-    // antman (even) | wasp_hope (odd)
+
     "antman|wasp_hope": [
-      ["I know a guy.", "You mean me.", "I mean you.", "Say my name.", "...The Wasp."]
+      { requires: "antman", lines: ["I know a guy.", "You mean me.", "I mean you.", "Say my name.", "...The Wasp."] }
     ],
 
     // ── Black Panther ──
-    // blackpanther (even) | shuri (odd)
     "blackpanther|shuri": [
-      ["They're my shoes, Shuri.", "What are THOSE?!", "Old man shoes!", "I am your KING."],
-      ["Shuri, please.", "Another broken white boy to fix.", "What? I'm just saying."]
+      { requires: "blackpanther", startsWith: "shuri", lines: ["What are THOSE?!", "These are perfectly fine shoes.", "Old man shoes!", "I am your KING."] },
+      { requires: "blackpanther", startsWith: "shuri", lines: ["Another broken white boy to fix.", "Shuri, please.", "What? I'm just saying."] }
     ],
-    // blackpanther (even) | okoye (odd)
+
     "blackpanther|okoye": [
-      ["Wakanda forever.", "Forever.", "...That never gets old.", "No. It does not."]
+      { requires: "blackpanther", lines: ["Wakanda forever.", "Forever.", "...That never gets old.", "No. It does not."] }
     ],
 
     // ── Deadpool & Wolverine ──
-    // deadpool (even) | wolverine (odd)
     "deadpool|wolverine": [
-      ["Hey, buddy! Wanna team up?", "No.", "Too late, we're already walking together!"],
-      ["You're the best there is at what you do.", "And what's that?", "Looking angry. It's a gift."],
-      ["I'm touching your claws.", "Touch them and lose the hand.", "...Worth it."],
-      ["Maximum effort!", "Minimum patience.", "That's fair."]
+      { requires: "deadpool3", lines: ["Hey, buddy! Wanna team up?", "No.", "Too late, we're already walking together!"] },
+      { requires: "deadpool3", lines: ["You're the best there is at what you do.", "And what's that?", "Looking angry. It's a gift."] },
+      { requires: "deadpool3", lines: ["I'm touching your claws.", "Touch them and lose the hand.", "...Worth it."] },
+      { requires: "deadpool3", lines: ["Maximum effort!", "Minimum patience.", "That's fair."] }
     ],
 
     // ── Netflix / Street-Level ──
-    // daredevil (even) | punisher (odd)
     "daredevil|punisher": [
-      ["No, Frank. I'm not.", "You're one bad day away from being me.", "Keep telling yourself that, Red."],
-      ["Justice isn't a weapon.", "No, but I am.", "...Frank."]
+      { requires: "daredevil2", startsWith: "punisher", lines: ["You're one bad day away from being me, Red.", "No, Frank. I'm not.", "Keep telling yourself that."] },
+      { requires: "daredevil2", lines: ["Justice isn't a weapon.", "No, but I am.", "...Frank."] }
     ],
-    // daredevil (even) | fisk (odd)
+
     "daredevil|fisk": [
-      ["This city doesn't belong to you.", "This city will be your GRAVE.", "...You always were dramatic, Fisk."]
+      { requires: "daredevil1", lines: ["This city doesn't belong to you.", "This city will be your GRAVE.", "...You always were dramatic, Fisk."] },
+      { requires: "daredevil1", startsWith: "fisk", lines: ["I want to make this city a better place.", "By crushing everyone in it?", "...You wouldn't understand."] }
     ],
-    // jessicajones (even) | lukecage (odd)
+
     "jessicajones|lukecage": [
-      ["You look good.", "I know.", "Humble as ever.", "Always."],
-      ["Did you just say 'sweet Christmas'?", "Sweet Christmas.", "...Maybe."]
+      { requires: "jessicajones1", lines: ["You look good.", "I know.", "Humble as ever.", "Always."] },
+      { requires: "lukecage1", startsWith: "lukecage", lines: ["Sweet Christmas.", "Did you just say that out loud?", "...Maybe.", "You absolutely did."] }
     ],
-    // daredevil (even) | jessicajones (odd)
+
     "daredevil|jessicajones": [
-      ["I'm a lawyer.", "I'm a PI.", "We should NOT be friends.", "Absolutely not."]
+      { requires: "defenders", lines: ["I'm a lawyer.", "I'm a PI.", "We should NOT be friends.", "Absolutely not."] }
     ],
-    // ironfist (even) | lukecage (odd)
+
     "ironfist|lukecage": [
-      ["Heroes for Hire?", "I told you, we're not calling it that.", "But it sounds cool!", "It really doesn't."]
+      { requires: "lukecage1", lines: ["Heroes for Hire?", "I told you, we're not calling it that.", "But it sounds cool!", "It really doesn't."] }
     ],
 
     // ── Captain Marvel ──
-    // captainmarvel (even) | nick_fury (odd)
     "captainmarvel|nick_fury": [
-      ["Saving other planets.", "Where have you BEEN?", "...A text would've been nice."],
-      ["Higher, further, faster.", "Just don't break my stuff.", "No promises."]
+      { requires: "endgame", startsWith: "nick_fury", lines: ["Where have you BEEN?", "Saving other planets.", "A text would've been nice.", "I was busy."] },
+      { requires: "captainmarvel", lines: ["Higher, further, faster.", "Just don't break my stuff.", "No promises."] }
     ],
 
     // ── Shang-Chi ──
-    // shangchi (even) | xialing (odd)
     "shangchi|xialing": [
-      ["I came back!", "You ran away.", "After TEN years.", "...I needed some time."]
+      { requires: "shangchi", startsWith: "xialing", lines: ["You ran away.", "I came back!", "After TEN years.", "I know. I'm sorry."] }
     ],
-    // shangchi (even) | wong (odd)
+
     "shangchi|wong": [
-      ["Karaoke later?", "I'm the Sorcerer Supreme. I don't do karaoke.", "...Hotel California?", "I'll get my coat."]
+      { requires: "shangchi", lines: ["Karaoke later?", "I'm the Sorcerer Supreme. I don't do karaoke.", "...Hotel California?", "I'll get my coat."] }
     ],
 
     // ── Others ──
-    // coulson (even) | nick_fury (odd)
     "coulson|nick_fury": [
-      ["Everything's fine, sir.", "Agent Coulson, report.", "I mean controlled chaos.", "When you say fine..."]
+      { requires: "ironman1", startsWith: "nick_fury", lines: ["Agent Coulson, report.", "Everything's under control, sir.", "Is it?", "...I mean controlled chaos."] }
     ],
-    // hawkeye (even) | kate (odd)
+
     "hawkeye|kate": [
-      ["That's sweet, Kate.", "I learned from the best.", "...I'm standing right here.", "I was talking about the YouTube videos."]
+      { requires: "hawkeye", startsWith: "kate", lines: ["I learned from the best.", "That's sweet, Kate.", "I was talking about the YouTube videos.", "...I'm standing right here."] }
     ],
-    // blackwidow (even) | yelena (odd)
+
     "blackwidow|yelena": [
-      ["I'm your older sister. Show some respect.", "You're such a poser.", "Make me.", "...I walked into that one."]
+      { requires: "blackwidow", lines: ["I'm your older sister. Show some respect.", "You're such a poser.", "Make me.", "...I walked into that one."] },
+      { requires: "blackwidow", startsWith: "yelena", lines: ["That superhero landing pose is so dramatic.", "...It's cool and you know it.", "It's ridiculous.", "You're just jealous."] }
     ]
   };
 
@@ -292,21 +292,37 @@ const WALKER_DIALOGUES = (() => {
     return [id1, id2].sort().join('|');
   }
 
-  function getDialogue(charA, charB) {
+  function getDialogue(charA, charB, watched) {
     const key = getKey(charA.id, charB.id);
-    const specific = pairs[key];
+    const allExchanges = pairs[key];
+    const check = watched
+      ? (typeof watched.isWatched === 'function' ? (id) => watched.isWatched(id) : (id) => watched.has(id))
+      : () => true;
 
-    if (specific) {
-      const exchange = specific[Math.floor(Math.random() * specific.length)];
-      // Determine who speaks first based on key order
-      const [first, second] = key.split('|');
-      const nameA = charA.id === first ? charA.name : charB.name;
-      const nameB = charA.id === first ? charB.name : charA.name;
-      return exchange.map((line, i) => ({
-        speaker: i % 2 === 0 ? first : second,
-        name: i % 2 === 0 ? nameA : nameB,
-        text: line
-      }));
+    if (allExchanges) {
+      // Filter to only exchanges whose required movie is watched
+      const available = allExchanges.filter(e => check(e.requires));
+
+      // 85% chance to use specific dialogue if available
+      if (available.length > 0 && Math.random() < 0.85) {
+        const chosen = available[Math.floor(Math.random() * available.length)];
+        const [first, second] = key.split('|');
+
+        // Determine who speaks first — default is alphabetically first, startsWith overrides
+        const initiator = chosen.startsWith || first;
+        const responder = initiator === first ? second : first;
+
+        const nameMap = new Map([[charA.id, charA.name], [charB.id, charB.name]]);
+
+        return chosen.lines.map((line, i) => {
+          const speaker = i % 2 === 0 ? initiator : responder;
+          return {
+            speaker,
+            name: nameMap.get(speaker),
+            text: line
+          };
+        });
+      }
     }
 
     // Generic fallback

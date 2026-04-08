@@ -5,24 +5,58 @@
 const characters = [
 
   // ─── PHASE 1 ───────────────────────────────
-  { id: "ironman",        name: "Iron Man",                   debut: "ironman1",      image: "ironman.jpg" },
+  { id: "ironman",        name: "Iron Man",                   debut: "ironman1",      image: "ironman.jpg",
+    stages: [
+      { after: "avengers1",   image: "ironman_avengers.jpg",   look: "Avengers suit, Mark VII" },
+      { after: "infinitywar",  image: "ironman_nano.jpg",       look: "Nanotech bleeding edge suit" }
+    ] },
   { id: "pepper",         name: "Pepper Potts",               debut: "ironman1",      image: "pepper.jpg" },
   { id: "happy",          name: "Happy Hogan",                debut: "ironman1",      image: "happy.jpg" },
   { id: "rhodey",         name: "James Rhodes",               debut: "ironman1",      image: "rhodey.jpg" },
-  { id: "nick_fury",      name: "Nick Fury",                  debut: "ironman1",      image: "nickfury.jpg" },
+  { id: "nick_fury",      name: "Nick Fury",                  debut: "ironman1",      image: "nickfury.jpg",
+    stages: [
+      { after: "secretinvasion", image: "nickfury_si.jpg", look: "Secret Invasion era, older, battle-worn" }
+    ] },
   { id: "coulson",        name: "Agent Coulson",              debut: "ironman1",      image: "coulson.jpg" },
-  { id: "blackwidow",     name: "Black Widow",                debut: "ironman2",      image: "blackwidow.jpg" },
-  { id: "hulk",           name: "Hulk",                       debut: "hulk",          image: "hulk.jpg" },
+  { id: "blackwidow",     name: "Black Widow",                debut: "ironman2",      image: "blackwidow.jpg",
+    stages: [
+      { after: "infinitywar", image: "blackwidow_blonde.jpg", look: "Blonde hair, Infinity War era" },
+      { after: "blackwidow",  image: "blackwidow_white.jpg",  look: "White suit, Black Widow movie" }
+    ] },
+  { id: "hulk",           name: "Hulk",                       debut: "hulk",          image: "hulk.jpg",
+    stages: [
+      { after: "thor3",    image: "hulk_gladiator.jpg", look: "Sakaar gladiator armor, war paint" },
+      { after: "endgame",  image: "hulk_smart.jpg",     look: "Smart Hulk, glasses, calm" }
+    ] },
   { id: "bettyross",      name: "Betty Ross",                 debut: "hulk",          image: "bettyross.jpg" },
   { id: "abomnination",   name: "Abomination",                debut: "hulk",          image: "abomination.jpg" },
-  { id: "thor",           name: "Thor",                       debut: "thor1",         image: "thor.jpg" },
-  { id: "loki",           name: "Loki",                       debut: "thor1",         image: "loki.jpg" },
+  { id: "thor",           name: "Thor",                       debut: "thor1",         image: "thor.jpg",
+    stages: [
+      { after: "thor3", image: "thor_ragnarok.jpg",     look: "Short hair, Ragnarok armor" },
+      { after: "thor4", image: "thor_lovethunder.jpg",  look: "Love & Thunder outfit, blue/gold" }
+    ] },
+  { id: "loki",           name: "Loki",                       debut: "thor1",         image: "loki.jpg",
+    stages: [
+      { after: "loki1", image: "loki_tva.jpg", look: "TVA suit variant" },
+      { after: "loki2", image: "loki_s2.jpg",  look: "God of Stories, throne at end of time" }
+    ] },
   { id: "janefoster",     name: "Jane Foster",                debut: "thor1",         image: "janefoster.jpg" },
-  { id: "hawkeye",        name: "Hawkeye",                    debut: "thor1",         image: "hawkeye.jpg" },
+  { id: "hawkeye",        name: "Hawkeye",                    debut: "thor1",         image: "hawkeye.jpg",
+    stages: [
+      { after: "hawkeye", image: "hawkeye_ronin.jpg", look: "Ronin/mentor era, darker look" }
+    ] },
   { id: "heimdall",       name: "Heimdall",                   debut: "thor1",         image: "heimdall.jpg" },
-  { id: "cap",            name: "Captain America",            debut: "cap1",          image: "cap.jpg" },
+  { id: "cap",            name: "Captain America",            debut: "cap1",          image: "cap.jpg",
+    stages: [
+      { after: "avengers1", image: "cap_avengers.jpg", look: "Avengers blue suit, modern" },
+      { after: "cap2",      image: "cap_stealth.jpg",  look: "Dark stealth suit, SHIELD era" },
+      { after: "endgame",   image: "cap_endgame.jpg",  look: "Scale mail Endgame suit" }
+    ] },
   { id: "peggy",          name: "Peggy Carter",               debut: "cap1",          image: "peggy.jpg" },
-  { id: "bucky",          name: "Bucky Barnes",               debut: "cap1",          image: "bucky.jpg" },
+  { id: "bucky",          name: "Bucky Barnes",               debut: "cap1",          image: "bucky.jpg",
+    stages: [
+      { after: "blackpanther", image: "bucky_wakanda.jpg", look: "Vibranium arm, Wakanda look" }
+    ] },
   { id: "redskull",       name: "Red Skull",                  debut: "cap1",          image: "redskull.jpg" },
   { id: "howardstark",    name: "Howard Stark",               debut: "cap1",          image: "howardstark.jpg" },
   { id: "thanos_snap",    name: "Thanos",                     debut: "avengers1",     image: "thanos.jpg" },
@@ -30,17 +64,33 @@ const characters = [
   // ─── PHASE 2 ───────────────────────────────
   { id: "killian",        name: "Aldrich Killian",            debut: "ironman3",      image: "killian.jpg" },
   { id: "malekith",       name: "Malekith",                   debut: "thor2",         image: "malekith.jpg" },
-  { id: "falcon",         name: "Falcon",                     debut: "cap2",          image: "falcon.jpg" },
+  { id: "falcon",         name: "Falcon",                     debut: "cap2",          image: "falcon.jpg",
+    stages: [
+      { after: "falconws", image: "falcon_cap.jpg", look: "Captain America suit with wings" }
+    ] },
   { id: "wintersolider",  name: "Winter Soldier",             debut: "cap2",          image: "wintersoldier.jpg" },
   { id: "starlord",       name: "Star-Lord",                  debut: "guardians1",    image: "starlord.jpg" },
-  { id: "gamora",         name: "Gamora",                     debut: "guardians1",    image: "gamora.jpg" },
+  { id: "gamora",         name: "Gamora",                     debut: "guardians1",    image: "gamora.jpg",
+    stages: [
+      { after: "guardians3", image: "gamora_variant.jpg", look: "Alternate Gamora, armored, Guardians 3" }
+    ] },
   { id: "drax",           name: "Drax",                       debut: "guardians1",    image: "drax.jpg" },
   { id: "rocket",         name: "Rocket",                     debut: "guardians1",    image: "rocket.jpg" },
-  { id: "groot",          name: "Groot",                      debut: "guardians1",    image: "groot.jpg" },
-  { id: "nebula",         name: "Nebula",                     debut: "guardians1",    image: "nebula.jpg" },
+  { id: "groot",          name: "Groot",                      debut: "guardians1",    image: "groot.jpg",
+    stages: [
+      { after: "guardians2",  image: "groot_baby.jpg",  look: "Baby Groot, small and cute" },
+      { after: "infinitywar", image: "groot_teen.jpg",  look: "Teen Groot with attitude" }
+    ] },
+  { id: "nebula",         name: "Nebula",                     debut: "guardians1",    image: "nebula.jpg",
+    stages: [
+      { after: "endgame", image: "nebula_hero.jpg", look: "Hero Nebula, gold plating, softer look" }
+    ] },
   { id: "ronan",          name: "Ronan the Accuser",          debut: "guardians1",    image: "ronan.jpg" },
   { id: "yondu",          name: "Yondu",                      debut: "guardians1",    image: "yondu.jpg" },
-  { id: "wanda_wv",       name: "Wanda Maximoff",             debut: "ageofultron",   image: "wanda.jpg" },
+  { id: "wanda_wv",       name: "Wanda Maximoff",             debut: "ageofultron",   image: "wanda.jpg",
+    stages: [
+      { after: "wandavision", image: "wanda_scarletwitch.jpg", look: "Scarlet Witch with crown/headpiece" }
+    ] },
   { id: "quicksilver",    name: "Quicksilver",                debut: "ageofultron",   image: "quicksilver.jpg" },
   { id: "vision",         name: "Vision",                     debut: "ageofultron",   image: "vision.jpg" },
   { id: "ultron",         name: "Ultron",                     debut: "ageofultron",   image: "ultron.jpg" },
@@ -49,7 +99,11 @@ const characters = [
   { id: "hankpym",        name: "Hank Pym",                   debut: "antman",        image: "hankpym.jpg" },
 
   // ─── PHASE 3 ───────────────────────────────
-  { id: "spiderman",      name: "Spider-Man",                 debut: "civilwar",      image: "spiderman.jpg" },
+  { id: "spiderman",      name: "Spider-Man",                 debut: "civilwar",      image: "spiderman.jpg",
+    stages: [
+      { after: "spiderman1", image: "spiderman_stark.jpg",      look: "Red/blue Stark suit, Homecoming" },
+      { after: "nowayhome",  image: "spiderman_integrated.jpg", look: "Black/gold integrated suit, No Way Home" }
+    ] },
   { id: "blackpanther",   name: "Black Panther",              debut: "civilwar",      image: "blackpanther.jpg" },
   { id: "zemo",           name: "Baron Zemo",                 debut: "civilwar",      image: "zemo.jpg" },
   { id: "drstrange",      name: "Doctor Strange",             debut: "doctorstrange", image: "drstrange.jpg" },
@@ -150,3 +204,28 @@ const characters = [
   { id: "cottonmouth",    name: "Cottonmouth",                debut: "lukecage1",     image: "cottonmouth.jpg" },
 
 ];
+
+/************************************************
+ * STAGE HELPERS
+ * Resolve which image to show based on watch progress
+ ************************************************/
+
+// Get all unlocked stage images for a character (default + watched stages)
+function getCharStages(char, watched) {
+  const check = typeof watched.isWatched === 'function'
+    ? (id) => watched.isWatched(id)
+    : (id) => watched.has(id);
+  const results = [{ image: char.image, label: "Default" }];
+  if (char.stages) {
+    char.stages.forEach(s => {
+      if (check(s.after)) results.push({ image: s.image, label: s.look });
+    });
+  }
+  return results;
+}
+
+// Get the highest unlocked image (used as default display)
+function getCharImage(char, watched) {
+  const stages = getCharStages(char, watched);
+  return stages[stages.length - 1].image;
+}

@@ -1605,6 +1605,35 @@ body.auth-page {
   white-space: nowrap;
 }
 
+.walker-stage-row {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.walker-stage-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  opacity: 0.5;
+  transition: all 0.2s;
+}
+
+.walker-stage-dot:hover {
+  opacity: 0.85;
+  border-color: var(--gold-03);
+}
+
+.walker-stage-dot.active {
+  opacity: 1;
+  border-color: var(--gold);
+  box-shadow: 0 0 6px rgba(201, 162, 39, 0.4);
+}
+
 .map-walker {
   will-change: left, top;
 }
@@ -1955,6 +1984,11 @@ body.auth-page {
     max-width: 110px;
     font-size: 9px;
     padding: 4px 7px;
+  }
+
+  .walker-stage-dot {
+    width: 18px;
+    height: 18px;
   }
 }
 

@@ -84,18 +84,21 @@ function buildAvatarPicker(watchedIds, currentPic) {
 
   pickerGrid.innerHTML = '';
   unlocked.forEach(c => {
-    const src = `assets/characters/${c.image}`;
-    const btn = document.createElement('button');
-    btn.className = 'avatar-option' + (src === currentPic ? ' selected' : '');
-    btn.title = c.name;
+    const stages = getCharStages(c, watchedIds);
+    stages.forEach(s => {
+      const src = `assets/characters/${s.image}`;
+      const btn = document.createElement('button');
+      btn.className = 'avatar-option' + (src === currentPic ? ' selected' : '');
+      btn.title = stages.length > 1 ? `${c.name} — ${s.label}` : c.name;
 
-    const img = document.createElement('img');
-    img.src = src;
-    img.alt = c.name;
-    btn.appendChild(img);
+      const img = document.createElement('img');
+      img.src = src;
+      img.alt = c.name;
+      btn.appendChild(img);
 
-    btn.onclick = () => selectAvatar(src, btn);
-    pickerGrid.appendChild(btn);
+      btn.onclick = () => selectAvatar(src, btn);
+      pickerGrid.appendChild(btn);
+    });
   });
 }
 
