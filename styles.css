@@ -1614,10 +1614,14 @@ body.auth-page {
   color: rgba(255, 255, 255, 0.7);
   text-align: center;
   line-height: 1.2;
-  max-width: 80px;
+  max-width: 90px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .walker-stage-row {

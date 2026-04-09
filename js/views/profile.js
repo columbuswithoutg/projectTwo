@@ -6,7 +6,7 @@ const ProfileView = {
 
   mount(container) {
     if (!Auth.isLoggedIn()) {
-      Router.go('/');
+      Router.go('/login');
       return;
     }
 
@@ -59,7 +59,7 @@ const ProfileView = {
       </div>
     `;
 
-    document.getElementById('back-btn').addEventListener('click', () => Router.go('/app'));
+    document.getElementById('back-btn').addEventListener('click', () => Router.go('/'));
 
     // DOM refs scoped to this mount
     const avatarImg      = document.getElementById('profile-avatar-img');

@@ -219,24 +219,51 @@ class MapRenderer {
     const ns = "http://www.w3.org/2000/svg";
     const elements = [];
 
-    // Main road path
-    const road = document.createElementNS(ns, "path");
-    road.setAttribute("id", pathId);
-    road.setAttribute("d", d);
-    road.setAttribute("stroke", "rgba(201, 162, 39, 0.45)");
-    road.setAttribute("stroke-width", "4");
-    road.setAttribute("fill", "none");
-    road.setAttribute("marker-end", "url(#arrowhead)");
-    elements.push(road);
+    // Road base — wide background
+    const roadBase = document.createElementNS(ns, "path");
+    roadBase.setAttribute("d", d);
+    roadBase.setAttribute("stroke", "rgba(201, 162, 39, 0.12)");
+    roadBase.setAttribute("stroke-width", isMobile ? "18" : "26");
+    roadBase.setAttribute("stroke-linecap", "round");
+    roadBase.setAttribute("fill", "none");
+    elements.push(roadBase);
 
-    // Dashed center lane marking
+    // Road edges — lane borders
+    const laneW = isMobile ? 18 : 26;
+    const perpX = -uy * laneW / 2;
+    const perpY = ux * laneW / 2;
+
+    const edgeLeft = document.createElementNS(ns, "path");
+    edgeLeft.setAttribute("d", `M ${x1 + perpX} ${y1 + perpY} L ${x2 + perpX} ${y2 + perpY}`);
+    edgeLeft.setAttribute("stroke", "rgba(201, 162, 39, 0.25)");
+    edgeLeft.setAttribute("stroke-width", "1");
+    edgeLeft.setAttribute("fill", "none");
+    elements.push(edgeLeft);
+
+    const edgeRight = document.createElementNS(ns, "path");
+    edgeRight.setAttribute("d", `M ${x1 - perpX} ${y1 - perpY} L ${x2 - perpX} ${y2 - perpY}`);
+    edgeRight.setAttribute("stroke", "rgba(201, 162, 39, 0.25)");
+    edgeRight.setAttribute("stroke-width", "1");
+    edgeRight.setAttribute("fill", "none");
+    elements.push(edgeRight);
+
+    // Dashed center lane divider
     const dash = document.createElementNS(ns, "path");
+    dash.setAttribute("id", pathId);
     dash.setAttribute("d", d);
-    dash.setAttribute("stroke", "rgba(255, 255, 255, 0.18)");
-    dash.setAttribute("stroke-width", "1.5");
-    dash.setAttribute("stroke-dasharray", "6 8");
+    dash.setAttribute("stroke", "rgba(255, 255, 255, 0.15)");
+    dash.setAttribute("stroke-width", "1");
+    dash.setAttribute("stroke-dasharray", "6 10");
     dash.setAttribute("fill", "none");
     elements.push(dash);
+
+    // Direction arrow
+    const arrow = document.createElementNS(ns, "path");
+    arrow.setAttribute("d", d);
+    arrow.setAttribute("stroke", "none");
+    arrow.setAttribute("fill", "none");
+    arrow.setAttribute("marker-end", "url(#arrowhead)");
+    elements.push(arrow);
 
     return elements;
   }

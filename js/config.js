@@ -2,8 +2,8 @@
  * CONFIGURATION
  ************************************************/
 const CONFIG = {
-  H_SPACING: 160,
-  V_SPACING: 220,
+  H_SPACING: 200,
+  V_SPACING: 260,
   NODE_WIDTH: 120,
   NODE_HEIGHT: 180,
   IMAGE_BASE: "assets/images/",
@@ -11,11 +11,11 @@ const CONFIG = {
   STORAGE_KEY: "watchProgress_v2"
 };
 
-// Scale down for mobile — zoomed out feel
+// Scale down for mobile
 const isMobile = window.matchMedia('(max-width: 640px)').matches;
 if (isMobile) {
-  CONFIG.H_SPACING = 110;
-  CONFIG.V_SPACING = 130;
+  CONFIG.H_SPACING = 130;
+  CONFIG.V_SPACING = 160;
   CONFIG.NODE_WIDTH = 55;
   CONFIG.NODE_HEIGHT = 82;
 }

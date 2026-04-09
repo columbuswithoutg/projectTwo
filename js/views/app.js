@@ -7,7 +7,7 @@ const AppView = {
 
   mount(container) {
     if (!Auth.isLoggedIn()) {
-      Router.go('/');
+      Router.go('/login');
       return;
     }
 
@@ -88,7 +88,7 @@ const AppView = {
       AppView._initialized = false;
       Walkers.resetInit();
       state.data.clear();
-      Router.go('/');
+      Router.go('/login');
     });
 
     $("#friends-btn")?.addEventListener("click", () => showFriendsPanel());

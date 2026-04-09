@@ -13,7 +13,7 @@ app.use(express.json());
 
 // SPA routes — BEFORE static middleware so they take priority over index.html
 const spaFile = path.join(__dirname, 'spa.html');
-['/', '/app', '/profile', '/characters'].forEach(route => {
+['/', '/login', '/profile', '/characters'].forEach(route => {
   app.get(route, (req, res) => res.sendFile(spaFile));
 });
 

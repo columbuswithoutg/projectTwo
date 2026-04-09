@@ -6,7 +6,7 @@ const CharactersView = {
 
   mount(container) {
     if (!Auth.isLoggedIn()) {
-      Router.go('/');
+      Router.go('/login');
       return;
     }
 
@@ -26,7 +26,7 @@ const CharactersView = {
       </div>
     `;
 
-    document.getElementById('back-btn').addEventListener('click', () => Router.go('/app'));
+    document.getElementById('back-btn').addEventListener('click', () => Router.go('/'));
 
     this._load();
   },

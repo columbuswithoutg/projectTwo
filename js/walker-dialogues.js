@@ -274,20 +274,6 @@ const WALKER_DIALOGUES = (() => {
     ]
   };
 
-  // Generic dialogues for any pair without specific lines
-  const generic = [
-    ["{a}: Fancy meeting you here.", "{b}: Small world.", "{a}: Literally."],
-    ["{a}: You come here often?", "{b}: I'm literally walking randomly.", "{a}: Same."],
-    ["{a}: Hey.", "{b}: Hey.", "{a}: ...Nice weather.", "{b}: We're on a map."],
-    ["{a}: Shouldn't we be saving the world?", "{b}: It's our day off."],
-    ["{a}: I like your outfit.", "{b}: Thanks, I got it from my movie."],
-    ["{a}: Are we going the same way?", "{b}: I hope not.", "{a}: Rude."],
-    ["{a}: This place looks familiar.", "{b}: It's the same map every time.", "{a}: Still cool though."],
-    ["{a}: Quick question—", "{b}: No.", "{a}: You don't even know what I was going to ask!", "{b}: Still no."],
-    ["{a}: Wanna race?", "{b}: Absolutely not.", "{a}: Because you'd lose?", "{b}: ...Maybe."],
-    ["{a}: Do you think they're watching us?", "{b}: Who?", "{a}: The user.", "{b}: ...Don't make it weird."]
-  ];
-
   function getKey(id1, id2) {
     return [id1, id2].sort().join('|');
   }
@@ -295,46 +281,29 @@ const WALKER_DIALOGUES = (() => {
   function getDialogue(charA, charB, watched) {
     const key = getKey(charA.id, charB.id);
     const allExchanges = pairs[key];
+    if (!allExchanges) return null;
+
     const check = watched
       ? (typeof watched.isWatched === 'function' ? (id) => watched.isWatched(id) : (id) => watched.has(id))
       : () => true;
 
-    if (allExchanges) {
-      // Filter to only exchanges whose required movie is watched
-      const available = allExchanges.filter(e => check(e.requires));
+    const available = allExchanges.filter(e => check(e.requires));
+    if (available.length === 0) return null;
 
-      // 85% chance to use specific dialogue if available
-      if (available.length > 0 && Math.random() < 0.85) {
-        const chosen = available[Math.floor(Math.random() * available.length)];
-        const [first, second] = key.split('|');
+    const chosen = available[Math.floor(Math.random() * available.length)];
+    const [first, second] = key.split('|');
 
-        // Determine who speaks first — default is alphabetically first, startsWith overrides
-        const initiator = chosen.startsWith || first;
-        const responder = initiator === first ? second : first;
+    const initiator = chosen.startsWith || first;
+    const responder = initiator === first ? second : first;
 
-        const nameMap = new Map([[charA.id, charA.name], [charB.id, charB.name]]);
+    const nameMap = new Map([[charA.id, charA.name], [charB.id, charB.name]]);
 
-        return chosen.lines.map((line, i) => {
-          const speaker = i % 2 === 0 ? initiator : responder;
-          return {
-            speaker,
-            name: nameMap.get(speaker),
-            text: line
-          };
-        });
-      }
-    }
-
-    // Generic fallback
-    const template = generic[Math.floor(Math.random() * generic.length)];
-    const nameA = charA.name;
-    const nameB = charB.name;
-    return template.map(line => {
-      const isA = line.startsWith('{a}');
+    return chosen.lines.map((line, i) => {
+      const speaker = i % 2 === 0 ? initiator : responder;
       return {
-        speaker: isA ? charA.id : charB.id,
-        name: isA ? nameA : nameB,
-        text: line.replace(/\{[ab]\}: /, '')
+        speaker,
+        name: nameMap.get(speaker),
+        text: line
       };
     });
   }

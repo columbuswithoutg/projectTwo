@@ -10,20 +10,21 @@
 const Walkers = (() => {
   const STORAGE_KEY = 'mcu_walkers';
   const WALKER_SIZE = isMobile ? 18 : 24;           // px diameter
-  const SPEED = isMobile ? 30 : 40;                 // px per second
+  const WALKER_R = WALKER_SIZE / 2;                  // radius
+  const SPEED = isMobile ? 30 : 40;                  // px per second
   const PAUSE_MIN = 800;              // ms pause at node
   const PAUSE_MAX = 2500;
-  const ORBIT_RADIUS = isMobile ? 12 : 20;          // how far walkers wander from node center
-  const ENCOUNTER_SEP = isMobile ? 20 : 35;         // px separation before dialogue
 
-  const ENCOUNTER_COOLDOWN = 30000;    // ms before same pair can chat again
-  const ENCOUNTER_CHECK_INTERVAL = 500; // ms between encounter checks
-  const LINE_DURATION = isMobile ? 2000 : 2500;     // ms per dialogue line
+  const ROAD_HALF_W = isMobile ? 9 : 13;            // half the visual road width
+  const DAMPING = 0.998;                              // friction per frame
+  const BOUNCE = 0.85;                                // energy kept after wall bounce
+  const ENCOUNTER_DIST = WALKER_SIZE * 1.5;           // dialogue trigger distance
+  const ENCOUNTER_COOLDOWN = 30000;
+  const LINE_DURATION = isMobile ? 2000 : 2500;
 
-  let activeWalkers = [];              // { id, charId, charImg, charName, el, currentNode, targetNode, progress, paused, pauseEnd, pathX1, pathY1, pathX2, pathY2, inEncounter }
+  let activeWalkers = [];              // { id, charId, charImg, charName, el, currentNode, targetNode, vx, vy, _cx, _cy, currentEdge, paused, pauseEnd, inEncounter, _spawned }
   let animFrameId = null;
   let lastTime = 0;
-  let lastEncounterCheck = 0;
   let encounterCooldowns = new Map();  // "id1|id2" -> timestamp
   let activeBubbles = [];              // { el, owner }
   let encounterQueue = [];             // { w1, w2 }
@@ -85,6 +86,19 @@ const Walkers = (() => {
       return stages[stages.length - 1].image; // highest unlocked
     }
     return stages[Math.max(0, entry.stage)].image;
+  }
+
+  // Each stage starts at the node that unlocked it
+  function getStageStartNode(char, stageIndex, visibleIds) {
+    if (stageIndex <= 0) {
+      return visibleIds.includes(char.debut) ? char.debut : pickRandom(visibleIds);
+    }
+    // Stage N corresponds to char.stages[N-1].after
+    const stageData = char.stages?.[stageIndex - 1];
+    if (stageData && visibleIds.includes(stageData.after)) {
+      return stageData.after;
+    }
+    return visibleIds.includes(char.debut) ? char.debut : pickRandom(visibleIds);
   }
 
   /* ---- helpers ---- */
@@ -172,13 +186,11 @@ const Walkers = (() => {
   /* ---- encounters & speech bubbles ---- */
 
   function centerBetweenWalkers(w1, w2) {
-    // Center the viewport on the midpoint between two walkers
-    const pos1 = getNodeCenter(w1.currentNode);
-    const pos2 = getNodeCenter(w2.currentNode);
-    if (!pos1 || !pos2) return;
+    // Center the viewport on the actual walker positions
+    if (w1._cx == null || w2._cx == null) return;
 
-    const midX = (pos1.x + pos2.x) / 2;
-    const midY = (pos1.y + pos2.y) / 2;
+    const midX = (w1._cx + w2._cx) / 2;
+    const midY = (w1._cy + w2._cy) / 2;
 
     const wrapper = renderer.container;
     const wrapperRect = wrapper.getBoundingClientRect();
@@ -195,11 +207,9 @@ const Walkers = (() => {
   }
 
   function positionBubbleAboveWalker(bubble, w) {
-    if (!w.el) return;
-    const wx = parseFloat(w.el.style.left) + WALKER_SIZE / 2;
-    const wy = parseFloat(w.el.style.top);
-    bubble.style.left = wx + 'px';
-    bubble.style.top = (wy - 8) + 'px';
+    if (!w.el || w._cx == null) return;
+    bubble.style.left = w._cx + 'px';
+    bubble.style.top = (w._cy - WALKER_SIZE / 2 - 8) + 'px';
   }
 
   function createSpeechBubble(w, text) {
@@ -240,13 +250,33 @@ const Walkers = (() => {
       return;
     }
 
+    // Helper to release walkers and skip to next
+    function releaseAndSkip() {
+      w1.vx = 0; w1.vy = 0;
+      w2.vx = 0; w2.vy = 0;
+      w1.paused = true;
+      w1.pauseEnd = performance.now() + randBetween(200, 500);
+      w2.paused = true;
+      w2.pauseEnd = performance.now() + randBetween(200, 500);
+      runNextEncounter();
+    }
+
+    // Verify they're still close enough — skip stale encounters
+    if (w1._cx != null && w2._cx != null) {
+      const dist = Math.hypot(w2._cx - w1._cx, w2._cy - w1._cy);
+      if (dist > ENCOUNTER_DIST * 3) {
+        releaseAndSkip();
+        return;
+      }
+    }
+
     const charMap = new Map(characters.map(c => [c.id, c]));
     const charA = charMap.get(w1.charId);
     const charB = charMap.get(w2.charId);
-    if (!charA || !charB) { runNextEncounter(); return; }
+    if (!charA || !charB) { releaseAndSkip(); return; }
 
     const dialogue = WALKER_DIALOGUES.getDialogue(charA, charB, state);
-    if (!dialogue || dialogue.length === 0) { runNextEncounter(); return; }
+    if (!dialogue || dialogue.length === 0) { releaseAndSkip(); return; }
 
     // Mark both walkers as in encounter
     w1.inEncounter = true;
@@ -259,36 +289,9 @@ const Walkers = (() => {
     // Center the map between the two walkers
     centerBetweenWalkers(w1, w2);
 
-    // --- Separate walkers so they stand side by side ---
-    const nodeCenter = getNodeCenter(w1.currentNode);
-    if (nodeCenter) {
-      // Smoothly slide them apart using CSS transition
-      w1.el.style.transition = 'left 0.4s ease, top 0.4s ease';
-      w2.el.style.transition = 'left 0.4s ease, top 0.4s ease';
-
-      const leftX = nodeCenter.x - ENCOUNTER_SEP;
-      const rightX = nodeCenter.x + ENCOUNTER_SEP;
-      const y = nodeCenter.y;
-
-      w1.el.style.left = (leftX - WALKER_SIZE / 2) + 'px';
-      w1.el.style.top = (y - WALKER_SIZE / 2) + 'px';
-      w2.el.style.left = (rightX - WALKER_SIZE / 2) + 'px';
-      w2.el.style.top = (y - WALKER_SIZE / 2) + 'px';
-
-      // Update path coords so bubble tracking works
-      w1.pathX1 = leftX; w1.pathY1 = y; w1.pathX2 = leftX; w1.pathY2 = y; w1.progress = 1;
-      w2.pathX1 = rightX; w2.pathY1 = y; w2.pathX2 = rightX; w2.pathY2 = y; w2.progress = 1;
-
-      // Remove transition after animation completes so normal walking isn't affected
-      setTimeout(() => {
-        if (w1.el) w1.el.style.transition = 'none';
-        if (w2.el) w2.el.style.transition = 'none';
-      }, 450);
-    }
-
-    const sepDelay = 500;       // wait for separation animation
-    const scrollDelay = 600;    // let smooth scroll finish
-    const startDelay = Math.max(sepDelay, scrollDelay) + 300;
+    // Collision already keeps them apart — just let the scroll settle
+    const scrollDelay = 600;
+    const startDelay = scrollDelay + 300;
     const totalDuration = startDelay + dialogue.length * LINE_DURATION + 500;
 
     // Extend their pause for the full dialogue duration
@@ -300,9 +303,8 @@ const Walkers = (() => {
       encounterTimers.push(setTimeout(() => {
         clearBubblesFor(w1.charId, w2.charId);
 
-        // Match speaker to the correct walker by charId
-        const walker = activeWalkers.find(w => w.charId === line.speaker) ||
-                       (line.speaker === w1.charId ? w1 : w2);
+        // Use the specific encounter walkers, not a global search
+        const walker = line.speaker === w1.charId ? w1 : w2;
         const bubble = createSpeechBubble(walker, line.text);
         activeBubbles.push({ el: bubble, owner: line.speaker, walker });
       }, startDelay + i * LINE_DURATION));
@@ -311,19 +313,40 @@ const Walkers = (() => {
     // Clean up after dialogue ends, then run next queued encounter
     encounterTimers.push(setTimeout(() => {
       clearBubblesFor(w1.charId, w2.charId);
-      w1.inEncounter = false;
-      w2.inEncounter = false;
-      w1.paused = true;
-      w1.pauseEnd = performance.now() + randBetween(300, 800);
-      w2.paused = true;
-      w2.pauseEnd = performance.now() + randBetween(300, 800);
 
-      // Brief pause before next queued encounter
-      encounterTimers.push(setTimeout(() => runNextEncounter(), 800));
+      // Release walkers at current position, find nearest node
+      [w1, w2].forEach(w => {
+        w.vx = 0;
+        w.vy = 0;
+        w.currentEdge = null;
+
+        // Find nearest node
+        if (w._cx != null) {
+          let bestNode = w.currentNode;
+          let bestDist = Infinity;
+          getVisibleNodes().forEach(p => {
+            const pos = getNodeCenter(p.id);
+            if (!pos) return;
+            const d = Math.hypot(pos.x - w._cx, pos.y - w._cy);
+            if (d < bestDist) { bestDist = d; bestNode = p.id; }
+          });
+          w.currentNode = bestNode;
+        }
+        w.inEncounter = false;
+        w.paused = true;
+        w.pauseEnd = performance.now() + randBetween(300, 800);
+        applyWalkerPosition(w);
+      });
+
+      // Cooldown before next encounter can play
+      encounterTimers.push(setTimeout(() => runNextEncounter(), 5000));
     }, totalDuration));
   }
 
   function queueEncounter(w1, w2) {
+    // Max 2 queued encounters — don't let them pile up
+    if (encounterQueue.length >= 2) return;
+
     // Don't queue duplicates
     const isDuplicate = encounterQueue.some(e =>
       (e.w1 === w1 && e.w2 === w2) || (e.w1 === w2 && e.w2 === w1)
@@ -338,64 +361,13 @@ const Walkers = (() => {
     }
   }
 
-  function checkEncounters(now, graph) {
-    if (now - lastEncounterCheck < ENCOUNTER_CHECK_INTERVAL) return;
-    lastEncounterCheck = now;
+  /* ---- physics helpers ---- */
 
-    // Don't trigger encounters right after deploy
-    if (now - deployTime < DEPLOY_GRACE) return;
-
-    // Group walkers by current node — must be paused, arrived, and have walked at least once
-    const atNode = new Map();
-    activeWalkers.forEach(w => {
-      if (!w.paused || w.inEncounter) return;
-      if (w.progress < 1) return;          // still mid-walk
-      if (!w.previousNode) return;         // hasn't moved yet (just spawned)
-      const list = atNode.get(w.currentNode) || [];
-      list.push(w);
-      atNode.set(w.currentNode, list);
-    });
-
-    // Check each node for pairs
-    atNode.forEach((walkers) => {
-      if (walkers.length < 2) return;
-      for (let i = 0; i < walkers.length - 1; i++) {
-        for (let j = i + 1; j < walkers.length; j++) {
-          const w1 = walkers[i];
-          const w2 = walkers[j];
-
-          const key = WALKER_DIALOGUES.getKey(w1.charId, w2.charId);
-          const cooldownEnd = encounterCooldowns.get(key) || 0;
-          if (now < cooldownEnd) continue;
-
-          // Hold both walkers while queued/playing
-          const holdTime = 15000;
-          w1.pauseEnd = Math.max(w1.pauseEnd, now + holdTime);
-          w2.pauseEnd = Math.max(w2.pauseEnd, now + holdTime);
-
-          queueEncounter(w1, w2);
-        }
-      }
-    });
-  }
-
-  /* ---- orbital offset ---- */
-
-  // Give each walker a random offset around the node center so they don't stack
-  function randomOrbitOffset() {
-    const angle = Math.random() * Math.PI * 2;
-    const r = ORBIT_RADIUS * (0.4 + Math.random() * 0.6);
-    return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
-  }
-
-  /* ---- animation loop ---- */
-
-  function positionWalker(w) {
+  // Apply computed position to DOM
+  function applyWalkerPosition(w) {
     if (!w.el) return;
-    const x = w.pathX1 + (w.pathX2 - w.pathX1) * w.progress;
-    const y = w.pathY1 + (w.pathY2 - w.pathY1) * w.progress;
-    w.el.style.left = (x - WALKER_SIZE / 2) + 'px';
-    w.el.style.top = (y - WALKER_SIZE / 2) + 'px';
+    w.el.style.left = (w._cx - WALKER_R) + 'px';
+    w.el.style.top = (w._cy - WALKER_R) + 'px';
   }
 
   function pickNextTarget(w, graph) {
@@ -405,79 +377,322 @@ const Walkers = (() => {
     return pickRandom(filtered.length ? filtered : neighbors);
   }
 
-  function startWalkerPath(w, graph) {
-    const target = pickNextTarget(w, graph);
-    const from = getNodeCenter(w.currentNode);
-    const to = getNodeCenter(target);
+  // Build road segment geometry for each graph edge
+  function buildRoadSegments(graph) {
+    const segments = new Map();
+    const seen = new Set();
+    graph.forEach((neighbors, nodeId) => {
+      neighbors.forEach(neighborId => {
+        const key = [nodeId, neighborId].sort().join('|');
+        if (seen.has(key)) return;
+        seen.add(key);
 
-    if (!from || !to) {
-      w.paused = true;
-      w.pauseEnd = performance.now() + 1000;
-      return;
+        const from = getNodeCenter(nodeId);
+        const to = getNodeCenter(neighborId);
+        if (!from || !to) return;
+
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len;
+        const uy = dy / len;
+
+        // Road starts/ends at node edge — compute intersection along road direction
+        const fromEl = renderer.nodeElements.get(nodeId);
+        const toEl = renderer.nodeElements.get(neighborId);
+        // Use the dimension along the road direction (not max)
+        const absUx = Math.abs(ux);
+        const absUy = Math.abs(uy);
+        const fromOff = fromEl
+          ? (fromEl.offsetWidth / 2) * absUx + (fromEl.offsetHeight / 2) * absUy + 6
+          : 60;
+        const toOff = toEl
+          ? (toEl.offsetWidth / 2) * absUx + (toEl.offsetHeight / 2) * absUy + 8
+          : 60;
+
+        segments.set(key, {
+          fromId: nodeId, toId: neighborId,
+          x1: from.x + ux * fromOff, y1: from.y + uy * fromOff,
+          x2: to.x - ux * toOff, y2: to.y - uy * toOff,
+          ux, uy,
+          px: -uy, py: ux,  // perpendicular
+          length: Math.max(0, len - fromOff - toOff),
+          halfW: ROAD_HALF_W
+        });
+      });
+    });
+    return segments;
+  }
+
+  // Build node bounding rectangles
+  function buildNodeRects() {
+    const rects = [];
+    const containerRect = renderer.mapContainer.getBoundingClientRect();
+    getVisibleNodes().forEach(p => {
+      const el = renderer.nodeElements.get(p.id);
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      rects.push({
+        id: p.id,
+        left: r.left - containerRect.left,
+        top: r.top - containerRect.top,
+        right: r.right - containerRect.left,
+        bottom: r.bottom - containerRect.top
+      });
+    });
+    return rects;
+  }
+
+  // Bounce walker off a rectangle (circle vs AABB)
+  function bounceOffRect(w, rect) {
+    const closestX = Math.max(rect.left, Math.min(w._cx, rect.right));
+    const closestY = Math.max(rect.top, Math.min(w._cy, rect.bottom));
+    const dx = w._cx - closestX;
+    const dy = w._cy - closestY;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist < WALKER_R && dist > 0.01) {
+      const nx = dx / dist;
+      const ny = dy / dist;
+      // Push out
+      w._cx = closestX + nx * WALKER_R;
+      w._cy = closestY + ny * WALKER_R;
+      // Reflect velocity
+      const vDotN = w.vx * nx + w.vy * ny;
+      if (vDotN < 0) {
+        w.vx -= 2 * vDotN * nx * BOUNCE;
+        w.vy -= 2 * vDotN * ny * BOUNCE;
+      }
     }
+  }
 
-    // Start from current visual position (includes orbit offset)
-    const rawX = parseFloat(w.el.style.left);
-    const rawY = parseFloat(w.el.style.top);
-    const curX = isNaN(rawX) ? from.x : rawX + WALKER_SIZE / 2;
-    const curY = isNaN(rawY) ? from.y : rawY + WALKER_SIZE / 2;
+  // Launch walker from a node onto a road with velocity
+  function launchWalker(w, graph, roadSegments) {
+    const target = pickNextTarget(w, graph);
+    if (target === w.currentNode) return;
 
-    // Destination gets a new random orbit offset
-    const destOffset = randomOrbitOffset();
+    const edgeKey = [w.currentNode, target].sort().join('|');
+    const road = roadSegments.get(edgeKey);
+    if (!road) return;
+
+    const isFrom = (road.fromId === w.currentNode);
+    const dirX = isFrom ? road.ux : -road.ux;
+    const dirY = isFrom ? road.uy : -road.uy;
+
+    // Position at the road opening (not node center) so we're outside the node rect
+    const startX = isFrom ? road.x1 : road.x2;
+    const startY = isFrom ? road.y1 : road.y2;
+    w._cx = startX;
+    w._cy = startY;
+
+    // Small random perpendicular drift for variety
+    const drift = (Math.random() - 0.5) * 0.3;
+    w.vx = (dirX + road.px * drift) * SPEED;
+    w.vy = (dirY + road.py * drift) * SPEED;
 
     w.previousNode = w.currentNode;
     w.targetNode = target;
-    w.pathX1 = curX;
-    w.pathY1 = curY;
-    w.pathX2 = to.x + destOffset.x;
-    w.pathY2 = to.y + destOffset.y;
-    w.progress = 0;
+    w.currentEdge = edgeKey;
     w.paused = false;
-
-    const dist = Math.hypot(to.x - from.x, to.y - from.y);
-    w.duration = (dist / SPEED) * 1000;  // ms
   }
+
+  /* ---- animation loop ---- */
 
   function tick(now) {
     if (!lastTime) lastTime = now;
-    const dt = now - lastTime;
+    const dt = Math.min(now - lastTime, 50);  // cap dt to prevent huge jumps
     lastTime = now;
 
     const graph = buildGraph();
+    // Cache geometry — rebuild every 2 seconds, not every frame
+    if (!tick._geoTime || now - tick._geoTime > 2000) {
+      tick._roads = buildRoadSegments(graph);
+      tick._rects = buildNodeRects();
+      tick._geoTime = now;
+    }
+    const roadSegments = tick._roads;
+    const nodeRects = tick._rects;
+    const dtSec = dt / 1000;
 
-    checkEncounters(now, graph);
-
+    // Pass 1: move walkers
     activeWalkers.forEach(w => {
-      if (w.inEncounter) return;  // frozen during dialogue
-
-      if (w.paused) {
+      // Hidden walkers waiting to spawn
+      if (!w._spawned) {
         if (now >= w.pauseEnd) {
-          startWalkerPath(w, graph);
+          w._spawned = true;
+          w.el.style.display = '';
+          w.pauseEnd = now + randBetween(100, 500);
         }
         return;
       }
 
-      if (w.duration <= 0) {
-        w.paused = true;
-        w.pauseEnd = now + randBetween(PAUSE_MIN, PAUSE_MAX);
+      if (w.inEncounter) return;
+
+      if (w.paused) {
+        if (now >= w.pauseEnd) {
+          launchWalker(w, graph, roadSegments);
+        }
         return;
       }
 
-      w.progress += dt / w.duration;
+      // Velocity integration
+      w._cx += w.vx * dtSec;
+      w._cy += w.vy * dtSec;
 
-      if (w.progress >= 1) {
-        w.progress = 1;
-        positionWalker(w);
-        w.currentNode = w.targetNode;
-        w.paused = true;
-        w.pauseEnd = now + randBetween(PAUSE_MIN, PAUSE_MAX);
-        return;
+      // Road edge bounce — keep within road corridor
+      const road = roadSegments.get(w.currentEdge);
+      if (road) {
+        // Perpendicular distance from road centerline
+        const relX = w._cx - road.x1;
+        const relY = w._cy - road.y1;
+        const perpDist = relX * road.px + relY * road.py;
+        const maxPerp = road.halfW - WALKER_R;
+
+        if (Math.abs(perpDist) > maxPerp) {
+          const sign = perpDist > 0 ? 1 : -1;
+          w._cx -= road.px * (perpDist - sign * maxPerp);
+          w._cy -= road.py * (perpDist - sign * maxPerp);
+          // Reflect perpendicular velocity component
+          const vPerp = w.vx * road.px + w.vy * road.py;
+          w.vx -= 2 * vPerp * road.px * BOUNCE;
+          w.vy -= 2 * vPerp * road.py * BOUNCE;
+        }
+
+        // Check if walker reached the end of the road
+        const alongDist = relX * road.ux + relY * road.uy;
+        if (alongDist >= road.length || alongDist <= 0) {
+          // Arrived at target node
+          // Use actual exit direction, not original travel direction
+          w.currentNode = alongDist >= road.length ? road.toId : road.fromId;
+
+          // Check if node is occupied
+          const nodeOccupied = activeWalkers.some(other =>
+            other !== w && other._spawned && other.paused &&
+            !other.inEncounter && other.currentNode === w.currentNode
+          );
+
+          if (nodeOccupied) {
+            // Keep moving — pick new road
+            launchWalker(w, graph, roadSegments);
+          } else {
+            w.vx = 0;
+            w.vy = 0;
+            w.paused = true;
+            w.pauseEnd = now + randBetween(PAUSE_MIN, PAUSE_MAX);
+            // Snap to node center
+            const nc = getNodeCenter(w.currentNode);
+            if (nc) { w._cx = nc.x; w._cy = nc.y; }
+          }
+        }
       }
 
-      positionWalker(w);
+      // Bounce off node rectangles — skip nodes on the walker's current road
+      const curRoad = roadSegments.get(w.currentEdge);
+      for (const rect of nodeRects) {
+        if (curRoad && (rect.id === curRoad.fromId || rect.id === curRoad.toId)) continue;
+        bounceOffRect(w, rect);
+      }
+
+      // Damping + speed enforcement
+      w.vx *= DAMPING;
+      w.vy *= DAMPING;
+      const spd = Math.hypot(w.vx, w.vy);
+      if (spd > SPEED * 1.5) {
+        // Cap max speed
+        w.vx = (w.vx / spd) * SPEED;
+        w.vy = (w.vy / spd) * SPEED;
+      } else if (spd < SPEED * 0.5 && spd > 0.01) {
+        // Boost back up — walkers never slow to a crawl
+        w.vx = (w.vx / spd) * SPEED;
+        w.vy = (w.vy / spd) * SPEED;
+      }
     });
 
-    // Keep speech bubbles positioned above their walkers
+    // Pass 2: walker-walker elastic collision + encounter detection
+    const graceActive = (now - deployTime < DEPLOY_GRACE);
+    for (let i = 0; i < activeWalkers.length; i++) {
+      const a = activeWalkers[i];
+      if (!a._spawned || a._cx == null) continue;
+      for (let j = i + 1; j < activeWalkers.length; j++) {
+        const b = activeWalkers[j];
+        if (!b._spawned || b._cx == null) continue;
+
+        const dx = b._cx - a._cx;
+        const dy = b._cy - a._cy;
+        const dist = Math.hypot(dx, dy);
+        const minDist = WALKER_SIZE;
+
+        if (dist < minDist && dist > 0.01) {
+          const nx = dx / dist;
+          const ny = dy / dist;
+          const overlap = minDist - dist;
+
+          const aLocked = a.inEncounter;
+          const bLocked = b.inEncounter;
+
+          // Separate
+          if (aLocked && bLocked) {
+            // both locked
+          } else if (aLocked) {
+            b._cx += nx * overlap;
+            b._cy += ny * overlap;
+          } else if (bLocked) {
+            a._cx -= nx * overlap;
+            a._cy -= ny * overlap;
+          } else {
+            a._cx -= nx * overlap / 2;
+            a._cy -= ny * overlap / 2;
+            b._cx += nx * overlap / 2;
+            b._cy += ny * overlap / 2;
+          }
+
+          // Elastic velocity exchange (equal mass)
+          if (!aLocked && !bLocked && !a.paused && !b.paused) {
+            const aVn = a.vx * nx + a.vy * ny;
+            const bVn = b.vx * nx + b.vy * ny;
+            a.vx += (bVn - aVn) * nx;
+            a.vy += (bVn - aVn) * ny;
+            b.vx += (aVn - bVn) * nx;
+            b.vy += (aVn - bVn) * ny;
+          } else if (!aLocked && bLocked) {
+            const aVn = a.vx * nx + a.vy * ny;
+            if (aVn > 0) { a.vx -= 2 * aVn * nx * BOUNCE; a.vy -= 2 * aVn * ny * BOUNCE; }
+          } else if (aLocked && !bLocked) {
+            const bVn = b.vx * nx + b.vy * ny;
+            if (bVn < 0) { b.vx -= 2 * bVn * nx * BOUNCE; b.vy -= 2 * bVn * ny * BOUNCE; }
+          }
+        }
+
+        // Encounter detection
+        if (!graceActive && !encounterRunning && encounterQueue.length === 0 &&
+            dist < ENCOUNTER_DIST &&
+            !a.inEncounter && !b.inEncounter &&
+            a.charId !== b.charId &&
+            a.previousNode && b.previousNode) {
+          const key = WALKER_DIALOGUES.getKey(a.charId, b.charId);
+          const cooldownEnd = encounterCooldowns.get(key) || 0;
+          if (now >= cooldownEnd) {
+            const cMap = new Map(characters.map(c => [c.id, c]));
+            const cA = cMap.get(a.charId);
+            const cB = cMap.get(b.charId);
+            const testDialogue = (cA && cB) ? WALKER_DIALOGUES.getDialogue(cA, cB, state) : null;
+            if (testDialogue && testDialogue.length > 0) {
+              a.vx = 0; a.vy = 0;
+              b.vx = 0; b.vy = 0;
+              a.paused = true; b.paused = true;
+              a.pauseEnd = now + 15000; b.pauseEnd = now + 15000;
+              queueEncounter(a, b);
+            }
+          }
+        }
+      }
+    }
+
+    // Pass 3: apply to DOM
+    activeWalkers.forEach(w => {
+      if (w._spawned && !w.inEncounter) applyWalkerPosition(w);
+    });
+
     activeBubbles.forEach(b => {
       if (b.walker) positionBubbleAboveWalker(b.el, b.walker);
     });
@@ -492,8 +707,19 @@ const Walkers = (() => {
       ? overrideSelections.map(normalizeEntry).filter(Boolean)
       : loadSelections();
     const maxSlots = getMaxSlots();
+    const charMap = new Map(characters.map(c => [c.id, c]));
     const unlocked = new Set(getUnlockedCharacters().map(c => c.id));
-    return raw.filter(e => unlocked.has(e.id)).slice(0, maxSlots);
+    return raw.filter(e => {
+      if (!unlocked.has(e.id)) return false;
+      const char = charMap.get(e.id);
+      if (!char) return false;
+      // Verify the specific stage is unlocked
+      if (e.stage !== -1) {
+        const stages = getCharStages(char, state);
+        if (e.stage >= stages.length) return false;
+      }
+      return true;
+    }).slice(0, maxSlots);
   }
 
   // Backward-compat: return just the IDs for external consumers
@@ -516,6 +742,9 @@ const Walkers = (() => {
     const graph = buildGraph();
     const container = renderer.mapContainer;
 
+    // Track how many walkers share each start node for staggering
+    const nodeSpawnCount = new Map();
+
     entries.forEach((entry, i) => {
       const char = charMap.get(entry.id);
       if (!char) return;
@@ -525,33 +754,45 @@ const Walkers = (() => {
       const el = createWalkerElement(img);
       container.appendChild(el);
 
-      // Start at the character's debut node if visible, else random visible node
-      let startNode = visibleIds.includes(char.debut) ? char.debut : pickRandom(visibleIds);
+      // Start at the node that unlocked this stage
+      const resolvedStage = entry.stage === -1 ? getCharStages(char, state).length - 1 : Math.max(0, entry.stage);
+      let startNode = getStageStartNode(char, resolvedStage, visibleIds);
+
+      // Stagger walkers from same node — each one waits before appearing
+      const spawnIndex = nodeSpawnCount.get(startNode) || 0;
+      nodeSpawnCount.set(startNode, spawnIndex + 1);
+      const spawnAt = performance.now() + 500 + spawnIndex * 3000;  // 3s apart
 
       const w = {
-        id: entry.id,
+        id: `${entry.id}_s${entry.stage}_${i}`,
         charId: entry.id,
+        stageIndex: entry.stage,
         charImg: img,
         charName: char.name,
         el,
         currentNode: startNode,
         targetNode: startNode,
         previousNode: null,
-        progress: 1,
+        vx: 0, vy: 0,
+        _cx: 0, _cy: 0,
+        currentEdge: null,
         paused: true,
-        pauseEnd: performance.now() + randBetween(200, 1500),
-        pathX1: 0, pathY1: 0, pathX2: 0, pathY2: 0,
-        duration: 0,
-        inEncounter: false
+        pauseEnd: spawnAt,
+        inEncounter: false,
+        _spawned: spawnIndex === 0
       };
 
-      // Position at start node with orbit offset
+      // Position at start node center
       const pos = getNodeCenter(startNode);
       if (pos) {
-        const off = randomOrbitOffset();
-        w.pathX1 = pos.x + off.x; w.pathY1 = pos.y + off.y;
-        w.pathX2 = pos.x + off.x; w.pathY2 = pos.y + off.y;
-        positionWalker(w);
+        w._cx = pos.x;
+        w._cy = pos.y;
+        applyWalkerPosition(w);
+      }
+
+      // Hide until spawn time
+      if (!w._spawned) {
+        el.style.display = 'none';
       }
 
       activeWalkers.push(w);
@@ -580,13 +821,12 @@ const Walkers = (() => {
     const current = getSelectedEntries();
     const maxSlots = getMaxSlots();
 
-    const idx = current.findIndex(e => e.id === charId);
+    const idx = current.findIndex(e => e.id === charId && e.stage === stageIndex);
     if (idx !== -1) {
-      // Remove
       current.splice(idx, 1);
       saveSelections(current);
     } else {
-      if (current.length >= maxSlots) return false; // no slots
+      if (current.length >= maxSlots) return false;
       current.push({ id: charId, stage: stageIndex });
       saveSelections(current);
     }
@@ -615,12 +855,9 @@ const Walkers = (() => {
   /* ---- Walker Picker UI ---- */
 
   function showWalkerPicker() {
-    // Remove existing
     document.getElementById('walker-picker-overlay')?.remove();
 
     const maxSlots = getMaxSlots();
-    const selectedEntries = getSelectedEntries();
-    const selectedIds = new Set(selectedEntries.map(e => e.id));
     const unlocked = getUnlockedCharacters();
 
     if (unlocked.length === 0) {
@@ -634,7 +871,7 @@ const Walkers = (() => {
       <div id="walker-picker">
         <div class="walker-picker-header">
           <h2>Choose Your Walkers</h2>
-          <p class="walker-slots-info">${selectedIds.size} / ${maxSlots} slots used</p>
+          <p class="walker-slots-info">${getSelectedEntries().length} / ${maxSlots} slots used</p>
           <button id="walker-picker-close">✕</button>
         </div>
         <div id="walker-picker-grid"></div>
@@ -651,97 +888,48 @@ const Walkers = (() => {
         `${count} / ${getMaxSlots()} slots used`;
     }
 
+    function isSelected(charId, stageIdx) {
+      return getSelectedEntries().some(e => e.id === charId && e.stage === stageIdx);
+    }
+
+    // Build flat list: each unlocked stage = one card
     unlocked.forEach(char => {
-      const isSelected = selectedIds.has(char.id);
       const stages = getCharStages(char, state);
-      const currentEntry = selectedEntries.find(e => e.id === char.id);
-      const currentStageIdx = currentEntry ? currentEntry.stage : -1;
-      // Resolve display image: selected stage or highest unlocked
-      const displayImg = currentEntry
-        ? resolveWalkerImage(currentEntry, char)
-        : stages[stages.length - 1].image;
 
-      const card = document.createElement('div');
-      card.className = 'walker-card' + (isSelected ? ' selected' : '');
-      card.dataset.charId = char.id;
+      stages.forEach((stage, si) => {
+        const selected = isSelected(char.id, si);
+        const label = si === 0 ? char.name : `${char.name} — ${stage.label}`;
 
-      card.innerHTML = `
-        <div class="walker-card-img">
-          <img src="assets/characters/${displayImg}" alt="${char.name}" loading="lazy" />
-          <span class="walker-check">✔</span>
-        </div>
-        <span class="walker-card-name">${char.name}</span>
-      `;
+        const card = document.createElement('div');
+        card.className = 'walker-card' + (selected ? ' selected' : '');
 
-      // Stage selector row (only if multiple stages unlocked)
-      if (stages.length > 1) {
-        const stageRow = document.createElement('div');
-        stageRow.className = 'walker-stage-row';
-        stages.forEach((s, si) => {
-          const dot = document.createElement('img');
-          dot.src = `assets/characters/${s.image}`;
-          dot.className = 'walker-stage-dot';
-          dot.title = s.label;
-          // Highlight active stage
-          const activeIdx = currentStageIdx === -1 ? stages.length - 1 : currentStageIdx;
-          if (si === activeIdx) dot.classList.add('active');
+        card.innerHTML = `
+          <div class="walker-card-img">
+            <img src="assets/characters/${stage.image}" alt="${label}" loading="lazy" />
+            <span class="walker-check">✔</span>
+          </div>
+          <span class="walker-card-name">${label}</span>
+        `;
 
-          dot.addEventListener('click', (e) => {
-            e.stopPropagation();
-            // If not selected yet, select it first
-            if (!getSelectedIds().includes(char.id)) {
-              const entries = getSelectedEntries();
-              if (entries.length >= getMaxSlots()) {
-                const info = overlay.querySelector('.walker-slots-info');
-                info.style.color = '#E23636';
-                setTimeout(() => info.style.color = '', 600);
-                return;
-              }
-              const newEntries = [...entries, { id: char.id, stage: si }];
-              saveSelections(newEntries);
-              deploy();
-              card.classList.add('selected');
-            } else {
-              setCharacterStage(char.id, si);
+        card.addEventListener('click', () => {
+          if (isSelected(char.id, si)) {
+            toggleCharacter(char.id, si);
+            card.classList.remove('selected');
+          } else {
+            if (getSelectedEntries().length >= getMaxSlots()) {
+              const info = overlay.querySelector('.walker-slots-info');
+              info.style.color = '#E23636';
+              setTimeout(() => info.style.color = '', 600);
+              return;
             }
-            // Update main image on card
-            card.querySelector('.walker-card-img img').src = `assets/characters/${stages[si].image}`;
-            // Update active dot
-            stageRow.querySelectorAll('.walker-stage-dot').forEach((d, di) => {
-              d.classList.toggle('active', di === si);
-            });
-            updateSlotCount();
-          });
-          stageRow.appendChild(dot);
-        });
-        card.appendChild(stageRow);
-      }
-
-      card.addEventListener('click', (e) => {
-        // Don't toggle if clicking a stage dot
-        if (e.target.classList.contains('walker-stage-dot')) return;
-
-        const currentSelected = new Set(getSelectedIds());
-        const currentMax = getMaxSlots();
-
-        if (currentSelected.has(char.id)) {
-          toggleCharacter(char.id);
-          card.classList.remove('selected');
-        } else {
-          if (currentSelected.size >= currentMax) {
-            const info = overlay.querySelector('.walker-slots-info');
-            info.style.color = '#E23636';
-            setTimeout(() => info.style.color = '', 600);
-            return;
+            toggleCharacter(char.id, si);
+            card.classList.add('selected');
           }
-          toggleCharacter(char.id);
-          card.classList.add('selected');
-        }
+          updateSlotCount();
+        });
 
-        updateSlotCount();
+        grid.appendChild(card);
       });
-
-      grid.appendChild(card);
     });
 
     overlay.addEventListener('click', (e) => {

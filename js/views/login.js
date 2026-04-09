@@ -7,7 +7,7 @@ const LoginView = {
   mount(container) {
     // If already logged in, skip to app
     if (Auth.isLoggedIn()) {
-      Router.go('/app');
+      Router.go('/');
       return;
     }
 
@@ -90,7 +90,7 @@ const LoginView = {
         if (currentMode === 'login') {
           localStorage.setItem('mcu_token', data.token);
           localStorage.setItem('mcu_username', data.username);
-          Router.go('/app');
+          Router.go('/');
         } else {
           showError('Account created! Please log in.', 'green');
           tabs[0].click();

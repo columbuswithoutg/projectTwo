@@ -32,7 +32,7 @@ const Auth = {
     Auth.clearToken();
     localStorage.removeItem("mcu_username");
     if (typeof Router !== 'undefined') {
-      Router.go('/');
+      Router.go('/login');
     } else {
       window.location.reload();
     }
