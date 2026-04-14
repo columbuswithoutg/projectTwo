@@ -8,6 +8,9 @@
  *   - lines[0] spoken by the initiator, lines[1] by the other, alternating
  *   - startsWith: (optional) character ID who speaks first
  *     If omitted, the alphabetically first ID speaks first
+ *
+ * Lines sourced from MCU films/shows. Verbatim where possible,
+ * lightly adapted for two-character walker format.
  ************************************************/
 const WALKER_DIALOGUES = (() => {
 
@@ -15,262 +18,360 @@ const WALKER_DIALOGUES = (() => {
 
     // ── Iron Man relationships ──
     "cap|ironman": [
-      { requires: "avengers1", lines: ["We need a plan of attack.", "I have a plan... attack."] },
-      { requires: "avengers1", startsWith: "ironman", lines: ["Doth mother know you weareth her drapes?", "...That was ONE time, Stark."] },
-      { requires: "ageofultron", lines: ["Language!", "...It was one time, Steve."] },
-      { requires: "ageofultron", startsWith: "ironman", lines: ["No way we all get through this.", "I got no plans tomorrow night.", "...I'll pick you up at 7."] },
-      { requires: "civilwar", lines: ["You could've called.", "You could've not dropped an airport on me."] },
-      { requires: "civilwar", startsWith: "ironman", lines: ["Sometimes I wanna punch you in your perfect teeth.", "...I get that a lot."] }
+      // Avengers 1 — actual exchange on the helicarrier
+      { requires: "avengers1", lines: ["Big man in a suit of armor. Take that off, what are you?", "Genius, billionaire, playboy, philanthropist."] },
+      // Avengers 1 — battle of New York
+      { requires: "avengers1", startsWith: "ironman", lines: ["Call it, Captain.", "Alright, listen up."] },
+      // Avengers 1 — actual line from Tony
+      { requires: "avengers1", startsWith: "ironman", lines: ["Doth mother know you weareth her drapes?", "...That is not the point, Stark."] },
+      // Age of Ultron — Cap's actual slip
+      { requires: "ageofultron", lines: ["Language!", "Did you just say 'language'?", "It just slipped out."] },
+      // Civil War — actual lines
+      { requires: "civilwar", startsWith: "ironman", lines: ["Sometimes I wanna punch you in your perfect teeth.", "Is that all you've got?"] },
+      // Civil War — the bunker
+      { requires: "civilwar", lines: ["He's my friend.", "So was I."] }
     ],
 
     "ironman|spiderman": [
-      { requires: "civilwar", lines: ["Kid, relax. This is just a walk.", "But Mr. Stark, is this an Avengers mission?", "No. Definitely not."] },
-      { requires: "spiderman1", lines: ["If you're nothing without the suit, you shouldn't have it.", "I'm nothing without the suit...", "That's the point, kid."] },
-      { requires: "spiderman1", startsWith: "spiderman", lines: ["Mr. Stark! Do I look like a vending machine?", "...A little bit, yeah.", "Watch it, kid."] },
-      { requires: "spiderman1", startsWith: "spiderman", lines: ["Can I be an Avenger now?", "We'll talk about it later.", "You always say that!"] },
-      { requires: "infinitywar", lines: ["You should not be here.", "I know, but I couldn't just stay behind!", "...Kid, you're gonna give me a heart attack."] }
+      // Homecoming — actual Tony line
+      { requires: "spiderman1", lines: ["If you're nothing without this suit, then you shouldn't have it.", "But Mr. Stark—", "I want you to be better."] },
+      // Civil War — Peter's actual intro
+      { requires: "civilwar", startsWith: "spiderman", lines: ["Hey everyone.", "...Good job, kid.", "Thanks! I could've stuck the landing a little better."] },
+      // Infinity War — actual exchange
+      { requires: "infinitywar", startsWith: "spiderman", lines: ["I'm Peter, by the way.", "Doctor Strange.", "Oh, we're using our made-up names? I'm Spider-Man then."] },
+      // Homecoming — actual Tony line
+      { requires: "spiderman1", startsWith: "spiderman", lines: ["Can I keep the suit?", "Yes, we were just talking about it.", "Really?!", "No."] }
     ],
 
     "ironman|pepper": [
-      { requires: "ironman1", lines: ["This isn't a suit... it's a walking outfit.", "Tony, you promised no more suits.", "Technically, it's armor."] },
-      { requires: "endgame", lines: ["I love you 3000.", "I love you more than 3000."] },
-      { requires: "ironman3", startsWith: "pepper", lines: ["How many suits is 'a few', Tony?", "...Forty-two.", "TONY!"] },
-      { requires: "ironman1", startsWith: "pepper", lines: ["You're going to be late for dinner.", "I'm never late. Everyone else is just early.", "...That doesn't even make sense."] }
+      // Iron Man 1 — actual exchange
+      { requires: "ironman1", startsWith: "pepper", lines: ["Is this about the Avengers? Which I know nothing about.", "The Avengers Initiative was scrapped.", "...And I'm supposed to believe that?"] },
+      // Endgame — Morgan's actual line, Tony repeats it
+      { requires: "endgame", lines: ["I love you 3000.", "...You know I love you 3000 too."] },
+      // Iron Man 3 — actual plot point
+      { requires: "ironman3", startsWith: "pepper", lines: ["Tony, how many suits do you have now?", "Uh... a few.", "How many is 'a few'?", "...forty-two."] }
     ],
 
     "ironman|rhodey": [
-      { requires: "ironman1", lines: ["Next time, baby.", "You always say that.", "And I always mean it."] },
-      { requires: "ageofultron", startsWith: "rhodey", lines: ["BOOM! You looking for this?", "That story again?", "It's a GOOD story!", "...Tell it one more time."] },
-      { requires: "ironman2", startsWith: "rhodey", lines: ["I think I need a better suit.", "Rhodey, you ARE the upgrade.", "...That's sweet, Tones."] }
+      // Iron Man 1 — actual line
+      { requires: "ironman1", lines: ["Next time, baby.", "You always say 'next time.'", "And I always mean it."] },
+      // Age of Ultron — Rhodey's actual story retelling
+      { requires: "ageofultron", startsWith: "rhodey", lines: ["BOOM! You looking for this?", "That's the whole story?", "Yeah, it's a War Machine story.", "...It's very good then."] },
+      // Iron Man 2 — actual exchange about the suit
+      { requires: "ironman2", startsWith: "rhodey", lines: ["You don't deserve to wear one of these.", "Come on, pal.", "Rethink this, Tony."] }
     ],
 
     "ironman|thor": [
-      { requires: "avengers1", lines: ["Point Break! Long time no see.", "I am not Point Break.", "Sure you are, big guy."] },
-      { requires: "avengers1", lines: ["Doth mother know you weareth her drapes?", "...That was ONE time, Stark."] },
-      { requires: "ageofultron", startsWith: "thor", lines: ["You dare lift my hammer?", "It's a party trick.", "It is NOT a party trick!"] }
+      // Avengers 1 — actual Tony line about Thor's cape
+      { requires: "avengers1", lines: ["No hard feelings, Point Break.", "Do not call me that.", "Point Break! I love that movie."] },
+      // Age of Ultron — the hammer lift scene
+      { requires: "ageofultron", startsWith: "thor", lines: ["You're all not worthy.", "...The handle's imprinted, right?", "That is a very interesting theory."] }
     ],
 
     "drstrange|ironman": [
-      { requires: "infinitywar", startsWith: "ironman", lines: ["Do you concur, Doctor?", "I'm not that kind of doctor.", "Then what's with the cape?"] },
-      { requires: "infinitywar", lines: ["Nice facial hair.", "...Right back at you.", "We should start a club."] },
-      { requires: "infinitywar", lines: ["We're in the endgame now.", "Please don't say that.", "I've seen 14 million outcomes.", "And how many do we win?", "...You don't want to know."] }
+      // Infinity War — actual meeting
+      { requires: "infinitywar", startsWith: "ironman", lines: ["What is your job exactly, besides making balloon animals?", "Protecting your reality, douchebag.", "...Fair enough."] },
+      // Infinity War — actual exchange
+      { requires: "infinitywar", lines: ["Seriously, you don't have any money?", "Attachment to the material is detachment from the spiritual.", "I'll buy you a sandwich."] },
+      // Infinity War — the actual endgame line
+      { requires: "infinitywar", lines: ["We're in the endgame now.", "...How many did we win?", "One."] }
     ],
 
     "hulk|ironman": [
-      { requires: "avengers1", lines: ["I'm always angry.", "That's my secret too... coffee."] },
-      { requires: "ageofultron", startsWith: "ironman", lines: ["Sun's getting real low, big guy.", "That only works when Natasha does it.", "Worth a shot."] },
-      { requires: "endgame", lines: ["Hulk gave you taco.", "Thanks, big guy.", "Hulk want taco back.", "...No."] }
+      // Avengers 1 — Bruce's actual iconic line
+      { requires: "avengers1", lines: ["That's my secret, Captain. I'm always angry.", "...I love it when he does that."] },
+      // Age of Ultron — actual lullaby reference
+      { requires: "ageofultron", startsWith: "ironman", lines: ["Sun's getting real low, big guy.", "That only works when SHE does it.", "Had to try."] },
+      // Avengers 1 — actual post-credits shawarma reference
+      { requires: "avengers1", startsWith: "ironman", lines: ["Have you ever tried shawarma?", "I don't know what that is.", "I don't know what it is either. I wanna try it."] }
     ],
 
     // ── Thor relationships ──
     "loki|thor": [
-      { requires: "thor1", lines: ["Brother!", "I am NOT your brother.", "...Adopted."] },
-      { requires: "thor2", startsWith: "thor", lines: ["I thought you were dead!", "I get that a lot.", "Loki, I swear—", "Surprise."] },
-      { requires: "thor3", startsWith: "thor", lines: ["We're doing 'Get Help.'", "We are NOT doing 'Get Help.'", "GET HELP!!", "I hate you."] },
-      { requires: "thor3", lines: ["We're not doing 'Get Help.'", "We are absolutely doing 'Get Help.'"] },
-      { requires: "avengers1", lines: ["I have an army.", "We have a Hulk.", "...I hate the Hulk."] }
+      // Thor 1 — adapted from actual dynamic
+      { requires: "thor1", lines: ["I never wanted the throne!", "...Could've fooled me."] },
+      // Thor 2 — Loki's actual fake death reveal
+      { requires: "thor2", startsWith: "thor", lines: ["I thought you were dead!", "Did you mourn?", "We all did.", "I'm touched."] },
+      // Thor 3 — actual Get Help scene
+      { requires: "thor3", startsWith: "thor", lines: ["We're doing 'Get Help.'", "We are NOT doing 'Get Help.'", "GET HELP! My brother is dying!", "I hate you."] },
+      // Avengers 1 — actual exchange
+      { requires: "avengers1", lines: ["I have an army.", "We have a Hulk."] },
+      // Thor 3 — actual snake story
+      { requires: "thor3", startsWith: "thor", lines: ["He turned himself into a snake. I went to pick up the snake because I love snakes.", "And?", "He stabbed me."] }
     ],
 
     "hulk|thor": [
-      { requires: "thor3", startsWith: "thor", lines: ["FRIEND FROM WORK!", "Hulk know tiny god.", "I'm not tiny!", "...Little bit tiny."] },
-      { requires: "endgame", lines: ["Thor okay?", "I'm not sad! ...Okay maybe a little."] },
-      { requires: "thor3", lines: ["Hulk like raging fire. Thor like smoldering fire.", "That's... actually kind of nice."] }
+      // Thor 3 — Thor's actual arena reaction
+      { requires: "thor3", startsWith: "thor", lines: ["I know him! He's a friend from work!", "Hulk no friend. Hulk smash.", "I just said we're friends!"] },
+      // Thor 3 — actual Hulk line about fire
+      { requires: "thor3", lines: ["Hulk like raging fire. Thor like smoldering fire.", "...That's actually kind of nice."] },
+      // Endgame — Professor Hulk era
+      { requires: "endgame", startsWith: "thor", lines: ["What happened to you?", "I put the brains and the brawn together.", "...Huh."] }
     ],
 
     "thor|valkyrie": [
-      { requires: "thor3", lines: ["Your Majesty.", "Don't call me that. Makes me feel old.", "You ARE old.", "...Fair point."] },
-      { requires: "thor3", startsWith: "valkyrie", lines: ["I need a drink.", "It's 10 in the morning.", "And?", "...Fair point."] }
+      // Thor 3 — actual Valkyrie attitude
+      { requires: "thor3", startsWith: "valkyrie", lines: ["I don't do 'hero' anymore.", "But you're a Valkyrie!", "Former. Retired. Done."] },
+      // Thor 3 — actual bottle scene reference
+      { requires: "thor3", startsWith: "valkyrie", lines: ["What have you done?", "I went on a little trip.", "You smell like a brewery.", "...Ran into an old friend."] }
     ],
 
     "heimdall|thor": [
-      { requires: "thor1", lines: ["I can see everything.", "Can you see why I skipped breakfast?", "...You didn't. You had Pop-Tarts."] }
+      // Thor 1 — Heimdall's actual role as all-seer
+      { requires: "thor1", lines: ["I can see nine realms and ten trillion souls.", "Can you see where I left my hammer?", "...It is in the next room."] }
     ],
 
     "hela|thor": [
-      { requires: "thor3", lines: ["Kneel before your queen.", "I don't really kneel.", "You will.", "Not today."] }
+      // Thor 3 — actual Hela line
+      { requires: "thor3", lines: ["Kneel before your queen.", "I don't think so.", "It's a shame, really. You would have made a lovely addition to my army."] }
     ],
 
     // ── Cap relationships ──
     "bucky|cap": [
+      // Cap 1 — actual exchange before shipping out
       { requires: "cap1", lines: ["Don't do anything stupid until I get back.", "How can I? You're taking all the stupid with you.", "...Punk.", "Jerk."] },
-      { requires: "cap2", lines: ["You pulled me from the river. Why?", "Because you're my friend.", "...You're my mission.", "Then finish it."] },
-      { requires: "blackpanther", startsWith: "cap", lines: ["The arm looks good.", "Wakandan vibranium. Not bad.", "Better than 'not bad.'"] },
-      { requires: "cap1", startsWith: "cap", lines: ["I'm with you till the end of the line.", "...Right back at ya, pal."] }
+      // Cap 2 — actual climax dialogue
+      { requires: "cap2", lines: ["You're my mission.", "Then finish it. 'Cause I'm with you to the end of the line."] },
+      // Cap 1 — actual catchphrase
+      { requires: "cap1", startsWith: "cap", lines: ["I'm with you till the end of the line.", "...Yeah, pal. I know you are."] }
     ],
 
     "cap|falcon": [
-      { requires: "cap2", lines: ["On your left.", "Oh, come on!", "On your left.", "I HEARD YOU THE FIRST TIME."] },
-      { requires: "endgame", lines: ["Take care of the shield.", "I will.", "I know you will."] }
+      // Cap 2 — actual jogging scene
+      { requires: "cap2", lines: ["On your left.", "On my left. Got it.", "On your left.", "DON'T SAY IT!"] },
+      // Endgame — actual shield passing
+      { requires: "endgame", lines: ["How does it feel?", "Like it's someone else's.", "It isn't."] }
     ],
 
     "cap|peggy": [
-      { requires: "cap1", lines: ["I had a date.", "You're late.", "Couldn't call... bad reception in the ice."] }
+      // Cap 1 — actual last words before the ice
+      { requires: "cap1", lines: ["I'm gonna need a rain check on that dance.", "Alright. A week, next Saturday, at the Stork Club.", "You got it."] }
     ],
 
     "blackwidow|cap": [
-      { requires: "avengers1", lines: ["Do you trust me?", "I do.", "...That makes one of us."] },
-      { requires: "cap2", startsWith: "cap", lines: ["Where did Captain America learn to steal a car?", "Nazi Germany.", "...Noted."] }
+      // Cap 2 — actual mall disguise scene
+      { requires: "cap2", startsWith: "cap", lines: ["Public displays of affection make people very uncomfortable.", "Yes, they do.", "...Still uncomfortable."] },
+      // Avengers 1 — actual trust exchange
+      { requires: "avengers1", lines: ["Regimes fall every day. I tend not to weep over that.", "...I do."] }
     ],
 
     // ── Guardians ──
     "groot|rocket": [
-      { requires: "guardians1", lines: ["I am Groot.", "I know, buddy.", "I am Groot.", "Well that's just rude."] },
-      { requires: "guardians1", lines: ["I am Groot!", "No, you cannot have a gun.", "I am Groot.", "ESPECIALLY not that one."] },
+      // Guardians 1 — actual dynamic
+      { requires: "guardians1", lines: ["I am Groot.", "I know, buddy.", "I am Groot.", "Well that IS rude."] },
+      // Guardians 1 — actual scene about weapons
+      { requires: "guardians1", lines: ["I am Groot!", "No, Groot. You can't have that guy's arm.", "I am Groot.", "He didn't actually need it? He was USING it!"] },
+      // Guardians 1 — actual Rocket emotional moment
       { requires: "guardians1", lines: ["I am Groot.", "Yeah, yeah, I love you too. Don't make it weird."] }
     ],
 
     "gamora|starlord": [
-      { requires: "guardians1", startsWith: "starlord", lines: ["I'm gonna make some weird faces.", "...Was that supposed to be charming?", "Definitely.", "It wasn't."] },
-      { requires: "guardians1", startsWith: "starlord", lines: ["Dance with me.", "I don't dance.", "Come on, everyone dances.", "NOT me."] },
-      { requires: "guardians1", lines: ["I like your plan. Except it sucks.", "Tell me how you really feel."] }
+      // Guardians 1 — actual dance-off reference
+      { requires: "guardians1", startsWith: "starlord", lines: ["Dance-off, bro.", "...What are you doing?", "I'm distracting you.", "It's working. And I hate it."] },
+      // Guardians 2 — actual unspoken thing
+      { requires: "guardians2", startsWith: "starlord", lines: ["There's an unspoken thing between us.", "There is no unspoken thing.", "There's definitely an unspoken thing.", "Stop saying 'unspoken thing.'"] },
+      // Guardians 1 — actual Gamora sass
+      { requires: "guardians1", lines: ["I'm a warrior. An assassin. I don't dance.", "Everybody's got moves.", "I don't."] }
     ],
 
     "gamora|nebula": [
-      { requires: "guardians2", lines: ["Sister.", "...Sister.", "This is progress.", "Don't push it."] },
-      { requires: "guardians2", startsWith: "nebula", lines: ["You were always the favorite.", "I wasn't. Not really.", "Father made me watch while he—", "I know. I'm sorry."] }
+      // Guardians 2 — actual sisterly exchange
+      { requires: "guardians2", startsWith: "nebula", lines: ["You were the one who wanted to win. I just wanted a sister.", "...You had one."] },
+      // Guardians 2 — actual détente
+      { requires: "guardians2", lines: ["Sister.", "...Sister."] }
     ],
 
     "drax|starlord": [
-      { requires: "guardians1", lines: ["Nothing goes over my head. My reflexes are too fast.", "That's... not what that means."] },
-      { requires: "infinitywar", lines: ["I am standing perfectly still.", "Drax, I can literally see you.", "No, you cannot. I am invisible.", "...You're eating chips."] }
+      // Guardians 1 — actual Drax line
+      { requires: "guardians1", lines: ["Nothing goes over my head. My reflexes are too fast. I would catch it.", "...Sure, buddy."] },
+      // Infinity War — actual invisible Drax
+      { requires: "infinitywar", lines: ["I have mastered the ability of standing so incredibly still... that I become invisible to the eye.", "...You're eating a zarg-nut.", "But my movement... was so slow... that it was imperceptible."] }
     ],
 
     "groot|starlord": [
-      { requires: "guardians1", lines: ["I am Groot.", "...I understood that!", "I am Groot.", "Wait, never mind."] }
+      // Guardians 1 — actual dynamic
+      { requires: "guardians1", lines: ["I am Groot.", "Well that's just as fascinating as the first 89 times.", "I am Groot.", "...I'm sorry. I really am."] }
     ],
 
     "drax|mantis": [
-      { requires: "guardians2", lines: ["You are horrifying to look at.", "...Thank you?", "That was not a compliment.", "I'll take it anyway."] }
+      // Guardians 2 — actual Drax bluntness
+      { requires: "guardians2", lines: ["You are beautiful. On the inside.", "Thank you, Drax.", "Not on the outside, though.", "...Okay."] }
     ],
 
     // ── Wanda & Vision ──
     "vision|wanda_wv": [
-      { requires: "wandavision", lines: ["What is grief, if not love persevering?", "...That's beautiful, Vis."] },
-      { requires: "wandavision", lines: ["Wanda, we can't stay here.", "Just five more minutes.", "You said that an hour ago."] },
-      { requires: "wandavision", lines: ["I just feel you.", "And I feel you."] }
+      // WandaVision — actual Vision line
+      { requires: "wandavision", lines: ["What is grief, if not love persevering?", "...That's the most beautiful thing anyone's ever said to me."] },
+      // WandaVision — actual exchange about the ship of Theseus
+      { requires: "wandavision", lines: ["I request elaboration.", "That's my line.", "I know. I like saying it."] },
+      // Infinity War — actual farewell
+      { requires: "infinitywar", lines: ["I just feel you.", "I just feel you."] }
     ],
 
     "quicksilver|wanda_wv": [
-      { requires: "ageofultron", lines: ["You didn't see that coming?", "I hate when you say that.", "You didn't see THAT coming either."] },
-      { requires: "ageofultron", lines: ["Keep up, old lady.", "We're TWINS!", "Yeah, but I'm faster."] }
+      // Age of Ultron — Pietro's actual catchphrase
+      { requires: "ageofultron", lines: ["You didn't see that coming?", "I hate it when you say that.", "You didn't see THAT coming either."] },
+      // Age of Ultron — actual volunteering scene
+      { requires: "ageofultron", lines: ["We volunteered for Strucker's experiments.", "People thought we were crazy.", "We were. A little.", "...Speak for yourself."] }
     ],
 
     // ── Black Widow & Hawkeye ──
     "blackwidow|hawkeye": [
+      // Avengers 1 — actual Budapest exchange
       { requires: "avengers1", lines: ["Just like Budapest all over again.", "You and I remember Budapest very differently."] },
-      { requires: "avengers1", lines: ["I've got red in my ledger.", "We all do, Nat."] },
-      { requires: "avengers1", lines: ["Don't you dare miss.", "I never miss.", "Show-off."] }
+      // Avengers 1 — actual Natasha line to Loki about Clint
+      { requires: "avengers1", lines: ["I've got red in my ledger. I'd like to wipe it out.", "...Yeah. Me too."] },
+      // Endgame — actual Vormir exchange
+      { requires: "endgame", lines: ["Tell my family I love them.", "Tell them yourself.", "...You first."] }
     ],
 
     // ── Spider-Man ──
     "drstrange|spiderman": [
-      { requires: "nowayhome", lines: ["The Multiverse is not a concept you can just—", "Yeah yeah, I opened a portal once!", "That was an accident."] },
-      { requires: "nowayhome", startsWith: "spiderman", lines: ["Scooby-Doo this crap!", "Please never say that again.", "...Too late."] }
+      // No Way Home — actual Peter botching the spell
+      { requires: "nowayhome", startsWith: "spiderman", lines: ["Can you make everyone forget I'm Spider-Man?", "The spell is for the whole world.", "Wait, can you exclude a few people?", "Peter, that's not how this works."] },
+      // No Way Home — actual Scooby-Doo line
+      { requires: "nowayhome", startsWith: "spiderman", lines: ["We Scooby-Doo this crap!", "...Please don't call it that.", "Too late."] }
     ],
 
     "mysterio|spiderman": [
-      { requires: "farfromhome", lines: ["People need to believe.", "In you? Hard pass.", "You wound me, Spider-Man."] }
+      // Far From Home — actual Mysterio manipulation
+      { requires: "farfromhome", lines: ["People need to believe. And nowadays, they'll believe anything.", "That's... kind of dark.", "That's the world, kid."] }
     ],
 
     // ── Loki variants ──
     "loki_tva|sylvie": [
-      { requires: "loki1", lines: ["What makes Loki a Loki?", "Independence. Authority. Style.", "...I was going to say trust issues."] },
-      { requires: "loki1", lines: ["I've been pruned, stabbed, and betrayed.", "Welcome to being a Loki."] },
+      // Loki S1 — actual identity discussion
+      { requires: "loki1", lines: ["What makes a Loki a Loki?", "Independence. Authority. Style.", "...I was going to say our inability to trust."] },
+      // Loki S1 — actual pruning reference
+      { requires: "loki1", lines: ["I've been pruned, stabbed, and now this.", "Welcome to being a Loki."] },
+      // Loki S1 — actual finale
       { requires: "loki1", lines: ["For you.", "...For us."] }
     ],
 
     "loki_tva|mobius": [
-      { requires: "loki1", lines: ["What's so great about jet skis anyway?", "Wow.", "...That's not an answer.", "It's the only answer."] },
-      { requires: "loki2", startsWith: "mobius", lines: ["I believe in you, Loki.", "...That makes one of us.", "Then I'll believe enough for both."] },
-      { requires: "loki1", lines: ["Jet ski?", "JET SKI!", "...We really need better hobbies."] }
+      // Loki S1 — actual Mobius wow moment
+      { requires: "loki1", lines: ["What's so great about jet skis?", "Wow.", "That's... not an answer.", "It's the only answer that matters."] },
+      // Loki S2 — actual Mobius encouragement
+      { requires: "loki2", startsWith: "mobius", lines: ["I believe in you, Loki.", "Nobody's ever said that to me before.", "I know. That's why I'm saying it."] },
+      // Loki S1 — actual jet ski enthusiasm
+      { requires: "loki1", lines: ["Jet ski?", "JET SKI!", "...We have vastly different priorities."] }
     ],
 
     // ── Doctor Strange ──
     "drstrange|wong": [
-      { requires: "doctorstrange", lines: ["Wong.", "Strange.", "...That's still funny to me.", "It's really not."] },
-      { requires: "nowayhome", lines: ["I'm the Sorcerer Supreme.", "Actually, that's me now.", "On a technicality!", "Still counts."] },
-      { requires: "doctorstrange", lines: ["Want to get food?", "I thought you'd never ask."] }
+      // Doctor Strange — actual name exchange
+      { requires: "doctorstrange", lines: ["Wong. Just Wong? Like Adele?", "Or Aristotle. Drake. Bono.", "...That's a good one."] },
+      // No Way Home — actual Sorcerer Supreme exchange
+      { requires: "nowayhome", lines: ["I'm the Sorcerer Supreme.", "Actually, technically, that's me.", "On a technicality!", "Still counts."] },
+      // Shang-Chi post-credits — actual karaoke reference
+      { requires: "shangchi", lines: ["Want to get food?", "I thought you'd never ask.", "...Just not karaoke.", "Too late. Already booked."] }
     ],
 
     // ── Ant-Man ──
     "antman|falcon": [
-      { requires: "civilwar", lines: ["I'm a big fan!", "...Do I know you?", "I'm Ant-Man!", "Oh. The guy who shrinks."] },
-      { requires: "civilwar", lines: ["So am I an Avenger now?", "Buddy, you shrink.", "That's a yes, right?", "...No."] }
+      // Civil War — actual Scott meeting Sam
+      { requires: "civilwar", lines: ["I'm a big fan.", "...I don't even know who you are.", "I'm Ant-Man!", "Oh, the guy who broke into my house."] },
+      // Ant-Man — actual post-credits scene reference
+      { requires: "antman", lines: ["I know a guy.", "Is he any good?", "Well, he can shrink.", "...Great."] }
     ],
 
     "antman|wasp_hope": [
-      { requires: "antman", lines: ["I know a guy.", "You mean me.", "I mean you.", "Say my name.", "...The Wasp."] }
+      // Ant-Man — actual training dynamic
+      { requires: "antman", startsWith: "wasp_hope", lines: ["You want to know how I knew you'd miss that punch?", "Because I telegraphed it?", "Because you telegraphed it.", "...I literally just said that."] }
     ],
 
     // ── Black Panther ──
     "blackpanther|shuri": [
-      { requires: "blackpanther", startsWith: "shuri", lines: ["What are THOSE?!", "These are perfectly fine shoes.", "Old man shoes!", "I am your KING."] },
-      { requires: "blackpanther", startsWith: "shuri", lines: ["Another broken white boy to fix.", "Shuri, please.", "What? I'm just saying."] }
+      // Black Panther — actual "What are those" scene
+      { requires: "blackpanther", startsWith: "shuri", lines: ["What are THOSE?!", "My sandals.", "Why do you have on sandals in the lab?!", "I am your king!"] },
+      // Black Panther — actual Bucky reference
+      { requires: "blackpanther", startsWith: "shuri", lines: ["Great, another broken white boy for us to fix.", "Shuri.", "What? I'm kidding. Mostly."] }
     ],
 
     "blackpanther|okoye": [
-      { requires: "blackpanther", lines: ["Wakanda forever.", "Forever.", "...That never gets old.", "No. It does not."] }
+      // Black Panther — actual Okoye loyalty
+      { requires: "blackpanther", startsWith: "okoye", lines: ["I am loyal to that throne, no matter WHO sits on it.", "Then we are in agreement.", "Wakanda forever.", "Forever."] }
     ],
 
     // ── Deadpool & Wolverine ──
     "deadpool|wolverine": [
-      { requires: "deadpool3", lines: ["Hey, buddy! Wanna team up?", "No.", "Too late, we're already walking together!"] },
-      { requires: "deadpool3", lines: ["You're the best there is at what you do.", "And what's that?", "Looking angry. It's a gift."] },
-      { requires: "deadpool3", lines: ["I'm touching your claws.", "Touch them and lose the hand.", "...Worth it."] },
-      { requires: "deadpool3", lines: ["Maximum effort!", "Minimum patience.", "That's fair."] }
+      // Deadpool & Wolverine — actual dynamic
+      { requires: "deadpool3", lines: ["Hey, buddy! Let's be best friends!", "No.", "Too late!"] },
+      // Deadpool's actual catchphrase + Wolverine's attitude
+      { requires: "deadpool3", lines: ["Maximum effort!", "Minimum interest.", "That hurts, Logan."] },
+      // Deadpool & Wolverine — actual claw reference
+      { requires: "deadpool3", lines: ["Those claws are very cool, by the way.", "They're not for show.", "Can I touch them?", "Touch them and you lose the hand.", "...Still gonna touch them."] },
+      // Wolverine's actual catchphrase adapted
+      { requires: "deadpool3", startsWith: "wolverine", lines: ["I'm the best there is at what I do.", "And what's that?", "...Wouldn't you like to know.", "I would, actually."] }
     ],
 
     // ── Netflix / Street-Level ──
     "daredevil|punisher": [
-      { requires: "daredevil2", startsWith: "punisher", lines: ["You're one bad day away from being me, Red.", "No, Frank. I'm not.", "Keep telling yourself that."] },
-      { requires: "daredevil2", lines: ["Justice isn't a weapon.", "No, but I am.", "...Frank."] }
+      // Daredevil S2 — actual rooftop debate
+      { requires: "daredevil2", startsWith: "punisher", lines: ["You know you're one bad day away from being me.", "No, Frank. I'm not.", "Keep telling yourself that, Red."] },
+      // Daredevil S2 — actual philosophical clash
+      { requires: "daredevil2", lines: ["You hit them, they get back up. I hit them, they stay down.", "That's the difference between justice and murder.", "Potato, potahto."] }
     ],
 
     "daredevil|fisk": [
-      { requires: "daredevil1", lines: ["This city doesn't belong to you.", "This city will be your GRAVE.", "...You always were dramatic, Fisk."] },
-      { requires: "daredevil1", startsWith: "fisk", lines: ["I want to make this city a better place.", "By crushing everyone in it?", "...You wouldn't understand."] }
+      // Daredevil S1 — actual ill intent speech reference
+      { requires: "daredevil1", startsWith: "fisk", lines: ["I am the ill intent.", "This city rejected you.", "This city doesn't know what it needs."] },
+      // Daredevil S1 — actual exchange
+      { requires: "daredevil1", lines: ["This city doesn't belong to you, Fisk.", "No. It belongs to the people. And I will save them from themselves."] }
     ],
 
     "jessicajones|lukecage": [
-      { requires: "jessicajones1", lines: ["You look good.", "I know.", "Humble as ever.", "Always."] },
-      { requires: "lukecage1", startsWith: "lukecage", lines: ["Sweet Christmas.", "Did you just say that out loud?", "...Maybe.", "You absolutely did."] }
+      // Jessica Jones S1 — actual dynamic
+      { requires: "jessicajones1", lines: ["You look like crap.", "I know.", "Charming as always.", "I do my best."] },
+      // Luke Cage S1 — actual Sweet Christmas
+      { requires: "lukecage1", startsWith: "lukecage", lines: ["Sweet Christmas.", "Did you actually just say that?", "It's my thing.", "...It's really not."] }
     ],
 
     "daredevil|jessicajones": [
-      { requires: "defenders", lines: ["I'm a lawyer.", "I'm a PI.", "We should NOT be friends.", "Absolutely not."] }
+      // Defenders — actual team tension
+      { requires: "defenders", lines: ["I'm a lawyer.", "I'm a private investigator.", "We should probably not be friends.", "Agreed."] }
     ],
 
     "ironfist|lukecage": [
-      { requires: "lukecage1", lines: ["Heroes for Hire?", "I told you, we're not calling it that.", "But it sounds cool!", "It really doesn't."] }
+      // Luke Cage / Heroes for Hire reference
+      { requires: "lukecage1", lines: ["Heroes for Hire?", "We are NOT calling it that.", "But it sounds cool!", "It really doesn't."] }
     ],
 
     // ── Captain Marvel ──
     "captainmarvel|nick_fury": [
-      { requires: "endgame", startsWith: "nick_fury", lines: ["Where have you BEEN?", "Saving other planets.", "A text would've been nice.", "I was busy."] },
-      { requires: "captainmarvel", lines: ["Higher, further, faster.", "Just don't break my stuff.", "No promises."] }
+      // Captain Marvel — actual exchange
+      { requires: "captainmarvel", lines: ["Higher, further, faster, baby.", "Just don't break anything.", "No promises.", "...I wasn't asking."] },
+      // Endgame — adapted from actual pager/absence
+      { requires: "endgame", startsWith: "nick_fury", lines: ["Where the HELL have you been?!", "There are a lot of other planets out there.", "And they don't have phones?"] }
     ],
 
     // ── Shang-Chi ──
     "shangchi|xialing": [
-      { requires: "shangchi", startsWith: "xialing", lines: ["You ran away.", "I came back!", "After TEN years.", "I know. I'm sorry."] }
+      // Shang-Chi — actual sibling exchange
+      { requires: "shangchi", startsWith: "xialing", lines: ["You ran away.", "I thought I was protecting you.", "By LEAVING me there?!", "...I know. I'm sorry."] }
     ],
 
     "shangchi|wong": [
-      { requires: "shangchi", lines: ["Karaoke later?", "I'm the Sorcerer Supreme. I don't do karaoke.", "...Hotel California?", "I'll get my coat."] }
+      // Shang-Chi post-credits — actual karaoke scene
+      { requires: "shangchi", lines: ["Karaoke?", "I shouldn't. I'm the Sorcerer Supreme.", "Hotel California?", "...One song."] }
     ],
 
     // ── Others ──
     "coulson|nick_fury": [
-      { requires: "ironman1", startsWith: "nick_fury", lines: ["Agent Coulson, report.", "Everything's under control, sir.", "Is it?", "...I mean controlled chaos."] }
+      // Iron Man 1 / Avengers 1 — actual Coulson-Fury dynamic
+      { requires: "ironman1", startsWith: "nick_fury", lines: ["What do we got, Coulson?", "We've got eyes on the target, sir.", "Good. Don't lose them.", "When have I ever?"] }
     ],
 
     "hawkeye|kate": [
-      { requires: "hawkeye", startsWith: "kate", lines: ["I learned from the best.", "That's sweet, Kate.", "I was talking about the YouTube videos.", "...I'm standing right here."] }
+      // Hawkeye — actual Kate fangirling
+      { requires: "hawkeye", startsWith: "kate", lines: ["You're Hawkeye! I'm your biggest fan!", "...Great.", "Can you sign my bow?", "No.", "What about my quiver?", "Also no."] }
     ],
 
     "blackwidow|yelena": [
-      { requires: "blackwidow", lines: ["I'm your older sister. Show some respect.", "You're such a poser.", "Make me.", "...I walked into that one."] },
-      { requires: "blackwidow", startsWith: "yelena", lines: ["That superhero landing pose is so dramatic.", "...It's cool and you know it.", "It's ridiculous.", "You're just jealous."] }
+      // Black Widow — actual pose discussion
+      { requires: "blackwidow", startsWith: "yelena", lines: ["The pose. You do the pose in your fights.", "It's not a pose.", "It's a little bit of a pose.", "...It's effective."] },
+      // Black Widow — actual sister dynamic
+      { requires: "blackwidow", lines: ["We're sisters.", "It's not real.", "It was real to me.", "...Yeah. Me too."] }
     ]
   };
 

@@ -22,7 +22,7 @@ const Walkers = (() => {
   const ENCOUNTER_COOLDOWN = 30000;
   const LINE_DURATION = isMobile ? 2000 : 2500;
 
-  let activeWalkers = [];              // { id, charId, charImg, charName, el, currentNode, targetNode, vx, vy, _cx, _cy, currentEdge, paused, pauseEnd, inEncounter, _spawned }
+  let activeWalkers = [];              // { id, charId, vx, vy, _cx, _cy, location: 'node'|'road', currentNode, currentEdge, paused, inEncounter, _spawned }
   let animFrameId = null;
   let lastTime = 0;
   let encounterCooldowns = new Map();  // "id1|id2" -> timestamp
@@ -32,6 +32,8 @@ const Walkers = (() => {
   let encounterTimers = [];            // setTimeout IDs for active dialogue, cleared on destroy
   let deployTime = 0;                  // timestamp of last deploy, used for grace period
   const DEPLOY_GRACE = 5000;           // ms — no encounters right after deploy
+  let cachedRoads = null;              // cached road segments
+  let cachedRects = null;              // cached node rects
   let overrideSelections = null;       // when set, deploy uses these instead of localStorage
 
   /* ---- persistence ---- */
@@ -252,12 +254,13 @@ const Walkers = (() => {
 
     // Helper to release walkers and skip to next
     function releaseAndSkip() {
-      w1.vx = 0; w1.vy = 0;
-      w2.vx = 0; w2.vy = 0;
-      w1.paused = true;
-      w1.pauseEnd = performance.now() + randBetween(200, 500);
-      w2.paused = true;
-      w2.pauseEnd = performance.now() + randBetween(200, 500);
+      [w1, w2].forEach(w => {
+        w.location = 'node';
+        w.currentEdge = null;
+        w.paused = true;
+        w.pauseEnd = performance.now() + randBetween(200, 500);
+        giveRandomVelocity(w);
+      });
       runNextEncounter();
     }
 
@@ -314,11 +317,10 @@ const Walkers = (() => {
     encounterTimers.push(setTimeout(() => {
       clearBubblesFor(w1.charId, w2.charId);
 
-      // Release walkers at current position, find nearest node
+      // Release walkers — find nearest node and bounce inside it
       [w1, w2].forEach(w => {
-        w.vx = 0;
-        w.vy = 0;
         w.currentEdge = null;
+        w.location = 'node';
 
         // Find nearest node
         if (w._cx != null) {
@@ -331,10 +333,18 @@ const Walkers = (() => {
             if (d < bestDist) { bestDist = d; bestNode = p.id; }
           });
           w.currentNode = bestNode;
+
+          // Snap into the nearest node rect so they're inside
+          const rect = cachedRects?.get(bestNode);
+          if (rect) {
+            w._cx = Math.max(rect.left + WALKER_R, Math.min(w._cx, rect.right - WALKER_R));
+            w._cy = Math.max(rect.top + WALKER_R, Math.min(w._cy, rect.bottom - WALKER_R));
+          }
         }
         w.inEncounter = false;
         w.paused = true;
         w.pauseEnd = performance.now() + randBetween(300, 800);
+        giveRandomVelocity(w);  // keep bouncing inside node
         applyWalkerPosition(w);
       });
 
@@ -424,187 +434,221 @@ const Walkers = (() => {
     return segments;
   }
 
-  // Build node bounding rectangles
-  function buildNodeRects() {
-    const rects = [];
+  // Build node bounding rectangles with road openings
+  function buildNodeRects(graph, roadSegments) {
+    const rects = new Map();
     const containerRect = renderer.mapContainer.getBoundingClientRect();
     getVisibleNodes().forEach(p => {
       const el = renderer.nodeElements.get(p.id);
       if (!el) return;
       const r = el.getBoundingClientRect();
-      rects.push({
+      const rect = {
         id: p.id,
         left: r.left - containerRect.left,
         top: r.top - containerRect.top,
         right: r.right - containerRect.left,
-        bottom: r.bottom - containerRect.top
+        bottom: r.bottom - containerRect.top,
+        cx: r.left + r.width / 2 - containerRect.left,
+        cy: r.top + r.height / 2 - containerRect.top,
+        openings: []  // road openings where walkers can pass through
+      };
+
+      // Find all roads connected to this node and compute openings
+      // Opening point is ON the node edge (not the road endpoint which is outside)
+      const neighbors = graph.get(p.id) || [];
+      neighbors.forEach(nId => {
+        const key = [p.id, nId].sort().join('|');
+        const road = roadSegments.get(key);
+        if (!road) return;
+        const isFrom = (road.fromId === p.id);
+        const ux = isFrom ? road.ux : -road.ux;
+        const uy = isFrom ? road.uy : -road.uy;
+        // Compute where the road direction intersects the node edge
+        const halfW = (rect.right - rect.left) / 2;
+        const halfH = (rect.bottom - rect.top) / 2;
+        const absUx = Math.abs(ux);
+        const absUy = Math.abs(uy);
+        const edgeDist = halfW * absUx + halfH * absUy;
+        rect.openings.push({
+          x: rect.cx + ux * edgeDist,
+          y: rect.cy + uy * edgeDist,
+          ux, uy,
+          edgeKey: key,
+          targetId: nId
+        });
       });
+
+      rects.set(p.id, rect);
     });
     return rects;
   }
 
-  // Bounce walker off a rectangle (circle vs AABB)
-  function bounceOffRect(w, rect) {
-    const closestX = Math.max(rect.left, Math.min(w._cx, rect.right));
-    const closestY = Math.max(rect.top, Math.min(w._cy, rect.bottom));
-    const dx = w._cx - closestX;
-    const dy = w._cy - closestY;
-    const dist = Math.hypot(dx, dy);
+  // Bounce walker off node walls from INSIDE, with openings for roads
+  function bounceInsideNode(w, rect) {
+    if (!rect) return;
+    const pad = WALKER_R;
+    let bounced = false;
 
-    if (dist < WALKER_R && dist > 0.01) {
-      const nx = dx / dist;
-      const ny = dy / dist;
-      // Push out
-      w._cx = closestX + nx * WALKER_R;
-      w._cy = closestY + ny * WALKER_R;
-      // Reflect velocity
-      const vDotN = w.vx * nx + w.vy * ny;
-      if (vDotN < 0) {
-        w.vx -= 2 * vDotN * nx * BOUNCE;
-        w.vy -= 2 * vDotN * ny * BOUNCE;
+    // Check if walker is near an opening — if so, let it pass through
+    for (const op of rect.openings) {
+      const distToOpening = Math.hypot(w._cx - op.x, w._cy - op.y);
+      if (distToOpening < ROAD_HALF_W + WALKER_R) {
+        // Walker is near a road opening — check if moving outward
+        const movingOut = w.vx * op.ux + w.vy * op.uy;
+        if (movingOut > 0) {
+          // Transition to road
+          w.location = 'road';
+          w.currentEdge = op.edgeKey;
+          w.previousNode = w.currentNode;
+          w.targetNode = op.targetId;
+          return;
+        }
       }
+    }
+
+    // Bounce off left wall
+    if (w._cx - pad < rect.left) {
+      w._cx = rect.left + pad;
+      if (w.vx < 0) w.vx = -w.vx * BOUNCE;
+      bounced = true;
+    }
+    // Bounce off right wall
+    if (w._cx + pad > rect.right) {
+      w._cx = rect.right - pad;
+      if (w.vx > 0) w.vx = -w.vx * BOUNCE;
+      bounced = true;
+    }
+    // Bounce off top wall
+    if (w._cy - pad < rect.top) {
+      w._cy = rect.top + pad;
+      if (w.vy < 0) w.vy = -w.vy * BOUNCE;
+      bounced = true;
+    }
+    // Bounce off bottom wall
+    if (w._cy + pad > rect.bottom) {
+      w._cy = rect.bottom - pad;
+      if (w.vy > 0) w.vy = -w.vy * BOUNCE;
+      bounced = true;
     }
   }
 
-  // Launch walker from a node onto a road with velocity
-  function launchWalker(w, graph, roadSegments) {
-    const target = pickNextTarget(w, graph);
-    if (target === w.currentNode) return;
-
-    const edgeKey = [w.currentNode, target].sort().join('|');
-    const road = roadSegments.get(edgeKey);
-    if (!road) return;
-
-    const isFrom = (road.fromId === w.currentNode);
-    const dirX = isFrom ? road.ux : -road.ux;
-    const dirY = isFrom ? road.uy : -road.uy;
-
-    // Position at the road opening (not node center) so we're outside the node rect
-    const startX = isFrom ? road.x1 : road.x2;
-    const startY = isFrom ? road.y1 : road.y2;
-    w._cx = startX;
-    w._cy = startY;
-
-    // Small random perpendicular drift for variety
-    const drift = (Math.random() - 0.5) * 0.3;
-    w.vx = (dirX + road.px * drift) * SPEED;
-    w.vy = (dirY + road.py * drift) * SPEED;
-
-    w.previousNode = w.currentNode;
-    w.targetNode = target;
-    w.currentEdge = edgeKey;
-    w.paused = false;
+  // Give walker a random velocity inside a node (for bouncing around)
+  function giveRandomVelocity(w) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd = SPEED * 0.8;
+    w.vx = Math.cos(angle) * spd;
+    w.vy = Math.sin(angle) * spd;
   }
 
   /* ---- animation loop ---- */
 
   function tick(now) {
     if (!lastTime) lastTime = now;
-    const dt = Math.min(now - lastTime, 50);  // cap dt to prevent huge jumps
+    const dt = Math.min(now - lastTime, 50);
     lastTime = now;
 
     const graph = buildGraph();
-    // Cache geometry — rebuild every 2 seconds, not every frame
+    // Cache geometry — rebuild every 2 seconds
     if (!tick._geoTime || now - tick._geoTime > 2000) {
-      tick._roads = buildRoadSegments(graph);
-      tick._rects = buildNodeRects();
+      cachedRoads = buildRoadSegments(graph);
+      cachedRects = buildNodeRects(graph, cachedRoads);
       tick._geoTime = now;
     }
-    const roadSegments = tick._roads;
-    const nodeRects = tick._rects;
+    const roadSegments = cachedRoads;
+    const nodeRects = cachedRects;
     const dtSec = dt / 1000;
 
     // Pass 1: move walkers
     activeWalkers.forEach(w => {
-      // Hidden walkers waiting to spawn
       if (!w._spawned) {
         if (now >= w.pauseEnd) {
           w._spawned = true;
           w.el.style.display = '';
-          w.pauseEnd = now + randBetween(100, 500);
+          // Start bouncing inside node immediately
+          w.location = 'node';
+          giveRandomVelocity(w);
         }
         return;
       }
 
       if (w.inEncounter) return;
 
-      if (w.paused) {
-        if (now >= w.pauseEnd) {
-          launchWalker(w, graph, roadSegments);
-        }
-        return;
-      }
-
-      // Velocity integration
+      // Velocity integration (always, even in nodes)
       w._cx += w.vx * dtSec;
       w._cy += w.vy * dtSec;
 
-      // Road edge bounce — keep within road corridor
-      const road = roadSegments.get(w.currentEdge);
-      if (road) {
-        // Perpendicular distance from road centerline
-        const relX = w._cx - road.x1;
-        const relY = w._cy - road.y1;
-        const perpDist = relX * road.px + relY * road.py;
-        const maxPerp = road.halfW - WALKER_R;
+      if (w.location === 'node') {
+        // Bouncing inside a node
+        const rect = nodeRects.get(w.currentNode);
+        bounceInsideNode(w, rect);
 
-        if (Math.abs(perpDist) > maxPerp) {
-          const sign = perpDist > 0 ? 1 : -1;
-          w._cx -= road.px * (perpDist - sign * maxPerp);
-          w._cy -= road.py * (perpDist - sign * maxPerp);
-          // Reflect perpendicular velocity component
-          const vPerp = w.vx * road.px + w.vy * road.py;
-          w.vx -= 2 * vPerp * road.px * BOUNCE;
-          w.vy -= 2 * vPerp * road.py * BOUNCE;
+        // If bounceInsideNode transitioned us to a road, we're done
+        if (w.location === 'road') return;
+
+        // After pause expires, aim toward a road opening to leave
+        if (w.paused && now >= w.pauseEnd) {
+          w.paused = false;
+          // Aim toward a random road opening
+          if (rect && rect.openings.length > 0) {
+            const op = pickRandom(rect.openings);
+            const dx = op.x - w._cx;
+            const dy = op.y - w._cy;
+            const len = Math.hypot(dx, dy) || 1;
+            w.vx = (dx / len) * SPEED;
+            w.vy = (dy / len) * SPEED;
+          } else {
+            giveRandomVelocity(w);
+          }
         }
 
-        // Check if walker reached the end of the road
-        const alongDist = relX * road.ux + relY * road.uy;
-        if (alongDist >= road.length || alongDist <= 0) {
-          // Arrived at target node
-          // Use actual exit direction, not original travel direction
-          w.currentNode = alongDist >= road.length ? road.toId : road.fromId;
+      } else if (w.location === 'road') {
+        // On a road — bounce off corridor edges
+        const road = roadSegments.get(w.currentEdge);
+        if (road) {
+          const relX = w._cx - road.x1;
+          const relY = w._cy - road.y1;
+          const perpDist = relX * road.px + relY * road.py;
+          const maxPerp = road.halfW - WALKER_R;
 
-          // Check if node is occupied
-          const nodeOccupied = activeWalkers.some(other =>
-            other !== w && other._spawned && other.paused &&
-            !other.inEncounter && other.currentNode === w.currentNode
-          );
+          if (Math.abs(perpDist) > maxPerp) {
+            const sign = perpDist > 0 ? 1 : -1;
+            w._cx -= road.px * (perpDist - sign * maxPerp);
+            w._cy -= road.py * (perpDist - sign * maxPerp);
+            const vPerp = w.vx * road.px + w.vy * road.py;
+            w.vx -= 2 * vPerp * road.px * BOUNCE;
+            w.vy -= 2 * vPerp * road.py * BOUNCE;
+          }
 
-          if (nodeOccupied) {
-            // Keep moving — pick new road
-            launchWalker(w, graph, roadSegments);
-          } else {
-            w.vx = 0;
-            w.vy = 0;
+          // Check if walker reached the end of the road → enter node
+          const alongDist = relX * road.ux + relY * road.uy;
+          if (alongDist >= road.length || alongDist <= 0) {
+            w.currentNode = alongDist >= road.length ? road.toId : road.fromId;
+            w.location = 'node';
+            w.currentEdge = null;
+            // Keep velocity — walker enters node with momentum and bounces inside
             w.paused = true;
             w.pauseEnd = now + randBetween(PAUSE_MIN, PAUSE_MAX);
-            // Snap to node center
-            const nc = getNodeCenter(w.currentNode);
-            if (nc) { w._cx = nc.x; w._cy = nc.y; }
           }
         }
       }
 
-      // Bounce off node rectangles — skip nodes on the walker's current road
-      const curRoad = roadSegments.get(w.currentEdge);
-      for (const rect of nodeRects) {
-        if (curRoad && (rect.id === curRoad.fromId || rect.id === curRoad.toId)) continue;
-        bounceOffRect(w, rect);
-      }
-
-      // Damping + speed enforcement
-      w.vx *= DAMPING;
-      w.vy *= DAMPING;
+      // Speed enforcement — never too fast, never stalling
       const spd = Math.hypot(w.vx, w.vy);
       if (spd > SPEED * 1.5) {
-        // Cap max speed
         w.vx = (w.vx / spd) * SPEED;
         w.vy = (w.vy / spd) * SPEED;
-      } else if (spd < SPEED * 0.5 && spd > 0.01) {
-        // Boost back up — walkers never slow to a crawl
-        w.vx = (w.vx / spd) * SPEED;
-        w.vy = (w.vy / spd) * SPEED;
+      } else if (spd < SPEED * 0.6) {
+        // Boost to minimum speed — walkers should always move
+        const boost = SPEED * 0.7;
+        if (spd > 0.01) {
+          w.vx = (w.vx / spd) * boost;
+          w.vy = (w.vy / spd) * boost;
+        } else {
+          // Dead stop — give random direction
+          const angle = Math.random() * Math.PI * 2;
+          w.vx = Math.cos(angle) * boost;
+          w.vy = Math.sin(angle) * boost;
+        }
       }
     });
 
@@ -776,6 +820,7 @@ const Walkers = (() => {
         vx: 0, vy: 0,
         _cx: 0, _cy: 0,
         currentEdge: null,
+        location: 'node',          // 'node' or 'road'
         paused: true,
         pauseEnd: spawnAt,
         inEncounter: false,
