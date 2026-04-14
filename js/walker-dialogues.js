@@ -409,5 +409,79 @@ const WALKER_DIALOGUES = (() => {
     });
   }
 
-  return { getDialogue, getKey };
+  // ── Villain defeat lines (shown when villain HP reaches 0) ──
+  const villainDefeatLines = {
+    thanos_snap:    ["I am... inevitable. Or perhaps not.", "You could not live with your own failure."],
+    loki:           ["The sun will shine on us again...", "I assure you, brother... this isn't over."],
+    ultron:         ["There are... no strings... on me...", "You want to protect the world... but you don't want it to change."],
+    hela:           ["It was never about the throne...", "I'm not a queen or a monster. I'm the goddess of death."],
+    killmonger:     ["Bury me in the ocean...", "Is this your king?"],
+    redskull:       ["I have seen the future, Captain... and there are no flags.", "Cut off one head... two more shall take its place."],
+    abomnination:   ["Give me a REAL fight!", "I want more..."],
+    malekith:       ["The Aether cannot be destroyed...", "Darkness returns..."],
+    ronan:          ["You... cannot stop it. The judgment is upon you.", "I will unfurl one thousand years of Kree justice."],
+    dormammu:       ["You will... return...", "This is not the end."],
+    ego:            ["I wanted to experience... everything.", "Eternity... was within my grasp."],
+    killian:        ["You know who I am. You don't know where I am.", "I am the Mandarin!"],
+    fisk:           ["This city... will remember me.", "I will not be stopped by some man... in a mask."],
+    kilgrave:       ["I once told a man to go screw himself... he did.", "JESSICA!"],
+    mysterio:       ["People need to believe...", "You'll see. It's all... an illusion."],
+    kang:           ["You can't stop what's coming.", "See you soon."],
+    cottonmouth:    ["Everybody wants to be the king...", "Harlem is mine."],
+    kingpin:        ["This city needs me.", "When I was a boy..."],
+    cassandra:      ["You were never enough.", "Interesting..."],
+    wenwu:          ["I have lived a thousand years...", "The rings... were never yours."],
+    punisher:       ["One batch... two batch...", "I do what needs to be done."],
+    zemo:           ["An empire toppled by its enemies can rise again...", "But one which crumbles from within? That is dead. Forever."],
+    wintersolider:  ["I remember everything...", "Mission... failed."],
+    he_who_remains: ["See you soon.", "If you think I'm evil... just wait."],
+    gorr:           ["All gods must die...", "Let me tell you a story..."],
+    agatha:         ["It was Agatha all along!", "You don't know what you've unleashed."],
+    vulture:        ["I'll kill you dead.", "The world's changed, boys."],
+    _default:       ["This isn't over...", "I'll be back.", "You got lucky."]
+  };
+
+  function getDefeatLine(villainId) {
+    const lines = villainDefeatLines[villainId] || villainDefeatLines._default;
+    return lines[Math.floor(Math.random() * lines.length)];
+  }
+
+  // ── Villain victory lines (shown when all walkers faint) ──
+  const villainVictoryLines = {
+    thanos_snap:    ["I am inevitable.", "Dread it. Run from it. Destiny arrives all the same."],
+    loki:           ["Kneel.", "I am burdened with glorious purpose."],
+    ultron:         ["There are no strings on me.", "Upon this rock, I will build my church."],
+    hela:           ["I'm not a queen or a monster. I'm the goddess of death.", "Kneel before your queen."],
+    killmonger:     ["Is this your king?", "The world took everything away from me."],
+    redskull:       ["You could have the power of the gods!", "HAIL HYDRA."],
+    abomnination:   ["Is that all you've got?!", "GIVE ME A REAL FIGHT!"],
+    malekith:       ["The Aether is mine.", "Your universe was never meant to survive."],
+    ronan:          ["The judgment is upon you all.", "They call me terrorist. I am a freedom fighter."],
+    dormammu:       ["You've come to die.", "Your world is now my world."],
+    ego:            ["It doesn't need to be like this. We can do this together.", "I AM the universe."],
+    killian:        ["I am the Mandarin!", "A famous man once said, we create our own demons."],
+    fisk:           ["I am the ill intent.", "This city deserves a better class of criminal."],
+    kilgrave:       ["Now, SMILE.", "I once told a man to go screw himself. He did."],
+    mysterio:       ["People... they need to believe.", "The truth is... you're too late, Spider-Man."],
+    kang:           ["See you soon.", "You just made something far worse."],
+    cottonmouth:    ["Everybody wants to be the king.", "Harlem is MINE."],
+    kingpin:        ["When I was a boy...", "Take your shot."],
+    cassandra:      ["You never stood a chance.", "Fascinating."],
+    wenwu:          ["I have lived a thousand years. You are nothing.", "The rings are mine."],
+    punisher:       ["One batch, two batch. Penny and dime.", "I do what needs to be done."],
+    zemo:           ["An empire toppled by its enemies can rise again.", "Mission accomplished."],
+    wintersolider:  ["Mission complete.", "Hail Hydra."],
+    he_who_remains: ["See you soon.", "If you think I'm evil... just wait."],
+    gorr:           ["All gods must die.", "The gods don't care about you."],
+    agatha:         ["It was Agatha all along!", "You have no idea what you've unleashed."],
+    vulture:        ["I'm the bad guy? I'm saving YOU.", "The rich and the powerful... they don't care about us."],
+    _default:       ["Too easy.", "Is that all?", "Pathetic."]
+  };
+
+  function getVictoryLine(villainId) {
+    const lines = villainVictoryLines[villainId] || villainVictoryLines._default;
+    return lines[Math.floor(Math.random() * lines.length)];
+  }
+
+  return { getDialogue, getKey, getDefeatLine, getVictoryLine };
 })();

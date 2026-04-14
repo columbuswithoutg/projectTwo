@@ -22,7 +22,19 @@ const Walkers = (() => {
   const ENCOUNTER_COOLDOWN = 30000;
   const LINE_DURATION = isMobile ? 2000 : 2500;
 
-  let activeWalkers = [];              // { id, charId, vx, vy, _cx, _cy, location: 'node'|'road', currentNode, currentEdge, paused, inEncounter, _spawned }
+  // Fight constants
+  const WEAPON_RADIUS = isMobile ? 14 : 18;           // melee orbit distance
+  const WEAPON_SIZE = isMobile ? 10 : 14;              // weapon shape size
+  const WEAPON_BASE_SPEED = 3.5;                        // radians/sec base spin
+  const FIGHT_SPAWN_CHANCE = 0.15;                      // 15% chance per node entry
+  const VILLAIN_HP_MULT = 1.5;                          // villain HP multiplier
+  const HIT_COOLDOWN = 300;                             // ms between hits from same attacker
+  const DEFEAT_DISPLAY_MS = 2000;                       // villain defeat line duration
+  const PROJECTILE_SPEED = isMobile ? 80 : 120;        // px/s for ranged weapons
+  const PROJECTILE_COOLDOWN = 1400;                      // ms between shots (slower than melee)
+  const PROJECTILE_SIZE = isMobile ? 4 : 6;            // projectile radius
+
+  let activeWalkers = [];
   let animFrameId = null;
   let lastTime = 0;
   let encounterCooldowns = new Map();  // "id1|id2" -> timestamp
@@ -34,6 +46,9 @@ const Walkers = (() => {
   const DEPLOY_GRACE = 5000;           // ms — no encounters right after deploy
   let cachedRoads = null;              // cached road segments
   let cachedRects = null;              // cached node rects
+  let activeFights = new Map();        // nodeId -> { villain, participants: Set, started }
+  let faintedWalkers = new Set();      // walkers waiting to revive after fight
+  let activeProjectiles = [];          // { x, y, vx, vy, ownerId, dmg, el, isVillainProj }
   let overrideSelections = null;       // when set, deploy uses these instead of localStorage
 
   /* ---- persistence ---- */
@@ -490,18 +505,19 @@ const Walkers = (() => {
     let bounced = false;
 
     // Check if walker is near an opening — if so, let it pass through
-    for (const op of rect.openings) {
-      const distToOpening = Math.hypot(w._cx - op.x, w._cy - op.y);
-      if (distToOpening < ROAD_HALF_W + WALKER_R) {
-        // Walker is near a road opening — check if moving outward
-        const movingOut = w.vx * op.ux + w.vy * op.uy;
-        if (movingOut > 0) {
-          // Transition to road
-          w.location = 'road';
-          w.currentEdge = op.edgeKey;
-          w.previousNode = w.currentNode;
-          w.targetNode = op.targetId;
-          return;
+    // BUT NOT during a fight — openings are sealed
+    if (!w.inFight) {
+      for (const op of rect.openings) {
+        const distToOpening = Math.hypot(w._cx - op.x, w._cy - op.y);
+        if (distToOpening < ROAD_HALF_W + WALKER_R) {
+          const movingOut = w.vx * op.ux + w.vy * op.uy;
+          if (movingOut > 0) {
+            w.location = 'road';
+            w.currentEdge = op.edgeKey;
+            w.previousNode = w.currentNode;
+            w.targetNode = op.targetId;
+            return;
+          }
         }
       }
     }
@@ -535,9 +551,506 @@ const Walkers = (() => {
   // Give walker a random velocity inside a node (for bouncing around)
   function giveRandomVelocity(w) {
     const angle = Math.random() * Math.PI * 2;
-    const spd = SPEED * 0.8;
+    const spd = (w.inFight ? (w.moveSpeedMult || SPEED) : SPEED) * 0.8;
     w.vx = Math.cos(angle) * spd;
     w.vy = Math.sin(angle) * spd;
+  }
+
+  /* ---- fight system ---- */
+
+  function createWeaponElement(weaponType) {
+    const color = WEAPON_COLORS[weaponType] || WEAPON_COLORS._default;
+    const el = document.createElement('div');
+    el.className = 'walker-weapon';
+    el.style.color = color;
+
+    // Build weapon shape via inline SVG
+    const s = isMobile ? 10 : 14;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', s);
+    svg.setAttribute('height', s);
+    svg.setAttribute('viewBox', '0 0 14 14');
+    svg.style.display = 'block';
+    svg.style.overflow = 'visible';
+
+    const shape = WEAPON_SHAPES[weaponType] || WEAPON_SHAPES._default;
+    svg.innerHTML = shape.replace(/\{c\}/g, color);
+    el.appendChild(svg);
+
+    el.style.width = s + 'px';
+    el.style.height = s + 'px';
+    renderer.mapContainer.appendChild(el);
+    return el;
+  }
+
+  function createHpElement() {
+    const el = document.createElement('div');
+    el.className = 'walker-hp';
+    renderer.mapContainer.appendChild(el);
+    return el;
+  }
+
+  function initFightProps(w) {
+    const stats = WALKER_STATS[w.charId] || WALKER_STATS._default;
+    w.hp = stats.hp;
+    w.maxHp = stats.hp;
+    w.atkSpeedMult = stats.atkSpeed;
+    w.moveSpeedMult = stats.moveSpeed;
+    // Melee weapon (orbiting)
+    w.meleeWeapon = stats.melee ? stats.melee[0] : 'fist';
+    w.meleeDmg = stats.melee ? stats.melee[1] : 10;
+    // Ranged weapon (projectiles) — null means no ranged
+    w.rangeWeapon = stats.range ? stats.range[0] : null;
+    w.rangeDmg = stats.range ? stats.range[1] : 0;
+    // For display, use melee weapon as the orbiting shape
+    w.weaponType = w.meleeWeapon;
+    w.weaponAngle = Math.random() * Math.PI * 2;
+    w.weaponEl = null;
+    w.rangeWeaponEl = null;  // secondary weapon display for ranged
+    w.hpEl = null;
+    w.inFight = false;
+    w.fainted = false;
+    w.isVillain = false;
+    w.lastHitBy = new Map();
+    w._lastShot = 0;
+  }
+
+  function equipForFight(w) {
+    if (!w.weaponEl) {
+      w.weaponEl = createWeaponElement(w.weaponType);
+    }
+    if (!w.hpEl) {
+      w.hpEl = createHpElement();
+    }
+    w.inFight = true;
+  }
+
+  function unequipFight(w) {
+    w.weaponEl?.remove();
+    w.weaponEl = null;
+    w.hpEl?.remove();
+    w.hpEl = null;
+    w.inFight = false;
+  }
+
+  function centerOnNode(nodeId) {
+    const rect = cachedRects?.get(nodeId);
+    if (!rect || !renderer.container) return;
+    const wrapper = renderer.container;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const containerRect = renderer.mapContainer.getBoundingClientRect();
+    const scrollLeft = wrapper.scrollLeft + (containerRect.left - wrapperRect.left) + rect.cx - wrapperRect.width / 2;
+    const scrollTop = wrapper.scrollTop + (containerRect.top - wrapperRect.top) + rect.cy - wrapperRect.height / 2;
+    wrapper.scrollTo({ left: Math.max(0, scrollLeft), top: Math.max(0, scrollTop), behavior: 'smooth' });
+  }
+
+  function spawnVillain(nodeId) {
+    // Check if this node has villain data
+    const villainIds = VILLAIN_DATA[nodeId];
+    if (!villainIds || villainIds.length === 0) return;
+    if (activeFights.size > 0) return;  // only one fight at a time globally
+    if (Math.random() >= FIGHT_SPAWN_CHANCE) return;
+
+    // Pick random villain
+    const villainCharId = pickRandom(villainIds);
+    const villainChar = characters.find(c => c.id === villainCharId);
+    if (!villainChar) return;
+
+    const stats = WALKER_STATS[villainCharId] || WALKER_STATS._default;
+    const nodeRect = cachedRects?.get(nodeId);
+    if (!nodeRect) return;
+
+    // Create villain walker
+    const imgFile = typeof getCharImage === 'function' ? getCharImage(villainChar, state) : villainChar.image;
+    const img = `assets/characters/${imgFile}`;
+    const el = createWalkerElement(img);
+    el.classList.add('villain');
+    renderer.mapContainer.appendChild(el);
+
+    const w = {
+      id: `villain_${villainCharId}_${Date.now()}`,
+      charId: villainCharId,
+      charName: villainChar.name,
+      charImg: img,
+      el,
+      currentNode: nodeId,
+      targetNode: nodeId,
+      previousNode: null,
+      vx: 0, vy: 0,
+      _cx: nodeRect.cx, _cy: nodeRect.cy,
+      currentEdge: null,
+      location: 'node',
+      paused: false,
+      pauseEnd: 0,
+      inEncounter: false,
+      _spawned: true
+    };
+
+    initFightProps(w);
+    w.hp = Math.round(stats.hp * VILLAIN_HP_MULT);
+    w.maxHp = w.hp;
+    w.isVillain = true;
+    equipForFight(w);        // set inFight=true before velocity so moveSpeed is used
+    giveRandomVelocity(w);
+    applyWalkerPosition(w);
+
+    activeWalkers.push(w);
+
+    // Create fight
+    const fight = { villain: w, participants: new Set(), nodeId, started: performance.now() };
+    activeFights.set(nodeId, fight);
+
+    // Center screen on fight
+    centerOnNode(nodeId);
+
+    // Enroll all walkers in the node
+    joinFight(nodeId);
+  }
+
+  function joinFight(nodeId) {
+    const fight = activeFights.get(nodeId);
+    if (!fight) return;
+
+    activeWalkers.forEach(w => {
+      if (w === fight.villain) return;
+      if (w.isVillain) return;
+      if (w.fainted) return;
+      if (w.currentNode === nodeId && w.location === 'node' && w._spawned) {
+        if (!fight.participants.has(w)) {
+          fight.participants.add(w);
+          equipForFight(w);
+          // Reset HP for the fight
+          const stats = WALKER_STATS[w.charId] || WALKER_STATS._default;
+          w.hp = stats.hp;
+          w.maxHp = stats.hp;
+        }
+      }
+    });
+  }
+
+  function handleWalkerFaint(w) {
+    w.fainted = true;
+    w.vx = 0;
+    w.vy = 0;
+    w.el.classList.add('fainted');
+    unequipFight(w);
+    faintedWalkers.add(w);
+  }
+
+  function handleVillainDefeat(fight, nodeId) {
+    const villain = fight.villain;
+    villain.fainted = true;
+    villain.vx = 0;
+    villain.vy = 0;
+
+    // Show defeat line
+    const line = WALKER_DIALOGUES.getDefeatLine(villain.charId);
+    const bubble = createSpeechBubble(villain, line);
+    activeBubbles.push({ el: bubble, owner: villain.charId, walker: villain });
+
+    setTimeout(() => {
+      // Clean up villain
+      bubble.remove();
+      activeBubbles = activeBubbles.filter(b => b.walker !== villain);
+      unequipFight(villain);
+      villain.el?.remove();
+      const idx = activeWalkers.indexOf(villain);
+      if (idx !== -1) activeWalkers.splice(idx, 1);
+
+      // End fight
+      activeFights.delete(nodeId);
+      // Clear any remaining projectiles
+      activeProjectiles.forEach(p => p.el.remove());
+      activeProjectiles = [];
+
+      // Release participants
+      fight.participants.forEach(w => {
+        unequipFight(w);
+        if (!w.fainted) {
+          giveRandomVelocity(w);
+          w.paused = true;
+          w.pauseEnd = performance.now() + randBetween(300, 800);
+        }
+      });
+
+      // Start revive checks
+      checkFaintedRevives();
+    }, DEFEAT_DISPLAY_MS);
+  }
+
+  function handleVillainWins(fight, nodeId) {
+    const villain = fight.villain;
+    villain.vx = 0;
+    villain.vy = 0;
+
+    // Show victory line
+    const line = WALKER_DIALOGUES.getVictoryLine(villain.charId);
+    const bubble = createSpeechBubble(villain, line);
+    activeBubbles.push({ el: bubble, owner: villain.charId, walker: villain });
+
+    setTimeout(() => {
+      bubble.remove();
+      activeBubbles = activeBubbles.filter(b => b.walker !== villain);
+      unequipFight(villain);
+      villain.el?.remove();
+      const idx = activeWalkers.indexOf(villain);
+      if (idx !== -1) activeWalkers.splice(idx, 1);
+
+      activeFights.delete(nodeId);
+      // Clear any remaining projectiles
+      activeProjectiles.forEach(p => p.el.remove());
+      activeProjectiles = [];
+
+      // Revive fainted walkers after delay
+      setTimeout(() => checkFaintedRevives(), 1500);
+    }, DEFEAT_DISPLAY_MS);
+  }
+
+  function checkFaintedRevives() {
+    if (faintedWalkers.size === 0) return;
+
+    faintedWalkers.forEach(w => {
+      // Don't revive during an active fight at this node
+      if (activeFights.has(w.currentNode)) return;
+
+      // Check overlap with any active walker
+      const overlapping = activeWalkers.some(other =>
+        other !== w && !other.fainted && other._spawned &&
+        Math.hypot(other._cx - w._cx, other._cy - w._cy) < WALKER_SIZE
+      );
+
+      if (!overlapping) {
+        w.fainted = false;
+        w.inFight = false;
+        w.el.classList.remove('fainted');
+        const stats = WALKER_STATS[w.charId] || WALKER_STATS._default;
+        w.hp = stats.hp;
+        w.maxHp = stats.hp;
+        giveRandomVelocity(w);
+        faintedWalkers.delete(w);
+      }
+    });
+
+    if (faintedWalkers.size > 0) {
+      setTimeout(checkFaintedRevives, 500);
+    }
+  }
+
+  // Projectile SVG shapes per weapon type — smaller than melee weapons
+  const PROJECTILE_SHAPES = {
+    repulsor:   `<circle cx="5" cy="5" r="4" fill="{c}" opacity="0.8"/><circle cx="5" cy="5" r="2" fill="#fff" opacity="0.6"/>`,
+    blaster:    `<ellipse cx="5" cy="5" rx="4" ry="2.5" fill="{c}"/><circle cx="7" cy="5" r="1.5" fill="#fff" opacity="0.5"/>`,
+    arrow:      `<line x1="1" y1="5" x2="9" y2="5" stroke="{c}" stroke-width="1.5"/><polygon points="9,5 6,3 6,7" fill="{c}"/>`,
+    beam:       `<rect x="1" y="3" width="8" height="4" rx="2" fill="{c}" opacity="0.7"/><rect x="2" y="4" width="6" height="2" fill="#fff" opacity="0.4"/>`,
+    photon:     `<polygon points="5,0 6.5,3.5 10,3.5 7.5,5.5 8.5,10 5,7 1.5,10 2.5,5.5 0,3.5 3.5,3.5" fill="{c}" opacity="0.8"/>`,
+    shield:     `<circle cx="5" cy="5" r="4" fill="{c}" opacity="0.6"/><circle cx="5" cy="5" r="2.5" fill="none" stroke="#fff" stroke-width="1"/>`,
+    shotgun:    `<circle cx="3" cy="4" r="1.5" fill="{c}"/><circle cx="5" cy="6" r="1.5" fill="{c}"/><circle cx="7" cy="4" r="1.5" fill="{c}"/>`,
+    pistol:     `<circle cx="5" cy="5" r="2.5" fill="{c}"/><circle cx="5" cy="5" r="1" fill="#fff" opacity="0.5"/>`,
+    sting:      `<polygon points="5,0 7,5 5,10 3,5" fill="{c}"/><circle cx="5" cy="5" r="1.5" fill="#fff" opacity="0.4"/>`,
+    redwing:    `<polygon points="5,2 9,5 5,5 1,5" fill="{c}"/><polygon points="5,5 8,8 5,7 2,8" fill="{c}" opacity="0.6"/>`,
+    drone:      `<rect x="2" y="3.5" width="6" height="3" rx="1" fill="{c}"/><circle cx="5" cy="5" r="1" fill="#fff"/>`,
+    chi:        `<circle cx="5" cy="5" r="3" fill="{c}" opacity="0.5"/><polygon points="5,1.5 6.5,4 5,3.5 3.5,4" fill="{c}"/>`,
+    disc:       `<circle cx="5" cy="5" r="3.5" fill="{c}" opacity="0.6"/><circle cx="5" cy="5" r="2" fill="{c}"/>`,
+    web:        `<circle cx="5" cy="5" r="3" fill="none" stroke="{c}" stroke-width="0.8"/><line x1="5" y1="2" x2="5" y2="8" stroke="{c}" stroke-width="0.4"/><line x1="2" y1="5" x2="8" y2="5" stroke="{c}" stroke-width="0.4"/>`,
+    magic:      `<circle cx="5" cy="5" r="3.5" fill="none" stroke="{c}" stroke-width="1.2"/><circle cx="5" cy="5" r="1.5" fill="{c}" opacity="0.5"/>`,
+    hex:        `<polygon points="5,1 9,5 5,9 1,5" fill="{c}" opacity="0.7"/>`,
+    rings:      `<circle cx="5" cy="5" r="3.5" fill="none" stroke="{c}" stroke-width="1.2"/><circle cx="5" cy="5" r="1.5" fill="none" stroke="{c}" stroke-width="0.8"/>`,
+    psychic:    `<circle cx="5" cy="5" r="3" fill="{c}" opacity="0.4"/><line x1="2" y1="2" x2="8" y2="8" stroke="{c}" stroke-width="0.8"/><line x1="8" y1="2" x2="2" y2="8" stroke="{c}" stroke-width="0.8"/>`,
+    tesseract:  `<rect x="2" y="2" width="6" height="6" fill="{c}" opacity="0.6" transform="rotate(45,5,5)"/>`,
+    darkEnergy: `<circle cx="5" cy="5" r="3.5" fill="{c}" opacity="0.5"/><circle cx="5" cy="5" r="1.5" fill="#fff" opacity="0.3"/>`,
+    necrosword: `<polygon points="5,0 6.5,4 8,3 6.5,7 5,10 3.5,7 2,3 3.5,4" fill="{c}"/>`,
+    aether:     `<ellipse cx="5" cy="5" rx="4" ry="2.5" fill="{c}" opacity="0.6"/><ellipse cx="5" cy="5" rx="2.5" ry="4" fill="{c}" opacity="0.4"/>`,
+    tendril:    `<path d="M5,0 Q7,3 6,5 Q8,6 6,8 Q5,10 5,10 Q5,10 4,8 Q2,6 4,5 Q3,3 5,0" fill="{c}" opacity="0.6"/>`,
+    suit:       `<polygon points="5,1 8,4 8,7 5,9 2,7 2,4" fill="none" stroke="{c}" stroke-width="1"/><circle cx="5" cy="5" r="1.5" fill="{c}"/>`,
+    mind:       `<circle cx="5" cy="5" r="3" fill="none" stroke="{c}" stroke-width="0.8" stroke-dasharray="1.5,1.5"/><circle cx="5" cy="5" r="1.5" fill="{c}" opacity="0.5"/>`,
+    pulse:      `<circle cx="5" cy="5" r="2" fill="{c}"/><circle cx="5" cy="5" r="3.5" fill="none" stroke="{c}" stroke-width="0.6" opacity="0.5"/>`,
+    _default:   `<circle cx="5" cy="5" r="3" fill="{c}"/><circle cx="5" cy="5" r="1.5" fill="#fff" opacity="0.3"/>`
+  };
+
+  // Create a shaped projectile DOM element
+  function createProjectileElement(weaponType, color, aimAngle) {
+    const el = document.createElement('div');
+    el.className = 'walker-projectile';
+    const s = isMobile ? 8 : 10;
+    el.style.width = s + 'px';
+    el.style.height = s + 'px';
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', s);
+    svg.setAttribute('height', s);
+    svg.setAttribute('viewBox', '0 0 10 10');
+    svg.style.display = 'block';
+    svg.style.overflow = 'visible';
+
+    const shape = PROJECTILE_SHAPES[weaponType] || PROJECTILE_SHAPES._default;
+    svg.innerHTML = shape.replace(/\{c\}/g, color);
+    el.appendChild(svg);
+
+    // Rotate projectile to face travel direction
+    const deg = (aimAngle * 180 / Math.PI) + 90;
+    el.style.transform = `rotate(${deg}deg)`;
+
+    renderer.mapContainer.appendChild(el);
+    return el;
+  }
+
+  // Fire a projectile toward target's current position with aim spread — travels in a straight line, no homing
+  function fireProjectile(attacker, target, now) {
+    const dx = target._cx - attacker._cx;
+    const dy = target._cy - attacker._cy;
+    const len = Math.hypot(dx, dy) || 1;
+
+    // Add random aim spread (±15 degrees) so shots can miss
+    const baseAngle = Math.atan2(dy, dx);
+    const spread = (Math.random() - 0.5) * 0.52;  // ~±15 degrees in radians
+    const aimAngle = baseAngle + spread;
+
+    const color = WEAPON_COLORS[attacker.rangeWeapon] || WEAPON_COLORS._default;
+
+    const proj = {
+      x: attacker._cx + Math.cos(aimAngle) * WALKER_R,
+      y: attacker._cy + Math.sin(aimAngle) * WALKER_R,
+      vx: Math.cos(aimAngle) * PROJECTILE_SPEED,
+      vy: Math.sin(aimAngle) * PROJECTILE_SPEED,
+      ownerId: attacker.id,
+      ownerIsVillain: attacker.isVillain,
+      dmg: attacker.rangeDmg,
+      el: createProjectileElement(attacker.rangeWeapon, color, aimAngle),
+      born: now
+    };
+    activeProjectiles.push(proj);
+  }
+
+  // Find the nearest valid target for a ranged attacker
+  function findTarget(attacker, fighters) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const f of fighters) {
+      if (f === attacker || f.fainted || f.hp <= 0) continue;
+      if (f.isVillain === attacker.isVillain) continue;
+      const d = Math.hypot(f._cx - attacker._cx, f._cy - attacker._cy);
+      if (d < bestDist) { bestDist = d; best = f; }
+    }
+    return best;
+  }
+
+  function applyDamage(target, dmg, now, attackerId) {
+    const lastHit = target.lastHitBy?.get(attackerId) || 0;
+    if (now - lastHit < HIT_COOLDOWN) return false;
+
+    target.lastHitBy.set(attackerId, now);
+    target.hp -= dmg;
+
+    target.el.classList.add('hit-flash');
+    setTimeout(() => target.el.classList.remove('hit-flash'), 150);
+    return true;
+  }
+
+  function processFightDamage(now, dtSec) {
+    activeFights.forEach((fight, nodeId) => {
+      const allFighters = [...fight.participants, fight.villain];
+
+      for (const attacker of allFighters) {
+        if (attacker.fainted || attacker.hp <= 0) continue;
+
+        // --- Melee: orbiting weapon always does contact damage ---
+        const wx = attacker._cx + Math.cos(attacker.weaponAngle) * WEAPON_RADIUS;
+        const wy = attacker._cy + Math.sin(attacker.weaponAngle) * WEAPON_RADIUS;
+
+        for (const target of allFighters) {
+          if (target === attacker || target.fainted || target.hp <= 0) continue;
+          if (attacker.isVillain === target.isVillain) continue;
+
+          const dist = Math.hypot(wx - target._cx, wy - target._cy);
+          if (dist < WALKER_R + WEAPON_SIZE / 2) {
+            if (applyDamage(target, attacker.meleeDmg, now, attacker.id + '_melee')) {
+              if (target.hp <= 0) {
+                target.hp = 0;
+                if (target.isVillain) { handleVillainDefeat(fight, nodeId); return; }
+                else {
+                  handleWalkerFaint(target);
+                  if (![...fight.participants].some(p => !p.fainted)) { handleVillainWins(fight, nodeId); return; }
+                }
+              }
+            }
+          }
+        }
+
+        // --- Ranged: fire projectiles if character has range weapon ---
+        if (attacker.rangeWeapon) {
+          // Hybrid fighters (have both melee + range) shoot slower
+          const hybridPenalty = attacker.meleeDmg > 0 ? 1.5 : 1.0;
+          const lastShot = attacker._lastShot || 0;
+          if (now - lastShot >= (PROJECTILE_COOLDOWN * hybridPenalty) / attacker.atkSpeedMult) {
+            const target = findTarget(attacker, allFighters);
+            if (target) {
+              fireProjectile(attacker, target, now);
+              attacker._lastShot = now;
+            }
+          }
+        }
+      }
+    });
+
+    // Process projectile movement and hits
+    const nodeRect = activeFights.size > 0
+      ? cachedRects?.get(activeFights.keys().next().value)
+      : null;
+
+    for (let i = activeProjectiles.length - 1; i >= 0; i--) {
+      const p = activeProjectiles[i];
+      p.x += p.vx * dtSec;
+      p.y += p.vy * dtSec;
+
+      // Remove if too old (2 seconds max) or out of node bounds
+      const age = now - p.born;
+      const outOfBounds = nodeRect && (
+        p.x < nodeRect.left || p.x > nodeRect.right ||
+        p.y < nodeRect.top || p.y > nodeRect.bottom
+      );
+      if (age > 2000 || outOfBounds) {
+        p.el.remove();
+        activeProjectiles.splice(i, 1);
+        continue;
+      }
+
+      // Check hit against all fighters
+      let hit = false;
+      activeFights.forEach((fight, nodeId) => {
+        if (hit) return;
+        const allFighters = [...fight.participants, fight.villain];
+        for (const target of allFighters) {
+          if (target.fainted || target.hp <= 0) continue;
+          if (target.id === p.ownerId) continue;
+          if (target.isVillain === p.ownerIsVillain) continue;
+
+          const dist = Math.hypot(p.x - target._cx, p.y - target._cy);
+          if (dist < WALKER_R + PROJECTILE_SIZE) {
+            if (applyDamage(target, p.dmg, now, p.ownerId)) {
+              if (target.hp <= 0) {
+                target.hp = 0;
+                if (target.isVillain) { handleVillainDefeat(fight, nodeId); }
+                else {
+                  handleWalkerFaint(target);
+                  if (![...fight.participants].some(pp => !pp.fainted)) { handleVillainWins(fight, nodeId); }
+                }
+              }
+            }
+            hit = true;
+          }
+        }
+      });
+
+      if (hit) {
+        p.el.remove();
+        activeProjectiles.splice(i, 1);
+        continue;
+      }
+
+      // Update projectile DOM position
+      p.el.style.left = (p.x - PROJECTILE_SIZE) + 'px';
+      p.el.style.top = (p.y - PROJECTILE_SIZE) + 'px';
+    }
   }
 
   /* ---- animation loop ---- */
@@ -572,8 +1085,17 @@ const Walkers = (() => {
       }
 
       if (w.inEncounter) return;
+      if (w.fainted) return;
 
-      // Velocity integration (always, even in nodes)
+      // During a fight, only fighters move — everyone else freezes
+      if (activeFights.size > 0 && !w.inFight) return;
+
+      // Update weapon spin if in fight
+      if (w.inFight) {
+        w.weaponAngle = (w.weaponAngle || 0) + w.atkSpeedMult * WEAPON_BASE_SPEED * dtSec;
+      }
+
+      // Velocity integration
       w._cx += w.vx * dtSec;
       w._cy += w.vy * dtSec;
 
@@ -585,19 +1107,21 @@ const Walkers = (() => {
         // If bounceInsideNode transitioned us to a road, we're done
         if (w.location === 'road') return;
 
-        // After pause expires, aim toward a road opening to leave
-        if (w.paused && now >= w.pauseEnd) {
-          w.paused = false;
-          // Aim toward a random road opening
-          if (rect && rect.openings.length > 0) {
-            const op = pickRandom(rect.openings);
-            const dx = op.x - w._cx;
-            const dy = op.y - w._cy;
-            const len = Math.hypot(dx, dy) || 1;
-            w.vx = (dx / len) * SPEED;
-            w.vy = (dy / len) * SPEED;
-          } else {
-            giveRandomVelocity(w);
+        // Don't leave the node during a fight — just bounce inside
+        if (!w.inFight) {
+          // After pause expires, aim toward a road opening to leave
+          if (w.paused && now >= w.pauseEnd) {
+            w.paused = false;
+            if (rect && rect.openings.length > 0) {
+              const op = pickRandom(rect.openings);
+              const dx = op.x - w._cx;
+              const dy = op.y - w._cy;
+              const len = Math.hypot(dx, dy) || 1;
+              w.vx = (dx / len) * SPEED;
+              w.vy = (dy / len) * SPEED;
+            } else {
+              giveRandomVelocity(w);
+            }
           }
         }
 
@@ -628,18 +1152,27 @@ const Walkers = (() => {
             // Keep velocity — walker enters node with momentum and bounces inside
             w.paused = true;
             w.pauseEnd = now + randBetween(PAUSE_MIN, PAUSE_MAX);
+
+            // Fight: join existing fight or maybe spawn villain
+            if (!w.isVillain) {
+              if (activeFights.has(w.currentNode)) {
+                joinFight(w.currentNode);
+              } else {
+                spawnVillain(w.currentNode);
+              }
+            }
           }
         }
       }
 
-      // Speed enforcement — never too fast, never stalling
+      // Speed enforcement — use character moveSpeed during fights
+      const charSpeed = w.inFight ? (w.moveSpeedMult || SPEED) : SPEED;
       const spd = Math.hypot(w.vx, w.vy);
-      if (spd > SPEED * 1.5) {
-        w.vx = (w.vx / spd) * SPEED;
-        w.vy = (w.vy / spd) * SPEED;
-      } else if (spd < SPEED * 0.6) {
-        // Boost to minimum speed — walkers should always move
-        const boost = SPEED * 0.7;
+      if (spd > charSpeed * 1.5) {
+        w.vx = (w.vx / spd) * charSpeed;
+        w.vy = (w.vy / spd) * charSpeed;
+      } else if (spd < charSpeed * 0.6) {
+        const boost = charSpeed * 0.7;
         if (spd > 0.01) {
           w.vx = (w.vx / spd) * boost;
           w.vy = (w.vy / spd) * boost;
@@ -652,14 +1185,28 @@ const Walkers = (() => {
       }
     });
 
+    // Keep camera centered on active fight
+    if (activeFights.size > 0) {
+      const fightNodeId = activeFights.keys().next().value;
+      if (!tick._lastFightCenter || now - tick._lastFightCenter > 1000) {
+        centerOnNode(fightNodeId);
+        tick._lastFightCenter = now;
+      }
+    } else {
+      tick._lastFightCenter = 0;
+    }
+
+    // Pass 1.5: fight damage processing
+    processFightDamage(now, dtSec);
+
     // Pass 2: walker-walker elastic collision + encounter detection
     const graceActive = (now - deployTime < DEPLOY_GRACE);
     for (let i = 0; i < activeWalkers.length; i++) {
       const a = activeWalkers[i];
-      if (!a._spawned || a._cx == null) continue;
+      if (!a._spawned || a._cx == null || a.fainted) continue;
       for (let j = i + 1; j < activeWalkers.length; j++) {
         const b = activeWalkers[j];
-        if (!b._spawned || b._cx == null) continue;
+        if (!b._spawned || b._cx == null || b.fainted) continue;
 
         const dx = b._cx - a._cx;
         const dy = b._cy - a._cy;
@@ -707,10 +1254,12 @@ const Walkers = (() => {
           }
         }
 
-        // Encounter detection
+        // Encounter detection (suppress during fights)
         if (!graceActive && !encounterRunning && encounterQueue.length === 0 &&
             dist < ENCOUNTER_DIST &&
             !a.inEncounter && !b.inEncounter &&
+            !a.inFight && !b.inFight &&
+            !a.isVillain && !b.isVillain &&
             a.charId !== b.charId &&
             a.previousNode && b.previousNode) {
           const key = WALKER_DIALOGUES.getKey(a.charId, b.charId);
@@ -732,9 +1281,27 @@ const Walkers = (() => {
       }
     }
 
-    // Pass 3: apply to DOM
+    // Pass 3: apply to DOM + weapon/HP positions
     activeWalkers.forEach(w => {
       if (w._spawned && !w.inEncounter) applyWalkerPosition(w);
+
+      // Update melee weapon orbit position + rotation (every character has one)
+      if (w.inFight && !w.fainted && w.weaponEl) {
+        const wx = w._cx + Math.cos(w.weaponAngle) * WEAPON_RADIUS;
+        const wy = w._cy + Math.sin(w.weaponAngle) * WEAPON_RADIUS;
+        w.weaponEl.style.left = (wx - WEAPON_SIZE / 2) + 'px';
+        w.weaponEl.style.top = (wy - WEAPON_SIZE / 2) + 'px';
+        const deg = (w.weaponAngle * 180 / Math.PI) + 90;
+        w.weaponEl.style.transform = `rotate(${deg}deg)`;
+      }
+
+      // Update HP display
+      if (w.inFight && w.hpEl) {
+        w.hpEl.style.left = w._cx + 'px';
+        w.hpEl.style.top = (w._cy - WALKER_R - 12) + 'px';
+        w.hpEl.textContent = Math.max(0, Math.ceil(w.hp));
+        w.hpEl.classList.toggle('low', w.hp < w.maxHp * 0.3);
+      }
     });
 
     activeBubbles.forEach(b => {
@@ -827,6 +1394,9 @@ const Walkers = (() => {
         _spawned: spawnIndex === 0
       };
 
+      // Initialize fight stats
+      initFightProps(w);
+
       // Position at start node center
       const pos = getNodeCenter(startNode);
       if (pos) {
@@ -853,13 +1423,21 @@ const Walkers = (() => {
     animFrameId = null;
     encounterTimers.forEach(t => clearTimeout(t));
     encounterTimers = [];
-    activeWalkers.forEach(w => w.el?.remove());
+    activeWalkers.forEach(w => {
+      w.el?.remove();
+      w.weaponEl?.remove();
+      w.hpEl?.remove();
+    });
     activeWalkers = [];
     activeBubbles.forEach(b => b.el.remove());
     activeBubbles = [];
     encounterQueue = [];
     encounterRunning = false;
     encounterCooldowns.clear();
+    activeFights.clear();
+    faintedWalkers.clear();
+    activeProjectiles.forEach(p => p.el.remove());
+    activeProjectiles = [];
   }
 
   function toggleCharacter(charId, stageIndex = -1) {
