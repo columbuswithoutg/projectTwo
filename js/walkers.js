@@ -9,30 +9,30 @@
 
 const Walkers = (() => {
   const STORAGE_KEY = 'mcu_walkers';
-  const WALKER_SIZE = isMobile ? 18 : 24;           // px diameter
-  const WALKER_R = WALKER_SIZE / 2;                  // radius
-  const SPEED = isMobile ? 30 : 40;                  // px per second
-  const PAUSE_MIN = 800;              // ms pause at node
+  const WALKER_SIZE = 24;                              // px diameter
+  const WALKER_R = WALKER_SIZE / 2;                    // radius
+  const SPEED = 40;                                    // px per second
+  const PAUSE_MIN = 800;                               // ms pause at node
   const PAUSE_MAX = 2500;
 
-  const ROAD_HALF_W = isMobile ? 9 : 13;            // half the visual road width
-  const DAMPING = 0.998;                              // friction per frame
-  const BOUNCE = 0.85;                                // energy kept after wall bounce
-  const ENCOUNTER_DIST = WALKER_SIZE * 1.5;           // dialogue trigger distance
+  const ROAD_HALF_W = 13;                             // half the visual road width
+  const DAMPING = 0.998;                               // friction per frame
+  const BOUNCE = 0.85;                                 // energy kept after wall bounce
+  const ENCOUNTER_DIST = WALKER_SIZE * 1.5;            // dialogue trigger distance
   const ENCOUNTER_COOLDOWN = 30000;
-  const LINE_DURATION = isMobile ? 2000 : 2500;
+  const LINE_DURATION = 2500;
 
   // Fight constants
-  const WEAPON_RADIUS = isMobile ? 14 : 18;           // melee orbit distance
-  const WEAPON_SIZE = isMobile ? 10 : 14;              // weapon shape size
-  const WEAPON_BASE_SPEED = 3.5;                        // radians/sec base spin
-  const FIGHT_SPAWN_CHANCE = 0.15;                      // 15% chance per node entry
-  const VILLAIN_HP_MULT = 1.5;                          // villain HP multiplier
-  const HIT_COOLDOWN = 300;                             // ms between hits from same attacker
-  const DEFEAT_DISPLAY_MS = 2000;                       // villain defeat line duration
-  const PROJECTILE_SPEED = isMobile ? 80 : 120;        // px/s for ranged weapons
-  const PROJECTILE_COOLDOWN = 1400;                      // ms between shots (slower than melee)
-  const PROJECTILE_SIZE = isMobile ? 4 : 6;            // projectile radius
+  const WEAPON_RADIUS = 18;                            // melee orbit distance
+  const WEAPON_SIZE = 14;                              // weapon shape size
+  const WEAPON_BASE_SPEED = 3.5;                       // radians/sec base spin
+  const FIGHT_SPAWN_CHANCE = 0.15;                     // 15% chance per node entry
+  const VILLAIN_HP_MULT = 1.5;                         // villain HP multiplier
+  const HIT_COOLDOWN = 300;                            // ms between hits from same attacker
+  const DEFEAT_DISPLAY_MS = 2000;                      // villain defeat line duration
+  const PROJECTILE_SPEED = 120;                        // px/s for ranged weapons
+  const PROJECTILE_COOLDOWN = 1400;                    // ms between shots (slower than melee)
+  const PROJECTILE_SIZE = 6;                           // projectile radius
 
   let activeWalkers = [];
   let animFrameId = null;
@@ -457,6 +457,7 @@ const Walkers = (() => {
       const el = renderer.nodeElements.get(p.id);
       if (!el) return;
       const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return;  // not laid out yet
       const rect = {
         id: p.id,
         left: r.left - containerRect.left,
@@ -565,10 +566,9 @@ const Walkers = (() => {
     el.style.color = color;
 
     // Build weapon shape via inline SVG
-    const s = isMobile ? 10 : 14;
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', s);
-    svg.setAttribute('height', s);
+    svg.setAttribute('width', WEAPON_SIZE);
+    svg.setAttribute('height', WEAPON_SIZE);
     svg.setAttribute('viewBox', '0 0 14 14');
     svg.style.display = 'block';
     svg.style.overflow = 'visible';
@@ -577,8 +577,8 @@ const Walkers = (() => {
     svg.innerHTML = shape.replace(/\{c\}/g, color);
     el.appendChild(svg);
 
-    el.style.width = s + 'px';
-    el.style.height = s + 'px';
+    el.style.width = WEAPON_SIZE + 'px';
+    el.style.height = WEAPON_SIZE + 'px';
     renderer.mapContainer.appendChild(el);
     return el;
   }
@@ -633,14 +633,63 @@ const Walkers = (() => {
     w.inFight = false;
   }
 
+  /* ---- fight zoom ---- */
+  let fightZoomed = false;
+
+  function startFightZoom(nodeId) {
+    const nodeEl = renderer.nodeElements.get(nodeId);
+    if (!nodeEl || !renderer.container) return;
+
+    const wrapper = renderer.container;
+    const container = renderer.mapContainer;
+
+    // Node center in container-local coords (from style, not getBoundingClientRect)
+    const nodeCX = parseFloat(nodeEl.style.left) + CONFIG.NODE_WIDTH / 2;
+    const nodeCY = parseFloat(nodeEl.style.top) + CONFIG.NODE_HEIGHT / 2;
+
+    // Scale so node fills ~60% of viewport
+    const wRect = wrapper.getBoundingClientRect();
+    const scale = Math.min(
+      wRect.width * 0.6 / CONFIG.NODE_WIDTH,
+      wRect.height * 0.6 / CONFIG.NODE_HEIGHT
+    );
+
+    // Scroll to center node (instant), then apply zoom
+    wrapper.scrollTo({ left: nodeCX - wRect.width / 2, top: nodeCY - wRect.height / 2 });
+    wrapper.style.overflow = 'hidden';
+
+    container.style.transformOrigin = `${nodeCX}px ${nodeCY}px`;
+    container.style.transition = 'transform 0.5s ease';
+    container.style.transform = `scale(${scale})`;
+    fightZoomed = true;
+  }
+
+  function endFightZoom() {
+    if (!fightZoomed) return;
+    const container = renderer.mapContainer;
+    const wrapper = renderer.container;
+
+    container.style.transition = 'transform 0.5s ease';
+    container.style.transform = '';
+
+    setTimeout(() => {
+      container.style.transformOrigin = '';
+      container.style.transition = '';
+      wrapper.style.overflow = 'auto';
+      fightZoomed = false;
+      // Force geometry rebuild on next tick
+      tick._geoTime = 0;
+    }, 500);
+  }
+
   function centerOnNode(nodeId) {
-    const rect = cachedRects?.get(nodeId);
-    if (!rect || !renderer.container) return;
+    const pos = getNodeCenter(nodeId);
+    if (!pos || !renderer.container) return;
     const wrapper = renderer.container;
     const wrapperRect = wrapper.getBoundingClientRect();
     const containerRect = renderer.mapContainer.getBoundingClientRect();
-    const scrollLeft = wrapper.scrollLeft + (containerRect.left - wrapperRect.left) + rect.cx - wrapperRect.width / 2;
-    const scrollTop = wrapper.scrollTop + (containerRect.top - wrapperRect.top) + rect.cy - wrapperRect.height / 2;
+    const scrollLeft = wrapper.scrollLeft + (containerRect.left - wrapperRect.left) + pos.x - wrapperRect.width / 2;
+    const scrollTop = wrapper.scrollTop + (containerRect.top - wrapperRect.top) + pos.y - wrapperRect.height / 2;
     wrapper.scrollTo({ left: Math.max(0, scrollLeft), top: Math.max(0, scrollTop), behavior: 'smooth' });
   }
 
@@ -657,8 +706,10 @@ const Walkers = (() => {
     if (!villainChar) return;
 
     const stats = WALKER_STATS[villainCharId] || WALKER_STATS._default;
-    const nodeRect = cachedRects?.get(nodeId);
-    if (!nodeRect) return;
+
+    // Use live position (same as regular walkers in deploy()) — cached rects can be stale
+    const pos = getNodeCenter(nodeId);
+    if (!pos) return;
 
     // Create villain walker
     const imgFile = typeof getCharImage === 'function' ? getCharImage(villainChar, state) : villainChar.image;
@@ -677,7 +728,7 @@ const Walkers = (() => {
       targetNode: nodeId,
       previousNode: null,
       vx: 0, vy: 0,
-      _cx: nodeRect.cx, _cy: nodeRect.cy,
+      _cx: pos.x, _cy: pos.y,
       currentEdge: null,
       location: 'node',
       paused: false,
@@ -700,8 +751,8 @@ const Walkers = (() => {
     const fight = { villain: w, participants: new Set(), nodeId, started: performance.now() };
     activeFights.set(nodeId, fight);
 
-    // Center screen on fight
-    centerOnNode(nodeId);
+    // Zoom into fight node
+    startFightZoom(nodeId);
 
     // Enroll all walkers in the node
     joinFight(nodeId);
@@ -773,7 +824,8 @@ const Walkers = (() => {
         }
       });
 
-      // Start revive checks
+      // Zoom out and start revive checks
+      endFightZoom();
       checkFaintedRevives();
     }, DEFEAT_DISPLAY_MS);
   }
@@ -801,7 +853,8 @@ const Walkers = (() => {
       activeProjectiles.forEach(p => p.el.remove());
       activeProjectiles = [];
 
-      // Revive fainted walkers after delay
+      // Zoom out, then revive fainted walkers after delay
+      endFightZoom();
       setTimeout(() => checkFaintedRevives(), 1500);
     }, DEFEAT_DISPLAY_MS);
   }
@@ -846,7 +899,7 @@ const Walkers = (() => {
     shield:     `<circle cx="5" cy="5" r="4" fill="{c}" opacity="0.6"/><circle cx="5" cy="5" r="2.5" fill="none" stroke="#fff" stroke-width="1"/>`,
     shotgun:    `<circle cx="3" cy="4" r="1.5" fill="{c}"/><circle cx="5" cy="6" r="1.5" fill="{c}"/><circle cx="7" cy="4" r="1.5" fill="{c}"/>`,
     pistol:     `<circle cx="5" cy="5" r="2.5" fill="{c}"/><circle cx="5" cy="5" r="1" fill="#fff" opacity="0.5"/>`,
-    sting:      `<polygon points="5,0 7,5 5,10 3,5" fill="{c}"/><circle cx="5" cy="5" r="1.5" fill="#fff" opacity="0.4"/>`,
+    sting:      `<polygon points="10,5 5,7 0,5 5,3" fill="{c}"/><circle cx="5" cy="5" r="1.5" fill="#fff" opacity="0.4"/>`,
     redwing:    `<polygon points="5,2 9,5 5,5 1,5" fill="{c}"/><polygon points="5,5 8,8 5,7 2,8" fill="{c}" opacity="0.6"/>`,
     drone:      `<rect x="2" y="3.5" width="6" height="3" rx="1" fill="{c}"/><circle cx="5" cy="5" r="1" fill="#fff"/>`,
     chi:        `<circle cx="5" cy="5" r="3" fill="{c}" opacity="0.5"/><polygon points="5,1.5 6.5,4 5,3.5 3.5,4" fill="{c}"/>`,
@@ -858,9 +911,9 @@ const Walkers = (() => {
     psychic:    `<circle cx="5" cy="5" r="3" fill="{c}" opacity="0.4"/><line x1="2" y1="2" x2="8" y2="8" stroke="{c}" stroke-width="0.8"/><line x1="8" y1="2" x2="2" y2="8" stroke="{c}" stroke-width="0.8"/>`,
     tesseract:  `<rect x="2" y="2" width="6" height="6" fill="{c}" opacity="0.6" transform="rotate(45,5,5)"/>`,
     darkEnergy: `<circle cx="5" cy="5" r="3.5" fill="{c}" opacity="0.5"/><circle cx="5" cy="5" r="1.5" fill="#fff" opacity="0.3"/>`,
-    necrosword: `<polygon points="5,0 6.5,4 8,3 6.5,7 5,10 3.5,7 2,3 3.5,4" fill="{c}"/>`,
+    necrosword: `<polygon points="10,5 6,6.5 7,8 3,6.5 0,5 3,3.5 3,2 6,3.5" fill="{c}"/>`,
     aether:     `<ellipse cx="5" cy="5" rx="4" ry="2.5" fill="{c}" opacity="0.6"/><ellipse cx="5" cy="5" rx="2.5" ry="4" fill="{c}" opacity="0.4"/>`,
-    tendril:    `<path d="M5,0 Q7,3 6,5 Q8,6 6,8 Q5,10 5,10 Q5,10 4,8 Q2,6 4,5 Q3,3 5,0" fill="{c}" opacity="0.6"/>`,
+    tendril:    `<g transform="rotate(90,5,5)"><path d="M5,0 Q7,3 6,5 Q8,6 6,8 Q5,10 5,10 Q5,10 4,8 Q2,6 4,5 Q3,3 5,0" fill="{c}" opacity="0.6"/></g>`,
     suit:       `<polygon points="5,1 8,4 8,7 5,9 2,7 2,4" fill="none" stroke="{c}" stroke-width="1"/><circle cx="5" cy="5" r="1.5" fill="{c}"/>`,
     mind:       `<circle cx="5" cy="5" r="3" fill="none" stroke="{c}" stroke-width="0.8" stroke-dasharray="1.5,1.5"/><circle cx="5" cy="5" r="1.5" fill="{c}" opacity="0.5"/>`,
     pulse:      `<circle cx="5" cy="5" r="2" fill="{c}"/><circle cx="5" cy="5" r="3.5" fill="none" stroke="{c}" stroke-width="0.6" opacity="0.5"/>`,
@@ -871,13 +924,13 @@ const Walkers = (() => {
   function createProjectileElement(weaponType, color, aimAngle) {
     const el = document.createElement('div');
     el.className = 'walker-projectile';
-    const s = isMobile ? 8 : 10;
-    el.style.width = s + 'px';
-    el.style.height = s + 'px';
+    const ps = 10;
+    el.style.width = ps + 'px';
+    el.style.height = ps + 'px';
 
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', s);
-    svg.setAttribute('height', s);
+    svg.setAttribute('width', ps);
+    svg.setAttribute('height', ps);
     svg.setAttribute('viewBox', '0 0 10 10');
     svg.style.display = 'block';
     svg.style.overflow = 'visible';
@@ -886,8 +939,8 @@ const Walkers = (() => {
     svg.innerHTML = shape.replace(/\{c\}/g, color);
     el.appendChild(svg);
 
-    // Rotate projectile to face travel direction
-    const deg = (aimAngle * 180 / Math.PI) + 90;
+    // Rotate projectile to face travel direction (SVGs point right = 0°, matching atan2)
+    const deg = aimAngle * 180 / Math.PI;
     el.style.transform = `rotate(${deg}deg)`;
 
     renderer.mapContainer.appendChild(el);
@@ -1061,8 +1114,8 @@ const Walkers = (() => {
     lastTime = now;
 
     const graph = buildGraph();
-    // Cache geometry — rebuild every 2 seconds
-    if (!tick._geoTime || now - tick._geoTime > 2000) {
+    // Cache geometry — rebuild every 2 seconds (skip during fight zoom: transform breaks getBoundingClientRect)
+    if (!fightZoomed && (!tick._geoTime || now - tick._geoTime > 2000)) {
       cachedRoads = buildRoadSegments(graph);
       cachedRects = buildNodeRects(graph, cachedRoads);
       tick._geoTime = now;
@@ -1185,8 +1238,8 @@ const Walkers = (() => {
       }
     });
 
-    // Keep camera centered on active fight
-    if (activeFights.size > 0) {
+    // Keep camera centered on active fight (skip when zoomed — view is already locked)
+    if (activeFights.size > 0 && !fightZoomed) {
       const fightNodeId = activeFights.keys().next().value;
       if (!tick._lastFightCenter || now - tick._lastFightCenter > 1000) {
         centerOnNode(fightNodeId);
@@ -1320,7 +1373,7 @@ const Walkers = (() => {
     const maxSlots = getMaxSlots();
     const charMap = new Map(characters.map(c => [c.id, c]));
     const unlocked = new Set(getUnlockedCharacters().map(c => c.id));
-    return raw.filter(e => {
+    const result = raw.filter(e => {
       if (!unlocked.has(e.id)) return false;
       const char = charMap.get(e.id);
       if (!char) return false;
@@ -1331,6 +1384,23 @@ const Walkers = (() => {
       }
       return true;
     }).slice(0, maxSlots);
+
+    // Resolve stage: -1 → actual highest unlocked stage index
+    let needsSave = false;
+    result.forEach(e => {
+      if (e.stage === -1) {
+        const char = charMap.get(e.id);
+        if (char) {
+          e.stage = getCharStages(char, state).length - 1;
+          needsSave = true;
+        }
+      }
+    });
+    if (needsSave && overrideSelections === null) {
+      saveSelections(result);
+    }
+
+    return result;
   }
 
   // Backward-compat: return just the IDs for external consumers
@@ -1438,6 +1508,14 @@ const Walkers = (() => {
     faintedWalkers.clear();
     activeProjectiles.forEach(p => p.el.remove());
     activeProjectiles = [];
+    // Reset zoom if active
+    if (fightZoomed) {
+      const container = renderer.mapContainer;
+      const wrapper = renderer.container;
+      if (container) { container.style.transform = ''; container.style.transformOrigin = ''; container.style.transition = ''; }
+      if (wrapper) wrapper.style.overflow = 'auto';
+      fightZoomed = false;
+    }
   }
 
   function toggleCharacter(charId, stageIndex = -1) {
@@ -1530,6 +1608,7 @@ const Walkers = (() => {
           <div class="walker-card-img">
             <img src="assets/characters/${stage.image}" alt="${label}" loading="lazy" />
             <span class="walker-check">✔</span>
+            <span class="walker-remove">✕</span>
           </div>
           <span class="walker-card-name">${label}</span>
         `;
@@ -1541,8 +1620,12 @@ const Walkers = (() => {
           } else {
             if (getSelectedEntries().length >= getMaxSlots()) {
               const info = overlay.querySelector('.walker-slots-info');
+              info.textContent = `${getMaxSlots()} / ${getMaxSlots()} — tap a selected walker to swap`;
               info.style.color = '#E23636';
-              setTimeout(() => info.style.color = '', 600);
+              setTimeout(() => {
+                updateSlotCount();
+                info.style.color = '';
+              }, 1500);
               return;
             }
             toggleCharacter(char.id, si);

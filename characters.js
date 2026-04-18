@@ -7,7 +7,7 @@ const characters = [
   // ─── PHASE 1 ───────────────────────────────
   { id: "ironman",        name: "Iron Man",                   debut: "ironman1",      image: "ironman.jpg",
     stages: [
-      { after: "avengers1",   image: "ironman_avengers.jpg",   look: "Avengers suit, Mark VII" },
+      { after: "avengers1",   image: "ironman_avengers.jpg",   look: "Mark VII" },
       { after: "infinitywar",  image: "ironman_nano.jpg",       look: "Nanotech bleeding edge suit" }
     ] },
   { id: "pepper",         name: "Pepper Potts",               debut: "ironman1",      image: "pepper.jpg" },
@@ -25,15 +25,15 @@ const characters = [
     ] },
   { id: "hulk",           name: "Hulk",                       debut: "hulk",          image: "hulk.jpg",
     stages: [
-      { after: "thor3",    image: "hulk_gladiator.jpg", look: "Sakaar gladiator armor, war paint" },
-      { after: "endgame",  image: "hulk_smart.jpg",     look: "Smart Hulk, glasses, calm" }
+      { after: "thor3",    image: "hulk_gladiator.jpg", look: "Sakaar gladiator armor" },
+      { after: "endgame",  image: "hulk_smart.jpg",     look: "Smart Hulk" }
     ] },
   { id: "bettyross",      name: "Betty Ross",                 debut: "hulk",          image: "bettyross.jpg" },
   { id: "abomnination",   name: "Abomination",                debut: "hulk",          image: "abomination.jpg" },
   { id: "thor",           name: "Thor",                       debut: "thor1",         image: "thor.jpg",
     stages: [
-      { after: "thor3", image: "thor_ragnarok.jpg",     look: "Short hair, Ragnarok armor" },
-      { after: "thor4", image: "thor_lovethunder.jpg",  look: "Love & Thunder outfit, blue/gold" }
+      { after: "thor3", image: "thor_ragnarok.jpg",     look: "Short hair" },
+      { after: "thor4", image: "thor_lovethunder.jpg",  look: "Love & Thunder" }
     ] },
   { id: "loki",           name: "Loki",                       debut: "thor1",         image: "loki.jpg",
     stages: [
@@ -48,9 +48,9 @@ const characters = [
   { id: "heimdall",       name: "Heimdall",                   debut: "thor1",         image: "heimdall.jpg" },
   { id: "cap",            name: "Captain America",            debut: "cap1",          image: "cap.jpg",
     stages: [
-      { after: "avengers1", image: "cap_avengers.jpg", look: "Avengers blue suit, modern" },
-      { after: "cap2",      image: "cap_stealth.jpg",  look: "Dark stealth suit, SHIELD era" },
-      { after: "endgame",   image: "cap_endgame.jpg",  look: "Scale mail Endgame suit" }
+      { after: "avengers1", image: "cap_avengers.jpg", look: "Modern" },
+      { after: "cap2",      image: "cap_stealth.jpg",  look: "Dark stealth suit" },
+      { after: "endgame",   image: "cap_endgame.jpg",  look: "Bearded" }
     ] },
   { id: "peggy",          name: "Peggy Carter",               debut: "cap1",          image: "peggy.jpg" },
   { id: "bucky",          name: "Bucky Barnes",               debut: "cap1",          image: "bucky.jpg",

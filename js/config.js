@@ -11,15 +11,6 @@ const CONFIG = {
   STORAGE_KEY: "watchProgress_v2"
 };
 
-// Scale down for mobile
-const isMobile = window.matchMedia('(max-width: 640px)').matches;
-if (isMobile) {
-  CONFIG.H_SPACING = 130;
-  CONFIG.V_SPACING = 160;
-  CONFIG.NODE_WIDTH = 55;
-  CONFIG.NODE_HEIGHT = 82;
-}
-
 const PHASE_UNLOCKERS = {
   2: "avengers1",
   3: "ageofultron",

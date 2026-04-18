@@ -223,13 +223,13 @@ class MapRenderer {
     const roadBase = document.createElementNS(ns, "path");
     roadBase.setAttribute("d", d);
     roadBase.setAttribute("stroke", "rgba(201, 162, 39, 0.12)");
-    roadBase.setAttribute("stroke-width", isMobile ? "18" : "26");
+    roadBase.setAttribute("stroke-width", "26");
     roadBase.setAttribute("stroke-linecap", "round");
     roadBase.setAttribute("fill", "none");
     elements.push(roadBase);
 
     // Road edges — lane borders
-    const laneW = isMobile ? 18 : 26;
+    const laneW = 26;
     const perpX = -uy * laneW / 2;
     const perpY = ux * laneW / 2;
 

@@ -1609,6 +1609,31 @@ body.auth-page {
   display: block;
 }
 
+.walker-remove {
+  display: none;
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 18px;
+  height: 18px;
+  background: #E23636;
+  color: #fff;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  font-weight: 700;
+  z-index: 2;
+}
+
+.walker-card.selected:hover .walker-remove {
+  display: block;
+}
+
+.walker-card.selected:hover .walker-check {
+  display: none;
+}
+
 .walker-card-name {
   font-size: 0.7rem;
   color: rgba(255, 255, 255, 0.7);
@@ -1761,9 +1786,6 @@ body.auth-page {
 @media (max-width: 640px) {
   :root {
     --header-height: 64px;
-    --node-width: 55px;
-    --node-height: 82px;
-    --h-spacing: 140px;
   }
 
   /* Header */
@@ -2056,24 +2078,14 @@ body.auth-page {
     font-size: 1.6rem;
   }
 
-  .walker-speech-bubble {
-    max-width: 110px;
-    font-size: 9px;
-    padding: 4px 7px;
+  .walker-card.selected .walker-remove {
+    display: block;
   }
 
-  .walker-stage-dot {
-    width: 18px;
-    height: 18px;
+  .walker-card.selected .walker-check {
+    display: none;
   }
 
-  .walker-weapon {
-    filter: drop-shadow(0 0 2px currentColor);
-  }
-
-  .walker-hp {
-    font-size: 8px;
-  }
 }
 
 /* Tablet breakpoint */
