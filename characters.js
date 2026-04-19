@@ -29,7 +29,7 @@ const characters = [
       { after: "endgame",  image: "hulk_smart.jpg",     look: "Smart Hulk" }
     ] },
   { id: "bettyross",      name: "Betty Ross",                 debut: "hulk",          image: "bettyross.jpg" },
-  { id: "abomnination",   name: "Abomination",                debut: "hulk",          image: "abomination.jpg" },
+  { id: "abomination",    name: "Abomination",                debut: "hulk",          image: "abomination.jpg" },
   { id: "thor",           name: "Thor",                       debut: "thor1",         image: "thor.jpg",
     stages: [
       { after: "thor3", image: "thor_ragnarok.jpg",     look: "Short hair" },
@@ -55,11 +55,12 @@ const characters = [
   { id: "peggy",          name: "Peggy Carter",               debut: "cap1",          image: "peggy.jpg" },
   { id: "bucky",          name: "Bucky Barnes",               debut: "cap1",          image: "bucky.jpg",
     stages: [
-      { after: "blackpanther", image: "bucky_wakanda.jpg", look: "Vibranium arm, Wakanda look" }
+      { after: "infinitywar", image: "bucky_wakanda.jpg", look: "Vibranium arm, Wakanda look" }
     ] },
   { id: "redskull",       name: "Red Skull",                  debut: "cap1",          image: "redskull.jpg" },
   { id: "howardstark",    name: "Howard Stark",               debut: "cap1",          image: "howardstark.jpg" },
   { id: "thanos_snap",    name: "Thanos",                     debut: "avengers1",     image: "thanos.jpg" },
+  { id: "obadiah",        name: "Obadiah Stane / Iron Monger",debut: "ironman1",      image: "obadiah.jpg" },
 
   // ─── PHASE 2 ───────────────────────────────
   { id: "killian",        name: "Aldrich Killian",            debut: "ironman3",      image: "killian.jpg" },
@@ -68,7 +69,7 @@ const characters = [
     stages: [
       { after: "falconws", image: "falcon_cap.jpg", look: "Captain America suit with wings" }
     ] },
-  { id: "wintersolider",  name: "Winter Soldier",             debut: "cap2",          image: "wintersoldier.jpg" },
+  { id: "wintersoldier",  name: "Winter Soldier",             debut: "cap2",          image: "wintersoldier.jpg" },
   { id: "starlord",       name: "Star-Lord",                  debut: "guardians1",    image: "starlord.jpg" },
   { id: "gamora",         name: "Gamora",                     debut: "guardians1",    image: "gamora.jpg",
     stages: [
@@ -78,8 +79,8 @@ const characters = [
   { id: "rocket",         name: "Rocket",                     debut: "guardians1",    image: "rocket.jpg" },
   { id: "groot",          name: "Groot",                      debut: "guardians1",    image: "groot.jpg",
     stages: [
-      { after: "guardians2",  image: "groot_baby.jpg",  look: "Baby Groot, small and cute" },
-      { after: "infinitywar", image: "groot_teen.jpg",  look: "Teen Groot with attitude" }
+      { after: "guardians1",  image: "groot_baby.jpg",  look: "Baby Groot, small and cute" },
+      { after: "guardians2",  image: "groot_teen.jpg",  look: "Teen Groot with attitude" }
     ] },
   { id: "nebula",         name: "Nebula",                     debut: "guardians1",    image: "nebula.jpg",
     stages: [
@@ -117,11 +118,12 @@ const characters = [
   { id: "shuri",          name: "Shuri",                      debut: "blackpanther",  image: "shuri.jpg" },
   { id: "okoye",          name: "Okoye",                      debut: "blackpanther",  image: "okoye.jpg" },
   { id: "killmonger",     name: "Killmonger",                 debut: "blackpanther",  image: "killmonger.jpg" },
-  { id: "mshields",       name: "M'Baku",                     debut: "blackpanther",  image: "mbaku.jpg" },
+  { id: "mbaku",          name: "M'Baku",                     debut: "blackpanther",  image: "mbaku.jpg" },
   { id: "captainmarvel",  name: "Captain Marvel",             debut: "captainmarvel", image: "captainmarvel.jpg" },
   { id: "talos",          name: "Talos",                      debut: "captainmarvel", image: "talos.jpg" },
   { id: "ghost",          name: "Ghost",                      debut: "antmanwasp",    image: "ghost.jpg" },
   { id: "mysterio",       name: "Mysterio",                   debut: "farfromhome",   image: "mysterio.jpg" },
+  { id: "vulture",        name: "Vulture",                    debut: "spiderman1",    image: "vulture.jpg" },
 
   // ─── PHASE 4 ───────────────────────────────
   { id: "agatha",         name: "Agatha Harkness",            debut: "wandavision",   image: "agatha.jpg" },
@@ -151,7 +153,10 @@ const characters = [
   { id: "ironheart",      name: "Ironheart",                  debut: "blackpanther2", image: "ironheart.jpg" },
   { id: "riri",           name: "Riri Williams",              debut: "blackpanther2", image: "riri.jpg" },
   { id: "kang",           name: "Kang the Conqueror",         debut: "antman3",       image: "kang.jpg" },
-  { id: "cassie",         name: "Cassie Lang",                debut: "antman3",       image: "cassie.jpg" },
+  { id: "cassie",         name: "Cassie Lang",                debut: "antman",        image: "cassie.jpg",
+    stages: [
+      { after: "antman3", image: "cassie_stature.jpg", look: "Stature suit, Quantumania" }
+    ] },
   { id: "cosmo",          name: "Cosmo the Spacedog",         debut: "guardiansholiday", image: "cosmo.jpg" },
   { id: "adam",           name: "Adam Warlock",               debut: "guardians3",    image: "adamwarlock.jpg" },
   { id: "highevolutionary", name: "High Evolutionary",        debut: "guardians3",    image: "highevolutionary.jpg" },
@@ -183,7 +188,7 @@ const characters = [
   { id: "humantorch",     name: "Human Torch",                debut: "fantasticfour", image: "humantorch.jpg" },
   { id: "thething",       name: "The Thing",                  debut: "fantasticfour", image: "thething.jpg" },
   { id: "galactus",       name: "Galactus",                   debut: "fantasticfour", image: "galactus.jpg" },
-  { id: "silvesurfer",    name: "Silver Surfer",              debut: "fantasticfour", image: "silversurfer.jpg" },
+  { id: "silversurfer",   name: "Silver Surfer",              debut: "fantasticfour", image: "silversurfer.jpg" },
 
   // ─── NETFLIX / STREET-LEVEL ────────────────
   { id: "daredevil",      name: "Daredevil",                  debut: "daredevil1",    image: "daredevil.jpg" },
@@ -249,7 +254,7 @@ const WALKER_STATS = {
   thanos_snap:    { hp: 210, melee: ['gauntlet', 18],  range: ['beam', 10],       moveSpeed: 36, atkSpeed: 0.9 },
   drstrange:      { hp: 185, melee: ['fist', 6],       range: ['magic', 16],      moveSpeed: 43, atkSpeed: 1.4 },
   vision:         { hp: 195, melee: ['fist', 10],      range: ['beam', 12],       moveSpeed: 45, atkSpeed: 1.1 },
-  abomnination:   { hp: 190, melee: ['fist', 22],      range: null,               moveSpeed: 34, atkSpeed: 0.7 },
+  abomination:    { hp: 190, melee: ['fist', 22],      range: null,               moveSpeed: 34, atkSpeed: 0.7 },
   ultron:         { hp: 198, melee: ['fist', 8],        range: ['beam', 14],       moveSpeed: 40, atkSpeed: 1.0 },
   agatha:         { hp: 182, melee: ['fist', 6],        range: ['magic', 15],      moveSpeed: 41, atkSpeed: 1.1 },
 
@@ -310,15 +315,15 @@ const WALKER_STATS = {
  * VILLAIN DATA — which villain spawns at which node
  ************************************************/
 const VILLAIN_DATA = {
-  ironman1: ['killian'],
+  ironman1: ['obadiah'],
   ironman3: ['killian'],
-  hulk: ['abomnination'],
+  hulk: ['abomination'],
   thor1: ['loki'],
   thor2: ['malekith'],
   thor3: ['hela'],
   thor4: ['gorr'],
   cap1: ['redskull'],
-  cap2: ['wintersolider'],
+  cap2: ['wintersoldier'],
   avengers1: ['loki', 'thanos_snap'],
   ageofultron: ['ultron'],
   guardians1: ['ronan'],
@@ -327,13 +332,21 @@ const VILLAIN_DATA = {
   doctorstrange: ['dormammu'],
   blackpanther: ['killmonger'],
   spiderman1: ['vulture'],
+  antmanwasp: ['ghost'],
   infinitywar: ['thanos_snap'],
   endgame: ['thanos_snap'],
   farfromhome: ['mysterio'],
   wandavision: ['agatha'],
   loki1: ['he_who_remains'],
   shangchi: ['wenwu'],
+  blackwidow: ['taskmaster'],
   antman3: ['kang'],
+  blackpanther2: ['namor'],
+  guardians3: ['highevolutionary'],
+  secretinvasion: ['gravik'],
+  cap4: ['red_hulk'],
+  thunderbolts: ['sentry'],
+  fantasticfour: ['galactus'],
   daredevil1: ['fisk'],
   daredevil2: ['punisher'],
   jessicajones1: ['kilgrave'],
