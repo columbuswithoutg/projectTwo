@@ -20,7 +20,7 @@ tabs.forEach(tab => {
     tab.classList.add("active");
     currentMode = tab.dataset.tab;
     submitBtn.textContent = currentMode === "login" ? "Login" : "Create Account";
-    errorEl.style.display = "none";
+    hideAlert();
   });
 });
 
@@ -34,8 +34,7 @@ submitBtn.addEventListener("click", async () => {
     return;
   }
 
-  submitBtn.disabled = true;
-  submitBtn.textContent = "Please wait...";
+  setLoading(true);
 
   try {
     const res = await fetch(`${API}/auth/${currentMode}`, {
@@ -57,15 +56,14 @@ submitBtn.addEventListener("click", async () => {
       window.location.href = "/app.html"; // ← redirect to tracker
     } else {
       // After register, auto-switch to login tab
-      showError("Account created! Please log in.", "green");
+      showSuccess("Account created! Please log in.");
       tabs[0].click();
     }
 
   } catch (e) {
     showError("Server error. Is the server running?");
   } finally {
-    submitBtn.disabled = false;
-    submitBtn.textContent = currentMode === "login" ? "Login" : "Create Account";
+    setLoading(false);
   }
 });
 
@@ -74,8 +72,23 @@ passwordEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter") submitBtn.click();
 });
 
-function showError(msg, color = "red") {
+function setLoading(on) {
+  submitBtn.disabled = on;
+  submitBtn.classList.toggle("loading", on);
+  if (!on) submitBtn.textContent = currentMode === "login" ? "Login" : "Create Account";
+}
+
+function showError(msg) {
   errorEl.textContent = msg;
-  errorEl.style.color = color;
-  errorEl.style.display = "block";
+  errorEl.classList.remove("success");
+  errorEl.classList.add("visible");
+}
+
+function showSuccess(msg) {
+  errorEl.textContent = msg;
+  errorEl.classList.add("success", "visible");
+}
+
+function hideAlert() {
+  errorEl.classList.remove("visible", "success");
 }

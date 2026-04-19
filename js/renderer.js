@@ -226,6 +226,7 @@ class MapRenderer {
     roadBase.setAttribute("stroke-width", "26");
     roadBase.setAttribute("stroke-linecap", "round");
     roadBase.setAttribute("fill", "none");
+    roadBase.setAttribute("shape-rendering", "geometricPrecision");
     elements.push(roadBase);
 
     // Road edges — lane borders
@@ -238,6 +239,7 @@ class MapRenderer {
     edgeLeft.setAttribute("stroke", "rgba(201, 162, 39, 0.25)");
     edgeLeft.setAttribute("stroke-width", "1");
     edgeLeft.setAttribute("fill", "none");
+    edgeLeft.setAttribute("shape-rendering", "crispEdges");
     elements.push(edgeLeft);
 
     const edgeRight = document.createElementNS(ns, "path");
@@ -245,6 +247,7 @@ class MapRenderer {
     edgeRight.setAttribute("stroke", "rgba(201, 162, 39, 0.25)");
     edgeRight.setAttribute("stroke-width", "1");
     edgeRight.setAttribute("fill", "none");
+    edgeRight.setAttribute("shape-rendering", "crispEdges");
     elements.push(edgeRight);
 
     // Dashed center lane divider
@@ -255,6 +258,7 @@ class MapRenderer {
     dash.setAttribute("stroke-width", "1");
     dash.setAttribute("stroke-dasharray", "6 10");
     dash.setAttribute("fill", "none");
+    dash.setAttribute("shape-rendering", "crispEdges");
     elements.push(dash);
 
     // Direction arrow

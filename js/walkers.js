@@ -9,30 +9,24 @@
 
 const Walkers = (() => {
   const STORAGE_KEY = 'mcu_walkers';
-  const WALKER_SIZE = 24;                              // px diameter
-  const WALKER_R = WALKER_SIZE / 2;                    // radius
-  const SPEED = 40;                                    // px per second
-  const PAUSE_MIN = 800;                               // ms pause at node
-  const PAUSE_MAX = 2500;
 
-  const ROAD_HALF_W = 13;                             // half the visual road width
-  const DAMPING = 0.998;                               // friction per frame
-  const BOUNCE = 0.85;                                 // energy kept after wall bounce
-  const ENCOUNTER_DIST = WALKER_SIZE * 1.5;            // dialogue trigger distance
-  const ENCOUNTER_COOLDOWN = 30000;
-  const LINE_DURATION = 2500;
+  const PHYSICS = Object.freeze({
+    WALKER:     { size: 24, r: 12, speed: 40, pauseMin: 800, pauseMax: 2500 },
+    ROAD:       { halfW: 13, damping: 0.998, bounce: 0.85 },
+    ENCOUNTER:  { dist: 36, cooldown: 30000, lineDuration: 2500 },
+    WEAPON:     { radius: 18, size: 14, baseSpeed: 3.5, hitCooldown: 300 },
+    FIGHT:      { spawnChance: 0.15, villainHpMult: 1.5, defeatDisplayMs: 2000, deployGrace: 5000 },
+    PROJECTILE: { speed: 120, cooldown: 1400, size: 6 },
+  });
 
-  // Fight constants
-  const WEAPON_RADIUS = 18;                            // melee orbit distance
-  const WEAPON_SIZE = 14;                              // weapon shape size
-  const WEAPON_BASE_SPEED = 3.5;                       // radians/sec base spin
-  const FIGHT_SPAWN_CHANCE = 0.15;                     // 15% chance per node entry
-  const VILLAIN_HP_MULT = 1.5;                         // villain HP multiplier
-  const HIT_COOLDOWN = 300;                            // ms between hits from same attacker
-  const DEFEAT_DISPLAY_MS = 2000;                      // villain defeat line duration
-  const PROJECTILE_SPEED = 120;                        // px/s for ranged weapons
-  const PROJECTILE_COOLDOWN = 1400;                    // ms between shots (slower than melee)
-  const PROJECTILE_SIZE = 6;                           // projectile radius
+  // Primary walker state. `paused` remains an orthogonal flag (a walker can
+  // be paused during WALKING, ENCOUNTER, or after DEFEATED revive).
+  const W_STATE = Object.freeze({
+    WALKING:   'walking',
+    ENCOUNTER: 'encounter',
+    FIGHTING:  'fighting',
+    DEFEATED:  'defeated',
+  });
 
   let activeWalkers = [];
   let animFrameId = null;
@@ -43,7 +37,6 @@ const Walkers = (() => {
   let encounterRunning = false;
   let encounterTimers = [];            // setTimeout IDs for active dialogue, cleared on destroy
   let deployTime = 0;                  // timestamp of last deploy, used for grace period
-  const DEPLOY_GRACE = 5000;           // ms — no encounters right after deploy
   let cachedRoads = null;              // cached road segments
   let cachedRects = null;              // cached node rects
   let activeFights = new Map();        // nodeId -> { villain, participants: Set, started }
@@ -179,8 +172,8 @@ const Walkers = (() => {
   function createWalkerElement(charImg) {
     const wrap = document.createElement('div');
     wrap.className = 'map-walker';
-    wrap.style.width = WALKER_SIZE + 'px';
-    wrap.style.height = WALKER_SIZE + 'px';
+    wrap.style.width = PHYSICS.WALKER.size + 'px';
+    wrap.style.height = PHYSICS.WALKER.size + 'px';
     wrap.style.position = 'absolute';
     wrap.style.zIndex = '50';
     wrap.style.pointerEvents = 'none';
@@ -226,7 +219,7 @@ const Walkers = (() => {
   function positionBubbleAboveWalker(bubble, w) {
     if (!w.el || w._cx == null) return;
     bubble.style.left = w._cx + 'px';
-    bubble.style.top = (w._cy - WALKER_SIZE / 2 - 8) + 'px';
+    bubble.style.top = (w._cy - PHYSICS.WALKER.size / 2 - 8) + 'px';
   }
 
   function createSpeechBubble(w, text) {
@@ -238,6 +231,15 @@ const Walkers = (() => {
     renderer.mapContainer.appendChild(bubble);
 
     positionBubbleAboveWalker(bubble, w);
+
+    // Safety auto-dismiss: if encounter cleanup never removes the bubble
+    // (e.g., walker navigates away mid-dialogue), fade it out after a
+    // generous lifetime so it never sticks forever.
+    setTimeout(() => {
+      if (!bubble.parentElement) return;
+      bubble.classList.add('fade-out');
+      setTimeout(() => bubble.remove(), 260);
+    }, PHYSICS.ENCOUNTER.lineDuration * 2 + 1500);
 
     return bubble;
   }
@@ -282,7 +284,7 @@ const Walkers = (() => {
     // Verify they're still close enough — skip stale encounters
     if (w1._cx != null && w2._cx != null) {
       const dist = Math.hypot(w2._cx - w1._cx, w2._cy - w1._cy);
-      if (dist > ENCOUNTER_DIST * 3) {
+      if (dist > PHYSICS.ENCOUNTER.dist * 3) {
         releaseAndSkip();
         return;
       }
@@ -297,12 +299,12 @@ const Walkers = (() => {
     if (!dialogue || dialogue.length === 0) { releaseAndSkip(); return; }
 
     // Mark both walkers as in encounter
-    w1.inEncounter = true;
-    w2.inEncounter = true;
+    w1.state = W_STATE.ENCOUNTER;
+    w2.state = W_STATE.ENCOUNTER;
 
     // Set cooldown for this pair
     const key = WALKER_DIALOGUES.getKey(w1.charId, w2.charId);
-    encounterCooldowns.set(key, performance.now() + ENCOUNTER_COOLDOWN);
+    encounterCooldowns.set(key, performance.now() + PHYSICS.ENCOUNTER.cooldown);
 
     // Center the map between the two walkers
     centerBetweenWalkers(w1, w2);
@@ -310,7 +312,7 @@ const Walkers = (() => {
     // Collision already keeps them apart — just let the scroll settle
     const scrollDelay = 600;
     const startDelay = scrollDelay + 300;
-    const totalDuration = startDelay + dialogue.length * LINE_DURATION + 500;
+    const totalDuration = startDelay + dialogue.length * PHYSICS.ENCOUNTER.lineDuration + 500;
 
     // Extend their pause for the full dialogue duration
     const holdUntil = performance.now() + totalDuration + 1000;
@@ -325,20 +327,52 @@ const Walkers = (() => {
         const walker = line.speaker === w1.charId ? w1 : w2;
         const bubble = createSpeechBubble(walker, line.text);
         activeBubbles.push({ el: bubble, owner: line.speaker, walker });
-      }, startDelay + i * LINE_DURATION));
+      }, startDelay + i * PHYSICS.ENCOUNTER.lineDuration));
     });
 
     // Clean up after dialogue ends, then run next queued encounter
     encounterTimers.push(setTimeout(() => {
       clearBubblesFor(w1.charId, w2.charId);
 
-      // Release walkers — find nearest node and bounce inside it
+      // Release walkers. They may have bumped each other either inside a
+      // node OR mid-road — preserve that context so we don't teleport them.
       [w1, w2].forEach(w => {
-        w.currentEdge = null;
-        w.location = 'node';
+        let inNodeId = null;
+        if (cachedRects && w._cx != null) {
+          for (const [id, r] of cachedRects) {
+            if (w._cx >= r.left && w._cx <= r.right &&
+                w._cy >= r.top && w._cy <= r.bottom) {
+              inNodeId = id;
+              break;
+            }
+          }
+        }
 
-        // Find nearest node
-        if (w._cx != null) {
+        if (inNodeId) {
+          // Genuinely inside a node rect — lock in and bounce inside.
+          w.currentNode = inNodeId;
+          w.location = 'node';
+          w.currentEdge = null;
+          const rect = cachedRects.get(inNodeId);
+          w._cx = Math.max(rect.left + PHYSICS.WALKER.r, Math.min(w._cx, rect.right - PHYSICS.WALKER.r));
+          w._cy = Math.max(rect.top + PHYSICS.WALKER.r, Math.min(w._cy, rect.bottom - PHYSICS.WALKER.r));
+          giveRandomVelocity(w);
+        } else if (w.currentEdge && cachedRoads?.get(w.currentEdge) && w.targetNode) {
+          // Mid-road when dialogue ended — resume travel toward targetNode
+          // without touching position (no teleport).
+          w.location = 'road';
+          const targetPos = getNodeCenter(w.targetNode);
+          if (targetPos) {
+            const dx = targetPos.x - w._cx;
+            const dy = targetPos.y - w._cy;
+            const len = Math.hypot(dx, dy) || 1;
+            w.vx = (dx / len) * PHYSICS.WALKER.speed;
+            w.vy = (dy / len) * PHYSICS.WALKER.speed;
+          } else {
+            giveRandomVelocity(w);
+          }
+        } else {
+          // Off-map / no road context — last-resort nearest-node snap.
           let bestNode = w.currentNode;
           let bestDist = Infinity;
           getVisibleNodes().forEach(p => {
@@ -348,18 +382,19 @@ const Walkers = (() => {
             if (d < bestDist) { bestDist = d; bestNode = p.id; }
           });
           w.currentNode = bestNode;
-
-          // Snap into the nearest node rect so they're inside
+          w.location = 'node';
+          w.currentEdge = null;
           const rect = cachedRects?.get(bestNode);
           if (rect) {
-            w._cx = Math.max(rect.left + WALKER_R, Math.min(w._cx, rect.right - WALKER_R));
-            w._cy = Math.max(rect.top + WALKER_R, Math.min(w._cy, rect.bottom - WALKER_R));
+            w._cx = Math.max(rect.left + PHYSICS.WALKER.r, Math.min(w._cx, rect.right - PHYSICS.WALKER.r));
+            w._cy = Math.max(rect.top + PHYSICS.WALKER.r, Math.min(w._cy, rect.bottom - PHYSICS.WALKER.r));
           }
+          giveRandomVelocity(w);
         }
-        w.inEncounter = false;
+
+        w.state = W_STATE.WALKING;
         w.paused = true;
         w.pauseEnd = performance.now() + randBetween(300, 800);
-        giveRandomVelocity(w);  // keep bouncing inside node
         applyWalkerPosition(w);
       });
 
@@ -391,8 +426,8 @@ const Walkers = (() => {
   // Apply computed position to DOM
   function applyWalkerPosition(w) {
     if (!w.el) return;
-    w.el.style.left = (w._cx - WALKER_R) + 'px';
-    w.el.style.top = (w._cy - WALKER_R) + 'px';
+    w.el.style.left = (w._cx - PHYSICS.WALKER.r) + 'px';
+    w.el.style.top = (w._cy - PHYSICS.WALKER.r) + 'px';
   }
 
   function pickNextTarget(w, graph) {
@@ -442,7 +477,7 @@ const Walkers = (() => {
           ux, uy,
           px: -uy, py: ux,  // perpendicular
           length: Math.max(0, len - fromOff - toOff),
-          halfW: ROAD_HALF_W
+          halfW: PHYSICS.ROAD.halfW
         });
       });
     });
@@ -502,15 +537,15 @@ const Walkers = (() => {
   // Bounce walker off node walls from INSIDE, with openings for roads
   function bounceInsideNode(w, rect) {
     if (!rect) return;
-    const pad = WALKER_R;
+    const pad = PHYSICS.WALKER.r;
     let bounced = false;
 
     // Check if walker is near an opening — if so, let it pass through
     // BUT NOT during a fight — openings are sealed
-    if (!w.inFight) {
+    if (w.state !== W_STATE.FIGHTING) {
       for (const op of rect.openings) {
         const distToOpening = Math.hypot(w._cx - op.x, w._cy - op.y);
-        if (distToOpening < ROAD_HALF_W + WALKER_R) {
+        if (distToOpening < PHYSICS.ROAD.halfW + PHYSICS.WALKER.r) {
           const movingOut = w.vx * op.ux + w.vy * op.uy;
           if (movingOut > 0) {
             w.location = 'road';
@@ -526,25 +561,25 @@ const Walkers = (() => {
     // Bounce off left wall
     if (w._cx - pad < rect.left) {
       w._cx = rect.left + pad;
-      if (w.vx < 0) w.vx = -w.vx * BOUNCE;
+      if (w.vx < 0) w.vx = -w.vx * PHYSICS.ROAD.bounce;
       bounced = true;
     }
     // Bounce off right wall
     if (w._cx + pad > rect.right) {
       w._cx = rect.right - pad;
-      if (w.vx > 0) w.vx = -w.vx * BOUNCE;
+      if (w.vx > 0) w.vx = -w.vx * PHYSICS.ROAD.bounce;
       bounced = true;
     }
     // Bounce off top wall
     if (w._cy - pad < rect.top) {
       w._cy = rect.top + pad;
-      if (w.vy < 0) w.vy = -w.vy * BOUNCE;
+      if (w.vy < 0) w.vy = -w.vy * PHYSICS.ROAD.bounce;
       bounced = true;
     }
     // Bounce off bottom wall
     if (w._cy + pad > rect.bottom) {
       w._cy = rect.bottom - pad;
-      if (w.vy > 0) w.vy = -w.vy * BOUNCE;
+      if (w.vy > 0) w.vy = -w.vy * PHYSICS.ROAD.bounce;
       bounced = true;
     }
   }
@@ -552,7 +587,7 @@ const Walkers = (() => {
   // Give walker a random velocity inside a node (for bouncing around)
   function giveRandomVelocity(w) {
     const angle = Math.random() * Math.PI * 2;
-    const spd = (w.inFight ? (w.moveSpeedMult || SPEED) : SPEED) * 0.8;
+    const spd = (w.state === W_STATE.FIGHTING ? (w.moveSpeedMult || PHYSICS.WALKER.speed) : PHYSICS.WALKER.speed) * 0.8;
     w.vx = Math.cos(angle) * spd;
     w.vy = Math.sin(angle) * spd;
   }
@@ -567,8 +602,8 @@ const Walkers = (() => {
 
     // Build weapon shape via inline SVG
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', WEAPON_SIZE);
-    svg.setAttribute('height', WEAPON_SIZE);
+    svg.setAttribute('width', PHYSICS.WEAPON.size);
+    svg.setAttribute('height', PHYSICS.WEAPON.size);
     svg.setAttribute('viewBox', '0 0 14 14');
     svg.style.display = 'block';
     svg.style.overflow = 'visible';
@@ -577,8 +612,8 @@ const Walkers = (() => {
     svg.innerHTML = shape.replace(/\{c\}/g, color);
     el.appendChild(svg);
 
-    el.style.width = WEAPON_SIZE + 'px';
-    el.style.height = WEAPON_SIZE + 'px';
+    el.style.width = PHYSICS.WEAPON.size + 'px';
+    el.style.height = PHYSICS.WEAPON.size + 'px';
     renderer.mapContainer.appendChild(el);
     return el;
   }
@@ -588,6 +623,27 @@ const Walkers = (() => {
     el.className = 'walker-hp';
     renderer.mapContainer.appendChild(el);
     return el;
+  }
+
+  function createHpBarElement() {
+    const wrap = document.createElement('div');
+    wrap.className = 'walker-hp-bar';
+    const fill = document.createElement('div');
+    fill.className = 'walker-hp-bar-fill';
+    wrap.appendChild(fill);
+    renderer.mapContainer.appendChild(wrap);
+    return wrap;
+  }
+
+  function spawnDamageNumber(target, dmg) {
+    if (!renderer.mapContainer || !target) return;
+    const el = document.createElement('div');
+    el.className = 'walker-damage-number';
+    el.textContent = '-' + Math.max(1, Math.round(dmg));
+    el.style.left = target._cx + 'px';
+    el.style.top = (target._cy - PHYSICS.WALKER.r - 18) + 'px';
+    renderer.mapContainer.appendChild(el);
+    setTimeout(() => el.remove(), 950);
   }
 
   function initFightProps(w) {
@@ -608,8 +664,7 @@ const Walkers = (() => {
     w.weaponEl = null;
     w.rangeWeaponEl = null;  // secondary weapon display for ranged
     w.hpEl = null;
-    w.inFight = false;
-    w.fainted = false;
+    w.hpBarEl = null;
     w.isVillain = false;
     w.lastHitBy = new Map();
     w._lastShot = 0;
@@ -622,23 +677,42 @@ const Walkers = (() => {
     if (!w.hpEl) {
       w.hpEl = createHpElement();
     }
-    w.inFight = true;
+    if (!w.hpBarEl) {
+      w.hpBarEl = createHpBarElement();
+    }
+    w.state = W_STATE.FIGHTING;
   }
 
   function unequipFight(w) {
     w.weaponEl?.remove();
     w.weaponEl = null;
+    w.hpBarEl?.remove();
+    w.hpBarEl = null;
     w.hpEl?.remove();
     w.hpEl = null;
-    w.inFight = false;
+    w.state = W_STATE.WALKING;
+  }
+
+  function setFightClass(nodeId, on) {
+    const el = renderer.nodeElements?.get(nodeId);
+    if (!el) return;
+    el.classList.toggle('active-fight', !!on);
   }
 
   /* ---- fight zoom ---- */
   let fightZoomed = false;
+  let zoomEndTimer = null;
 
   function startFightZoom(nodeId) {
     const nodeEl = renderer.nodeElements.get(nodeId);
     if (!nodeEl || !renderer.container) return;
+
+    // Cancel any pending end-zoom cleanup from a previous fight so it doesn't
+    // wipe this fight's transform mid-animation.
+    if (zoomEndTimer) {
+      clearTimeout(zoomEndTimer);
+      zoomEndTimer = null;
+    }
 
     const wrapper = renderer.container;
     const container = renderer.mapContainer;
@@ -654,13 +728,22 @@ const Walkers = (() => {
       wRect.height * 0.6 / CONFIG.NODE_HEIGHT
     );
 
-    // Scroll to center node (instant), then apply zoom
-    wrapper.scrollTo({ left: nodeCX - wRect.width / 2, top: nodeCY - wRect.height / 2 });
     wrapper.style.overflow = 'hidden';
 
-    container.style.transformOrigin = `${nodeCX}px ${nodeCY}px`;
+    // Use translate + scale (origin 0,0) to position the node explicitly at
+    // wrapper viewport center. This avoids scroll-clamp edge cases where the
+    // node is near the top/bottom/sides of the map.
+    //   P -> scale -> P*s -> translate -> P*s + (tx, ty)
+    //   Viewport position (accounting for wrapper scroll) = P*s + (tx, ty) - (sL, sT)
+    //   Solve P == node, viewport == (W/2, H/2)
+    const sL = wrapper.scrollLeft;
+    const sT = wrapper.scrollTop;
+    const tx = wRect.width / 2 - nodeCX * scale + sL;
+    const ty = wRect.height / 2 - nodeCY * scale + sT;
+
+    container.style.transformOrigin = '0 0';
     container.style.transition = 'transform 0.5s ease';
-    container.style.transform = `scale(${scale})`;
+    container.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
     fightZoomed = true;
   }
 
@@ -672,13 +755,15 @@ const Walkers = (() => {
     container.style.transition = 'transform 0.5s ease';
     container.style.transform = '';
 
-    setTimeout(() => {
+    if (zoomEndTimer) clearTimeout(zoomEndTimer);
+    zoomEndTimer = setTimeout(() => {
       container.style.transformOrigin = '';
       container.style.transition = '';
       wrapper.style.overflow = 'auto';
       fightZoomed = false;
       // Force geometry rebuild on next tick
       tick._geoTime = 0;
+      zoomEndTimer = null;
     }, 500);
   }
 
@@ -698,7 +783,16 @@ const Walkers = (() => {
     const villainIds = VILLAIN_DATA[nodeId];
     if (!villainIds || villainIds.length === 0) return;
     if (activeFights.size > 0) return;  // only one fight at a time globally
-    if (Math.random() >= FIGHT_SPAWN_CHANCE) return;
+
+    // Don't start a fight while walkers deployed to this node are still
+    // waiting in the stagger queue — they can't be enrolled retroactively and
+    // would appear mid-fight frozen on the node.
+    const hasPendingWalker = activeWalkers.some(w =>
+      !w._spawned && w.currentNode === nodeId
+    );
+    if (hasPendingWalker) return;
+
+    if (Math.random() >= PHYSICS.FIGHT.spawnChance) return;
 
     // Pick random villain
     const villainCharId = pickRandom(villainIds);
@@ -731,14 +825,14 @@ const Walkers = (() => {
       _cx: pos.x, _cy: pos.y,
       currentEdge: null,
       location: 'node',
+      state: W_STATE.WALKING,
       paused: false,
       pauseEnd: 0,
-      inEncounter: false,
       _spawned: true
     };
 
     initFightProps(w);
-    w.hp = Math.round(stats.hp * VILLAIN_HP_MULT);
+    w.hp = Math.round(stats.hp * PHYSICS.FIGHT.villainHpMult);
     w.maxHp = w.hp;
     w.isVillain = true;
     equipForFight(w);        // set inFight=true before velocity so moveSpeed is used
@@ -750,6 +844,7 @@ const Walkers = (() => {
     // Create fight
     const fight = { villain: w, participants: new Set(), nodeId, started: performance.now() };
     activeFights.set(nodeId, fight);
+    setFightClass(nodeId, true);
 
     // Zoom into fight node
     startFightZoom(nodeId);
@@ -765,7 +860,7 @@ const Walkers = (() => {
     activeWalkers.forEach(w => {
       if (w === fight.villain) return;
       if (w.isVillain) return;
-      if (w.fainted) return;
+      if (w.state === W_STATE.DEFEATED) return;
       if (w.currentNode === nodeId && w.location === 'node' && w._spawned) {
         if (!fight.participants.has(w)) {
           fight.participants.add(w);
@@ -780,7 +875,7 @@ const Walkers = (() => {
   }
 
   function handleWalkerFaint(w) {
-    w.fainted = true;
+    w.state = W_STATE.DEFEATED;
     w.vx = 0;
     w.vy = 0;
     w.el.classList.add('fainted');
@@ -789,8 +884,10 @@ const Walkers = (() => {
   }
 
   function handleVillainDefeat(fight, nodeId) {
+    if (fight._resolving) return;
+    fight._resolving = true;
     const villain = fight.villain;
-    villain.fainted = true;
+    villain.state = W_STATE.DEFEATED;
     villain.vx = 0;
     villain.vy = 0;
 
@@ -810,6 +907,7 @@ const Walkers = (() => {
 
       // End fight
       activeFights.delete(nodeId);
+      setFightClass(nodeId, false);
       // Clear any remaining projectiles
       activeProjectiles.forEach(p => p.el.remove());
       activeProjectiles = [];
@@ -817,7 +915,7 @@ const Walkers = (() => {
       // Release participants
       fight.participants.forEach(w => {
         unequipFight(w);
-        if (!w.fainted) {
+        if (w.state !== W_STATE.DEFEATED) {
           giveRandomVelocity(w);
           w.paused = true;
           w.pauseEnd = performance.now() + randBetween(300, 800);
@@ -827,10 +925,12 @@ const Walkers = (() => {
       // Zoom out and start revive checks
       endFightZoom();
       checkFaintedRevives();
-    }, DEFEAT_DISPLAY_MS);
+    }, PHYSICS.FIGHT.defeatDisplayMs);
   }
 
   function handleVillainWins(fight, nodeId) {
+    if (fight._resolving) return;
+    fight._resolving = true;
     const villain = fight.villain;
     villain.vx = 0;
     villain.vy = 0;
@@ -849,6 +949,7 @@ const Walkers = (() => {
       if (idx !== -1) activeWalkers.splice(idx, 1);
 
       activeFights.delete(nodeId);
+      setFightClass(nodeId, false);
       // Clear any remaining projectiles
       activeProjectiles.forEach(p => p.el.remove());
       activeProjectiles = [];
@@ -856,7 +957,7 @@ const Walkers = (() => {
       // Zoom out, then revive fainted walkers after delay
       endFightZoom();
       setTimeout(() => checkFaintedRevives(), 1500);
-    }, DEFEAT_DISPLAY_MS);
+    }, PHYSICS.FIGHT.defeatDisplayMs);
   }
 
   function checkFaintedRevives() {
@@ -868,13 +969,12 @@ const Walkers = (() => {
 
       // Check overlap with any active walker
       const overlapping = activeWalkers.some(other =>
-        other !== w && !other.fainted && other._spawned &&
-        Math.hypot(other._cx - w._cx, other._cy - w._cy) < WALKER_SIZE
+        other !== w && other.state !== W_STATE.DEFEATED && other._spawned &&
+        Math.hypot(other._cx - w._cx, other._cy - w._cy) < PHYSICS.WALKER.size
       );
 
       if (!overlapping) {
-        w.fainted = false;
-        w.inFight = false;
+        w.state = W_STATE.WALKING;
         w.el.classList.remove('fainted');
         const stats = WALKER_STATS[w.charId] || WALKER_STATS._default;
         w.hp = stats.hp;
@@ -961,10 +1061,10 @@ const Walkers = (() => {
     const color = WEAPON_COLORS[attacker.rangeWeapon] || WEAPON_COLORS._default;
 
     const proj = {
-      x: attacker._cx + Math.cos(aimAngle) * WALKER_R,
-      y: attacker._cy + Math.sin(aimAngle) * WALKER_R,
-      vx: Math.cos(aimAngle) * PROJECTILE_SPEED,
-      vy: Math.sin(aimAngle) * PROJECTILE_SPEED,
+      x: attacker._cx + Math.cos(aimAngle) * PHYSICS.WALKER.r,
+      y: attacker._cy + Math.sin(aimAngle) * PHYSICS.WALKER.r,
+      vx: Math.cos(aimAngle) * PHYSICS.PROJECTILE.speed,
+      vy: Math.sin(aimAngle) * PHYSICS.PROJECTILE.speed,
       ownerId: attacker.id,
       ownerIsVillain: attacker.isVillain,
       dmg: attacker.rangeDmg,
@@ -979,7 +1079,7 @@ const Walkers = (() => {
     let best = null;
     let bestDist = Infinity;
     for (const f of fighters) {
-      if (f === attacker || f.fainted || f.hp <= 0) continue;
+      if (f === attacker || f.state === W_STATE.DEFEATED || f.hp <= 0) continue;
       if (f.isVillain === attacker.isVillain) continue;
       const d = Math.hypot(f._cx - attacker._cx, f._cy - attacker._cy);
       if (d < bestDist) { bestDist = d; best = f; }
@@ -989,13 +1089,15 @@ const Walkers = (() => {
 
   function applyDamage(target, dmg, now, attackerId) {
     const lastHit = target.lastHitBy?.get(attackerId) || 0;
-    if (now - lastHit < HIT_COOLDOWN) return false;
+    if (now - lastHit < PHYSICS.WEAPON.hitCooldown) return false;
 
     target.lastHitBy.set(attackerId, now);
     target.hp -= dmg;
 
     target.el.classList.add('hit-flash');
-    setTimeout(() => target.el.classList.remove('hit-flash'), 150);
+    setTimeout(() => target.el.classList.remove('hit-flash'), 180);
+
+    spawnDamageNumber(target, dmg);
     return true;
   }
 
@@ -1004,25 +1106,25 @@ const Walkers = (() => {
       const allFighters = [...fight.participants, fight.villain];
 
       for (const attacker of allFighters) {
-        if (attacker.fainted || attacker.hp <= 0) continue;
+        if (attacker.state === W_STATE.DEFEATED || attacker.hp <= 0) continue;
 
         // --- Melee: orbiting weapon always does contact damage ---
-        const wx = attacker._cx + Math.cos(attacker.weaponAngle) * WEAPON_RADIUS;
-        const wy = attacker._cy + Math.sin(attacker.weaponAngle) * WEAPON_RADIUS;
+        const wx = attacker._cx + Math.cos(attacker.weaponAngle) * PHYSICS.WEAPON.radius;
+        const wy = attacker._cy + Math.sin(attacker.weaponAngle) * PHYSICS.WEAPON.radius;
 
         for (const target of allFighters) {
-          if (target === attacker || target.fainted || target.hp <= 0) continue;
+          if (target === attacker || target.state === W_STATE.DEFEATED || target.hp <= 0) continue;
           if (attacker.isVillain === target.isVillain) continue;
 
           const dist = Math.hypot(wx - target._cx, wy - target._cy);
-          if (dist < WALKER_R + WEAPON_SIZE / 2) {
+          if (dist < PHYSICS.WALKER.r + PHYSICS.WEAPON.size / 2) {
             if (applyDamage(target, attacker.meleeDmg, now, attacker.id + '_melee')) {
               if (target.hp <= 0) {
                 target.hp = 0;
                 if (target.isVillain) { handleVillainDefeat(fight, nodeId); return; }
                 else {
                   handleWalkerFaint(target);
-                  if (![...fight.participants].some(p => !p.fainted)) { handleVillainWins(fight, nodeId); return; }
+                  if (![...fight.participants].some(p => p.state !== W_STATE.DEFEATED)) { handleVillainWins(fight, nodeId); return; }
                 }
               }
             }
@@ -1034,7 +1136,7 @@ const Walkers = (() => {
           // Hybrid fighters (have both melee + range) shoot slower
           const hybridPenalty = attacker.meleeDmg > 0 ? 1.5 : 1.0;
           const lastShot = attacker._lastShot || 0;
-          if (now - lastShot >= (PROJECTILE_COOLDOWN * hybridPenalty) / attacker.atkSpeedMult) {
+          if (now - lastShot >= (PHYSICS.PROJECTILE.cooldown * hybridPenalty) / attacker.atkSpeedMult) {
             const target = findTarget(attacker, allFighters);
             if (target) {
               fireProjectile(attacker, target, now);
@@ -1073,19 +1175,19 @@ const Walkers = (() => {
         if (hit) return;
         const allFighters = [...fight.participants, fight.villain];
         for (const target of allFighters) {
-          if (target.fainted || target.hp <= 0) continue;
+          if (target.state === W_STATE.DEFEATED || target.hp <= 0) continue;
           if (target.id === p.ownerId) continue;
           if (target.isVillain === p.ownerIsVillain) continue;
 
           const dist = Math.hypot(p.x - target._cx, p.y - target._cy);
-          if (dist < WALKER_R + PROJECTILE_SIZE) {
+          if (dist < PHYSICS.WALKER.r + PHYSICS.PROJECTILE.size) {
             if (applyDamage(target, p.dmg, now, p.ownerId)) {
               if (target.hp <= 0) {
                 target.hp = 0;
                 if (target.isVillain) { handleVillainDefeat(fight, nodeId); }
                 else {
                   handleWalkerFaint(target);
-                  if (![...fight.participants].some(pp => !pp.fainted)) { handleVillainWins(fight, nodeId); }
+                  if (![...fight.participants].some(pp => pp.state !== W_STATE.DEFEATED)) { handleVillainWins(fight, nodeId); }
                 }
               }
             }
@@ -1101,8 +1203,8 @@ const Walkers = (() => {
       }
 
       // Update projectile DOM position
-      p.el.style.left = (p.x - PROJECTILE_SIZE) + 'px';
-      p.el.style.top = (p.y - PROJECTILE_SIZE) + 'px';
+      p.el.style.left = (p.x - PHYSICS.PROJECTILE.size) + 'px';
+      p.el.style.top = (p.y - PHYSICS.PROJECTILE.size) + 'px';
     }
   }
 
@@ -1137,15 +1239,15 @@ const Walkers = (() => {
         return;
       }
 
-      if (w.inEncounter) return;
-      if (w.fainted) return;
+      if (w.state === W_STATE.ENCOUNTER) return;
+      if (w.state === W_STATE.DEFEATED) return;
 
       // During a fight, only fighters move — everyone else freezes
-      if (activeFights.size > 0 && !w.inFight) return;
+      if (activeFights.size > 0 && w.state !== W_STATE.FIGHTING) return;
 
       // Update weapon spin if in fight
-      if (w.inFight) {
-        w.weaponAngle = (w.weaponAngle || 0) + w.atkSpeedMult * WEAPON_BASE_SPEED * dtSec;
+      if (w.state === W_STATE.FIGHTING) {
+        w.weaponAngle = (w.weaponAngle || 0) + w.atkSpeedMult * PHYSICS.WEAPON.baseSpeed * dtSec;
       }
 
       // Velocity integration
@@ -1161,7 +1263,7 @@ const Walkers = (() => {
         if (w.location === 'road') return;
 
         // Don't leave the node during a fight — just bounce inside
-        if (!w.inFight) {
+        if (w.state !== W_STATE.FIGHTING) {
           // After pause expires, aim toward a road opening to leave
           if (w.paused && now >= w.pauseEnd) {
             w.paused = false;
@@ -1170,8 +1272,8 @@ const Walkers = (() => {
               const dx = op.x - w._cx;
               const dy = op.y - w._cy;
               const len = Math.hypot(dx, dy) || 1;
-              w.vx = (dx / len) * SPEED;
-              w.vy = (dy / len) * SPEED;
+              w.vx = (dx / len) * PHYSICS.WALKER.speed;
+              w.vy = (dy / len) * PHYSICS.WALKER.speed;
             } else {
               giveRandomVelocity(w);
             }
@@ -1185,15 +1287,15 @@ const Walkers = (() => {
           const relX = w._cx - road.x1;
           const relY = w._cy - road.y1;
           const perpDist = relX * road.px + relY * road.py;
-          const maxPerp = road.halfW - WALKER_R;
+          const maxPerp = road.halfW - PHYSICS.WALKER.r;
 
           if (Math.abs(perpDist) > maxPerp) {
             const sign = perpDist > 0 ? 1 : -1;
             w._cx -= road.px * (perpDist - sign * maxPerp);
             w._cy -= road.py * (perpDist - sign * maxPerp);
             const vPerp = w.vx * road.px + w.vy * road.py;
-            w.vx -= 2 * vPerp * road.px * BOUNCE;
-            w.vy -= 2 * vPerp * road.py * BOUNCE;
+            w.vx -= 2 * vPerp * road.px * PHYSICS.ROAD.bounce;
+            w.vy -= 2 * vPerp * road.py * PHYSICS.ROAD.bounce;
           }
 
           // Check if walker reached the end of the road → enter node
@@ -1204,7 +1306,7 @@ const Walkers = (() => {
             w.currentEdge = null;
             // Keep velocity — walker enters node with momentum and bounces inside
             w.paused = true;
-            w.pauseEnd = now + randBetween(PAUSE_MIN, PAUSE_MAX);
+            w.pauseEnd = now + randBetween(PHYSICS.WALKER.pauseMin, PHYSICS.WALKER.pauseMax);
 
             // Fight: join existing fight or maybe spawn villain
             if (!w.isVillain) {
@@ -1219,7 +1321,7 @@ const Walkers = (() => {
       }
 
       // Speed enforcement — use character moveSpeed during fights
-      const charSpeed = w.inFight ? (w.moveSpeedMult || SPEED) : SPEED;
+      const charSpeed = w.state === W_STATE.FIGHTING ? (w.moveSpeedMult || PHYSICS.WALKER.speed) : PHYSICS.WALKER.speed;
       const spd = Math.hypot(w.vx, w.vy);
       if (spd > charSpeed * 1.5) {
         w.vx = (w.vx / spd) * charSpeed;
@@ -1252,27 +1354,39 @@ const Walkers = (() => {
     // Pass 1.5: fight damage processing
     processFightDamage(now, dtSec);
 
+    // Pass 1.6: safety net — if every enrolled participant is defeated but
+    // the villain has no one left to hit (so no damage event fires the
+    // normal endgame check), resolve the fight here.
+    activeFights.forEach((fight, nodeId) => {
+      if (fight._resolving) return;
+      if (fight.participants.size === 0) return;
+      const anyLive = [...fight.participants].some(p => p.state !== W_STATE.DEFEATED);
+      if (!anyLive && fight.villain.state !== W_STATE.DEFEATED) {
+        handleVillainWins(fight, nodeId);
+      }
+    });
+
     // Pass 2: walker-walker elastic collision + encounter detection
-    const graceActive = (now - deployTime < DEPLOY_GRACE);
+    const graceActive = (now - deployTime < PHYSICS.FIGHT.deployGrace);
     for (let i = 0; i < activeWalkers.length; i++) {
       const a = activeWalkers[i];
-      if (!a._spawned || a._cx == null || a.fainted) continue;
+      if (!a._spawned || a._cx == null || a.state === W_STATE.DEFEATED) continue;
       for (let j = i + 1; j < activeWalkers.length; j++) {
         const b = activeWalkers[j];
-        if (!b._spawned || b._cx == null || b.fainted) continue;
+        if (!b._spawned || b._cx == null || b.state === W_STATE.DEFEATED) continue;
 
         const dx = b._cx - a._cx;
         const dy = b._cy - a._cy;
         const dist = Math.hypot(dx, dy);
-        const minDist = WALKER_SIZE;
+        const minDist = PHYSICS.WALKER.size;
 
         if (dist < minDist && dist > 0.01) {
           const nx = dx / dist;
           const ny = dy / dist;
           const overlap = minDist - dist;
 
-          const aLocked = a.inEncounter;
-          const bLocked = b.inEncounter;
+          const aLocked = a.state === W_STATE.ENCOUNTER;
+          const bLocked = b.state === W_STATE.ENCOUNTER;
 
           // Separate
           if (aLocked && bLocked) {
@@ -1300,18 +1414,17 @@ const Walkers = (() => {
             b.vy += (aVn - bVn) * ny;
           } else if (!aLocked && bLocked) {
             const aVn = a.vx * nx + a.vy * ny;
-            if (aVn > 0) { a.vx -= 2 * aVn * nx * BOUNCE; a.vy -= 2 * aVn * ny * BOUNCE; }
+            if (aVn > 0) { a.vx -= 2 * aVn * nx * PHYSICS.ROAD.bounce; a.vy -= 2 * aVn * ny * PHYSICS.ROAD.bounce; }
           } else if (aLocked && !bLocked) {
             const bVn = b.vx * nx + b.vy * ny;
-            if (bVn < 0) { b.vx -= 2 * bVn * nx * BOUNCE; b.vy -= 2 * bVn * ny * BOUNCE; }
+            if (bVn < 0) { b.vx -= 2 * bVn * nx * PHYSICS.ROAD.bounce; b.vy -= 2 * bVn * ny * PHYSICS.ROAD.bounce; }
           }
         }
 
         // Encounter detection (suppress during fights)
         if (!graceActive && !encounterRunning && encounterQueue.length === 0 &&
-            dist < ENCOUNTER_DIST &&
-            !a.inEncounter && !b.inEncounter &&
-            !a.inFight && !b.inFight &&
+            dist < PHYSICS.ENCOUNTER.dist &&
+            a.state === W_STATE.WALKING && b.state === W_STATE.WALKING &&
             !a.isVillain && !b.isVillain &&
             a.charId !== b.charId &&
             a.previousNode && b.previousNode) {
@@ -1336,24 +1449,38 @@ const Walkers = (() => {
 
     // Pass 3: apply to DOM + weapon/HP positions
     activeWalkers.forEach(w => {
-      if (w._spawned && !w.inEncounter) applyWalkerPosition(w);
+      if (w._spawned && w.state !== W_STATE.ENCOUNTER) applyWalkerPosition(w);
 
       // Update melee weapon orbit position + rotation (every character has one)
-      if (w.inFight && !w.fainted && w.weaponEl) {
-        const wx = w._cx + Math.cos(w.weaponAngle) * WEAPON_RADIUS;
-        const wy = w._cy + Math.sin(w.weaponAngle) * WEAPON_RADIUS;
-        w.weaponEl.style.left = (wx - WEAPON_SIZE / 2) + 'px';
-        w.weaponEl.style.top = (wy - WEAPON_SIZE / 2) + 'px';
+      if (w.state === W_STATE.FIGHTING && w.state !== W_STATE.DEFEATED && w.weaponEl) {
+        const wx = w._cx + Math.cos(w.weaponAngle) * PHYSICS.WEAPON.radius;
+        const wy = w._cy + Math.sin(w.weaponAngle) * PHYSICS.WEAPON.radius;
+        w.weaponEl.style.left = (wx - PHYSICS.WEAPON.size / 2) + 'px';
+        w.weaponEl.style.top = (wy - PHYSICS.WEAPON.size / 2) + 'px';
         const deg = (w.weaponAngle * 180 / Math.PI) + 90;
         w.weaponEl.style.transform = `rotate(${deg}deg)`;
       }
 
-      // Update HP display
-      if (w.inFight && w.hpEl) {
+      // Update HP display (numeric + bar)
+      if (w.state === W_STATE.FIGHTING && w.hpEl) {
+        const hpPct = Math.max(0, w.hp / w.maxHp);
+        const low = hpPct < 0.3;
+        const warn = !low && hpPct < 0.6;
+
         w.hpEl.style.left = w._cx + 'px';
-        w.hpEl.style.top = (w._cy - WALKER_R - 12) + 'px';
+        w.hpEl.style.top = (w._cy - PHYSICS.WALKER.r - 18) + 'px';
         w.hpEl.textContent = Math.max(0, Math.ceil(w.hp));
-        w.hpEl.classList.toggle('low', w.hp < w.maxHp * 0.3);
+        w.hpEl.classList.toggle('low', low);
+        w.hpEl.classList.toggle('warn', warn);
+
+        if (w.hpBarEl) {
+          w.hpBarEl.style.left = w._cx + 'px';
+          w.hpBarEl.style.top = (w._cy - PHYSICS.WALKER.r - 8) + 'px';
+          w.hpBarEl.classList.toggle('low', low);
+          w.hpBarEl.classList.toggle('warn', warn);
+          const fill = w.hpBarEl.firstElementChild;
+          if (fill) fill.style.transform = `scaleX(${hpPct})`;
+        }
       }
     });
 
@@ -1458,9 +1585,9 @@ const Walkers = (() => {
         _cx: 0, _cy: 0,
         currentEdge: null,
         location: 'node',          // 'node' or 'road'
+        state: W_STATE.WALKING,
         paused: true,
         pauseEnd: spawnAt,
-        inEncounter: false,
         _spawned: spawnIndex === 0
       };
 

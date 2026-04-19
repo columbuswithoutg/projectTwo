@@ -1,20 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const jwt = require('jsonwebtoken');
 const User = require('../models/user');
 const Friend = require('../models/Friend');
-
-// Reuse your auth middleware
-function auth(req, res, next) {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'No token' });
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        next();
-    } catch {
-        res.status(401).json({ error: 'Invalid token' });
-    }
-}
+const auth = require('../middleware/auth');
 
 // Search users by username
 router.get('/search', auth, async (req, res) => {

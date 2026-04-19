@@ -11,14 +11,14 @@
 <body>
 
   <header id="header">
-    <button id="nav-toggle">☰</button>
+    <button id="nav-toggle" aria-label="Open navigation">☰</button>
     <h1>Watch Order Progression</h1>
 
     <!-- Navigation Drawer -->
     <div id="nav-drawer">
       <div id="nav-drawer-overlay"></div>
       <div id="nav-drawer-content">
-        <button id="close-drawer">✕</button>
+        <button id="close-drawer" aria-label="Close navigation">✕</button>
         <nav>
           <button id="profile-btn">👤 Profile</button>
           <button id="characters-btn">🦸 Characters</button>
@@ -30,9 +30,9 @@
         </nav>
       </div>
     </div>
-    <button id="header-profile-btn" title="Profile">
+    <button id="header-profile-btn" title="Profile" aria-label="Open profile">
       <img id="header-avatar" src="" alt="" style="display:none" />
-      <span id="header-avatar-initials">👤</span>
+      <span id="header-avatar-initials" aria-hidden="true">👤</span>
     </button>
   </header>
 

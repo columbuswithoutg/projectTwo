@@ -6,6 +6,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 app.use(cors({
@@ -28,7 +29,14 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error(err));
 
-app.use('/api/auth', require('./routes/auth'));
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many auth attempts, try again in 15 minutes' },
+});
+app.use('/api/auth', authLimiter, require('./routes/auth'));
 app.use('/api/progress', require('./routes/progress'));
 app.use('/api/friends', require('./routes/friends'));
 app.use('/api/upload', require('./routes/upload'));

@@ -176,7 +176,7 @@ function showFriendsPanel() {
         : `<strong>${esc(r.requester.username)}</strong> sent you a friend request`
       }
     </span>
-    <div style="display:flex; gap:6px; flex-shrink:0">
+    <div class="friend-row-actions">
       <button class="friend-accept-btn" data-id="${r._id}" data-type="${r.type || 'friend'}" data-project="${r.projectId || ''}">Accept</button>
       <button class="friend-reject-btn" data-id="${r._id}">Reject</button>
     </div>
@@ -239,8 +239,8 @@ function loadFriendList(panel) {
     }
     container.innerHTML = friends.map(f => `
       <div class="friend-row" data-id="${f.id}">
-        <span>${esc(f.username)}</span>
-        <div style="display:flex; gap:6px">
+        <span class="friend-username">${esc(f.username)}</span>
+        <div class="friend-row-actions">
           <button class="friend-view-btn" data-id="${f.id}" data-name="${esc(f.username)}">View Progress</button>
           <button class="friend-remove-btn" data-id="${f.id}" data-name="${esc(f.username)}">Remove</button>
         </div>
