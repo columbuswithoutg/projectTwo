@@ -31,7 +31,7 @@ const spaFile = path.join(__dirname, 'spa.html');
 // server.js, routes/, models/, middleware/, .env, package.json, etc. over HTTP.
 // Now each public directory/file is mounted explicitly so backend source never
 // leaves the server.
-app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: '7d' }));
+app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: '30d' }));
 app.use('/js',     express.static(path.join(__dirname, 'js')));
 // Root-level client files (HTML + top-level scripts + stylesheet) are served
 // from an explicit allowlist. Anything else at the project root stays private.

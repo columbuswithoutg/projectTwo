@@ -728,8 +728,11 @@ class MapRenderer {
       glow.style.background = `radial-gradient(ellipse, ${tint.a} 0%, ${tint.b} 45%, transparent 80%)`;
       frag.appendChild(glow);
 
-      // Location frame — the fixed-size rectangle with background image.
-      // Clickable (delegated to labelsContainer handler? no — set directly).
+      // Location frame — the fixed-size rectangle with a lazy-loaded backdrop
+      // image inside it. Using a real <img> with loading="lazy" + decoding="async"
+      // lets the browser defer off-screen backdrops until the user pans near them
+      // and run decode off the main thread — a big win over CSS background-image
+      // (which eager-fetches everything as soon as the frame mounts).
       const frame = document.createElement("div");
       frame.className = "cluster-frame";
       frame.dataset.location = locId;
@@ -738,12 +741,24 @@ class MapRenderer {
       frame.style.top = `${rect.minY}px`;
       frame.style.width = `${rect.width}px`;
       frame.style.height = `${rect.height}px`;
-      // Per-region fallback gradient shows when no backdrop image exists yet.
+      // Per-region tint ≠ image — the tint is a gold/region gradient that
+      // stays as the fallback when no backdrop WebP exists yet. It renders
+      // underneath the <img> via .cluster-frame's own background.
       frame.style.setProperty('--region-tint-a', tint.a);
       frame.style.setProperty('--region-tint-b', tint.b);
-      // Opt-in background image — renderer probes for assets/backgrounds/<id>.webp.
-      // Missing image leaves the CSS gradient fallback visible (no console noise).
-      frame.style.setProperty('--region-bg', `url('assets/backgrounds/${loc.id}.webp')`);
+
+      const img = document.createElement("img");
+      img.className = "cluster-frame-bg";
+      img.src = `assets/backgrounds/${loc.id}.webp`;
+      img.alt = "";
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.draggable = false;
+      // If the file doesn't exist yet, remove the broken <img> so the tint
+      // fallback shows clean — no browser "broken image" icon, no noise.
+      img.onerror = () => img.remove();
+      frame.appendChild(img);
+
       frag.appendChild(frame);
     });
     this.glowsContainer.appendChild(frag);
