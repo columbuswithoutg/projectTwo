@@ -37,17 +37,34 @@
   </header>
 
   <div id="map-wrapper">
-    <div id="map-container">
-      <svg id="connections"></svg>
-      <div id="nodes"></div>
+    <!-- World viewport: zoom + pan transform lives here -->
+    <div id="world-viewport">
+      <!-- Backdrop layers — decorative, don't scale with fight zoom but with world zoom -->
+      <svg id="world-continents" aria-hidden="true" viewBox="0 0 4000 1700" preserveAspectRatio="none"></svg>
+      <div id="cosmos-starfield" aria-hidden="true"></div>
+      <div id="region-glows" aria-hidden="true"></div>
+
+      <!-- Map container: fight zoom transform still mutates this -->
+      <div id="map-container">
+        <svg id="connections"></svg>
+        <div id="nodes"></div>
+        <div id="cluster-labels" aria-hidden="true"></div>
+      </div>
     </div>
+
+    <!-- World-view snap button -->
+    <button id="world-view-btn" aria-label="Show world view" title="World view (W)">
+      <span aria-hidden="true">🌍</span>
+    </button>
   </div>
 
   <script src="projects.js"></script>
   <script src="characters.js"></script>
+  <script src="locations.js"></script>
   <script src="js/config.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/state.js"></script>
+  <script src="js/layout.js"></script>
   <script src="js/utils.js"></script>
   <script src="js/renderer.js"></script>
   <script src="js/popup.js"></script>

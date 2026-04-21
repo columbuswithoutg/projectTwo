@@ -377,10 +377,100 @@ body {
   top: var(--header-height);
   left: 0;
   right: 0;
-  bottom: 0;
-  overflow: auto;
+  bottom: var(--shelf-height, 88px);
+  overflow: hidden;
   background: var(--color-bg);
-  scroll-behavior: smooth;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#map-wrapper.panning {
+  cursor: grabbing;
+}
+
+/* ======================
+   UP-NEXT SHELF
+   Fixed bottom dock for revealed-but-unwatched pins.
+====================== */
+:root { --shelf-height: 88px; }
+
+#up-next-shelf {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--shelf-height);
+  padding: 8px 14px;
+  box-sizing: border-box;
+  background: linear-gradient(to top, rgba(8, 8, 16, 0.96), rgba(12, 12, 24, 0.82));
+  border-top: 1px solid rgba(255, 215, 0, 0.24);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  z-index: 40;
+  transform: translateY(0);
+  transition: transform 0.35s ease;
+  backdrop-filter: blur(6px);
+}
+
+#up-next-shelf.empty {
+  transform: translateY(100%);
+  pointer-events: none;
+}
+
+#up-next-shelf .shelf-label {
+  font: 600 11px/1 system-ui, sans-serif;
+  letter-spacing: 0.22em;
+  color: #d8c988;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  padding: 4px 0;
+  flex: 0 0 auto;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+#up-next-shelf .shelf-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1;
+  min-width: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 215, 0, 0.35) transparent;
+  padding: 4px 2px;
+}
+
+#up-next-shelf .shelf-track::-webkit-scrollbar { height: 6px; }
+#up-next-shelf .shelf-track::-webkit-scrollbar-thumb {
+  background: rgba(255, 215, 0, 0.35);
+  border-radius: 3px;
+}
+
+/* Shelf pins override the map's absolute positioning so they can flow
+   inline in a horizontal track. */
+#up-next-shelf .node.pin.shelf-pin {
+  position: static !important;
+  flex: 0 0 auto;
+  left: auto !important;
+  top: auto !important;
+  animation: shelfPinBirth 0.35s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+@keyframes shelfPinBirth {
+  from { transform: scale(0.5); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* Block native drag-ghosts of node posters when the user pans across them. */
+#map-wrapper img {
+  user-drag: none;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
 }
 
 #map-wrapper::-webkit-scrollbar {
@@ -403,32 +493,162 @@ body {
 }
 
 /* ======================
+   WORLD VIEWPORT (zoom + pan)
+====================== */
+#world-viewport {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4000px;
+  height: 2800px;
+  transform-origin: 0 0;
+  transform: translate(0, 0) scale(0.55);
+}
+
+#world-viewport.interacting {
+  will-change: transform;
+}
+
+/* Backdrop layers — positioned inside #world-viewport, rendered below nodes */
+#world-continents {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4000px;
+  height: 1700px;
+  opacity: 0.05;
+  pointer-events: none;
+  z-index: 0;
+}
+
+#world-continents path {
+  fill: var(--color-primary-light);
+  stroke: none;
+}
+
+#cosmos-starfield {
+  position: absolute;
+  top: 1700px;
+  left: 0;
+  width: 4000px;
+  height: 900px;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(1px 1px at 25% 15%, rgba(255,255,255,0.6) 0%, transparent 100%),
+    radial-gradient(1px 1px at 70% 35%, rgba(255,255,255,0.4) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 45% 65%, rgba(180,200,255,0.5) 0%, transparent 100%),
+    radial-gradient(1px 1px at 85% 80%, rgba(255,255,255,0.5) 0%, transparent 100%),
+    radial-gradient(1px 1px at 12% 55%, rgba(255,180,220,0.4) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 62% 20%, rgba(255,255,255,0.3) 0%, transparent 100%);
+  background-size: 220px 180px, 180px 160px, 260px 200px, 200px 180px, 240px 200px, 300px 220px;
+  background-repeat: repeat;
+  opacity: 0.8;
+}
+
+#region-glows {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4000px;
+  height: 2800px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.region-glow {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+}
+
+/* Location frame — the fixed-size "room" for each region. Shows the
+   backdrop image if present (via --region-bg custom property), else falls
+   back to a dark tinted gradient keyed to the region. Clickable: snap-zooms
+   to that region. A bottom gradient shelf keeps pins legible over any image. */
+.cluster-frame {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  border: 1.5px solid rgba(201, 162, 39, 0.32);
+  border-radius: 14px;
+  overflow: hidden;
+  background-color: rgba(13, 16, 32, 0.55);
+  background-image:
+    linear-gradient(135deg, var(--region-tint-a, transparent) 0%, transparent 60%),
+    var(--region-bg, none);
+  background-size: auto, cover;
+  background-position: center, center;
+  background-repeat: no-repeat;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.6),
+    0 10px 28px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  z-index: 1;
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
+  animation: locationBirth 540ms cubic-bezier(0.22, 0.8, 0.32, 1);
+}
+
+.cluster-frame:hover {
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.6),
+    0 10px 32px rgba(0, 0, 0, 0.7),
+    0 0 24px var(--gold-025),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Bottom shelf — dark gradient under the pin row keeps posters readable
+   over busy background images. Fades from transparent at top to ~75% black
+   at the very bottom edge. */
+.cluster-frame::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 72px;
+  background: linear-gradient(to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.35) 45%,
+    rgba(0, 0, 0, 0.8) 100%);
+  pointer-events: none;
+}
+
+.cluster-frame.cosmic {
+  border-color: rgba(255, 180, 110, 0.36);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.6),
+    0 10px 32px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 200, 150, 0.08),
+    0 0 30px rgba(255, 140, 70, 0.14);
+}
+
+@keyframes locationBirth {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ======================
    MAP CONTAINER
 ====================== */
 #map-container {
-  position: relative;
-  min-width: 100%;
-  min-height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4000px;
+  height: 2800px;
+  transform-origin: 0 0;
+  background: transparent;
+}
+
+/* Fallback atmospheric gradient behind the world viewport */
+#map-wrapper {
   background:
     radial-gradient(circle at 15% 20%, rgba(201, 162, 39, 0.06) 0%, transparent 50%),
     radial-gradient(circle at 85% 40%, rgba(226, 54, 54, 0.04) 0%, transparent 45%),
     radial-gradient(circle at 50% 80%, rgba(201, 162, 39, 0.04) 0%, transparent 40%),
     linear-gradient(180deg, var(--color-bg) 0%, var(--color-surface) 50%, var(--color-bg) 100%);
-  /* Parallax: radial glows stay fixed to viewport while the map scrolls over them */
-  background-attachment: fixed, fixed, fixed, local;
-}
-
-#map-container::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(201, 162, 39, 0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(201, 162, 39, 0.018) 1px, transparent 1px);
-  background-size: 64px 64px;
-  pointer-events: none;
-  z-index: 0;
-  will-change: transform;
 }
 
 #map-container[data-phase="1"] { border: 1px solid var(--gold-008); }
@@ -452,6 +672,118 @@ body {
   overflow: visible;
 }
 
+/* Road draw-in: stroke animates from invisible to visible when a new road appears. */
+#connections path.road-drawing {
+  animation: roadDrawIn 800ms ease-out forwards;
+}
+
+@keyframes roadDrawIn {
+  from { stroke-dashoffset: var(--road-length, 1000); opacity: 0.2; }
+  to   { stroke-dashoffset: 0; opacity: 1; }
+}
+
+/* ======================
+   CLUSTER LABELS
+====================== */
+#cluster-labels {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.cluster-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+  text-shadow:
+    0 0 8px rgba(0, 0, 0, 0.8),
+    0 0 18px rgba(201, 162, 39, 0.3),
+    0 2px 4px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity 250ms ease;
+}
+
+.cluster-label.cosmic {
+  color: rgba(255, 200, 140, 0.85);
+  text-shadow:
+    0 0 10px rgba(0, 0, 0, 0.85),
+    0 0 22px rgba(255, 140, 70, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.9);
+}
+
+/* ======================
+   WORLD VIEW BUTTON
+====================== */
+#world-view-btn {
+  position: fixed;
+  top: calc(var(--header-height) + 12px);
+  right: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(13, 16, 32, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--gold-025);
+  color: var(--color-primary-light);
+  font-size: 1.4rem;
+  cursor: pointer;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.85);
+  transition: opacity 250ms ease, transform 250ms ease, background 200ms ease;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+#world-view-btn.visible {
+  opacity: 1;
+  pointer-events: all;
+  transform: scale(1);
+}
+
+#world-view-btn:hover {
+  background: rgba(13, 16, 32, 0.8);
+  border-color: var(--color-primary);
+  box-shadow: 0 4px 20px var(--gold-03);
+}
+
+/* ======================
+   REDUCED MOTION
+====================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .node {
+    animation: none;
+  }
+
+  #connections path.road-drawing {
+    animation: none;
+  }
+}
+
 /* ======================
    NODES
 ====================== */
@@ -460,11 +792,14 @@ body {
   z-index: 2;
 }
 
+/* Pins — small 30×45 mini-poster markers along the bottom of a location.
+   The location frame (background image + gold outline) is the dominant
+   visual; pins are just clickable chips identifying what movie plays there. */
 .node {
   position: absolute;
-  width: var(--node-width);
-  height: var(--node-height);
-  border-radius: 8px;
+  width: 30px;
+  height: 45px;
+  border-radius: 4px;
   overflow: hidden;
   cursor: pointer;
   background: var(--color-node-bg);
@@ -474,50 +809,79 @@ body {
     box-shadow 0.2s ease,
     filter 0.3s ease;
   box-shadow:
-    var(--shadow-card),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+    0 2px 6px rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .node:hover:not(.locked) {
-  transform: scale(1.05);
+  transform: scale(1.4);
   box-shadow:
-    var(--shadow-card),
+    0 4px 14px rgba(0, 0, 0, 0.8),
     var(--shadow-glow),
-    inset 0 0 0 1px var(--gold-03);
-  z-index: 10;
+    inset 0 0 0 1px var(--gold-04);
+  z-index: 12;
 }
 
 .node.watched {
   box-shadow:
-    0 0 0 2px var(--color-primary),
-    var(--shadow-card),
-    var(--shadow-glow);
+    0 0 0 1.5px var(--color-primary),
+    0 2px 6px rgba(0, 0, 0, 0.7),
+    0 0 10px rgba(201, 162, 39, 0.45);
 }
 
 .node.watched::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, rgba(201, 162, 39, 0.18) 0%, transparent 60%);
+  background: linear-gradient(135deg, rgba(201, 162, 39, 0.22) 0%, transparent 60%);
   pointer-events: none;
 }
 
+/* Locked nodes are hidden entirely on the world map (they reappear when unlocked). */
 .node.locked {
-  cursor: not-allowed;
-  opacity: 0.55;
+  display: none;
 }
 
-.node.locked img {
-  filter: grayscale(85%) brightness(0.5);
+/* Node birth animation — runs once when a node first appears */
+.node {
+  animation: nodeBirth 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.node.locked::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(7, 8, 15, 0.55) 0%, rgba(7, 8, 15, 0.78) 100%);
-  pointer-events: none;
-  z-index: 2;
+@keyframes nodeBirth {
+  from { transform: scale(0); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+/* ======================
+   TOUCH / COARSE POINTER
+   Pins stay visually 30×45 so layouts don't reshuffle, but their hit area
+   expands to ~48×67 via a transparent ::before so taps register reliably.
+   Desktop hover scale is mirrored onto :active for tap feedback.
+====================== */
+@media (pointer: coarse) {
+  .node.pin::before {
+    content: "";
+    position: absolute;
+    inset: -11px -9px;
+    pointer-events: auto;
+    z-index: 0;
+  }
+  .node.pin:active:not(.locked) {
+    transform: scale(1.35);
+    z-index: 12;
+  }
+  #world-view-btn:active {
+    background: rgba(13, 16, 32, 0.8);
+    border-color: var(--color-primary);
+  }
+}
+
+/* Hover-incapable devices: touch can't trigger :hover, so mirror the
+   hover-only visual cues onto :active / :focus-visible. */
+@media (hover: none) {
+  .node:active:not(.locked) img {
+    transform: scale(1.05);
+  }
 }
 
 /* Pulsing glow for the node where a villain fight is currently active */
@@ -562,19 +926,19 @@ body {
 ====================== */
 .node .checkmark {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 22px;
-  height: 22px;
+  top: 2px;
+  right: 2px;
+  width: 10px;
+  height: 10px;
   background: var(--gold-gradient);
   color: #000;
   font-weight: 900;
-  font-size: 12px;
+  font-size: 7px;
   border-radius: 50%;
   display: none;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6), 0 0 8px rgba(201, 162, 39, 0.6);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.7), 0 0 4px rgba(201, 162, 39, 0.6);
   animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   z-index: 3;
 }
@@ -2387,4 +2751,26 @@ body.auth-page {
     width: 44px;
     height: 44px;
   }
+}
+
+/* Narrow phones — squeeze the shelf, clamp the nav drawer, nudge the
+   world-view button away from the shelf's edge so they never collide. */
+@media (max-width: 480px) {
+  :root { --shelf-height: 72px; }
+
+  #up-next-shelf {
+    padding: 6px 10px;
+    gap: 10px;
+  }
+  #up-next-shelf .shelf-label {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+  }
+  #up-next-shelf .shelf-track { gap: 8px; }
+
+  #nav-drawer-content {
+    width: min(85vw, 260px);
+  }
+
+  .cluster-label { font-size: 11px; }
 }

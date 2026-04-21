@@ -37,8 +37,9 @@ const Walkers = (() => {
   let encounterRunning = false;
   let encounterTimers = [];            // setTimeout IDs for active dialogue, cleared on destroy
   let deployTime = 0;                  // timestamp of last deploy, used for grace period
+  let cachedGraph = null;              // cached adjacency (layout-version keyed)
   let cachedRoads = null;              // cached road segments
-  let cachedRects = null;              // cached node rects
+  let cachedRects = null;              // cached cluster rects
   let activeFights = new Map();        // nodeId -> { villain, participants: Set, started }
   let faintedWalkers = new Set();      // walkers waiting to revive after fight
   let activeProjectiles = [];          // { x, y, vx, vy, ownerId, dmg, el, isVillainProj }
@@ -148,23 +149,17 @@ const Walkers = (() => {
     return graph;
   }
 
+  // Read node centers from the authored world layout — independent of DOM transforms
+  // (fight zoom / world zoom can compose without breaking geometry).
   function getNodeCenter(nodeId) {
-    const el = renderer.nodeElements.get(nodeId);
-    if (!el) return null;
-    const containerRect = renderer.mapContainer.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
-    return {
-      x: r.left + r.width / 2 - containerRect.left,
-      y: r.top + r.height / 2 - containerRect.top
-    };
+    const pos = getNodePosition(nodeId);
+    if (!pos) return null;
+    return { x: pos.x, y: pos.y };
   }
 
-  function pickRandom(arr) {
-    return arr[Math.floor(Math.random() * arr.length)];
-  }
-
-  function randBetween(min, max) {
-    return min + Math.random() * (max - min);
+  function getClusterOf(nodeId) {
+    const pos = getNodePosition(nodeId);
+    return pos ? pos.clusterId : null;
   }
 
   /* ---- walker DOM element ---- */
@@ -196,24 +191,12 @@ const Walkers = (() => {
   /* ---- encounters & speech bubbles ---- */
 
   function centerBetweenWalkers(w1, w2) {
-    // Center the viewport on the actual walker positions
     if (w1._cx == null || w2._cx == null) return;
-
     const midX = (w1._cx + w2._cx) / 2;
     const midY = (w1._cy + w2._cy) / 2;
-
-    const wrapper = renderer.container;
-    const wrapperRect = wrapper.getBoundingClientRect();
-    const containerRect = renderer.mapContainer.getBoundingClientRect();
-
-    const scrollLeft = wrapper.scrollLeft + (containerRect.left - wrapperRect.left) + midX - wrapperRect.width / 2;
-    const scrollTop = wrapper.scrollTop + (containerRect.top - wrapperRect.top) + midY - wrapperRect.height / 2;
-
-    wrapper.scrollTo({
-      left: Math.max(0, scrollLeft),
-      top: Math.max(0, scrollTop),
-      behavior: 'smooth'
-    });
+    if (renderer) {
+      renderer._setCamera(Math.max(renderer.worldZoom, 0.9), midX, midY, true);
+    }
   }
 
   function positionBubbleAboveWalker(bubble, w) {
@@ -334,32 +317,33 @@ const Walkers = (() => {
     encounterTimers.push(setTimeout(() => {
       clearBubblesFor(w1.charId, w2.charId);
 
-      // Release walkers. They may have bumped each other either inside a
-      // node OR mid-road — preserve that context so we don't teleport them.
+      // Release walkers. They may have bumped either inside a cluster or
+      // mid-road — preserve that context so we don't teleport them.
       [w1, w2].forEach(w => {
-        let inNodeId = null;
+        let inClusterId = null;
         if (cachedRects && w._cx != null) {
-          for (const [id, r] of cachedRects) {
+          for (const [cid, r] of cachedRects) {
             if (w._cx >= r.left && w._cx <= r.right &&
                 w._cy >= r.top && w._cy <= r.bottom) {
-              inNodeId = id;
+              inClusterId = cid;
               break;
             }
           }
         }
 
-        if (inNodeId) {
-          // Genuinely inside a node rect — lock in and bounce inside.
-          w.currentNode = inNodeId;
+        if (inClusterId) {
+          const rect = cachedRects.get(inClusterId);
+          const nearest = nearestMemberNode(rect, w._cx, w._cy) || w.currentNode;
+          w.currentNode = nearest;
           w.location = 'node';
           w.currentEdge = null;
-          const rect = cachedRects.get(inNodeId);
+          w.edgeT = null;
+          w._perpOffset = 0;
           w._cx = Math.max(rect.left + PHYSICS.WALKER.r, Math.min(w._cx, rect.right - PHYSICS.WALKER.r));
           w._cy = Math.max(rect.top + PHYSICS.WALKER.r, Math.min(w._cy, rect.bottom - PHYSICS.WALKER.r));
           giveRandomVelocity(w);
         } else if (w.currentEdge && cachedRoads?.get(w.currentEdge) && w.targetNode) {
-          // Mid-road when dialogue ended — resume travel toward targetNode
-          // without touching position (no teleport).
+          // Mid-road — resume travel toward targetNode.
           w.location = 'road';
           const targetPos = getNodeCenter(w.targetNode);
           if (targetPos) {
@@ -384,7 +368,8 @@ const Walkers = (() => {
           w.currentNode = bestNode;
           w.location = 'node';
           w.currentEdge = null;
-          const rect = cachedRects?.get(bestNode);
+          const clusterId = getClusterOf(bestNode);
+          const rect = clusterId ? cachedRects?.get(clusterId) : null;
           if (rect) {
             w._cx = Math.max(rect.left + PHYSICS.WALKER.r, Math.min(w._cx, rect.right - PHYSICS.WALKER.r));
             w._cy = Math.max(rect.top + PHYSICS.WALKER.r, Math.min(w._cy, rect.bottom - PHYSICS.WALKER.r));
@@ -430,158 +415,160 @@ const Walkers = (() => {
     w.el.style.top = (w._cy - PHYSICS.WALKER.r) + 'px';
   }
 
-  function pickNextTarget(w, graph) {
-    const neighbors = graph.get(w.currentNode) || [];
-    if (neighbors.length === 0) return w.currentNode;
-    const filtered = neighbors.filter(n => n !== w.previousNode);
-    return pickRandom(filtered.length ? filtered : neighbors);
-  }
+  // Walker physics consumes the same road geometry the renderer draws. The
+  // shared source is LayoutSystem.buildRoadGeometry, cached in utils.js as
+  // getRoadGeometry — walkers and visible SVG paths never diverge.
+  const _sampleAt = LayoutSystem.sampleAt;
 
-  // Build road segment geometry for each graph edge
-  function buildRoadSegments(graph) {
-    const segments = new Map();
-    const seen = new Set();
-    graph.forEach((neighbors, nodeId) => {
-      neighbors.forEach(neighborId => {
-        const key = [nodeId, neighborId].sort().join('|');
-        if (seen.has(key)) return;
-        seen.add(key);
-
-        const from = getNodeCenter(nodeId);
-        const to = getNodeCenter(neighborId);
-        if (!from || !to) return;
-
-        const dx = to.x - from.x;
-        const dy = to.y - from.y;
-        const len = Math.hypot(dx, dy) || 1;
-        const ux = dx / len;
-        const uy = dy / len;
-
-        // Road starts/ends at node edge — compute intersection along road direction
-        const fromEl = renderer.nodeElements.get(nodeId);
-        const toEl = renderer.nodeElements.get(neighborId);
-        // Use the dimension along the road direction (not max)
-        const absUx = Math.abs(ux);
-        const absUy = Math.abs(uy);
-        const fromOff = fromEl
-          ? (fromEl.offsetWidth / 2) * absUx + (fromEl.offsetHeight / 2) * absUy + 6
-          : 60;
-        const toOff = toEl
-          ? (toEl.offsetWidth / 2) * absUx + (toEl.offsetHeight / 2) * absUy + 8
-          : 60;
-
-        segments.set(key, {
-          fromId: nodeId, toId: neighborId,
-          x1: from.x + ux * fromOff, y1: from.y + uy * fromOff,
-          x2: to.x - ux * toOff, y2: to.y - uy * toOff,
-          ux, uy,
-          px: -uy, py: ux,  // perpendicular
-          length: Math.max(0, len - fromOff - toOff),
-          halfW: PHYSICS.ROAD.halfW
-        });
-      });
-    });
-    return segments;
-  }
-
-  // Build node bounding rectangles with road openings
+  // Build cluster bounding rectangles with road openings. A cluster groups
+  // every visible node that shares a `location`. Walkers roam the whole
+  // cluster AABB and leave through any outbound inter-cluster road.
+  //
+  // Returns Map<clusterId, rect>, and Map<nodeId, clusterId> for convenience
+  // (walker.currentNode still resolves to a specific movie node for fights).
   function buildNodeRects(graph, roadSegments) {
+    const clusterRects = getClusterRects();
     const rects = new Map();
-    const containerRect = renderer.mapContainer.getBoundingClientRect();
-    getVisibleNodes().forEach(p => {
-      const el = renderer.nodeElements.get(p.id);
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) return;  // not laid out yet
+
+    clusterRects.forEach((cr, clusterId) => {
       const rect = {
-        id: p.id,
-        left: r.left - containerRect.left,
-        top: r.top - containerRect.top,
-        right: r.right - containerRect.left,
-        bottom: r.bottom - containerRect.top,
-        cx: r.left + r.width / 2 - containerRect.left,
-        cy: r.top + r.height / 2 - containerRect.top,
-        openings: []  // road openings where walkers can pass through
+        id: clusterId,
+        left: cr.minX,
+        top: cr.minY,
+        right: cr.maxX,
+        bottom: cr.maxY,
+        cx: cr.cx,
+        cy: cr.cy,
+        clusterId,
+        memberIds: cr.memberIds.slice(),
+        memberPositions: cr.memberPositions.slice(),
+        openings: []
       };
-
-      // Find all roads connected to this node and compute openings
-      // Opening point is ON the node edge (not the road endpoint which is outside)
-      const neighbors = graph.get(p.id) || [];
-      neighbors.forEach(nId => {
-        const key = [p.id, nId].sort().join('|');
-        const road = roadSegments.get(key);
-        if (!road) return;
-        const isFrom = (road.fromId === p.id);
-        const ux = isFrom ? road.ux : -road.ux;
-        const uy = isFrom ? road.uy : -road.uy;
-        // Compute where the road direction intersects the node edge
-        const halfW = (rect.right - rect.left) / 2;
-        const halfH = (rect.bottom - rect.top) / 2;
-        const absUx = Math.abs(ux);
-        const absUy = Math.abs(uy);
-        const edgeDist = halfW * absUx + halfH * absUy;
-        rect.openings.push({
-          x: rect.cx + ux * edgeDist,
-          y: rect.cy + uy * edgeDist,
-          ux, uy,
-          edgeKey: key,
-          targetId: nId
-        });
-      });
-
-      rects.set(p.id, rect);
+      rects.set(clusterId, rect);
     });
+
+    // For each inter-cluster edge, compute opening points on the boundary of
+    // each endpoint cluster (toward the edge direction). Intra-cluster edges
+    // don't create openings — walkers just wander the AABB between them.
+    roadSegments.forEach((road, key) => {
+      if (road.fromClusterId === road.toClusterId) return;
+
+      // From-cluster opening: exit direction points toward the road's first
+      // sample tangent (bezier) or its straight direction.
+      const fromRect = rects.get(road.fromClusterId);
+      const toRect = rects.get(road.toClusterId);
+      if (!fromRect || !toRect) return;
+
+      if (road.type === 'bezier') {
+        const firstSample = road.samples[0];
+        const lastSample = road.samples[road.samples.length - 1];
+        fromRect.openings.push({
+          x: firstSample.x, y: firstSample.y,
+          ux: firstSample.tx, uy: firstSample.ty,
+          edgeKey: key, targetClusterId: road.toClusterId,
+          targetNodeId: road.toId, fromNodeId: road.fromId,
+          direction: 'forward',
+        });
+        toRect.openings.push({
+          x: lastSample.x, y: lastSample.y,
+          ux: -lastSample.tx, uy: -lastSample.ty,
+          edgeKey: key, targetClusterId: road.fromClusterId,
+          targetNodeId: road.fromId, fromNodeId: road.toId,
+          direction: 'backward',
+        });
+      } else {
+        fromRect.openings.push({
+          x: road.x1, y: road.y1,
+          ux: road.ux, uy: road.uy,
+          edgeKey: key, targetClusterId: road.toClusterId,
+          targetNodeId: road.toId, fromNodeId: road.fromId,
+          direction: 'forward',
+        });
+        toRect.openings.push({
+          x: road.x2, y: road.y2,
+          ux: -road.ux, uy: -road.uy,
+          edgeKey: key, targetClusterId: road.fromClusterId,
+          targetNodeId: road.fromId, fromNodeId: road.toId,
+          direction: 'backward',
+        });
+      }
+    });
+
     return rects;
   }
 
-  // Bounce walker off node walls from INSIDE, with openings for roads
+  // Find the nearest member node to a walker inside a cluster — used to keep
+  // `walker.currentNode` updated for fight spawn and dialogue triggers.
+  function nearestMemberNode(cluster, cx, cy) {
+    if (!cluster || !cluster.memberPositions.length) return null;
+    let best = cluster.memberPositions[0];
+    let bestDist = Infinity;
+    for (const m of cluster.memberPositions) {
+      const d = Math.hypot(m.x - cx, m.y - cy);
+      if (d < bestDist) { bestDist = d; best = m; }
+    }
+    return best.id;
+  }
+
+  // Bounce walker off cluster AABB walls from INSIDE, with openings toward
+  // outbound inter-cluster roads. `rect` is a cluster rect (from
+  // buildNodeRects which now returns cluster-keyed rects).
   function bounceInsideNode(w, rect) {
     if (!rect) return;
     const pad = PHYSICS.WALKER.r;
-    let bounced = false;
 
-    // Check if walker is near an opening — if so, let it pass through
-    // BUT NOT during a fight — openings are sealed
+    // Check if walker is near an opening — if so, transition to the road.
+    // Sealed during fights so participants don't wander off.
     if (w.state !== W_STATE.FIGHTING) {
       for (const op of rect.openings) {
         const distToOpening = Math.hypot(w._cx - op.x, w._cy - op.y);
-        if (distToOpening < PHYSICS.ROAD.halfW + PHYSICS.WALKER.r) {
+        if (distToOpening < PHYSICS.ROAD.halfW * 2 + PHYSICS.WALKER.r) {
           const movingOut = w.vx * op.ux + w.vy * op.uy;
           if (movingOut > 0) {
             w.location = 'road';
             w.currentEdge = op.edgeKey;
+            w.edgeDirection = op.direction;
+            // edgeT is initialised by the road branch using the road's length
+            w.edgeT = null;
+            w._perpOffset = 0;
             w.previousNode = w.currentNode;
-            w.targetNode = op.targetId;
+            w.targetNode = op.targetNodeId;
+            w.targetCluster = op.targetClusterId;
             return;
           }
         }
       }
     }
 
-    // Bounce off left wall
+    // Bounce off cluster AABB walls
     if (w._cx - pad < rect.left) {
       w._cx = rect.left + pad;
       if (w.vx < 0) w.vx = -w.vx * PHYSICS.ROAD.bounce;
-      bounced = true;
     }
-    // Bounce off right wall
     if (w._cx + pad > rect.right) {
       w._cx = rect.right - pad;
       if (w.vx > 0) w.vx = -w.vx * PHYSICS.ROAD.bounce;
-      bounced = true;
     }
-    // Bounce off top wall
     if (w._cy - pad < rect.top) {
       w._cy = rect.top + pad;
       if (w.vy < 0) w.vy = -w.vy * PHYSICS.ROAD.bounce;
-      bounced = true;
     }
-    // Bounce off bottom wall
     if (w._cy + pad > rect.bottom) {
       w._cy = rect.bottom - pad;
       if (w.vy > 0) w.vy = -w.vy * PHYSICS.ROAD.bounce;
-      bounced = true;
     }
+
+    // Sync currentNode to the nearest cluster member so fight/dialogue gating
+    // reads the right movie. Throttled — the nearest-member loop is O(members)
+    // and recomputing it every frame for big clusters (NYC has 20+ members) is
+    // wasteful when the walker barely moved. Run every ~180ms per walker.
+    const now = performance.now();
+    if (!w._nearestCheckAt || now - w._nearestCheckAt > 180) {
+      const nearest = nearestMemberNode(rect, w._cx, w._cy);
+      if (nearest) w.currentNode = nearest;
+      w._nearestCheckAt = now;
+    }
+    w.clusterId = rect.id;
   }
 
   // Give walker a random velocity inside a node (for bouncing around)
@@ -704,53 +691,54 @@ const Walkers = (() => {
   let zoomEndTimer = null;
 
   function startFightZoom(nodeId) {
-    const nodeEl = renderer.nodeElements.get(nodeId);
-    if (!nodeEl || !renderer.container) return;
+    if (!renderer.wrapper) return;
 
-    // Cancel any pending end-zoom cleanup from a previous fight so it doesn't
-    // wipe this fight's transform mid-animation.
+    // Zoom to the whole CLUSTER that the fight belongs to — with grid packing
+    // the cluster is the visual "node" the user sees. Scaling to NODE_WIDTH
+    // would zoom into a single tile, which reads as wrong for multi-tile clusters.
+    const clusterId = getClusterOf(nodeId);
+    const rect = clusterId ? getClusterRects().get(clusterId) : null;
+    const pos = getNodePosition(nodeId);
+    if (!rect && !pos) return;
+
     if (zoomEndTimer) {
       clearTimeout(zoomEndTimer);
       zoomEndTimer = null;
     }
 
-    const wrapper = renderer.container;
-    const container = renderer.mapContainer;
-
-    // Node center in container-local coords (from style, not getBoundingClientRect)
-    const nodeCX = parseFloat(nodeEl.style.left) + CONFIG.NODE_WIDTH / 2;
-    const nodeCY = parseFloat(nodeEl.style.top) + CONFIG.NODE_HEIGHT / 2;
-
-    // Scale so node fills ~60% of viewport
-    const wRect = wrapper.getBoundingClientRect();
-    const scale = Math.min(
-      wRect.width * 0.6 / CONFIG.NODE_WIDTH,
-      wRect.height * 0.6 / CONFIG.NODE_HEIGHT
+    const wRect = renderer.wrapper.getBoundingClientRect();
+    const worldZ = renderer.worldZoom || 1;
+    // Frame the cluster (or fall back to the node rect if somehow absent) at
+    // ~80% of the shorter viewport axis so there's some breathing room and
+    // speech bubbles above participants stay on-screen.
+    const targetW = rect ? rect.width : CONFIG.NODE_WIDTH;
+    const targetH = rect ? rect.height : CONFIG.NODE_HEIGHT;
+    const centerX = rect ? rect.cx : pos.x;
+    const centerY = rect ? rect.cy : pos.y;
+    const innerScale = Math.min(
+      (wRect.width * 0.8) / (targetW * worldZ),
+      (wRect.height * 0.8) / (targetH * worldZ)
     );
 
-    wrapper.style.overflow = 'hidden';
+    // Compose with the outer world zoom/pan: we apply translate+scale to
+    // #map-container so that (centerX, centerY) lands at viewport center.
+    const effectiveScale = worldZ * innerScale;
+    const tx = (wRect.width / 2 - renderer.panX) / effectiveScale - centerX;
+    const ty = (wRect.height / 2 - renderer.panY) / effectiveScale - centerY;
 
-    // Use translate + scale (origin 0,0) to position the node explicitly at
-    // wrapper viewport center. This avoids scroll-clamp edge cases where the
-    // node is near the top/bottom/sides of the map.
-    //   P -> scale -> P*s -> translate -> P*s + (tx, ty)
-    //   Viewport position (accounting for wrapper scroll) = P*s + (tx, ty) - (sL, sT)
-    //   Solve P == node, viewport == (W/2, H/2)
-    const sL = wrapper.scrollLeft;
-    const sT = wrapper.scrollTop;
-    const tx = wRect.width / 2 - nodeCX * scale + sL;
-    const ty = wRect.height / 2 - nodeCY * scale + sT;
-
+    const container = renderer.mapContainer;
     container.style.transformOrigin = '0 0';
     container.style.transition = 'transform 0.5s ease';
-    container.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    container.style.transform = `scale(${innerScale}) translate(${tx}px, ${ty}px)`;
     fightZoomed = true;
+    // Lock camera input — wheel/pan/pinch/keys would desync the composed
+    // inner+outer transform and drift the view off the fight.
+    renderer.cameraLocked = true;
   }
 
   function endFightZoom() {
     if (!fightZoomed) return;
     const container = renderer.mapContainer;
-    const wrapper = renderer.container;
 
     container.style.transition = 'transform 0.5s ease';
     container.style.transform = '';
@@ -759,51 +747,70 @@ const Walkers = (() => {
     zoomEndTimer = setTimeout(() => {
       container.style.transformOrigin = '';
       container.style.transition = '';
-      wrapper.style.overflow = 'auto';
       fightZoomed = false;
-      // Force geometry rebuild on next tick
-      tick._geoTime = 0;
       zoomEndTimer = null;
     }, 500);
+    // Unlock camera input — user can zoom/pan again now that fight is resolved.
+    renderer.cameraLocked = false;
   }
 
   function centerOnNode(nodeId) {
-    const pos = getNodeCenter(nodeId);
-    if (!pos || !renderer.container) return;
-    const wrapper = renderer.container;
-    const wrapperRect = wrapper.getBoundingClientRect();
-    const containerRect = renderer.mapContainer.getBoundingClientRect();
-    const scrollLeft = wrapper.scrollLeft + (containerRect.left - wrapperRect.left) + pos.x - wrapperRect.width / 2;
-    const scrollTop = wrapper.scrollTop + (containerRect.top - wrapperRect.top) + pos.y - wrapperRect.height / 2;
-    wrapper.scrollTo({ left: Math.max(0, scrollLeft), top: Math.max(0, scrollTop), behavior: 'smooth' });
+    // Now delegates to the renderer's camera system.
+    const pos = getNodePosition(nodeId);
+    if (!pos || !renderer) return;
+    renderer._setCamera(Math.max(renderer.worldZoom, 0.9), pos.x, pos.y, true);
   }
 
   function spawnVillain(nodeId) {
-    // Check if this node has villain data
-    const villainIds = VILLAIN_DATA[nodeId];
-    if (!villainIds || villainIds.length === 0) return;
     if (activeFights.size > 0) return;  // only one fight at a time globally
 
-    // Don't start a fight while walkers deployed to this node are still
-    // waiting in the stagger queue — they can't be enrolled retroactively and
-    // would appear mid-fight frozen on the node.
+    // Pool villain candidates across every watched movie in this cluster.
+    // Previously we only looked at VILLAIN_DATA[nodeId] — and because roads
+    // dedupe to one prereq per cluster pair, `nodeId` was almost always the
+    // same member (e.g. `hulk` for NYC), so only Abomination ever spawned.
+    // Sourcing from the whole cluster rotates through Fisk, Kilgrave,
+    // Cottonmouth, Kingpin, Loki, Thanos, etc.
+    const fightClusterId = getClusterOf(nodeId);
+    const clusterRect = fightClusterId ? getClusterRects().get(fightClusterId) : null;
+    const candidates = [];
+    const members = clusterRect ? clusterRect.memberIds : [nodeId];
+    members.forEach(mid => {
+      if (!state.isWatched(mid)) return; // only watched movies contribute villains
+      const ids = VILLAIN_DATA[mid];
+      if (!ids || !ids.length) return;
+      ids.forEach(vid => candidates.push({ villainId: vid, anchorNodeId: mid }));
+    });
+    if (candidates.length === 0) return;
+
+    // Don't start a fight while walkers staged to this cluster are still
+    // waiting in the stagger queue — they can't be enrolled retroactively.
     const hasPendingWalker = activeWalkers.some(w =>
-      !w._spawned && w.currentNode === nodeId
+      !w._spawned && w.clusterId === fightClusterId
     );
     if (hasPendingWalker) return;
 
     if (Math.random() >= PHYSICS.FIGHT.spawnChance) return;
 
-    // Pick random villain
-    const villainCharId = pickRandom(villainIds);
+    const pick = pickRandom(candidates);
+    const villainCharId = pick.villainId;
+    const anchorNodeId = pick.anchorNodeId;
     const villainChar = characters.find(c => c.id === villainCharId);
     if (!villainChar) return;
 
     const stats = WALKER_STATS[villainCharId] || WALKER_STATS._default;
 
-    // Use live position (same as regular walkers in deploy()) — cached rects can be stale
-    const pos = getNodeCenter(nodeId);
-    if (!pos) return;
+    // Villain spawns at a RANDOM position inside the fight cluster's
+    // rectangle (anywhere in NYC, not right on the Daredevil pin). The
+    // fight is still anchored on the villain's own movie node (so HP bars,
+    // joinFight cluster lookup, etc. reference the correct nodeId).
+    const rect = clusterRect;
+    if (!rect) return;
+    const inset = PHYSICS.WALKER.r + 10;
+    const pos = {
+      x: rect.minX + inset + Math.random() * Math.max(1, rect.width - inset * 2),
+      y: rect.minY + inset + Math.random() * Math.max(1, rect.height - inset * 2),
+    };
+    nodeId = anchorNodeId;
 
     // Create villain walker
     const imgFile = typeof getCharImage === 'function' ? getCharImage(villainChar, state) : villainChar.image;
@@ -819,7 +826,8 @@ const Walkers = (() => {
       charImg: img,
       el,
       currentNode: nodeId,
-      targetNode: nodeId,
+      clusterId: getClusterOf(nodeId),
+      targetNode: null,
       previousNode: null,
       vx: 0, vy: 0,
       _cx: pos.x, _cy: pos.y,
@@ -857,15 +865,18 @@ const Walkers = (() => {
     const fight = activeFights.get(nodeId);
     if (!fight) return;
 
+    // Enroll every walker currently in the same cluster as the fight node —
+    // with big clusters like NYC, "at this movie" now means "in this region."
+    const fightClusterId = getClusterOf(nodeId);
+
     activeWalkers.forEach(w => {
       if (w === fight.villain) return;
       if (w.isVillain) return;
       if (w.state === W_STATE.DEFEATED) return;
-      if (w.currentNode === nodeId && w.location === 'node' && w._spawned) {
+      if (w.clusterId === fightClusterId && w.location === 'node' && w._spawned) {
         if (!fight.participants.has(w)) {
           fight.participants.add(w);
           equipForFight(w);
-          // Reset HP for the fight
           const stats = WALKER_STATS[w.charId] || WALKER_STATS._default;
           w.hp = stats.hp;
           w.maxHp = stats.hp;
@@ -963,9 +974,15 @@ const Walkers = (() => {
   function checkFaintedRevives() {
     if (faintedWalkers.size === 0) return;
 
+    // Compute fight clusters once per revive check, not per walker.
+    const fightClusterIds = new Set();
+    activeFights.forEach((_, nodeId) => {
+      const c = getClusterOf(nodeId);
+      if (c) fightClusterIds.add(c);
+    });
+
     faintedWalkers.forEach(w => {
-      // Don't revive during an active fight at this node
-      if (activeFights.has(w.currentNode)) return;
+      if (fightClusterIds.has(w.clusterId)) return;
 
       // Check overlap with any active walker
       const overlapping = activeWalkers.some(other =>
@@ -1147,10 +1164,11 @@ const Walkers = (() => {
       }
     });
 
-    // Process projectile movement and hits
-    const nodeRect = activeFights.size > 0
-      ? cachedRects?.get(activeFights.keys().next().value)
-      : null;
+    // Process projectile movement and hits. Projectile bounds are the fight's
+    // cluster rect (walkers fight within the cluster, not a single node box).
+    const fightNodeId = activeFights.size > 0 ? activeFights.keys().next().value : null;
+    const fightClusterId = fightNodeId ? getClusterOf(fightNodeId) : null;
+    const nodeRect = fightClusterId ? cachedRects?.get(fightClusterId) : null;
 
     for (let i = activeProjectiles.length - 1; i >= 0; i--) {
       const p = activeProjectiles[i];
@@ -1215,13 +1233,17 @@ const Walkers = (() => {
     const dt = Math.min(now - lastTime, 50);
     lastTime = now;
 
-    const graph = buildGraph();
-    // Cache geometry — rebuild every 2 seconds (skip during fight zoom: transform breaks getBoundingClientRect)
-    if (!fightZoomed && (!tick._geoTime || now - tick._geoTime > 2000)) {
-      cachedRoads = buildRoadSegments(graph);
-      cachedRects = buildNodeRects(graph, cachedRoads);
-      tick._geoTime = now;
+    // Geometry rebuilds only when the layout version bumps (on every
+    // state.subscribe fire). Road segments, cluster rects, and the graph
+    // all invalidate together — they derive from the same source.
+    const version = getLayoutVersion();
+    if (!cachedRoads || tick._version !== version) {
+      cachedGraph = buildGraph();
+      cachedRoads = getRoadGeometry();
+      cachedRects = buildNodeRects(cachedGraph, cachedRoads);
+      tick._version = version;
     }
+    const graph = cachedGraph;
     const roadSegments = cachedRoads;
     const nodeRects = cachedRects;
     const dtSec = dt / 1000;
@@ -1255,22 +1277,43 @@ const Walkers = (() => {
       w._cy += w.vy * dtSec;
 
       if (w.location === 'node') {
-        // Bouncing inside a node
-        const rect = nodeRects.get(w.currentNode);
+        // Bouncing inside the walker's current cluster AABB. If the walker's
+        // currentNode was invalidated (hidden via state change, e.g. clear
+        // progress), snap to the nearest visible cluster instead of drifting.
+        if (!w.clusterId || !nodeRects.has(w.clusterId)) {
+          let best = null, bestDist = Infinity;
+          nodeRects.forEach((r, cid) => {
+            const d = Math.hypot(r.cx - w._cx, r.cy - w._cy);
+            if (d < bestDist) { bestDist = d; best = r; }
+          });
+          if (best) {
+            w.clusterId = best.id;
+            w.currentNode = nearestMemberNode(best, w._cx, w._cy) || best.memberIds[0];
+            w._cx = Math.max(best.minX + PHYSICS.WALKER.r, Math.min(w._cx, best.maxX - PHYSICS.WALKER.r));
+            w._cy = Math.max(best.minY + PHYSICS.WALKER.r, Math.min(w._cy, best.maxY - PHYSICS.WALKER.r));
+          }
+        }
+        const rect = nodeRects.get(w.clusterId);
         bounceInsideNode(w, rect);
 
-        // If bounceInsideNode transitioned us to a road, we're done
-        if (w.location === 'road') return;
+        if (w.location === 'road') return; // transitioned out
 
-        // Don't leave the node during a fight — just bounce inside
         if (w.state !== W_STATE.FIGHTING) {
-          // After pause expires, aim toward a road opening to leave
           if (w.paused && now >= w.pauseEnd) {
             w.paused = false;
-            if (rect && rect.openings.length > 0) {
+            if (rect && rect.openings.length > 0 && Math.random() < 0.7) {
+              // Head toward a random opening (outbound road)
               const op = pickRandom(rect.openings);
               const dx = op.x - w._cx;
               const dy = op.y - w._cy;
+              const len = Math.hypot(dx, dy) || 1;
+              w.vx = (dx / len) * PHYSICS.WALKER.speed;
+              w.vy = (dy / len) * PHYSICS.WALKER.speed;
+            } else if (rect && rect.memberPositions.length > 1) {
+              // Wander toward a random member node inside the same cluster
+              const target = pickRandom(rect.memberPositions);
+              const dx = target.x - w._cx;
+              const dy = target.y - w._cy;
               const len = Math.hypot(dx, dy) || 1;
               w.vx = (dx / len) * PHYSICS.WALKER.speed;
               w.vy = (dy / len) * PHYSICS.WALKER.speed;
@@ -1281,9 +1324,19 @@ const Walkers = (() => {
         }
 
       } else if (w.location === 'road') {
-        // On a road — bounce off corridor edges
         const road = roadSegments.get(w.currentEdge);
-        if (road) {
+        if (!road) {
+          // Road vanished (layout change) — snap back to the walker's cluster.
+          w.location = 'node';
+          w.currentEdge = null;
+          w.edgeT = null;
+          const fr = nodeRects.get(w.clusterId);
+          if (fr) { w._cx = fr.cx; w._cy = fr.cy; }
+          giveRandomVelocity(w);
+          return;
+        }
+
+        if (road.type === 'straight') {
           const relX = w._cx - road.x1;
           const relY = w._cy - road.y1;
           const perpDist = relX * road.px + relY * road.py;
@@ -1298,23 +1351,73 @@ const Walkers = (() => {
             w.vy -= 2 * vPerp * road.py * PHYSICS.ROAD.bounce;
           }
 
-          // Check if walker reached the end of the road → enter node
           const alongDist = relX * road.ux + relY * road.uy;
           if (alongDist >= road.length || alongDist <= 0) {
             w.currentNode = alongDist >= road.length ? road.toId : road.fromId;
+            w.clusterId = alongDist >= road.length ? road.toClusterId : road.fromClusterId;
             w.location = 'node';
             w.currentEdge = null;
-            // Keep velocity — walker enters node with momentum and bounces inside
+            w.targetNode = null;
             w.paused = true;
             w.pauseEnd = now + randBetween(PHYSICS.WALKER.pauseMin, PHYSICS.WALKER.pauseMax);
 
-            // Fight: join existing fight or maybe spawn villain
             if (!w.isVillain) {
-              if (activeFights.has(w.currentNode)) {
-                joinFight(w.currentNode);
-              } else {
-                spawnVillain(w.currentNode);
-              }
+              if (activeFights.has(w.currentNode)) joinFight(w.currentNode);
+              else spawnVillain(w.currentNode);
+            }
+          }
+        } else {
+          // Bezier road: parameterise motion by arc-length `edgeT`, 0..road.length.
+          const dir = w.edgeDirection === 'forward' ? 1 : -1;
+          if (w.edgeT == null) w.edgeT = dir > 0 ? 0 : road.length;
+
+          const samp = _sampleAt(road.samples, w.edgeT);
+          // Velocity projected onto the unit tangent — signed. Positive when
+          // the walker is moving in the curve's forward direction.
+          const speedAlong = w.vx * samp.tx + w.vy * samp.ty;
+          w.edgeT += speedAlong * dtSec;
+
+          // Lateral offset tracking (bounce off the curved corridor)
+          if (w._perpOffset == null) w._perpOffset = 0;
+          const lateralV = w.vx * samp.nx + w.vy * samp.ny;
+          w._perpOffset += lateralV * dtSec;
+          const maxPerp = road.halfW - PHYSICS.WALKER.r;
+          if (Math.abs(w._perpOffset) > maxPerp) {
+            const sign = w._perpOffset > 0 ? 1 : -1;
+            w._perpOffset = sign * maxPerp;
+            const vPerp = w.vx * samp.nx + w.vy * samp.ny;
+            w.vx -= 2 * vPerp * samp.nx * PHYSICS.ROAD.bounce;
+            w.vy -= 2 * vPerp * samp.ny * PHYSICS.ROAD.bounce;
+          }
+
+          w._cx = samp.x + samp.nx * w._perpOffset;
+          w._cy = samp.y + samp.ny * w._perpOffset;
+
+          // Also reorient velocity along the tangent so the walker doesn't
+          // drift off-curve if the tangent changes (curves bend underfoot).
+          const currentSpeed = Math.hypot(w.vx, w.vy);
+          if (currentSpeed > 0.01) {
+            const travelSign = Math.sign(speedAlong) || dir;
+            w.vx = samp.tx * currentSpeed * travelSign;
+            w.vy = samp.ty * currentSpeed * travelSign;
+          }
+
+          const reachedEnd = w.edgeT >= road.length || w.edgeT <= 0;
+          if (reachedEnd) {
+            const arrivedForward = w.edgeT >= road.length;
+            w.currentNode = arrivedForward ? road.toId : road.fromId;
+            w.clusterId = arrivedForward ? road.toClusterId : road.fromClusterId;
+            w.location = 'node';
+            w.currentEdge = null;
+            w.targetNode = null;
+            w.edgeT = null;
+            w._perpOffset = 0;
+            w.paused = true;
+            w.pauseEnd = now + randBetween(PHYSICS.WALKER.pauseMin, PHYSICS.WALKER.pauseMax);
+
+            if (!w.isVillain) {
+              if (activeFights.has(w.currentNode)) joinFight(w.currentNode);
+              else spawnVillain(w.currentNode);
             }
           }
         }
@@ -1388,9 +1491,8 @@ const Walkers = (() => {
           const aLocked = a.state === W_STATE.ENCOUNTER;
           const bLocked = b.state === W_STATE.ENCOUNTER;
 
-          // Separate
           if (aLocked && bLocked) {
-            // both locked
+            continue;
           } else if (aLocked) {
             b._cx += nx * overlap;
             b._cy += ny * overlap;
@@ -1579,12 +1681,13 @@ const Walkers = (() => {
         charName: char.name,
         el,
         currentNode: startNode,
-        targetNode: startNode,
+        clusterId: getClusterOf(startNode),
+        targetNode: null,
         previousNode: null,
         vx: 0, vy: 0,
         _cx: 0, _cy: 0,
         currentEdge: null,
-        location: 'node',          // 'node' or 'road'
+        location: 'node',
         state: W_STATE.WALKING,
         paused: true,
         pauseEnd: spawnAt,
@@ -1594,12 +1697,18 @@ const Walkers = (() => {
       // Initialize fight stats
       initFightProps(w);
 
-      // Position at start node center
-      const pos = getNodeCenter(startNode);
-      if (pos) {
-        w._cx = pos.x;
-        w._cy = pos.y;
+      // Spawn at a RANDOM position inside the start node's location rectangle
+      // (rather than at the pin's exact coordinates, which sit in the bottom
+      // shelf). Walker physics bounces off the location's outer edges.
+      const rect = getClusterRects().get(getClusterOf(startNode));
+      if (rect) {
+        const inset = PHYSICS.WALKER.r + 4;
+        w._cx = rect.minX + inset + Math.random() * Math.max(1, rect.width - inset * 2);
+        w._cy = rect.minY + inset + Math.random() * Math.max(1, rect.height - inset * 2);
         applyWalkerPosition(w);
+      } else {
+        const pos = getNodeCenter(startNode);
+        if (pos) { w._cx = pos.x; w._cy = pos.y; applyWalkerPosition(w); }
       }
 
       // Hide until spawn time
@@ -1638,9 +1747,7 @@ const Walkers = (() => {
     // Reset zoom if active
     if (fightZoomed) {
       const container = renderer.mapContainer;
-      const wrapper = renderer.container;
       if (container) { container.style.transform = ''; container.style.transformOrigin = ''; container.style.transition = ''; }
-      if (wrapper) wrapper.style.overflow = 'auto';
       fightZoomed = false;
     }
   }

@@ -4,12 +4,20 @@ const User = require('../models/user');
 const Friend = require('../models/Friend');
 const auth = require('../middleware/auth');
 
+// Escape regex metacharacters so a user can't pass ".*" to dump everyone
+// or "(a+)+$" to hang the DB with catastrophic backtracking (ReDoS).
+function escapeRegex(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Search users by username
 router.get('/search', auth, async (req, res) => {
     const { username } = req.query;
-    if (!username) return res.json([]);
+    if (!username || typeof username !== 'string') return res.json([]);
+    const trimmed = username.trim();
+    if (trimmed.length < 1 || trimmed.length > 40) return res.json([]);
     const users = await User.find({
-        username: { $regex: username, $options: 'i' },
+        username: { $regex: escapeRegex(trimmed), $options: 'i' },
         _id: { $ne: req.user.id } // exclude self
     }).select('username _id').limit(10);
     res.json(users);
@@ -192,11 +200,6 @@ router.get('/progress/:friendId', auth, async (req, res) => {
 router.post('/watch-request', auth, async (req, res) => {
     const { recipientId, projectId, projectTitle } = req.body;
 
-    // Temporary debug log
-    console.log('watch-request hit');
-    console.log('requester:', req.user.id);
-    console.log('recipient:', recipientId);
-
     const friendship = await Friend.findOne({
         $and: [
             {
@@ -215,9 +218,6 @@ router.post('/watch-request', auth, async (req, res) => {
             }
         ]
     });
-
-    // Temporary debug log
-    console.log('friendship found:', friendship);
 
     if (!friendship) return res.status(403).json({ error: 'Not friends' });
 

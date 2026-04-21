@@ -37,10 +37,26 @@ const AppView = {
       </header>
 
       <div id="map-wrapper">
-        <div id="map-container">
-          <svg id="connections"></svg>
-          <div id="nodes"></div>
+        <div id="world-viewport">
+          <svg id="world-continents" aria-hidden="true" viewBox="0 0 4000 1700" preserveAspectRatio="none"></svg>
+          <div id="cosmos-starfield" aria-hidden="true"></div>
+          <div id="region-glows" aria-hidden="true"></div>
+
+          <div id="map-container">
+            <svg id="connections"></svg>
+            <div id="nodes"></div>
+            <div id="cluster-labels" aria-hidden="true"></div>
+          </div>
         </div>
+
+        <button id="world-view-btn" aria-label="Show world view" title="World view (W)">
+          <span aria-hidden="true">🌍</span>
+        </button>
+      </div>
+
+      <div id="up-next-shelf" aria-label="Up next to watch">
+        <span class="shelf-label">UP NEXT</span>
+        <div class="shelf-track"></div>
       </div>
     `;
 
@@ -126,10 +142,17 @@ const AppView = {
 
   unmount() {
     Walkers.destroy();
-    // Null out renderer DOM refs so subscriptions don't fire on stale DOM
-    renderer.container = null;
+    renderer.destroy();
+    renderer.wrapper = null;
+    renderer.viewport = null;
     renderer.mapContainer = null;
     renderer.nodesContainer = null;
     renderer.svg = null;
+    renderer.labelsContainer = null;
+    renderer.glowsContainer = null;
+    renderer.continentsSvg = null;
+    renderer.worldViewBtn = null;
+    renderer.shelfTrack = null;
+    renderer.shelfContainer = null;
   }
 };
