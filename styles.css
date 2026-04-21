@@ -509,41 +509,93 @@ body {
   will-change: transform;
 }
 
-/* Backdrop layers — positioned inside #world-viewport, rendered below nodes */
+/* ======================
+   BACKDROP LAYERS
+   #world-continents = Earth band (y: 0..1700) — ocean + continents + haze
+   #cosmos-starfield = Cosmos band (y: 1700..2800) — deep space + nebulas
+====================== */
+
+/* Earth band: oceanic blues with a subtle atmospheric rim and soft cloud
+   wisps. Continents are filled via SVG paths in earth-tones. */
 #world-continents {
   position: absolute;
   top: 0;
   left: 0;
   width: 4000px;
   height: 1700px;
-  opacity: 0.05;
+  opacity: 1;
   pointer-events: none;
   z-index: 0;
+  /* Layered radial+linear gradients mimic globe lighting and cloud wisps. */
+  background:
+    /* cloud wisps */
+    radial-gradient(ellipse 900px 160px at 20% 18%, rgba(240, 245, 255, 0.05) 0%, transparent 70%),
+    radial-gradient(ellipse 1200px 180px at 65% 40%, rgba(230, 240, 255, 0.04) 0%, transparent 70%),
+    radial-gradient(ellipse 800px 140px at 85% 75%, rgba(240, 245, 255, 0.04) 0%, transparent 70%),
+    radial-gradient(ellipse 1000px 200px at 35% 88%, rgba(230, 240, 255, 0.03) 0%, transparent 70%),
+    /* atmospheric top edge glow (soft blue halo like viewing Earth from space) */
+    linear-gradient(180deg,
+      rgba(120, 180, 230, 0.25) 0%,
+      rgba(90, 150, 210, 0.08) 4%,
+      transparent 10%,
+      transparent 90%,
+      rgba(60, 110, 170, 0.18) 100%),
+    /* ocean base: solid blue, brighter at center for globe lighting */
+    radial-gradient(ellipse at 50% 45%,
+      rgba(52, 100, 155, 0.95) 0%,
+      rgba(34, 70, 120, 0.95) 40%,
+      rgba(20, 42, 80, 0.95) 75%,
+      rgba(12, 24, 50, 0.95) 100%);
+  background-repeat: no-repeat;
 }
 
+/* Continents rendered via SVG <path>. Earth-toned green with a slightly
+   darker stroke for definition — reads as land, not abstract shape. */
 #world-continents path {
-  fill: var(--color-primary-light);
-  stroke: none;
+  fill: rgba(110, 150, 95, 0.35);
+  stroke: rgba(160, 190, 130, 0.2);
+  stroke-width: 1.5;
 }
 
+/* Cosmos band: deep space with nebula clouds and layered starfield.
+   Nebulas use huge soft radial gradients, stars use tiny tight ones
+   tiled via background-size. */
 #cosmos-starfield {
   position: absolute;
   top: 1700px;
   left: 0;
   width: 4000px;
-  height: 900px;
+  height: 1100px;
   pointer-events: none;
   z-index: 0;
-  background-image:
-    radial-gradient(1px 1px at 25% 15%, rgba(255,255,255,0.6) 0%, transparent 100%),
-    radial-gradient(1px 1px at 70% 35%, rgba(255,255,255,0.4) 0%, transparent 100%),
-    radial-gradient(1.5px 1.5px at 45% 65%, rgba(180,200,255,0.5) 0%, transparent 100%),
-    radial-gradient(1px 1px at 85% 80%, rgba(255,255,255,0.5) 0%, transparent 100%),
-    radial-gradient(1px 1px at 12% 55%, rgba(255,180,220,0.4) 0%, transparent 100%),
-    radial-gradient(1.5px 1.5px at 62% 20%, rgba(255,255,255,0.3) 0%, transparent 100%);
-  background-size: 220px 180px, 180px 160px, 260px 200px, 200px 180px, 240px 200px, 300px 220px;
-  background-repeat: repeat;
-  opacity: 0.8;
+  background:
+    /* stars — six tiled layers at different densities/tints */
+    radial-gradient(1px 1px at 25% 15%, rgba(255,255,255,0.85) 0%, transparent 100%),
+    radial-gradient(1px 1px at 70% 35%, rgba(255,255,255,0.65) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 45% 65%, rgba(180,200,255,0.7) 0%, transparent 100%),
+    radial-gradient(1px 1px at 85% 80%, rgba(255,255,255,0.7) 0%, transparent 100%),
+    radial-gradient(1px 1px at 12% 55%, rgba(255,180,220,0.55) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 62% 20%, rgba(200,220,255,0.5) 0%, transparent 100%),
+    /* nebulas — large soft blobs at fixed positions across the canvas */
+    radial-gradient(ellipse 900px 600px at 15% 20%, rgba(150, 60, 180, 0.22) 0%, transparent 60%),
+    radial-gradient(ellipse 1200px 700px at 50% 55%, rgba(60, 100, 220, 0.18) 0%, transparent 65%),
+    radial-gradient(ellipse 800px 500px at 85% 30%, rgba(220, 80, 140, 0.2) 0%, transparent 60%),
+    radial-gradient(ellipse 1000px 600px at 25% 80%, rgba(80, 180, 220, 0.15) 0%, transparent 65%),
+    radial-gradient(ellipse 700px 450px at 75% 85%, rgba(200, 120, 60, 0.16) 0%, transparent 60%),
+    /* base: very dark, slightly warmer toward top (closer to earth band) */
+    linear-gradient(180deg,
+      rgba(10, 6, 22, 1) 0%,
+      rgba(6, 3, 15, 1) 40%,
+      rgba(3, 1, 10, 1) 100%);
+  background-size:
+    220px 180px, 180px 160px, 260px 200px, 200px 180px, 240px 200px, 300px 220px,
+    100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%,
+    100% 100%;
+  background-repeat:
+    repeat, repeat, repeat, repeat, repeat, repeat,
+    no-repeat, no-repeat, no-repeat, no-repeat, no-repeat,
+    no-repeat;
+  opacity: 1;
 }
 
 #region-glows {

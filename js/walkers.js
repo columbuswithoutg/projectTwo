@@ -706,6 +706,11 @@ const Walkers = (() => {
       zoomEndTimer = null;
     }
 
+    // Cancel any in-flight world zoom/pan tween — composing our inner
+    // transform on top of a still-animating outer transform desyncs the math
+    // and leaves the fight framed somewhere off-screen.
+    if (typeof renderer._cancelTween === 'function') renderer._cancelTween();
+
     const wRect = renderer.wrapper.getBoundingClientRect();
     const worldZ = renderer.worldZoom || 1;
     // Frame the cluster (or fall back to the node rect if somehow absent) at
@@ -715,10 +720,17 @@ const Walkers = (() => {
     const targetH = rect ? rect.height : CONFIG.NODE_HEIGHT;
     const centerX = rect ? rect.cx : pos.x;
     const centerY = rect ? rect.cy : pos.y;
-    const innerScale = Math.min(
+
+    // Ideal inner scale would frame the cluster at 80% of whichever viewport
+    // axis binds first. Clamp to [1, 3] — a fight zoom must never SHRINK (≥1)
+    // and shouldn't zoom so far that walker motion is unwatchable (≤3). The
+    // shrink case happens when the user is already zoomed in close and the
+    // cluster already fills > 80% of the viewport.
+    const rawScale = Math.min(
       (wRect.width * 0.8) / (targetW * worldZ),
       (wRect.height * 0.8) / (targetH * worldZ)
     );
+    const innerScale = Math.max(1, Math.min(3, rawScale));
 
     // Compose with the outer world zoom/pan: we apply translate+scale to
     // #map-container so that (centerX, centerY) lands at viewport center.

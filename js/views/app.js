@@ -40,9 +40,12 @@ const AppView = {
         <div id="world-viewport">
           <svg id="world-continents" aria-hidden="true" viewBox="0 0 4000 1700" preserveAspectRatio="none"></svg>
           <div id="cosmos-starfield" aria-hidden="true"></div>
-          <div id="region-glows" aria-hidden="true"></div>
 
           <div id="map-container">
+            <!-- #region-glows sits INSIDE #map-container so fight-zoom's
+                 transform applies to backdrops, pins, and roads together —
+                 otherwise pins/roads would drift off their location box. -->
+            <div id="region-glows" aria-hidden="true"></div>
             <svg id="connections"></svg>
             <div id="nodes"></div>
             <div id="cluster-labels" aria-hidden="true"></div>
