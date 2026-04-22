@@ -11,10 +11,13 @@ const LoginView = {
       return;
     }
 
-    // Reset app state flags so next login fetches fresh data
+    // Reset app state flags so next login fetches fresh data.
+    // resetLocal fires listeners so layout/renderer caches invalidate for
+    // the incoming account (otherwise the new login inherits the previous
+    // user's cached map until a hard refresh).
     AppView._initialized = false;
     Walkers.resetInit();
-    state.data.clear();
+    state.resetLocal();
 
     container.innerHTML = `
       <div class="auth-modal-static">

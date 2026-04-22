@@ -443,6 +443,10 @@ body {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 215, 0, 0.35) transparent;
   padding: 4px 2px;
+  /* Explicit pan-x lets mobile browsers recognize horizontal swipes as scroll
+     immediately instead of waiting for tap-vs-scroll disambiguation. */
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
 }
 
 #up-next-shelf .shelf-track::-webkit-scrollbar { height: 6px; }
@@ -923,12 +927,27 @@ body {
    Desktop hover scale is mirrored onto :active for tap feedback.
 ====================== */
 @media (pointer: coarse) {
+  /* MAP pins keep their tight 30x45 layout but get an invisible padded
+     hit target via ::before so taps don't need pixel precision. */
   .node.pin::before {
     content: "";
     position: absolute;
     inset: -11px -9px;
     pointer-events: auto;
     z-index: 0;
+  }
+  /* SHELF pins are already separated by 10px gap in a flex row, so an
+     extended ::before would overlap neighboring pins and cause mis-taps.
+     Instead of extending the hit area, make the visible pin itself bigger
+     on touch — the shelf has horizontal space. Also hide the ::before so
+     the browser can recognize swipes as scroll without it absorbing the
+     pointerdown first. */
+  #up-next-shelf .node.pin.shelf-pin {
+    width: 44px;
+    height: 66px;
+  }
+  #up-next-shelf .node.pin.shelf-pin::before {
+    content: none;
   }
   .node.pin:active:not(.locked) {
     transform: scale(1.35);
@@ -2817,10 +2836,11 @@ body.auth-page {
   }
 }
 
-/* Narrow phones — squeeze the shelf, clamp the nav drawer, nudge the
-   world-view button away from the shelf's edge so they never collide. */
+/* Narrow phones — keep the shelf tall enough for the touch-sized 44×66 pins
+   (84px = 66 pin + 8px padding top/bot + ~10px breathing room). Any less and
+   pins clip. Other surfaces trim down more aggressively. */
 @media (max-width: 480px) {
-  :root { --shelf-height: 72px; }
+  :root { --shelf-height: 84px; }
 
   #up-next-shelf {
     padding: 6px 10px;

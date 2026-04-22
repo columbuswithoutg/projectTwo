@@ -106,7 +106,9 @@ const AppView = {
       // Reset init flags so next login re-fetches data
       AppView._initialized = false;
       Walkers.resetInit();
-      state.data.clear();
+      // resetLocal fires listeners → invalidates layout cache → next user
+      // doesn't inherit the previous user's map state.
+      state.resetLocal();
       Router.go('/login');
     });
 

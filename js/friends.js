@@ -278,6 +278,9 @@ async function viewFriendProgress(friendId, friendName) {
       memories: entry.memories || []
     });
   });
+  // Fire listeners so the layout cache invalidates; otherwise we'd keep
+  // rendering the viewer's own watched set instead of the friend's.
+  state.listeners.forEach(fn => fn(state.data));
 
   const originalHeader = document.getElementById('header');
   originalHeader.style.display = 'none';
@@ -292,6 +295,9 @@ async function viewFriendProgress(friendId, friendName) {
   banner.querySelector('#exit-friend-view').onclick = () => {
     state.data.clear();
     originalData.forEach((v, k) => state.data.set(k, v));
+    // Fire listeners so the layout cache invalidates on return; without
+    // this the map renders the friend's stale layout over the viewer's data.
+    state.listeners.forEach(fn => fn(state.data));
     banner.remove();
     originalHeader.style.display = '';
     renderer.nodesContainer.classList.remove('readonly');

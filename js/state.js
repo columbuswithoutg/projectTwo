@@ -106,6 +106,15 @@ class WatchState {
     this.listeners.forEach(fn => fn(this.data));
   }
 
+  // Local-only reset: used on logout and before loading a different user.
+  // Unlike clear(), this never posts to the server (which would wipe the
+  // previous user's saved progress). Fires listeners so subscribed caches
+  // — layout cache, renderer, walkers — rebuild for the new user.
+  resetLocal() {
+    this.data.clear();
+    this.listeners.forEach(fn => fn(this.data));
+  }
+
   getLastWatchedId() {
     const watched = [];
     for (const [id, isWatched] of this.data) {

@@ -269,6 +269,9 @@ class MapRenderer {
     this._arrowsVersion = -1;
     this._glowsVersion = -1;
     this._shelfVersion = -1;
+    // Release the camera lock. If the user logged out mid-fight the next
+    // login would inherit a locked camera and be unable to pan/zoom.
+    this.cameraLocked = false;
   }
 
   /* ─── Camera control ─── */

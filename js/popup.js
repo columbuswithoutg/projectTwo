@@ -174,7 +174,10 @@ function showAuthModal(mode) {
     modal.remove();
 
     if (mode === "login") {
-      state.data.clear();
+      // Use resetLocal instead of raw .clear() so layout cache invalidates —
+      // otherwise the new account inherits the previous session's map until
+      // a refresh (same bug as the main logout flow).
+      state.resetLocal();
       await state.load();
       renderer.render();
     }
