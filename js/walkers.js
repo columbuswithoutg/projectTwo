@@ -1741,6 +1741,13 @@ const Walkers = (() => {
     animFrameId = null;
     encounterTimers.forEach(t => clearTimeout(t));
     encounterTimers = [];
+    // Pending fight-zoom cleanup timer — if unmount runs mid-fight, the
+    // 500ms timer would fire with `renderer.mapContainer` already nulled
+    // and throw.
+    if (zoomEndTimer) {
+      clearTimeout(zoomEndTimer);
+      zoomEndTimer = null;
+    }
     activeWalkers.forEach(w => {
       w.el?.remove();
       w.weaponEl?.remove();
@@ -1904,18 +1911,34 @@ const Walkers = (() => {
 
   /* ---- re-deploy on state change ---- */
   let _walkerInitDone = false;
+  let _stateUnsubscribe = null;
+  let _pendingDeployTimer = null;
   async function init() {
     if (!_walkerInitDone) {
       await loadFromServer();
-      state.subscribe(() => {
-        // Small delay so nodes render first
-        setTimeout(() => deploy(), 300);
+      // Capture the unsubscribe handle so resetInit() (logout) can clean up.
+      // Without this, each logout→login cycle adds another subscriber, which
+      // multiplies deploy() calls across sessions.
+      _stateUnsubscribe = state.subscribe(() => {
+        if (_pendingDeployTimer) clearTimeout(_pendingDeployTimer);
+        _pendingDeployTimer = setTimeout(() => {
+          _pendingDeployTimer = null;
+          deploy();
+        }, 300);
       });
       _walkerInitDone = true;
     }
   }
 
   function resetInit() {
+    if (_stateUnsubscribe) {
+      _stateUnsubscribe();
+      _stateUnsubscribe = null;
+    }
+    if (_pendingDeployTimer) {
+      clearTimeout(_pendingDeployTimer);
+      _pendingDeployTimer = null;
+    }
     _walkerInitDone = false;
   }
 

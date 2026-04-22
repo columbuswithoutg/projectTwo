@@ -8,7 +8,7 @@ async function showAddMemoryModal(project) {
     <div class="auth-box">
       <button class="popup-close">✕</button>
       <h3>Add Memory</h3>
-      <p style="color:#aaa; font-size:0.9rem">Upload a photo or video from watching ${project.title}</p>
+      <p style="color:#aaa; font-size:0.9rem">Upload a photo or video from watching ${esc(project.title)}</p>
       <input type="file" id="memory-file" accept="image/*,video/*" />
       <input type="text" id="memory-caption" placeholder="Caption (optional)" />
       <div id="memory-preview"></div>
@@ -17,17 +17,29 @@ async function showAddMemoryModal(project) {
     </div>
   `;
 
-  modal.querySelector('.popup-close').onclick = () => modal.remove();
-  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+  // Blob URLs created for local file preview — must be revoked to avoid
+  // leaking memory until tab close.
+  let previewBlobUrl = null;
+  const revokePreview = () => {
+    if (previewBlobUrl) {
+      URL.revokeObjectURL(previewBlobUrl);
+      previewBlobUrl = null;
+    }
+  };
+  const closeModal = () => { revokePreview(); modal.remove(); };
+
+  modal.querySelector('.popup-close').onclick = closeModal;
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 
   modal.querySelector('#memory-file').onchange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const preview = modal.querySelector('#memory-preview');
-    const url = URL.createObjectURL(file);
+    revokePreview();
+    previewBlobUrl = URL.createObjectURL(file);
     preview.innerHTML = file.type.startsWith('video')
-      ? `<video src="${url}" controls style="max-width:100%; border-radius:8px; margin-top:8px"></video>`
-      : `<img src="${url}" style="max-width:100%; border-radius:8px; margin-top:8px" />`;
+      ? `<video src="${previewBlobUrl}" controls style="max-width:100%; border-radius:8px; margin-top:8px"></video>`
+      : `<img src="${previewBlobUrl}" style="max-width:100%; border-radius:8px; margin-top:8px" />`;
   };
 
   modal.querySelector('#memory-upload-btn').onclick = async () => {
@@ -70,7 +82,7 @@ async function showAddMemoryModal(project) {
       const entry = state.data.get(project.id);
       if (entry) entry.memories = saved.memories;
 
-      modal.remove();
+      closeModal();
       showPopup(project);
 
     } catch (e) {
@@ -101,10 +113,10 @@ function showMemoryLightbox(memories, startIndex, project) {
         <button class="lightbox-nav prev" ${current === 0 ? 'disabled' : ''}>‹</button>
         <div class="lightbox-media">
           ${m.type === 'video'
-            ? `<video src="${m.url}" controls autoplay></video>`
-            : `<img src="${m.url}" alt="${m.caption}" />`
+            ? `<video src="${esc(m.url)}" controls autoplay></video>`
+            : `<img src="${esc(m.url)}" alt="${esc(m.caption)}" />`
           }
-          ${m.caption ? `<p class="lightbox-caption">${m.caption}</p>` : ''}
+          ${m.caption ? `<p class="lightbox-caption">${esc(m.caption)}</p>` : ''}
           <p class="lightbox-counter">${current + 1} / ${memories.length}</p>
         </div>
         <button class="lightbox-nav next" ${current === memories.length - 1 ? 'disabled' : ''}>›</button>

@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const router = express.Router();
 const User = require('../models/user');
 const Friend = require('../models/Friend');
@@ -8,6 +9,12 @@ const auth = require('../middleware/auth');
 // or "(a+)+$" to hang the DB with catastrophic backtracking (ReDoS).
 function escapeRegex(s) {
     return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Reject non-ObjectId params up-front so Mongoose can't be tricked by
+// `{ $ne: null }` / operator-injection and doesn't throw on malformed IDs.
+function validId(id) {
+    return typeof id === 'string' && mongoose.isValidObjectId(id);
 }
 
 // Search users by username
@@ -26,8 +33,13 @@ router.get('/search', auth, async (req, res) => {
 // Send friend request
 router.post('/request', auth, async (req, res) => {
     const { recipientId } = req.body;
+    if (!validId(recipientId))
+        return res.status(400).json({ error: 'Invalid recipient' });
     if (recipientId === req.user.id)
         return res.status(400).json({ error: "You can't add yourself" });
+    const recipientExists = await User.exists({ _id: recipientId });
+    if (!recipientExists)
+        return res.status(404).json({ error: 'User not found' });
 
     const existing = await Friend.findOne({
         $and: [
@@ -64,10 +76,14 @@ router.get('/pending', auth, async (req, res) => {
 // Accept or reject a request
 router.post('/respond', auth, async (req, res) => {
     const { requestId, action } = req.body;
+    if (!validId(requestId))
+        return res.status(400).json({ error: 'Invalid request id' });
+    if (action !== 'accepted' && action !== 'rejected')
+        return res.status(400).json({ error: 'Invalid action' });
     const request = await Friend.findOneAndUpdate(
         { _id: requestId, recipient: req.user.id, status: 'pending' },
         { status: action },
-        { new: true }
+        { new: true, runValidators: true }
     ).populate('requester', 'username');
 
     if (!request) return res.status(404).json({ error: 'Request not found' });
@@ -151,6 +167,8 @@ router.get('/list', auth, async (req, res) => {
 
 // View a friend's progress
 router.get('/progress/:friendId', auth, async (req, res) => {
+    if (!validId(req.params.friendId))
+        return res.status(400).json({ error: 'Invalid friend id' });
     try {
         const friendship = await Friend.findOne({
             $and: [
@@ -199,6 +217,12 @@ router.get('/progress/:friendId', auth, async (req, res) => {
 // Send a "watched with friend" request
 router.post('/watch-request', auth, async (req, res) => {
     const { recipientId, projectId, projectTitle } = req.body;
+    if (!validId(recipientId))
+        return res.status(400).json({ error: 'Invalid recipient' });
+    if (typeof projectId !== 'string' || !projectId.trim())
+        return res.status(400).json({ error: 'Invalid project id' });
+    if (projectTitle != null && typeof projectTitle !== 'string')
+        return res.status(400).json({ error: 'Invalid project title' });
 
     const friendship = await Friend.findOne({
         $and: [
@@ -243,6 +267,8 @@ router.post('/watch-request', auth, async (req, res) => {
 });
 
 router.delete('/remove/:friendId', auth, async (req, res) => {
+    if (!validId(req.params.friendId))
+        return res.status(400).json({ error: 'Invalid friend id' });
     try {
         const result = await Friend.findOneAndDelete({
             $and: [

@@ -63,12 +63,7 @@ const Friends = {
   }
 };
 
-// Escape HTML to prevent XSS from user-controlled strings (usernames, titles)
-function esc(str) {
-  const d = document.createElement('div');
-  d.textContent = str;
-  return d.innerHTML;
-}
+// esc() is defined in js/utils.js and shared across all view modules.
 
 /************************************************
  * FRIENDS PANEL UI
@@ -268,7 +263,14 @@ async function viewFriendProgress(friendId, friendName) {
   const data = await Friends.getProgress(friendId);
   if (data.error) return alert(data.error);
 
+  const mapWrapperCheck = document.getElementById('map-wrapper');
+  if (!mapWrapperCheck) return; // not on the app view — bail safely
+
   const originalData = new Map(state.data);
+
+  // Block state.save from pushing the friend's data onto our account while
+  // the UI is in friend-view. Cleared when exiting the banner.
+  state.readonly = true;
 
   state.data.clear();
   data.watchedProjects.forEach(entry => {
@@ -295,6 +297,8 @@ async function viewFriendProgress(friendId, friendName) {
   banner.querySelector('#exit-friend-view').onclick = () => {
     state.data.clear();
     originalData.forEach((v, k) => state.data.set(k, v));
+    // Re-enable saves before the first post-exit listener fires.
+    state.readonly = false;
     // Fire listeners so the layout cache invalidates on return; without
     // this the map renders the friend's stale layout over the viewer's data.
     state.listeners.forEach(fn => fn(state.data));

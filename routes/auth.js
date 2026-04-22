@@ -26,7 +26,13 @@ router.post('/register', async (req, res) => {
     await User.create({ username: username.trim(), password: hashed });
     res.json({ message: 'User created' });
   } catch (e) {
-    res.status(400).json({ error: 'Username already exists' });
+    // Distinguish duplicate-key from real errors — previously every failure
+    // was reported as "username exists", which masked server-side outages.
+    if (e && e.code === 11000) {
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+    console.error('Register error:', e);
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 

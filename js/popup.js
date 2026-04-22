@@ -14,14 +14,14 @@ function showPopup(project) {
   popup.className = 'node-popup';
   popup.innerHTML = `
   <button class="popup-close">✕</button>
-  <h3>${project.title}</h3>
+  <h3>${esc(project.title)}</h3>
 
   ${isWatched ? `
     <p class="watch-count">Watched ${count} time${count !== 1 ? 's' : ''}</p>
 ${watchedWith.length ? (() => {
       const currentUsername = Auth.getUsername();
       const formatted = watchedWith.map(name =>
-        name === currentUsername ? '<span class="watched-with-you">you</span>' : `<span>${name}</span>`
+        name === currentUsername ? '<span class="watched-with-you">you</span>' : `<span>${esc(name)}</span>`
       );
       return `
     <div class="watched-with-info">
@@ -51,14 +51,14 @@ ${!isReadonly ? `
         ${memories.map((m, i) => `
           <div class="memory-item" data-index="${i}">
             ${m.type === 'video'
-              ? `<video src="${m.url}" preload="metadata"></video>`
-              : `<img src="${m.url}" alt="${m.caption}" />`
+              ? `<video src="${esc(m.url)}" preload="metadata"></video>`
+              : `<img src="${esc(m.url)}" alt="${esc(m.caption)}" />`
             }
             <div class="memory-overlay">
               <button class="memory-view-btn" data-index="${i}">View</button>
-              ${!isReadonly ? `<button class="memory-delete" data-url="${m.url}">✕</button>` : ''}
+              ${!isReadonly ? `<button class="memory-delete" data-url="${esc(m.url)}">✕</button>` : ''}
             </div>
-            ${m.caption ? `<p class="memory-caption">${m.caption}</p>` : ''}
+            ${m.caption ? `<p class="memory-caption">${esc(m.caption)}</p>` : ''}
           </div>
         `).join('')}
       </div>

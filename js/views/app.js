@@ -121,7 +121,12 @@ const AppView = {
 
     // Init walkers
     await Walkers.init();
-    setTimeout(() => Walkers.deploy(), 500);
+    // Track the deploy delay so unmount can cancel it — otherwise a fast
+    // logout within 500ms triggers deploy() against a destroyed renderer.
+    AppView._deployTimer = setTimeout(() => {
+      AppView._deployTimer = null;
+      Walkers.deploy();
+    }, 500);
 
     // Load profile picture into header
     if (Auth.isLoggedIn()) {
@@ -146,6 +151,10 @@ const AppView = {
   },
 
   unmount() {
+    if (AppView._deployTimer) {
+      clearTimeout(AppView._deployTimer);
+      AppView._deployTimer = null;
+    }
     Walkers.destroy();
     renderer.destroy();
     renderer.wrapper = null;

@@ -34,10 +34,28 @@ router.get('/', auth, async (req, res) => {
   });
 });
 
+// Whitelist of acceptable profile-picture sources:
+//   - relative path into the bundled character art (assets/characters/…)
+//   - https URL on our Cloudinary cloud (signed in upload route)
+// Blocks javascript: URIs, data: URIs, and arbitrary attacker-controlled URLs.
+const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
+function validProfilePictureUrl(url) {
+  if (typeof url !== 'string') return false;
+  if (url.length > 512) return false;
+  if (/^assets\/characters\/[\w.\-]+$/.test(url)) return true;
+  if (CLOUD_NAME) {
+    const prefix = `https://res.cloudinary.com/${CLOUD_NAME}/`;
+    if (url.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 // POST /api/profile/picture — update profile picture
 router.post('/picture', auth, async (req, res) => {
   const { profilePicture } = req.body;
   if (!profilePicture) return res.status(400).json({ error: 'No picture provided' });
+  if (!validProfilePictureUrl(profilePicture))
+    return res.status(400).json({ error: 'Invalid picture URL' });
   await User.findByIdAndUpdate(req.user.id, { profilePicture });
   res.json({ profilePicture });
 });

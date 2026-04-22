@@ -6,6 +6,10 @@ class WatchState {
     this.data = new Map();
     this.byId = new Map();
     this.listeners = new Set();
+    // When true, mutations don't persist. Set while the user is viewing a
+    // friend's progress so accidental watchAgain/toggle/walker edits can't
+    // PUT the friend's data to the current user's account.
+    this.readonly = false;
     // load() is async, called explicitly in DOMContentLoaded
   }
 
@@ -43,6 +47,12 @@ class WatchState {
   }
 
   save() {
+    // In readonly mode (friend-view), fire listeners so the UI updates but
+    // never push the friend's data back to the server or localStorage.
+    if (this.readonly) {
+      this.listeners.forEach(fn => fn(this.data));
+      return;
+    }
     if (Auth.isLoggedIn()) {
       const watchedProjects = [...this.data.entries()].map(([projectId, val]) => ({
         projectId,
@@ -90,6 +100,9 @@ class WatchState {
   }
 
   clear() {
+    // Respect readonly — "Clear Progress" while viewing a friend's map must
+    // not wipe our own account's server-side progress.
+    if (this.readonly) return;
     this.data.clear();
     if (Auth.isLoggedIn()) {
       fetch(`${API}/progress/save`, {

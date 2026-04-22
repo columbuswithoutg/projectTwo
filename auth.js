@@ -8,9 +8,9 @@ const tabs       = document.querySelectorAll(".auth-tab");
 
 let currentMode = "login";
 
-// If already logged in, skip straight to the app
+// If already logged in, skip straight to the SPA
 if (localStorage.getItem("mcu_token")) {
-  window.location.href = "/app.html";
+  window.location.href = "/";
 }
 
 // Tab switching
@@ -53,7 +53,7 @@ submitBtn.addEventListener("click", async () => {
     if (currentMode === "login") {
       localStorage.setItem("mcu_token", data.token);
       localStorage.setItem("mcu_username", data.username);
-      window.location.href = "/app.html"; // ← redirect to tracker
+      window.location.href = "/"; // ← redirect into SPA
     } else {
       // After register, auto-switch to login tab
       showSuccess("Account created! Please log in.");

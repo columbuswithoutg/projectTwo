@@ -31,20 +31,20 @@ const Router = (() => {
   }
 
   function navigate(path, pushState = true) {
-    // Normalize path
-    if (path.endsWith('.html')) {
-      path = path.replace('.html', '').replace('/index', '/');
-    }
-    if (path === '' || path === '/index') path = '/';
+    // Strip query + hash first so "?q=1" and "#section" don't break lookups.
+    const qIdx = path.indexOf('?');
+    if (qIdx !== -1) path = path.slice(0, qIdx);
+    const hIdx = path.indexOf('#');
+    if (hIdx !== -1) path = path.slice(0, hIdx);
+
+    // Drop trailing slashes (except for the root "/") so "/profile/" → "/profile".
+    if (path.length > 1) path = path.replace(/\/+$/, '');
+    // Strip .html suffix and the synthetic /index path.
+    if (path.endsWith('.html')) path = path.slice(0, -5);
+    if (path === '' || path === '/index' || path === '/index.html') path = '/';
 
     const view = routes[path];
     if (!view) {
-      // Fallback: try without trailing slash
-      const stripped = path.replace(/\/$/, '');
-      if (stripped && stripped !== path && routes[stripped]) {
-        navigate(stripped, pushState);
-        return;
-      }
       // Last resort: go to /
       if (path !== '/' && routes['/']) {
         navigate('/', pushState);

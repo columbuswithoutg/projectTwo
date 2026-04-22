@@ -1,4 +1,14 @@
 require('dotenv').config();
+
+// Fail fast at boot if critical env is missing — otherwise jwt.sign throws
+// mid-request and the user gets an opaque 500 on their first login attempt.
+['MONGO_URI', 'JWT_SECRET'].forEach(key => {
+  if (!process.env[key]) {
+    console.error(`FATAL: ${key} is not set in environment. Aborting.`);
+    process.exit(1);
+  }
+});
+
 // Force Google DNS for local dev — fixes SRV lookup issues on some networks
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
@@ -9,17 +19,22 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 
 const app = express();
-// CORS: if CLIENT_URL is set, lock to it. Otherwise in production block
-// cross-origin entirely (SPA is served same-origin by this Express, so it
-// still works); in dev reflect the request origin for localhost convenience.
+
+// CORS: explicit allowlist in prod; reflect origin only when NODE_ENV is
+// explicitly 'development'. Previously defaulted to reflecting any origin
+// when NODE_ENV was unset, which silently opened up prod if the flag
+// wasn't configured on the host.
+const isDev = process.env.NODE_ENV === 'development';
 const corsOrigin = process.env.CLIENT_URL
   ? process.env.CLIENT_URL.split(',').map(s => s.trim()).filter(Boolean)
-  : (process.env.NODE_ENV === 'production' ? false : true);
+  : (isDev ? true : false);
 app.use(cors({
   origin: corsOrigin,
   credentials: true
 }));
-app.use(express.json());
+// Cap body size — progress payloads are small; the upload route uses multer
+// and is not affected by this limit.
+app.use(express.json({ limit: '64kb' }));
 
 // SPA routes — BEFORE static middleware so they take priority over index.html
 const spaFile = path.join(__dirname, 'spa.html');
@@ -34,10 +49,11 @@ const spaFile = path.join(__dirname, 'spa.html');
 app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: '30d' }));
 app.use('/js',     express.static(path.join(__dirname, 'js')));
 // Root-level client files (HTML + top-level scripts + stylesheet) are served
-// from an explicit allowlist. Anything else at the project root stays private.
-const ROOT_FILES = ['index.html', 'spa.html', 'app.html', 'characters.html', 'profile.html',
-                    'styles.css', 'auth.js', 'projects.js', 'characters.js',
-                    'locations.js', 'characters-page.js'];
+// from an explicit allowlist. The pre-SPA orphan pages (app.html,
+// characters.html, profile.html) and their scripts are deliberately omitted
+// so old links can't resurrect the broken flow.
+const ROOT_FILES = ['index.html', 'spa.html', 'styles.css', 'auth.js',
+                    'projects.js', 'characters.js', 'locations.js'];
 ROOT_FILES.forEach(name => {
   app.get('/' + name, (req, res) => res.sendFile(path.join(__dirname, name)));
 });
@@ -76,4 +92,14 @@ app.use('/api/friends', apiLimiter, require('./routes/friends'));
 app.use('/api/upload', uploadLimiter, require('./routes/upload'));
 app.use('/api/profile', apiLimiter, require('./routes/profile'));
 
-app.listen(process.env.PORT, () => console.log(`Server running on port ${process.env.PORT}`));
+// Terminal error handler — Express 5 forwards async rejections here. Without
+// this, unhandled errors in route handlers leak stack traces to the client.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error(err);
+  if (res.headersSent) return next(err);
+  res.status(err.status || 500).json({ error: 'Server error' });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

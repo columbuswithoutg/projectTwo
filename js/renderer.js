@@ -67,10 +67,12 @@ class MapRenderer {
     // Initial camera: center on start node
     this._jumpToStartNode();
 
-    if (!this._subscribed) {
-      state.subscribe(() => this.render());
-      this._subscribed = true;
-    }
+    // Always (re)subscribe on init. Previously a `_subscribed` guard stopped
+    // resubscribing after logout→login, which silently disabled auto-render
+    // on watch/unwatch for subsequent sessions. The prior unsubscribe is
+    // cleared in destroy().
+    if (this._unsubscribeState) this._unsubscribeState();
+    this._unsubscribeState = state.subscribe(() => this.render());
   }
 
   _jumpToStartNode() {
@@ -253,6 +255,10 @@ class MapRenderer {
   }
 
   destroy() {
+    if (this._unsubscribeState) {
+      this._unsubscribeState();
+      this._unsubscribeState = null;
+    }
     this._listeners.forEach(({ target, event, handler, opts }) => {
       target.removeEventListener(event, handler, opts);
     });
@@ -812,9 +818,6 @@ class MapRenderer {
     this._setCamera(Math.max(this.worldZoom, CONFIG_WORLD.zoomRegionPreset), pos.x, pos.y, true);
   }
 
-  markAllWatched() {
-    projects.forEach(p => state.setWatched?.(p.id, true));
-  }
 }
 
 const renderer = new MapRenderer();

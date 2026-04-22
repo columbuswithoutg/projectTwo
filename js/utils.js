@@ -7,6 +7,15 @@ const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
 const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const randBetween = (min, max) => min + Math.random() * (max - min);
 
+// Escape HTML for safe interpolation into innerHTML. User-controlled strings
+// (usernames, project titles from friends' data, memory captions, file URLs)
+// must go through this before reaching template literals.
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str == null ? '' : String(str);
+  return d.innerHTML;
+}
+
 /************************************************
  * VISIBILITY & UNLOCK LOGIC
  ************************************************/
@@ -22,24 +31,17 @@ const allPrereqs = (p) => [
 ];
 
 const isUnlocked = (p) => {
-  if (p.phaseNum === 1) return true;
   if (!isPhaseUnlocked(p)) return false;
   return allPrereqs(p).every(id => state.isWatched(id));
 };
 
-// Only watched projects (plus the start node) sit on the world map. Projects
-// that are unlocked-but-unwatched live on the bottom "up-next" shelf instead
-// — the map shows what the user has already seen, the shelf shows what's
-// available to watch next. Use isRevealed() to query the shelf set.
-const isVisible = (p) => {
-  if (p.id === CONFIG.START_NODE_ID) return true;
-  return state.isWatched(p.id);
-};
+// Only watched projects sit on the world map. Unlocked-but-unwatched pins
+// (including the start node for new users) live on the bottom "up-next"
+// shelf — the map shows what's been seen, the shelf shows what's next.
+const isVisible = (p) => state.isWatched(p.id);
 
 const isRevealed = (p) =>
-  p.id !== CONFIG.START_NODE_ID &&
-  !state.isWatched(p.id) &&
-  isUnlocked(p);
+  !state.isWatched(p.id) && isUnlocked(p);
 
 const getHighestUnlockedPhase = () => {
   const unlocked = projects.filter(isPhaseUnlocked);

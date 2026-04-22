@@ -70,7 +70,11 @@
 body {
   margin: 0;
   font-family: system-ui, -apple-system, sans-serif;
+  /* 100dvh tracks the visible viewport on iOS Safari (shrinks as the URL bar
+     appears), so the bottom shelf isn't cropped by the toolbar. 100vh is a
+     fallback for older browsers. */
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: var(--color-bg);
   color: #fff;
@@ -225,6 +229,12 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
+  /* Push content below the iPhone notch / status bar when viewport-fit=cover
+     expands the page into those areas. */
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-top: env(safe-area-inset-top);
+  box-sizing: content-box;
   position: relative;
   background: linear-gradient(180deg, var(--color-dark-gradient-top) 0%, var(--color-bg) 100%);
   border-bottom: 1px solid var(--gold-025);
@@ -291,6 +301,7 @@ body {
   left: 0;
   width: var(--drawer-width);
   height: 100vh;
+  height: 100dvh;
   background: rgba(13, 16, 32, 0.62);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
@@ -403,6 +414,11 @@ body {
   right: 0;
   height: var(--shelf-height);
   padding: 8px 14px;
+  /* Keep content above the iPhone home indicator when viewport-fit=cover
+     lets the shelf extend into the safe area. */
+  padding-left: max(14px, env(safe-area-inset-left));
+  padding-right: max(14px, env(safe-area-inset-right));
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
   box-sizing: border-box;
   background: linear-gradient(to top, rgba(8, 8, 16, 0.96), rgba(12, 12, 24, 0.82));
   border-top: 1px solid rgba(255, 215, 0, 0.24);
@@ -1190,6 +1206,7 @@ body {
 ====================== */
 body.auth-page {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1243,7 +1260,7 @@ body.auth-page {
 }
 
 .auth-subtitle {
-  color: #666;
+  color: #b8b8b8;
   margin: -8px 0 16px;
   font-size: 0.9rem;
 }
@@ -1508,7 +1525,7 @@ body.auth-page {
 }
 
 .friends-empty {
-  color: #555;
+  color: #a8a8a8;
   font-size: 0.9rem;
   margin: 4px 0;
 }
@@ -1666,7 +1683,7 @@ body.auth-page {
   border-radius: 8px;
   border: 1px dashed var(--gold-035);
   background: rgba(255, 255, 255, 0.02);
-  color: #888;
+  color: #bcbcbc;
   cursor: pointer;
   width: 100%;
   transition: border-color 0.2s;
@@ -1812,7 +1829,8 @@ body.auth-page {
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.04);
   color: #fff;
-  font-size: 0.95rem;
+  /* 16px keeps iOS Safari from auto-zooming the page on focus. */
+  font-size: 16px;
   outline: none;
   transition: border-color 0.2s;
 }
@@ -1884,7 +1902,7 @@ body.auth-page {
 }
 
 .characters-empty {
-  color: #444;
+  color: #a0a0a0;
   grid-column: 1 / -1;
   text-align: center;
   padding: 60px 0;
@@ -2023,7 +2041,7 @@ body.auth-page {
 
 .stat-label {
   font-size: 0.72rem;
-  color: #777;
+  color: #b0b0b0;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   text-align: center;
@@ -2094,7 +2112,7 @@ body.auth-page {
 }
 
 #avatar-picker-empty {
-  color: #555;
+  color: #a8a8a8;
   font-size: 0.9rem;
   text-align: center;
   margin: 12px 0 0;
@@ -2102,8 +2120,9 @@ body.auth-page {
 
 /* Header profile avatar button */
 #header-profile-btn {
-  width: 40px;
-  height: 40px;
+  /* 44px is the WCAG 2.5.5 touch target minimum. */
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   border: 2px solid var(--gold-04);
   background: var(--gold-008);
