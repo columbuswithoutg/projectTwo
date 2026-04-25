@@ -456,38 +456,14 @@ class MapRenderer {
   createNodeElement(project, pos) {
     const pinHalfW = CONFIG_WORLD.pinWidth / 2;
     const pinHalfH = CONFIG_WORLD.pinHeight / 2;
-    const node = document.createElement("div");
-    node.className = "node pin";
-    node.dataset.id = project.id;
-    node.title = project.title || project.id;
+    const node = NodeFactory.create(project);
     node.style.left = `${pos.x - pinHalfW}px`;
     node.style.top = `${pos.y - pinHalfH}px`;
-
-    if (project.image) {
-      const img = document.createElement("img");
-      img.src = CONFIG.IMAGE_BASE + project.image;
-      img.loading = "lazy";
-      img.draggable = false;
-      img.alt = "";
-      img.onerror = () => img.remove();
-      node.appendChild(img);
-    }
-
-    const check = document.createElement("span");
-    check.className = "checkmark";
-    check.textContent = "✔";
-    node.appendChild(check);
-
-    this.updateNodeState(node, project);
     return node;
   }
 
   updateNodeState(node, project) {
-    const isWatched = state.isWatched(project.id);
-    const locked = !isUnlocked(project);
-
-    node.classList.toggle("watched", isWatched);
-    node.classList.toggle("locked", locked);
+    NodeFactory.updateState(node, project);
   }
 
   /* ─── Up-next shelf ─── */
@@ -539,27 +515,8 @@ class MapRenderer {
   }
 
   createShelfPin(project) {
-    const node = document.createElement("div");
-    node.className = "node pin shelf-pin";
-    node.dataset.id = project.id;
-    node.title = project.title || project.id;
-
-    if (project.image) {
-      const img = document.createElement("img");
-      img.src = CONFIG.IMAGE_BASE + project.image;
-      img.loading = "lazy";
-      img.draggable = false;
-      img.alt = "";
-      img.onerror = () => img.remove();
-      node.appendChild(img);
-    }
-
-    const check = document.createElement("span");
-    check.className = "checkmark";
-    check.textContent = "✔";
-    node.appendChild(check);
-
-    this.updateNodeState(node, project);
+    const node = NodeFactory.create(project);
+    node.classList.add("shelf-pin");
     return node;
   }
 

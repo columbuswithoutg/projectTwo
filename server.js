@@ -37,7 +37,7 @@ app.use(express.json({ limit: '64kb' }));
 
 // SPA routes — BEFORE static middleware so they take priority over index.html
 const spaFile = path.join(__dirname, 'spa.html');
-['/', '/login', '/profile', '/characters'].forEach(route => {
+['/', '/map', '/login', '/profile', '/characters'].forEach(route => {
   app.get(route, (req, res) => res.sendFile(spaFile));
 });
 

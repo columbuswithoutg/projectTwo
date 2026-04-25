@@ -8,12 +8,20 @@ function showPopup(project) {
   const count = state.getCount(project.id);
   const memories = state.getMemories(project.id);
   const watchedWith = state.getWatchedWith(project.id);
-  const isReadonly = renderer.nodesContainer.classList.contains('readonly');
+  // Readonly mode only exists on the map view (set when viewing a friend's
+  // progress). On the watch-order view there's no map renderer mounted, so
+  // default to false rather than crashing on a null container.
+  const isReadonly = renderer.nodesContainer
+    ? renderer.nodesContainer.classList.contains('readonly')
+    : false;
 
   const popup = document.createElement('div');
   popup.className = 'node-popup';
+  popup.setAttribute('role', 'dialog');
+  popup.setAttribute('aria-modal', 'true');
+  popup.setAttribute('aria-label', project.title);
   popup.innerHTML = `
-  <button class="popup-close">✕</button>
+  <button class="popup-close" aria-label="Close">✕</button>
   <h3>${esc(project.title)}</h3>
 
   ${isWatched ? `
@@ -75,7 +83,8 @@ ${!isReadonly ? `
       } else {
         state.toggle(project.id);
       }
-      renderer.setCenterTarget(project.id);
+      // Map view: re-center camera on the project. Flow view: no camera.
+      renderer.setCenterTarget?.(project.id);
       popup.remove();
     };
 
@@ -137,10 +146,13 @@ function showAuthModal(mode) {
 
   const modal = document.createElement("div");
   modal.className = "auth-modal";
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-labelledby', 'auth-modal-heading');
   modal.innerHTML = `
     <div class="auth-box">
-      <button class="popup-close">✕</button>
-      <h3>${mode === "login" ? "Login" : "Register"}</h3>
+      <button class="popup-close" aria-label="Close">✕</button>
+      <h3 id="auth-modal-heading">${mode === "login" ? "Login" : "Register"}</h3>
       <input id="auth-username" type="text" placeholder="Username" />
       <input id="auth-password" type="password" placeholder="Password" />
       <p class="auth-error" style="color:red;display:none;"></p>

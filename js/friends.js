@@ -73,10 +73,13 @@ function showFriendsPanel() {
 
   const panel = document.createElement('div');
   panel.className = 'friends-panel';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  panel.setAttribute('aria-labelledby', 'friends-panel-heading');
   panel.innerHTML = `
     <div class="friends-box">
-      <button class="popup-close" id="close-friends">✕</button>
-      <h3>Friends</h3>
+      <button class="popup-close" id="close-friends" aria-label="Close">✕</button>
+      <h3 id="friends-panel-heading">Friends</h3>
 
       <!-- Search -->
       <div class="friends-section">
@@ -321,10 +324,13 @@ async function showWatchedWithFriendModal(project) {
 
   const modal = document.createElement('div');
   modal.className = 'auth-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-labelledby', 'watched-with-friend-heading');
   modal.innerHTML = `
     <div class="auth-box">
-      <button class="popup-close">✕</button>
-      <h3>Watched with a Friend</h3>
+      <button class="popup-close" aria-label="Close">✕</button>
+      <h3 id="watched-with-friend-heading">Watched with a Friend</h3>
       <p style="color:#aaa; font-size:0.9rem">Select a friend to mark <strong style="color:#fff">${esc(project.title)}</strong> as watched for them too.</p>
       <div id="watch-friends-list">
         ${!friends.length
@@ -386,9 +392,12 @@ async function showWatchedWithFriendModal(project) {
 function showRemoveConfirm(friendId, friendName, panel) {
   const confirm = document.createElement('div');
   confirm.className = 'auth-modal';
+  confirm.setAttribute('role', 'alertdialog');
+  confirm.setAttribute('aria-modal', 'true');
+  confirm.setAttribute('aria-labelledby', 'remove-friend-heading');
   confirm.innerHTML = `
     <div class="auth-box" style="text-align:center; gap:16px">
-      <h3>Remove Friend</h3>
+      <h3 id="remove-friend-heading">Remove Friend</h3>
       <p style="color:#aaa">Are you sure you want to remove <strong style="color:#fff">${esc(friendName)}</strong> as a friend?</p>
       <p class="auth-error" style="display:none; color:red"></p>
       <div style="display:flex; gap:8px">

@@ -1,7 +1,8 @@
 // Extracted from spa.html so the <script> tag can use `defer` — inline
 // scripts don't respect defer, which forced every other script above them
 // to run synchronously.
-Router.register('/', AppView);
+Router.register('/', WatchOrderView);
+Router.register('/map', AppView);
 Router.register('/login', LoginView);
 Router.register('/profile', ProfileView);
 Router.register('/characters', CharactersView);

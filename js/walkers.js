@@ -13,9 +13,9 @@ const Walkers = (() => {
   const PHYSICS = Object.freeze({
     WALKER:     { size: 24, r: 12, speed: 40, pauseMin: 800, pauseMax: 2500 },
     ROAD:       { halfW: 13, damping: 0.998, bounce: 0.85 },
-    ENCOUNTER:  { dist: 36, cooldown: 30000, lineDuration: 2500 },
+    ENCOUNTER:  { dist: 26, cooldown: 30000, lineDuration: 2500 },
     WEAPON:     { radius: 18, size: 14, baseSpeed: 3.5, hitCooldown: 300 },
-    FIGHT:      { spawnChance: 0.15, villainHpMult: 1.5, defeatDisplayMs: 2000, deployGrace: 5000 },
+    FIGHT:      { spawnChance: 0.15, villainHpMult: 1.5, defeatDisplayMs: 2000, deployGrace: 5000, noShowTimeoutMs: 8000 },
     PROJECTILE: { speed: 120, cooldown: 1400, size: 6 },
   });
 
@@ -44,6 +44,35 @@ const Walkers = (() => {
   let faintedWalkers = new Set();      // walkers waiting to revive after fight
   let activeProjectiles = [];          // { x, y, vx, vy, ownerId, dmg, el, isVillainProj }
   let overrideSelections = null;       // when set, deploy uses these instead of localStorage
+
+  // Fight toggle — user can enable villain spawns from the nav drawer.
+  // Default OFF so a fresh user (or one who clears storage) gets the calm
+  // experience first; they opt in via the toggle. Persisted across reloads.
+  const FIGHTS_STORAGE_KEY = 'mcu_fights_enabled';
+  let fightsEnabled = (() => {
+    try {
+      const v = localStorage.getItem(FIGHTS_STORAGE_KEY);
+      return v === null ? false : v === '1';
+    } catch (_) { return false; }
+  })();
+
+  // Dialogue toggle — user can disable encounter dialogues from the nav
+  // drawer. Default ON (most users want to see character interactions).
+  const DIALOGUES_STORAGE_KEY = 'mcu_dialogues_enabled';
+  let dialoguesEnabled = (() => {
+    try {
+      const v = localStorage.getItem(DIALOGUES_STORAGE_KEY);
+      return v === null ? true : v === '1';
+    } catch (_) { return true; }
+  })();
+
+  // Global cooldowns — wall-clock timestamps in performance.now() units.
+  // After a dialogue or fight ENDS, no new one starts until the cooldown
+  // has elapsed. Prevents back-to-back dialogues/fights that the user
+  // can't keep up with.
+  const COOLDOWN_MS = 5000;
+  let globalEncounterCooldownEnd = 0;
+  let globalFightCooldownEnd = 0;
 
   /* ---- persistence ---- */
   // Storage format: [{ id: "thor", stage: 1 }, { id: "cap", stage: 0 }, ...]
@@ -149,17 +178,16 @@ const Walkers = (() => {
     return graph;
   }
 
-  // Read node centers from the authored world layout — independent of DOM transforms
-  // (fight zoom / world zoom can compose without breaking geometry).
+  // Node geometry — delegated to WalkerView so the same walker code works
+  // on both the geographic map and the watch-order flowchart.
   function getNodeCenter(nodeId) {
-    const pos = getNodePosition(nodeId);
+    const pos = WalkerView.get().nodePosition(nodeId);
     if (!pos) return null;
     return { x: pos.x, y: pos.y };
   }
 
   function getClusterOf(nodeId) {
-    const pos = getNodePosition(nodeId);
-    return pos ? pos.clusterId : null;
+    return WalkerView.get().clusterOf(nodeId);
   }
 
   /* ---- walker DOM element ---- */
@@ -194,9 +222,9 @@ const Walkers = (() => {
     if (w1._cx == null || w2._cx == null) return;
     const midX = (w1._cx + w2._cx) / 2;
     const midY = (w1._cy + w2._cy) / 2;
-    if (renderer) {
-      renderer._setCamera(Math.max(renderer.worldZoom, 0.9), midX, midY, true);
-    }
+    // Route through the view adapter — works on both the geographic map
+    // (camera pan) and the watch-order flow (smooth wrapper scroll).
+    WalkerView.get().centerOn(midX, midY);
   }
 
   function positionBubbleAboveWalker(bubble, w) {
@@ -211,7 +239,7 @@ const Walkers = (() => {
     bubble.textContent = text;
     bubble.style.position = 'absolute';
     bubble.style.zIndex = '60';
-    renderer.mapContainer.appendChild(bubble);
+    WalkerView.get().container().appendChild(bubble);
 
     positionBubbleAboveWalker(bubble, w);
 
@@ -383,7 +411,14 @@ const Walkers = (() => {
         applyWalkerPosition(w);
       });
 
-      // Cooldown before next encounter can play
+      // Global cooldown — block any new encounter from being queued for
+      // COOLDOWN_MS after this one finished. Without this, two walkers
+      // already standing close together would immediately queue another
+      // dialogue the moment this one ends.
+      globalEncounterCooldownEnd = performance.now() + COOLDOWN_MS;
+
+      // Cooldown before next QUEUED encounter can play (separate from the
+      // queue-blocking cooldown above — this one drains existing queue).
       encounterTimers.push(setTimeout(() => runNextEncounter(), 5000));
     }, totalDuration));
   }
@@ -427,7 +462,7 @@ const Walkers = (() => {
   // Returns Map<clusterId, rect>, and Map<nodeId, clusterId> for convenience
   // (walker.currentNode still resolves to a specific movie node for fights).
   function buildNodeRects(graph, roadSegments) {
-    const clusterRects = getClusterRects();
+    const clusterRects = WalkerView.get().allClusterRects();
     const rects = new Map();
 
     clusterRects.forEach((cr, clusterId) => {
@@ -518,8 +553,10 @@ const Walkers = (() => {
     const pad = PHYSICS.WALKER.r;
 
     // Check if walker is near an opening — if so, transition to the road.
-    // Sealed during fights so participants don't wander off.
-    if (w.state !== W_STATE.FIGHTING) {
+    // Sealed during the walker's own fight so participants don't wander off,
+    // AND sealed for ALL walkers globally while ANY fight is active — the
+    // user wants walkers to stay in their nodes during fights, period.
+    if (w.state !== W_STATE.FIGHTING && activeFights.size === 0) {
       for (const op of rect.openings) {
         const distToOpening = Math.hypot(w._cx - op.x, w._cy - op.y);
         if (distToOpening < PHYSICS.ROAD.halfW * 2 + PHYSICS.WALKER.r) {
@@ -534,6 +571,18 @@ const Walkers = (() => {
             w.previousNode = w.currentNode;
             w.targetNode = op.targetNodeId;
             w.targetCluster = op.targetClusterId;
+            // Snap walker onto the road centerline at the opening, slightly
+            // FORWARD into the road. Without this, the walker keeps its
+            // wander position (which can be off-centerline AND behind the
+            // road's start point) — the next road tick's alongDist <= 0
+            // check would immediately bounce them back to the node, looping
+            // forever. Aligning velocity to the road direction also avoids
+            // the perpendicular constraint dampening their motion to zero.
+            w._cx = op.x + op.ux * 1;
+            w._cy = op.y + op.uy * 1;
+            const speed = PHYSICS.WALKER.speed;
+            w.vx = op.ux * speed;
+            w.vy = op.uy * speed;
             return;
           }
         }
@@ -601,14 +650,14 @@ const Walkers = (() => {
 
     el.style.width = PHYSICS.WEAPON.size + 'px';
     el.style.height = PHYSICS.WEAPON.size + 'px';
-    renderer.mapContainer.appendChild(el);
+    WalkerView.get().container().appendChild(el);
     return el;
   }
 
   function createHpElement() {
     const el = document.createElement('div');
     el.className = 'walker-hp';
-    renderer.mapContainer.appendChild(el);
+    WalkerView.get().container().appendChild(el);
     return el;
   }
 
@@ -618,18 +667,18 @@ const Walkers = (() => {
     const fill = document.createElement('div');
     fill.className = 'walker-hp-bar-fill';
     wrap.appendChild(fill);
-    renderer.mapContainer.appendChild(wrap);
+    WalkerView.get().container().appendChild(wrap);
     return wrap;
   }
 
   function spawnDamageNumber(target, dmg) {
-    if (!renderer.mapContainer || !target) return;
+    if (!WalkerView.get().container() || !target) return;
     const el = document.createElement('div');
     el.className = 'walker-damage-number';
     el.textContent = '-' + Math.max(1, Math.round(dmg));
     el.style.left = target._cx + 'px';
     el.style.top = (target._cy - PHYSICS.WALKER.r - 18) + 'px';
-    renderer.mapContainer.appendChild(el);
+    WalkerView.get().container().appendChild(el);
     setTimeout(() => el.remove(), 950);
   }
 
@@ -681,7 +730,7 @@ const Walkers = (() => {
   }
 
   function setFightClass(nodeId, on) {
-    const el = renderer.nodeElements?.get(nodeId);
+    const el = WalkerView.get().nodeElement(nodeId);
     if (!el) return;
     el.classList.toggle('active-fight', !!on);
   }
@@ -690,15 +739,14 @@ const Walkers = (() => {
   let fightZoomed = false;
   let zoomEndTimer = null;
 
+  // Fight zoom — frames the fight cluster at ~80% of viewport. The math
+  // and the actual transform live in the view adapter so the same call
+  // works on both the geographic map (CSS transform on #map-container)
+  // and the watch-order flow (scroll-and-scale on .flow-canvas).
   function startFightZoom(nodeId) {
-    if (!renderer.wrapper) return;
-
-    // Zoom to the whole CLUSTER that the fight belongs to — with grid packing
-    // the cluster is the visual "node" the user sees. Scaling to NODE_WIDTH
-    // would zoom into a single tile, which reads as wrong for multi-tile clusters.
     const clusterId = getClusterOf(nodeId);
-    const rect = clusterId ? getClusterRects().get(clusterId) : null;
-    const pos = getNodePosition(nodeId);
+    const rect = clusterId ? WalkerView.get().clusterRect(clusterId) : null;
+    const pos = WalkerView.get().nodePosition(nodeId);
     if (!rect && !pos) return;
 
     if (zoomEndTimer) {
@@ -706,78 +754,91 @@ const Walkers = (() => {
       zoomEndTimer = null;
     }
 
-    // Cancel any in-flight world zoom/pan tween — composing our inner
-    // transform on top of a still-animating outer transform desyncs the math
-    // and leaves the fight framed somewhere off-screen.
-    if (typeof renderer._cancelTween === 'function') renderer._cancelTween();
-
-    const wRect = renderer.wrapper.getBoundingClientRect();
-    const worldZ = renderer.worldZoom || 1;
-    // Frame the cluster (or fall back to the node rect if somehow absent) at
-    // ~80% of the shorter viewport axis so there's some breathing room and
-    // speech bubbles above participants stay on-screen.
-    const targetW = rect ? rect.width : CONFIG.NODE_WIDTH;
-    const targetH = rect ? rect.height : CONFIG.NODE_HEIGHT;
-    const centerX = rect ? rect.cx : pos.x;
-    const centerY = rect ? rect.cy : pos.y;
-
-    // Ideal inner scale frames the cluster at ~80% of whichever viewport axis
-    // binds first, leaving room for speech bubbles above participants.
-    // We intentionally allow rawScale < 1: on mobile a large cluster like
-    // New York is wider than the viewport at worldZoom=1, so the fight zoom
-    // MUST shrink to fit the whole node. The previous Math.max(1) floor
-    // capped the scale at 1× and left the cluster clipped off-screen.
-    // Lower bound 0.3 is a sanity cap so a pathological layout can't
-    // collapse the view. Upper bound 3 keeps walker motion watchable when
-    // the cluster is tiny.
-    const rawScale = Math.min(
-      (wRect.width * 0.8) / (targetW * worldZ),
-      (wRect.height * 0.8) / (targetH * worldZ)
-    );
-    const innerScale = Math.max(0.3, Math.min(3, rawScale));
-
-    // Compose with the outer world zoom/pan: we apply translate+scale to
-    // #map-container so that (centerX, centerY) lands at viewport center.
-    const effectiveScale = worldZ * innerScale;
-    const tx = (wRect.width / 2 - renderer.panX) / effectiveScale - centerX;
-    const ty = (wRect.height / 2 - renderer.panY) / effectiveScale - centerY;
-
-    const container = renderer.mapContainer;
-    container.style.transformOrigin = '0 0';
-    container.style.transition = 'transform 0.5s ease';
-    container.style.transform = `scale(${innerScale}) translate(${tx}px, ${ty}px)`;
+    WalkerView.get().zoomToCluster(rect, pos);
     fightZoomed = true;
-    // Lock camera input — wheel/pan/pinch/keys would desync the composed
-    // inner+outer transform and drift the view off the fight.
-    renderer.cameraLocked = true;
   }
 
   function endFightZoom() {
     if (!fightZoomed) return;
-    const container = renderer.mapContainer;
-
-    container.style.transition = 'transform 0.5s ease';
-    container.style.transform = '';
-
+    WalkerView.get().releaseZoom();
     if (zoomEndTimer) clearTimeout(zoomEndTimer);
     zoomEndTimer = setTimeout(() => {
-      container.style.transformOrigin = '';
-      container.style.transition = '';
       fightZoomed = false;
       zoomEndTimer = null;
     }, 500);
-    // Unlock camera input — user can zoom/pan again now that fight is resolved.
-    renderer.cameraLocked = false;
+  }
+
+  // Fight visuals — swap the fight node's poster to its location image and
+  // fade in a full-screen location backdrop. Reverted by clearFightVisuals.
+  // Both are no-ops if the node has no location or no image.
+  function applyFightVisuals(nodeId) {
+    const project = state.byId?.get(nodeId);
+    if (!project) return;
+    const locationId = project.location;
+    if (!locationId) return;
+    const bgUrl = assetUrl(`assets/backgrounds/${locationId}.webp`);
+
+    // 1. Swap the node's <img> src to the location image. Save original so
+    //    we can restore it when the fight ends.
+    const nodeEl = WalkerView.get().nodeElement(nodeId);
+    if (nodeEl) {
+      const img = nodeEl.querySelector('img');
+      if (img && !img.dataset.originalSrc) {
+        img.dataset.originalSrc = img.src;
+        img.src = bgUrl;
+      }
+      nodeEl.classList.add('fighting');
+    }
+
+    // 2. Full-screen backdrop overlay. Single instance reused across fights.
+    let backdrop = document.querySelector('.fight-backdrop');
+    if (!backdrop) {
+      backdrop = document.createElement('div');
+      backdrop.className = 'fight-backdrop';
+      document.body.appendChild(backdrop);
+    }
+    backdrop.style.backgroundImage = `url("${bgUrl}")`;
+    // Force reflow so the .visible opacity transition fires from 0.
+    void backdrop.offsetWidth;
+    backdrop.classList.add('visible');
+
+    // 3. Mark body so the active canvas can raise its z-index above the
+    //    backdrop (so walkers/HP bars/the swapped node stay on top).
+    document.body.classList.add('fight-active');
+  }
+
+  function clearFightVisuals(nodeId) {
+    // Restore the node's original poster.
+    const nodeEl = WalkerView.get().nodeElement(nodeId);
+    if (nodeEl) {
+      const img = nodeEl.querySelector('img');
+      if (img && img.dataset.originalSrc) {
+        img.src = img.dataset.originalSrc;
+        delete img.dataset.originalSrc;
+      }
+      nodeEl.classList.remove('fighting');
+    }
+
+    // Fade out and remove the backdrop after the transition.
+    const backdrop = document.querySelector('.fight-backdrop');
+    if (backdrop) {
+      backdrop.classList.remove('visible');
+      setTimeout(() => backdrop.remove(), 350);
+    }
+
+    document.body.classList.remove('fight-active');
   }
 
   function centerOnNode(nodeId) {
     // Now delegates to the renderer's camera system.
-    const pos = getNodePosition(nodeId);
+    const pos = WalkerView.get().nodePosition(nodeId);
     if (!pos || !renderer) return;
-    renderer._setCamera(Math.max(renderer.worldZoom, 0.9), pos.x, pos.y, true);
+    WalkerView.get().setCamera(Math.max(WalkerView.get().worldZoom(), 0.9), pos.x, pos.y, true);
   }
 
   function spawnVillain(nodeId) {
+    if (!fightsEnabled) return;          // user disabled fights via the toggle
+    if (performance.now() < globalFightCooldownEnd) return; // cooldown after previous fight
     if (activeFights.size > 0) return;  // only one fight at a time globally
 
     // Pool villain candidates across every watched movie in this cluster.
@@ -787,7 +848,7 @@ const Walkers = (() => {
     // Sourcing from the whole cluster rotates through Fisk, Kilgrave,
     // Cottonmouth, Kingpin, Loki, Thanos, etc.
     const fightClusterId = getClusterOf(nodeId);
-    const clusterRect = fightClusterId ? getClusterRects().get(fightClusterId) : null;
+    const clusterRect = fightClusterId ? WalkerView.get().clusterRect(fightClusterId) : null;
     const candidates = [];
     const members = clusterRect ? clusterRect.memberIds : [nodeId];
     members.forEach(mid => {
@@ -833,7 +894,7 @@ const Walkers = (() => {
     const img = assetUrl(`assets/characters/${imgFile}`);
     const el = createWalkerElement(img);
     el.classList.add('villain');
-    renderer.mapContainer.appendChild(el);
+    WalkerView.get().container().appendChild(el);
 
     const w = {
       id: `villain_${villainCharId}_${Date.now()}`,
@@ -869,6 +930,7 @@ const Walkers = (() => {
     const fight = { villain: w, participants: new Set(), nodeId, started: performance.now() };
     activeFights.set(nodeId, fight);
     setFightClass(nodeId, true);
+    applyFightVisuals(nodeId);
 
     // Zoom into fight node
     startFightZoom(nodeId);
@@ -934,7 +996,9 @@ const Walkers = (() => {
 
       // End fight
       activeFights.delete(nodeId);
+      globalFightCooldownEnd = performance.now() + COOLDOWN_MS;
       setFightClass(nodeId, false);
+      clearFightVisuals(nodeId);
       // Clear any remaining projectiles
       activeProjectiles.forEach(p => p.el.remove());
       activeProjectiles = [];
@@ -976,7 +1040,9 @@ const Walkers = (() => {
       if (idx !== -1) activeWalkers.splice(idx, 1);
 
       activeFights.delete(nodeId);
+      globalFightCooldownEnd = performance.now() + COOLDOWN_MS;
       setFightClass(nodeId, false);
+      clearFightVisuals(nodeId);
       // Clear any remaining projectiles
       activeProjectiles.forEach(p => p.el.remove());
       activeProjectiles = [];
@@ -985,6 +1051,27 @@ const Walkers = (() => {
       endFightZoom();
       setTimeout(() => checkFaintedRevives(), 1500);
     }, PHYSICS.FIGHT.defeatDisplayMs);
+  }
+
+  // Despawn a villain that no walker ever engaged. Same teardown shape as
+  // handleVillainWins/Defeat but no victory line and no defeat-display
+  // delay — the villain simply leaves with no fanfare.
+  function handleVillainNoShow(fight, nodeId) {
+    if (fight._resolving) return;
+    fight._resolving = true;
+    const villain = fight.villain;
+    villain.vx = 0;
+    villain.vy = 0;
+    unequipFight(villain);
+    villain.el?.remove();
+    const idx = activeWalkers.indexOf(villain);
+    if (idx !== -1) activeWalkers.splice(idx, 1);
+    activeFights.delete(nodeId);
+    setFightClass(nodeId, false);
+    clearFightVisuals(nodeId);
+    activeProjectiles.forEach(p => p.el.remove());
+    activeProjectiles = [];
+    endFightZoom();
   }
 
   function checkFaintedRevives() {
@@ -1076,7 +1163,7 @@ const Walkers = (() => {
     const deg = aimAngle * 180 / Math.PI;
     el.style.transform = `rotate(${deg}deg)`;
 
-    renderer.mapContainer.appendChild(el);
+    WalkerView.get().container().appendChild(el);
     return el;
   }
 
@@ -1252,10 +1339,10 @@ const Walkers = (() => {
     // Geometry rebuilds only when the layout version bumps (on every
     // state.subscribe fire). Road segments, cluster rects, and the graph
     // all invalidate together — they derive from the same source.
-    const version = getLayoutVersion();
+    const version = WalkerView.get().layoutVersion();
     if (!cachedRoads || tick._version !== version) {
       cachedGraph = buildGraph();
-      cachedRoads = getRoadGeometry();
+      cachedRoads = WalkerView.get().roadGeometry();
       cachedRects = buildNodeRects(cachedGraph, cachedRoads);
       tick._version = version;
     }
@@ -1317,15 +1404,12 @@ const Walkers = (() => {
         if (w.state !== W_STATE.FIGHTING) {
           if (w.paused && now >= w.pauseEnd) {
             w.paused = false;
-            if (rect && rect.openings.length > 0 && Math.random() < 0.7) {
-              // Head toward a random opening (outbound road)
-              const op = pickRandom(rect.openings);
-              const dx = op.x - w._cx;
-              const dy = op.y - w._cy;
-              const len = Math.hypot(dx, dy) || 1;
-              w.vx = (dx / len) * PHYSICS.WALKER.speed;
-              w.vy = (dy / len) * PHYSICS.WALKER.speed;
-            } else if (rect && rect.memberPositions.length > 1) {
+            // Removed the "head toward a random opening" branch. Walkers no
+            // longer steer themselves at roads — they only transition to a
+            // road if their natural wandering happens to bring them near an
+            // opening. If they never wander to that side, they bounce in
+            // their node forever (which is what the user wants).
+            if (rect && rect.memberPositions.length > 1) {
               // Wander toward a random member node inside the same cluster
               const target = pickRandom(rect.memberPositions);
               const dx = target.x - w._cx;
@@ -1335,6 +1419,20 @@ const Walkers = (() => {
               w.vy = (dy / len) * PHYSICS.WALKER.speed;
             } else {
               giveRandomVelocity(w);
+            }
+
+            // No-road clusters (e.g., the watch-order flow view, where each
+            // node is its own cluster with no openings) never trigger a
+            // road-arrival villain spawn — that's how spawnVillain normally
+            // gets called. Roll for spawn here on pause-end so villains can
+            // still appear, but only at this walker's actual node — that's
+            // the user's invariant (villains only spawn where walkers are).
+            if (rect && rect.openings.length === 0 && !w.isVillain) {
+              if (activeFights.has(w.currentNode)) {
+                joinFight(w.currentNode);
+              } else {
+                spawnVillain(w.currentNode);
+              }
             }
           }
         }
@@ -1473,14 +1571,28 @@ const Walkers = (() => {
     // Pass 1.5: fight damage processing
     processFightDamage(now, dtSec);
 
-    // Pass 1.6: safety net — if every enrolled participant is defeated but
-    // the villain has no one left to hit (so no damage event fires the
-    // normal endgame check), resolve the fight here.
+    // Pass 1.6: safety net — resolve fights that the normal damage path
+    // can't end on its own. Three cases:
+    //   1. No participants ever joined within the grace window — the villain
+    //      spawned but no walkers were close enough. Despawn the villain.
+    //   2. All enrolled participants are defeated — villain wins.
+    //   3. Every still-alive participant has WALKED OUT of the fight cluster
+    //      (transitioned to a road, or been snapped to a different cluster).
+    //      The villain has no one to attack. Treat it as a win — fight ends
+    //      so the user isn't stuck staring at a stalled scene.
     activeFights.forEach((fight, nodeId) => {
       if (fight._resolving) return;
-      if (fight.participants.size === 0) return;
-      const anyLive = [...fight.participants].some(p => p.state !== W_STATE.DEFEATED);
-      if (!anyLive && fight.villain.state !== W_STATE.DEFEATED) {
+      if (fight.participants.size === 0) {
+        if ((now - fight.started) > PHYSICS.FIGHT.noShowTimeoutMs) {
+          handleVillainNoShow(fight, nodeId);
+        }
+        return;
+      }
+      const fightClusterId = getClusterOf(nodeId);
+      const liveAndPresent = [...fight.participants].some(p =>
+        p.state !== W_STATE.DEFEATED && p.clusterId === fightClusterId
+      );
+      if (!liveAndPresent && fight.villain.state !== W_STATE.DEFEATED) {
         handleVillainWins(fight, nodeId);
       }
     });
@@ -1522,8 +1634,13 @@ const Walkers = (() => {
             b._cy += ny * overlap / 2;
           }
 
-          // Elastic velocity exchange (equal mass)
-          if (!aLocked && !bLocked && !a.paused && !b.paused) {
+          // Elastic velocity exchange (equal mass).
+          // The previous `!a.paused && !b.paused` guard blocked exchange
+          // for walkers in the brief 200-500ms post-dialogue pause cycle,
+          // which made them slide into each other without bouncing. Now
+          // we exchange whenever neither is locked in an ENCOUNTER (the
+          // aLocked/bLocked checks already cover dialogue-locked walkers).
+          if (!aLocked && !bLocked) {
             const aVn = a.vx * nx + a.vy * ny;
             const bVn = b.vx * nx + b.vy * ny;
             a.vx += (bVn - aVn) * nx;
@@ -1539,8 +1656,11 @@ const Walkers = (() => {
           }
         }
 
-        // Encounter detection (suppress during fights)
-        if (!graceActive && !encounterRunning && encounterQueue.length === 0 &&
+        // Encounter detection (suppress during fights, when toggled off,
+        // and during the global cooldown window after a previous dialogue).
+        if (dialoguesEnabled &&
+            now >= globalEncounterCooldownEnd &&
+            !graceActive && !encounterRunning && encounterQueue.length === 0 &&
             dist < PHYSICS.ENCOUNTER.dist &&
             a.state === W_STATE.WALKING && b.state === W_STATE.WALKING &&
             !a.isVillain && !b.isVillain &&
@@ -1654,7 +1774,7 @@ const Walkers = (() => {
   }
 
   function deploy() {
-    if (!renderer.mapContainer) return;  // view not mounted
+    if (!WalkerView.get().container()) return;  // view not mounted
     // Remove old walkers
     destroy();
 
@@ -1666,7 +1786,7 @@ const Walkers = (() => {
     if (visibleIds.length === 0) return;
 
     const graph = buildGraph();
-    const container = renderer.mapContainer;
+    const container = WalkerView.get().container();
 
     // Track how many walkers share each start node for staggering
     const nodeSpawnCount = new Map();
@@ -1716,7 +1836,7 @@ const Walkers = (() => {
       // Spawn at a RANDOM position inside the start node's location rectangle
       // (rather than at the pin's exact coordinates, which sit in the bottom
       // shelf). Walker physics bounces off the location's outer edges.
-      const rect = getClusterRects().get(getClusterOf(startNode));
+      const rect = WalkerView.get().clusterRect(getClusterOf(startNode));
       if (rect) {
         const inset = PHYSICS.WALKER.r + 4;
         w._cx = rect.minX + inset + Math.random() * Math.max(1, rect.width - inset * 2);
@@ -1746,7 +1866,7 @@ const Walkers = (() => {
     encounterTimers.forEach(t => clearTimeout(t));
     encounterTimers = [];
     // Pending fight-zoom cleanup timer — if unmount runs mid-fight, the
-    // 500ms timer would fire with `renderer.mapContainer` already nulled
+    // 500ms timer would fire with `WalkerView.get().container()` already nulled
     // and throw.
     if (zoomEndTimer) {
       clearTimeout(zoomEndTimer);
@@ -1769,10 +1889,21 @@ const Walkers = (() => {
     activeProjectiles = [];
     // Reset zoom if active
     if (fightZoomed) {
-      const container = renderer.mapContainer;
+      const container = WalkerView.get().container();
       if (container) { container.style.transform = ''; container.style.transformOrigin = ''; container.style.transition = ''; }
       fightZoomed = false;
     }
+    // Clean any in-flight visual overlays — backdrop + body class. If the
+    // user navigates away mid-fight, these would otherwise persist.
+    document.body.classList.remove('fight-active');
+    const _backdrop = document.querySelector('.fight-backdrop');
+    if (_backdrop) _backdrop.remove();
+    // Best-effort restore for any node still showing the swapped poster.
+    document.querySelectorAll('.node img[data-original-src]').forEach(img => {
+      img.src = img.dataset.originalSrc;
+      delete img.dataset.originalSrc;
+      img.closest('.node')?.classList.remove('fighting');
+    });
   }
 
   function toggleCharacter(charId, stageIndex = -1) {
@@ -1825,12 +1956,15 @@ const Walkers = (() => {
 
     const overlay = document.createElement('div');
     overlay.id = 'walker-picker-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'walker-picker-heading');
     overlay.innerHTML = `
       <div id="walker-picker">
         <div class="walker-picker-header">
-          <h2>Choose Your Walkers</h2>
+          <h2 id="walker-picker-heading">Choose Your Walkers</h2>
           <p class="walker-slots-info">${getSelectedEntries().length} / ${maxSlots} slots used</p>
-          <button id="walker-picker-close">✕</button>
+          <button id="walker-picker-close" aria-label="Close">✕</button>
         </div>
         <div id="walker-picker-grid"></div>
       </div>
@@ -1946,5 +2080,38 @@ const Walkers = (() => {
     _walkerInitDone = false;
   }
 
-  return { init, deploy, destroy, resetInit, showWalkerPicker, getSelectedIds, getSelectedEntries, getMaxSlots, getUnlockedCharacters, toggleCharacter, setCharacterStage, setSelections, deployWithSelections, restoreSelections };
+  function setFightsEnabled(on) {
+    const next = !!on;
+    if (next === fightsEnabled) return;
+    fightsEnabled = next;
+    try { localStorage.setItem(FIGHTS_STORAGE_KEY, next ? '1' : '0'); } catch (_) {}
+    // If fights were just turned OFF mid-fight, end any active fight cleanly
+    // (no victory line, no defeat fanfare — same teardown as a no-show).
+    if (!next && activeFights.size > 0) {
+      [...activeFights.entries()].forEach(([nodeId, fight]) => {
+        handleVillainNoShow(fight, nodeId);
+      });
+    }
+  }
+
+  function getFightsEnabled() { return fightsEnabled; }
+
+  function setDialoguesEnabled(on) {
+    const next = !!on;
+    if (next === dialoguesEnabled) return;
+    dialoguesEnabled = next;
+    try { localStorage.setItem(DIALOGUES_STORAGE_KEY, next ? '1' : '0'); } catch (_) {}
+    // If turned OFF mid-dialogue, drop the queue and clear the running
+    // dialogue's bubble. The detection-loop check on `dialoguesEnabled`
+    // prevents new ones from being queued.
+    if (!next) {
+      encounterQueue = [];
+      activeBubbles.forEach(b => b.el.remove());
+      activeBubbles = [];
+    }
+  }
+
+  function getDialoguesEnabled() { return dialoguesEnabled; }
+
+  return { init, deploy, destroy, resetInit, showWalkerPicker, getSelectedIds, getSelectedEntries, getMaxSlots, getUnlockedCharacters, toggleCharacter, setCharacterStage, setSelections, deployWithSelections, restoreSelections, setFightsEnabled, getFightsEnabled, setDialoguesEnabled, getDialoguesEnabled };
 })();

@@ -56,6 +56,38 @@
   --gold-gradient: linear-gradient(135deg, var(--color-primary-light), var(--color-primary));
   --modal-bg: linear-gradient(180deg, #13182a 0%, #0a0d18 100%);
   --modal-box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8);
+
+  /* Spacing scale (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  /* Typography scale */
+  --font-size-xs: 11px;
+  --font-size-sm: 13px;
+  --font-size-base: 15px;
+  --font-size-lg: 18px;
+  --font-size-xl: 22px;
+  --font-size-2xl: 28px;
+  --font-size-3xl: 36px;
+  --line-height-tight: 1.2;
+  --line-height-base: 1.5;
+  --line-height-loose: 1.7;
+
+  /* Border radius scale */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+
+  /* Breakpoints (documentation only — CSS custom props can't be used in @media) */
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 1024px;
 }
 
 /* ======================
@@ -130,7 +162,7 @@ body {
 .friends-box,
 #walker-picker {
   border: 1px solid var(--gold-03);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -160,7 +192,7 @@ body {
 .friend-accept-btn,
 .friend-view-btn {
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-weight: 600;
   transition: all 0.2s;
@@ -207,7 +239,7 @@ body {
 .stat-card {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--gold-012);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1102,8 +1134,8 @@ body {
 
 .popup-close {
   position: absolute;
-  top: 12px;
-  right: 16px;
+  top: var(--space-3);
+  right: var(--space-4);
   color: rgba(255, 255, 255, 0.4);
   font-size: 20px;
   width: 32px;
@@ -1111,7 +1143,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 
 .popup-close:hover {
@@ -1123,7 +1155,7 @@ body {
 .popup-action {
   width: 100%;
   padding: 14px 20px;
-  font-size: 15px;
+  font-size: var(--font-size-base);
   font-family: var(--font-display);
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1274,8 +1306,8 @@ body.auth-page {
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid var(--gold-02);
-  padding: 32px;
-  gap: 12px;
+  padding: var(--space-7);
+  gap: var(--space-3);
   min-width: 300px;
   max-height: 85vh;
   box-shadow:
@@ -1298,7 +1330,7 @@ body.auth-page {
 
 .auth-box h3 {
   color: #fff;
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-2);
   font-family: var(--font-display);
   font-size: 1.5rem;
   font-weight: 700;
@@ -1308,7 +1340,7 @@ body.auth-page {
 
 .auth-box input {
   padding: 10px 14px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.04);
   color: #fff;
@@ -1329,7 +1361,7 @@ body.auth-page {
   font-size: 1rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  margin-top: 4px;
+  margin-top: var(--space-1);
   box-shadow: 0 4px 12px rgba(226, 54, 54, 0.35);
   position: relative;
   transition: box-shadow 0.2s, opacity 0.2s;
@@ -1853,7 +1885,7 @@ body.auth-page {
 }
 
 .character-card {
-  padding: 24px 16px;
+  padding: var(--space-6) var(--space-4);
   gap: 14px;
   cursor: default;
 }
@@ -2008,7 +2040,7 @@ body.auth-page {
 }
 
 .stat-card {
-  padding: 20px 12px;
+  padding: var(--space-5) var(--space-3);
   gap: 6px;
   transition: border-color 0.2s, background 0.2s;
 }
@@ -2873,3 +2905,296 @@ body.auth-page {
 
   .cluster-label { font-size: 11px; }
 }
+
+/* ==========================================
+   VIEW TABS (Watch Order ↔ Universe Map)
+========================================== */
+.view-tabs {
+  /* Absolute centering — same trick the original #header h1 used. With
+     flex space-between and 4 children (hamburger, tabs, drawer, profile)
+     the tabs land off-center. Anchor at viewport center instead. */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  gap: var(--space-1);
+  background: var(--gold-008);
+  border: 1px solid var(--gold-015);
+  border-radius: var(--radius-full);
+  padding: var(--space-1);
+  z-index: 2;
+}
+
+.view-tab {
+  background: transparent;
+  border: none;
+  color: var(--color-text-warm);
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s;
+  min-height: var(--touch-target-min);
+}
+
+.view-tab:hover {
+  color: var(--color-primary-light);
+}
+
+.view-tab.active {
+  background: var(--gold-gradient);
+  color: #000;
+  box-shadow: 0 2px 8px var(--gold-025);
+}
+
+@media (max-width: 640px) {
+  .view-tabs {
+    gap: 2px;
+    padding: 2px;
+  }
+  .view-tab {
+    font-size: var(--font-size-xs);
+    padding: var(--space-2) var(--space-3);
+    letter-spacing: 0.04em;
+  }
+}
+
+/* ==========================================
+   WATCH ORDER FLOWCHART
+========================================== */
+.flow-wrapper {
+  position: absolute;
+  top: var(--header-height);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: auto;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(201, 162, 39, 0.06), transparent 60%),
+    radial-gradient(ellipse at 70% 80%, rgba(226, 54, 54, 0.04), transparent 60%),
+    var(--color-bg);
+  scrollbar-width: thin;
+  scrollbar-color: var(--gold-025) transparent;
+  cursor: grab;
+  /* Mouse-drag pan in setupPanControls() updates scroll directly; this
+     prevents the browser from intercepting drag as a text selection. */
+  user-select: none;
+}
+
+.flow-wrapper.panning {
+  cursor: grabbing;
+}
+
+.flow-wrapper::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.flow-wrapper::-webkit-scrollbar-track {
+  background: transparent;
+}
+.flow-wrapper::-webkit-scrollbar-thumb {
+  background: var(--gold-025);
+  border-radius: var(--radius-full);
+}
+.flow-wrapper::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-04);
+}
+
+.flow-canvas {
+  position: relative;
+  /* width and height set inline by orderRenderer */
+}
+
+.flow-arrows {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.flow-nodes {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+.flow-walkers {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* Fight zoom on the flow view — lock native scroll while the canvas is
+   transformed by the WalkerView adapter. Without this, mouse-wheel/touch
+   would drag the wrapper out from under the centered fight transform. */
+.flow-wrapper.fight-zoom {
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* The orderRenderer-built canvas uses transform-origin 0 0 so the
+   adapter's translate+scale math composes correctly. */
+.flow-canvas {
+  transform-origin: 0 0;
+}
+
+/* ==========================================
+   FIGHT VISUALS
+   Full-screen location backdrop + node poster swap during a walker fight.
+========================================== */
+.fight-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(7, 8, 15, 0.92);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  /* Sits above general app content but below the walker layer (which
+     stays inside its canvas container — the canvas's z-index gets
+     raised via body.fight-active so walkers stay on top). */
+  z-index: 5;
+  opacity: 0;
+  transition: opacity 0.32s ease;
+  pointer-events: none;
+}
+
+.fight-backdrop::after {
+  /* Dark vignette so the location image stays atmospheric and walkers
+     plus HP bars stay readable on top. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0.7) 100%);
+}
+
+.fight-backdrop.visible {
+  opacity: 0.85;
+}
+
+/* When a fight is live, lift the canvas above the backdrop so the fight
+   node + walkers + HP bars paint on top of the location image. */
+body.fight-active #map-container,
+body.fight-active .flow-canvas {
+  position: relative;
+  z-index: 10;
+}
+
+/* Disable card interaction while a fight is active. Without this, hovering
+   a card would still trigger the .node:hover scale(1.4) — making the card
+   visibly grow past the zoomed frame — and clicking would still open the
+   project popup. The fight node itself keeps its pulsing red glow because
+   that's a class-based animation, not a hover effect. */
+body.fight-active .flow-cell {
+  pointer-events: none;
+  cursor: default;
+}
+body.fight-active .flow-wrapper {
+  cursor: default;
+}
+
+/* The fight node itself — pulsing red border draws the eye to where the
+   action is. The poster has already been swapped to the location image
+   by applyFightVisuals. */
+.node.fighting {
+  box-shadow:
+    0 0 0 2px var(--color-red),
+    0 0 24px var(--color-red),
+    0 4px 18px rgba(0, 0, 0, 0.7);
+  animation: fightingPulse 1.2s ease-in-out infinite;
+  z-index: 15;
+}
+
+@keyframes fightingPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px var(--color-red),
+      0 0 18px rgba(226, 54, 54, 0.6),
+      0 4px 18px rgba(0, 0, 0, 0.7);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px var(--color-red-light),
+      0 0 36px rgba(255, 112, 112, 0.85),
+      0 4px 18px rgba(0, 0, 0, 0.7);
+  }
+}
+
+.flow-cell {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  /* width set to match nodeWidth + label, height left to grow */
+  width: 130px;
+  cursor: pointer;
+  transition: transform 0.18s;
+}
+
+.flow-cell:hover {
+  transform: translateY(-2px);
+  z-index: 3;
+}
+
+.flow-label {
+  font-family: var(--font-display);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-warm);
+  text-align: center;
+  line-height: var(--line-height-tight);
+  max-width: 130px;
+  /* Clamp to 2 lines so long titles don't push siblings out of alignment */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.flow-cell .node {
+  position: relative;
+  /* Override the absolute positioning .node uses on the map */
+  left: auto !important;
+  top: auto !important;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  border: 2px solid transparent;
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+
+.flow-cell .node:not(.locked):hover {
+  border-color: var(--gold-035);
+  box-shadow: 0 6px 18px rgba(201, 162, 39, 0.3);
+}
+
+.flow-cell .node.watched {
+  border-color: var(--color-primary);
+  box-shadow: 0 4px 14px var(--gold-035);
+}
+
+.flow-cell .node.locked {
+  filter: grayscale(0.7) brightness(0.5);
+  cursor: not-allowed;
+}
+
+.flow-cell .node.locked .checkmark {
+  display: none;
+}
+
+.flow-cell .node img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
