@@ -6,45 +6,49 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>MCU Tracker</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 </head>
 
 <body>
   <!-- SPA root — views mount here -->
   <div id="app"></div>
 
+  <!--
+    All scripts use `defer` so the browser parses the HTML without blocking
+    on script download/execution. Defer preserves source order, so the
+    existing script-order dependencies (config → auth → state → …) still
+    hold. Scripts execute after DOMContentLoaded, which is when Router.init
+    expects to run anyway.
+  -->
+
   <!-- Shared data -->
-  <script src="projects.js"></script>
-  <script src="characters.js"></script>
-  <script src="locations.js"></script>
+  <script defer src="projects.js"></script>
+  <script defer src="characters.js"></script>
+  <script defer src="locations.js"></script>
 
   <!-- Core modules (order matters — these create globals) -->
-  <script src="js/config.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/state.js"></script>
-  <script src="js/layout.js"></script>
-  <script src="js/utils.js"></script>
-  <script src="js/renderer.js"></script>
-  <script src="js/popup.js"></script>
-  <script src="js/friends.js"></script>
-  <script src="js/memory.js"></script>
-  <script src="js/walker-dialogues.js"></script>
-  <script src="js/walkers.js"></script>
+  <script defer src="js/config.js"></script>
+  <script defer src="js/auth.js"></script>
+  <script defer src="js/state.js"></script>
+  <script defer src="js/layout.js"></script>
+  <script defer src="js/utils.js"></script>
+  <script defer src="js/renderer.js"></script>
+  <script defer src="js/popup.js"></script>
+  <script defer src="js/friends.js"></script>
+  <script defer src="js/memory.js"></script>
+  <script defer src="js/walker-dialogues.js"></script>
+  <script defer src="js/walkers.js"></script>
 
   <!-- Router + Views -->
-  <script src="js/router.js"></script>
-  <script src="js/views/login.js"></script>
-  <script src="js/views/app.js"></script>
-  <script src="js/views/profile.js"></script>
-  <script src="js/views/characters.js"></script>
+  <script defer src="js/router.js"></script>
+  <script defer src="js/views/login.js"></script>
+  <script defer src="js/views/app.js"></script>
+  <script defer src="js/views/profile.js"></script>
+  <script defer src="js/views/characters.js"></script>
 
-  <!-- Boot -->
-  <script>
-    Router.register('/', AppView);
-    Router.register('/login', LoginView);
-    Router.register('/profile', ProfileView);
-    Router.register('/characters', CharactersView);
-    Router.init('app');
-  </script>
+  <!-- Boot (also deferred via inline defer pattern — use DOMContentLoaded) -->
+  <script defer src="js/boot.js"></script>
 </body>
 
 </html>

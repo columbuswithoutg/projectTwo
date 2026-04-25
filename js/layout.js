@@ -8,7 +8,14 @@
  ************************************************/
 const LayoutSystem = (() => {
   const ROAD_HALF_W = 13;
-  const CLUSTER_EDGE_PAD = 8; // road endpoints sit this far outside the cluster AABB
+  // Road endpoints push INTO the cluster AABB by this many px. The location
+  // card renders above the roads SVG, so an endpoint tucked inside the AABB
+  // is naturally covered by the card — the road reads as "entering" the
+  // location the way a real highway disappears into a city, instead of
+  // stopping short and leaving a visible stub between the asphalt and the
+  // card edge. (Value is negative because the code below adds it along the
+  // outward normal; flipping the sign sends the point inward.)
+  const CLUSTER_EDGE_PAD = -22;
 
   /* ────────── location packing (pin row along bottom) ────────── */
 

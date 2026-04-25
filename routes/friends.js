@@ -17,6 +17,37 @@ function validId(id) {
     return typeof id === 'string' && mongoose.isValidObjectId(id);
 }
 
+// Atomically add a co-watch for a user on a project. Two writes:
+//   1. Try to increment an existing entry and $addToSet the co-watcher name.
+//   2. If no entry existed, $push a new one, guarding with $ne so a
+//      concurrent /watch click can't leave us with duplicate entries.
+// Both writes are single commands, so they can't interleave the way the
+// previous findById-mutate-save flow did.
+async function applyCoWatch(userId, projectId, coWatcherUsername) {
+    const incremented = await User.updateOne(
+        { _id: userId, 'watchedProjects.projectId': projectId },
+        {
+            $inc: { 'watchedProjects.$.count': 1 },
+            $addToSet: { 'watchedProjects.$.watchedWith': coWatcherUsername }
+        }
+    );
+    if (incremented.modifiedCount > 0) return;
+
+    await User.updateOne(
+        { _id: userId, 'watchedProjects.projectId': { $ne: projectId } },
+        {
+            $push: {
+                watchedProjects: {
+                    projectId,
+                    count: 1,
+                    watchedWith: [coWatcherUsername],
+                    memories: []
+                }
+            }
+        }
+    );
+}
+
 // Search users by username
 router.get('/search', auth, async (req, res) => {
     const { username } = req.query;
@@ -89,49 +120,23 @@ router.post('/respond', auth, async (req, res) => {
     if (!request) return res.status(404).json({ error: 'Request not found' });
 
     if (request.type === 'watch' && action === 'accepted' && request.projectId) {
-        const [recipient, requester] = await Promise.all([
-            User.findById(req.user.id),
-            User.findById(request.requester._id)
+        // Both sides need the other user's username for the watchedWith array.
+        // Look them up once, then apply all mutations atomically via $inc /
+        // $push / $addToSet so concurrent regular /watch clicks can't lose
+        // the increment (the previous find-mutate-save pattern did).
+        const requesterUsername = request.requester.username;
+        const recipient = await User.findById(req.user.id).select('username');
+        if (!recipient) return res.status(404).json({ error: 'User not found' });
+        const recipientUsername = recipient.username;
+        const projectId = request.projectId;
+
+        await Promise.all([
+            applyCoWatch(req.user.id, projectId, requesterUsername),
+            applyCoWatch(request.requester._id, projectId, recipientUsername)
         ]);
 
-        // Handle recipient's entry
-        let recipientEntry = recipient.watchedProjects.find(e => e.projectId === request.projectId);
-        if (!recipientEntry) {
-            recipient.watchedProjects.push({
-                projectId: request.projectId,
-                count: 1,
-                watchedWith: [request.requester.username],
-                memories: []
-            });
-        } else {
-            // Increment count for recipient
-            recipientEntry.count += 1;
-            if (!recipientEntry.watchedWith.includes(request.requester.username)) {
-                recipientEntry.watchedWith.push(request.requester.username);
-            }
-        }
-
-        // Handle requester's entry
-        let requesterEntry = requester.watchedProjects.find(e => e.projectId === request.projectId);
-        if (requesterEntry) {
-            // Increment count for requester too
-            requesterEntry.count += 1;
-            if (!requesterEntry.watchedWith.includes(recipient.username)) {
-                requesterEntry.watchedWith.push(recipient.username);
-            }
-        } else {
-            requester.watchedProjects.push({
-                projectId: request.projectId,
-                count: 1,
-                watchedWith: [recipient.username],
-                memories: []
-            });
-        }
-
-        await Promise.all([recipient.save(), requester.save()]);
-
-        // Delete the watch request entirely instead of keeping it as accepted
-        // This prevents it from ever showing in friend lists
+        // Delete the watch request entirely instead of keeping it as accepted.
+        // This prevents it from ever showing in friend lists.
         await Friend.findByIdAndDelete(request._id);
     }
 
@@ -254,14 +259,22 @@ router.post('/watch-request', auth, async (req, res) => {
     });
     if (existing) return res.status(400).json({ error: 'Already sent' });
 
-    await Friend.create({
-        requester: req.user.id,
-        recipient: recipientId,
-        status: 'pending',
-        type: 'watch',
-        projectId,
-        projectTitle // ← store it
-    });
+    try {
+        await Friend.create({
+            requester: req.user.id,
+            recipient: recipientId,
+            status: 'pending',
+            type: 'watch',
+            projectId,
+            projectTitle
+        });
+    } catch (e) {
+        // Partial unique index races with rapid double-clicks — the findOne
+        // above can miss a concurrent insert. Treat the duplicate as success
+        // from the client's perspective: their intent is already persisted.
+        if (e && e.code === 11000) return res.status(400).json({ error: 'Already sent' });
+        throw e;
+    }
 
     res.json({ message: 'Request sent' });
 });

@@ -20,14 +20,13 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 
-// CORS: explicit allowlist in prod; reflect origin only when NODE_ENV is
-// explicitly 'development'. Previously defaulted to reflecting any origin
-// when NODE_ENV was unset, which silently opened up prod if the flag
-// wasn't configured on the host.
-const isDev = process.env.NODE_ENV === 'development';
+// CORS: explicit allowlist only. Previously a NODE_ENV=development fallback
+// reflected any origin, which silently opened up any environment where that
+// flag leaked. If CLIENT_URL isn't set we disable cross-origin entirely —
+// same-origin requests (the SPA served from this app) are unaffected.
 const corsOrigin = process.env.CLIENT_URL
   ? process.env.CLIENT_URL.split(',').map(s => s.trim()).filter(Boolean)
-  : (isDev ? true : false);
+  : false;
 app.use(cors({
   origin: corsOrigin,
   credentials: true
@@ -47,15 +46,31 @@ const spaFile = path.join(__dirname, 'spa.html');
 // Now each public directory/file is mounted explicitly so backend source never
 // leaves the server.
 app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: '30d' }));
-app.use('/js',     express.static(path.join(__dirname, 'js')));
+// /js is the biggest chunk of per-request bytes and the content is static
+// between deploys — cache it for a day. Browsers still revalidate via ETag
+// when the file changes, and a hard refresh bypasses this entirely, so a
+// stale bundle after deploy resolves itself within one day without manual
+// intervention. For shorter invalidation, adopt hashed filenames.
+app.use('/js', express.static(path.join(__dirname, 'js'), { maxAge: '1d', etag: true }));
 // Root-level client files (HTML + top-level scripts + stylesheet) are served
 // from an explicit allowlist. The pre-SPA orphan pages (app.html,
 // characters.html, profile.html) and their scripts are deliberately omitted
 // so old links can't resurrect the broken flow.
 const ROOT_FILES = ['index.html', 'spa.html', 'styles.css', 'auth.js',
                     'projects.js', 'characters.js', 'locations.js'];
+// Same caching policy as /js — one-day max-age keeps the network out of the
+// critical path on repeat visits. HTML (spa.html, index.html) is served with
+// no-cache so shell updates reach users immediately.
+const HTML_FILES = new Set(['index.html', 'spa.html']);
 ROOT_FILES.forEach(name => {
-  app.get('/' + name, (req, res) => res.sendFile(path.join(__dirname, name)));
+  app.get('/' + name, (req, res) => {
+    if (HTML_FILES.has(name)) {
+      res.set('Cache-Control', 'no-cache');
+    } else {
+      res.set('Cache-Control', 'public, max-age=86400');
+    }
+    res.sendFile(path.join(__dirname, name));
+  });
 });
 
 mongoose.connect(process.env.MONGO_URI)

@@ -30,10 +30,17 @@ function sanitizeEntry(e) {
   return { projectId: e.projectId, count, watchedWith, memories };
 }
 
+// Memory URLs must point at our own Cloudinary cloud — matches the profile
+// picture whitelist. An attacker who can POST a memory should not be able to
+// embed arbitrary tracker/phishing URLs into the viewer's page. A protocol-
+// only check (https?://…) was not sufficient.
+const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
+const CLOUDINARY_PREFIX = CLOUD_NAME ? `https://res.cloudinary.com/${CLOUD_NAME}/` : '';
+
 function sanitizeMemory(m) {
   if (!m || typeof m !== 'object') return null;
   if (typeof m.url !== 'string' || m.url.length === 0 || m.url.length > MAX_URL_LEN) return null;
-  if (!/^https?:\/\//i.test(m.url)) return null;
+  if (!CLOUDINARY_PREFIX || !m.url.startsWith(CLOUDINARY_PREFIX)) return null;
   const type = (m.type === 'video' || m.type === 'image') ? m.type : 'image';
   const caption = typeof m.caption === 'string' ? m.caption.slice(0, MAX_CAPTION_LEN) : '';
   return { url: m.url, type, caption };
@@ -51,23 +58,50 @@ router.post('/save', auth, async (req, res) => {
   res.json({ message: 'Saved' });
 });
 
-// Increment watch count for a project
+// Increment watch count for a project.
+// Uses atomic $inc so rapid concurrent clicks can't read-modify-write stale
+// counts — the previous load/mutate/save pattern lost increments under load.
 router.post('/watch', auth, async (req, res) => {
   const { projectId } = req.body || {};
   if (typeof projectId !== 'string' || projectId.length === 0 || projectId.length > 80) {
     return res.status(400).json({ error: 'Invalid projectId' });
   }
-  const user = await User.findById(req.user.id);
-  const entry = user.watchedProjects.find(e => e.projectId === projectId);
-  if (entry) {
-    entry.count = Math.min((entry.count || 0) + 1, 9999);
-  } else {
-    if (user.watchedProjects.length >= MAX_WATCHED_PROJECTS) {
-      return res.status(400).json({ error: 'Watched-project cap reached' });
-    }
-    user.watchedProjects.push({ projectId, count: 1 });
+
+  // Fast path: entry exists and count is below the cap — increment atomically.
+  const incremented = await User.findOneAndUpdate(
+    {
+      _id: req.user.id,
+      watchedProjects: { $elemMatch: { projectId, count: { $lt: 9999 } } }
+    },
+    { $inc: { 'watchedProjects.$.count': 1 } },
+    { new: true, projection: { watchedProjects: 1 } }
+  );
+  if (incremented) return res.json({ watchedProjects: incremented.watchedProjects });
+
+  // Either the entry doesn't exist yet, or it's already capped at 9999.
+  // Try to push a new entry atomically — guarded by $ne so two parallel
+  // requests can't both push duplicate entries for the same projectId,
+  // and $expr enforces the per-user cap.
+  const pushed = await User.findOneAndUpdate(
+    {
+      _id: req.user.id,
+      'watchedProjects.projectId': { $ne: projectId },
+      $expr: { $lt: [{ $size: { $ifNull: ['$watchedProjects', []] } }, MAX_WATCHED_PROJECTS] }
+    },
+    { $push: { watchedProjects: { projectId, count: 1, watchedWith: [], memories: [] } } },
+    { new: true, projection: { watchedProjects: 1 } }
+  );
+  if (pushed) return res.json({ watchedProjects: pushed.watchedProjects });
+
+  // Fell through: entry exists and is capped, OR user is at the project cap.
+  // Re-fetch to distinguish — either way return current state so the client
+  // can reconcile without another round trip.
+  const user = await User.findById(req.user.id, { watchedProjects: 1 });
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const exists = user.watchedProjects.some(e => e.projectId === projectId);
+  if (!exists && user.watchedProjects.length >= MAX_WATCHED_PROJECTS) {
+    return res.status(400).json({ error: 'Watched-project cap reached' });
   }
-  await user.save();
   res.json({ watchedProjects: user.watchedProjects });
 });
 
@@ -78,7 +112,7 @@ router.post('/memory', auth, async (req, res) => {
     return res.status(400).json({ error: 'Invalid projectId' });
   }
   const memory = sanitizeMemory(req.body);
-  if (!memory) return res.status(400).json({ error: 'Invalid memory payload (http/https URL required)' });
+  if (!memory) return res.status(400).json({ error: 'Invalid memory payload (Cloudinary URL required)' });
   const user = await User.findById(req.user.id);
   const entry = user.watchedProjects.find(e => e.projectId === projectId);
   if (!entry) return res.status(404).json({ error: 'Project not watched yet' });

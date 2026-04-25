@@ -53,6 +53,23 @@ class WatchState {
       this.listeners.forEach(fn => fn(this.data));
       return;
     }
+    // Render synchronously — users should see the UI flip instantly — but
+    // coalesce network writes. A rapid "watched → undo → watched" flurry
+    // previously fired three full-document POSTs; now it sends one.
+    this.listeners.forEach(fn => fn(this.data));
+    this._schedulePersist();
+  }
+
+  _schedulePersist() {
+    if (this._persistTimer) clearTimeout(this._persistTimer);
+    this._persistTimer = setTimeout(() => {
+      this._persistTimer = null;
+      this._persistNow();
+    }, 400);
+  }
+
+  _persistNow() {
+    if (this.readonly) return;
     if (Auth.isLoggedIn()) {
       const watchedProjects = [...this.data.entries()].map(([projectId, val]) => ({
         projectId,
@@ -60,19 +77,32 @@ class WatchState {
         watchedWith: val.watchedWith || [],
         memories: val.memories || []
       }));
+      // keepalive lets the browser finish the request even if the page is
+      // unloading — otherwise a "click Watched, close tab" sequence would
+      // abort the save mid-flight and the server would never see it.
       fetch(`${API}/progress/save`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${Auth.getToken()}`
         },
-        body: JSON.stringify({ watchedProjects })
+        body: JSON.stringify({ watchedProjects }),
+        keepalive: true
       }).catch(e => console.warn("Save failed:", e));
     } else {
       const obj = Object.fromEntries(this.data);
       localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(obj));
     }
-    this.listeners.forEach(fn => fn(this.data));
+  }
+
+  // Force any pending debounced write to run immediately. Called on logout so
+  // a user's last click isn't lost to the debounce window.
+  flushPersist() {
+    if (this._persistTimer) {
+      clearTimeout(this._persistTimer);
+      this._persistTimer = null;
+      this._persistNow();
+    }
   }
 
   isWatched(id) { return this.data.has(id); }

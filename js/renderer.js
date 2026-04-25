@@ -611,7 +611,12 @@ class MapRenderer {
     }
 
     const elements = [];
-    // Wide translucent base
+    // Every lane layer uses round linecaps so the asphalt terminates
+    // consistently where the road enters a location. Previously the inner
+    // and outer lanes were drawn with SVG's default butt caps while the
+    // base used round — leaving a visible rounded "tongue" of base sticking
+    // past the flat-cut asphalt at every location edge. Consistent round
+    // caps make the road read as a single solid surface.
     const roadBase = document.createElementNS(ns, "path");
     roadBase.setAttribute("d", d);
     roadBase.setAttribute("stroke", "rgba(201, 162, 39, 0.12)");
@@ -621,24 +626,25 @@ class MapRenderer {
     roadBase.setAttribute("shape-rendering", "geometricPrecision");
     elements.push(roadBase);
 
-    // Lane border as an outlined path (works for curves)
     const laneOuter = document.createElementNS(ns, "path");
     laneOuter.setAttribute("d", d);
     laneOuter.setAttribute("stroke", "rgba(201, 162, 39, 0.28)");
     laneOuter.setAttribute("stroke-width", "28");
+    laneOuter.setAttribute("stroke-linecap", "round");
     laneOuter.setAttribute("fill", "none");
     laneOuter.setAttribute("opacity", "0.5");
     elements.push(laneOuter);
 
-    // Inner dark lane carved out
     const laneInner = document.createElementNS(ns, "path");
     laneInner.setAttribute("d", d);
     laneInner.setAttribute("stroke", "rgba(10, 12, 20, 0.55)");
     laneInner.setAttribute("stroke-width", "22");
+    laneInner.setAttribute("stroke-linecap", "round");
     laneInner.setAttribute("fill", "none");
     elements.push(laneInner);
 
-    // Dashed center divider
+    // Dashed center divider — butt cap is fine here because the dashes
+    // never reach the endpoint (the final dash always truncates short).
     const dash = document.createElementNS(ns, "path");
     dash.setAttribute("id", pathId);
     dash.setAttribute("d", d);
@@ -726,15 +732,21 @@ class MapRenderer {
       const tint = REGION_TINTS[loc.region] || REGION_TINTS["nyc"];
 
       // Soft ambient halo — bleeds beyond the location box as a regional aura.
-      const glowW = rect.width + 220;
-      const glowH = rect.height + 220;
+      // +60px on each side (was +110). Halos still bleed past the card but
+      // stop merging across the 80–100px gaps between NYC boroughs, so the
+      // five borough clusters no longer fuse into a single tan blob.
+      const glowW = rect.width + 120;
+      const glowH = rect.height + 120;
       const glow = document.createElement("div");
       glow.className = "region-glow";
       glow.style.width = `${glowW}px`;
       glow.style.height = `${glowH}px`;
       glow.style.left = `${rect.cx - glowW / 2}px`;
       glow.style.top = `${rect.cy - glowH / 2}px`;
-      glow.style.background = `radial-gradient(ellipse, ${tint.a} 0%, ${tint.b} 45%, transparent 80%)`;
+      // Faster falloff (stops at 70% instead of 80%) gives a clearer
+      // "this cluster lives here" marker and less ambient wash across
+      // the rest of the landmass.
+      glow.style.background = `radial-gradient(ellipse, ${tint.a} 0%, ${tint.b} 35%, transparent 70%)`;
       frag.appendChild(glow);
 
       // Location frame — the fixed-size rectangle with a lazy-loaded backdrop
@@ -758,7 +770,7 @@ class MapRenderer {
 
       const img = document.createElement("img");
       img.className = "cluster-frame-bg";
-      img.src = `assets/backgrounds/${loc.id}.webp`;
+      img.src = assetUrl(`assets/backgrounds/${loc.id}.webp`);
       img.alt = "";
       img.loading = "lazy";
       img.decoding = "async";
@@ -775,30 +787,17 @@ class MapRenderer {
   }
 
   renderContinents() {
-    if (!this.continentsSvg || this.continentsSvg.childElementCount > 0) return;
-    // Rough stylized continent silhouette (abstract — readability > accuracy).
-    // Coordinates are in the SVG viewBox (0 0 4000 1700), which matches the
-    // earth plane of the world canvas (cosmos band is below at y > 1700).
-    const ns = "http://www.w3.org/2000/svg";
-    const shapes = [
-      // North America (~x 40..1540, y 100..1450)
-      "M 80 400 Q 240 280 600 260 Q 900 280 1200 340 Q 1500 420 1600 640 Q 1680 900 1500 1180 Q 1280 1440 800 1460 Q 400 1420 180 1160 Q 40 900 80 400 Z",
-      // South America (~x 1150..1600, y 1400..1600) — small teaser
-      "M 1200 1520 Q 1340 1500 1420 1560 Q 1420 1600 1340 1600 Q 1260 1580 1200 1540 Z",
-      // Europe (~x 1760..2500, y 80..800)
-      "M 1780 240 Q 1960 160 2200 140 Q 2440 160 2540 320 Q 2560 500 2480 680 Q 2380 780 2200 780 Q 2000 760 1860 640 Q 1740 500 1780 240 Z",
-      // Africa (~x 2100..2500, y 900..1550)
-      "M 2120 960 Q 2300 920 2480 980 Q 2560 1200 2480 1400 Q 2380 1560 2220 1560 Q 2100 1480 2080 1280 Q 2060 1100 2120 960 Z",
-      // Asia (~x 2500..3900, y 200..1400)
-      "M 2500 240 Q 2850 200 3250 260 Q 3600 340 3820 500 Q 3880 720 3800 1000 Q 3600 1260 3280 1340 Q 2900 1380 2600 1260 Q 2500 1080 2500 800 Q 2480 500 2500 240 Z",
-      // Oceania (~x 3600..3900, y 1420..1580)
-      "M 3620 1460 Q 3740 1440 3860 1480 Q 3880 1540 3780 1560 Q 3660 1540 3610 1500 Z",
-    ];
-    shapes.forEach(d => {
-      const p = document.createElementNS(ns, "path");
-      p.setAttribute("d", d);
-      this.continentsSvg.appendChild(p);
-    });
+    // Earth band is intentionally empty — no continents, no satellite
+    // image. The #world-continents element carries a sky-blue ocean
+    // background in CSS; every location card sits on top of it like an
+    // island. Location worldX/worldY values already use real-world
+    // equirectangular coords, so cards land at geographically honest
+    // positions (NYC where NYC should be, Tokyo where Tokyo should be)
+    // without needing a painted landmass underneath.
+    //
+    // This function is kept as a no-op so the init path in init() still
+    // finds something to call; the renderContinents → re-init contract
+    // is preserved for any future return of a painted layer.
   }
 
   updatePhaseIndicator() {

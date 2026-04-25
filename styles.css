@@ -519,8 +519,10 @@ body {
   position: absolute;
   top: 0;
   left: 0;
-  width: 4000px;
-  height: 2800px;
+  /* 2× the previous 4000×2800 so real-world-adjacent cities (NYC metro,
+     European capitals) have room to breathe without card overlap. */
+  width: 8000px;
+  height: 5600px;
   transform-origin: 0 0;
   transform: translate(0, 0) scale(0.55);
 }
@@ -531,50 +533,32 @@ body {
 
 /* ======================
    BACKDROP LAYERS
-   #world-continents = Earth band (y: 0..1700) — ocean + continents + haze
-   #cosmos-starfield = Cosmos band (y: 1700..2800) — deep space + nebulas
+   #world-continents = Earth band (y: 0..3400) — ocean + continents + haze
+   #cosmos-starfield = Cosmos band (y: 3400..5600) — deep space + nebulas
 ====================== */
 
-/* Earth band: oceanic blues with a subtle atmospheric rim and soft cloud
-   wisps. Continents are filled via SVG paths in earth-tones. */
+/* Earth band is a flat sky-blue "ocean". No continent art — locations
+   sit on top as standalone islands at real-world equirectangular coords.
+   Subtle vertical gradient gives depth: slightly lighter at the top
+   (surface sunlight), deeper blue near the bottom (open-water feel),
+   then a mask fade into the cosmos starfield at y=3400 so the horizon
+   between Earth band and space doesn't read as a hard seam. */
 #world-continents {
   position: absolute;
   top: 0;
   left: 0;
-  width: 4000px;
-  height: 1700px;
-  opacity: 1;
+  width: 8000px;
+  height: 3400px;
   pointer-events: none;
   z-index: 0;
-  /* Layered radial+linear gradients mimic globe lighting and cloud wisps. */
-  background:
-    /* cloud wisps */
-    radial-gradient(ellipse 900px 160px at 20% 18%, rgba(240, 245, 255, 0.05) 0%, transparent 70%),
-    radial-gradient(ellipse 1200px 180px at 65% 40%, rgba(230, 240, 255, 0.04) 0%, transparent 70%),
-    radial-gradient(ellipse 800px 140px at 85% 75%, rgba(240, 245, 255, 0.04) 0%, transparent 70%),
-    radial-gradient(ellipse 1000px 200px at 35% 88%, rgba(230, 240, 255, 0.03) 0%, transparent 70%),
-    /* atmospheric top edge glow (soft blue halo like viewing Earth from space) */
-    linear-gradient(180deg,
-      rgba(120, 180, 230, 0.25) 0%,
-      rgba(90, 150, 210, 0.08) 4%,
-      transparent 10%,
-      transparent 90%,
-      rgba(60, 110, 170, 0.18) 100%),
-    /* ocean base: solid blue, brighter at center for globe lighting */
-    radial-gradient(ellipse at 50% 45%,
-      rgba(52, 100, 155, 0.95) 0%,
-      rgba(34, 70, 120, 0.95) 40%,
-      rgba(20, 42, 80, 0.95) 75%,
-      rgba(12, 24, 50, 0.95) 100%);
-  background-repeat: no-repeat;
-}
-
-/* Continents rendered via SVG <path>. Earth-toned green with a slightly
-   darker stroke for definition — reads as land, not abstract shape. */
-#world-continents path {
-  fill: rgba(110, 150, 95, 0.35);
-  stroke: rgba(160, 190, 130, 0.2);
-  stroke-width: 1.5;
+  background: linear-gradient(
+    180deg,
+    rgb(138, 188, 226) 0%,
+    rgb(95, 155, 205) 55%,
+    rgb(55, 115, 175) 100%
+  );
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 92%, transparent 100%);
+          mask-image: linear-gradient(180deg, #000 0%, #000 92%, transparent 100%);
 }
 
 /* Cosmos band: deep space with nebula clouds and layered starfield.
@@ -582,10 +566,10 @@ body {
    tiled via background-size. */
 #cosmos-starfield {
   position: absolute;
-  top: 1700px;
+  top: 3400px;
   left: 0;
-  width: 4000px;
-  height: 1100px;
+  width: 8000px;
+  height: 2200px;
   pointer-events: none;
   z-index: 0;
   background:
@@ -622,17 +606,29 @@ body {
   position: absolute;
   top: 0;
   left: 0;
-  width: 4000px;
-  height: 2800px;
+  width: 8000px;
+  height: 5600px;
   pointer-events: none;
-  z-index: 0;
+  /* Sits ABOVE #connections (z-index 1) so location cards (.cluster-frame,
+     rendered as children here) cover the road endpoints that extend into
+     each cluster's AABB. Otherwise the asphalt pokes out past the card's
+     edge like a stray tongue. The ambient .region-glow halos also render
+     above the roads but use mix-blend-mode: screen, so the visual impact
+     on the asphalt is a subtle brightening, not a mask. Below #nodes
+     (z-index 2) so pins still sit on top of every card. */
+  z-index: 2;
 }
 
 .region-glow {
   position: absolute;
   pointer-events: none;
   border-radius: 50%;
-  mix-blend-mode: screen;
+  /* Normal alpha compositing. Previously 'screen' was additive — where
+     multiple halos overlapped (the five NYC boroughs + DC + Chicago, for
+     instance) they additively brightened land paint beneath until the
+     continent palette bleached out into pastel mush. Plain compositing
+     lets overlapping halos mix/darken naturally and leaves the continent
+     colors legible. */
 }
 
 /* Location frame — the fixed-size "room" for each region. The backdrop is
@@ -720,8 +716,8 @@ body {
   position: absolute;
   top: 0;
   left: 0;
-  width: 4000px;
-  height: 2800px;
+  width: 8000px;
+  height: 5600px;
   transform-origin: 0 0;
   background: transparent;
 }

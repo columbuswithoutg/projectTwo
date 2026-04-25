@@ -721,16 +721,20 @@ const Walkers = (() => {
     const centerX = rect ? rect.cx : pos.x;
     const centerY = rect ? rect.cy : pos.y;
 
-    // Ideal inner scale would frame the cluster at 80% of whichever viewport
-    // axis binds first. Clamp to [1, 3] — a fight zoom must never SHRINK (≥1)
-    // and shouldn't zoom so far that walker motion is unwatchable (≤3). The
-    // shrink case happens when the user is already zoomed in close and the
-    // cluster already fills > 80% of the viewport.
+    // Ideal inner scale frames the cluster at ~80% of whichever viewport axis
+    // binds first, leaving room for speech bubbles above participants.
+    // We intentionally allow rawScale < 1: on mobile a large cluster like
+    // New York is wider than the viewport at worldZoom=1, so the fight zoom
+    // MUST shrink to fit the whole node. The previous Math.max(1) floor
+    // capped the scale at 1× and left the cluster clipped off-screen.
+    // Lower bound 0.3 is a sanity cap so a pathological layout can't
+    // collapse the view. Upper bound 3 keeps walker motion watchable when
+    // the cluster is tiny.
     const rawScale = Math.min(
       (wRect.width * 0.8) / (targetW * worldZ),
       (wRect.height * 0.8) / (targetH * worldZ)
     );
-    const innerScale = Math.max(1, Math.min(3, rawScale));
+    const innerScale = Math.max(0.3, Math.min(3, rawScale));
 
     // Compose with the outer world zoom/pan: we apply translate+scale to
     // #map-container so that (centerX, centerY) lands at viewport center.
@@ -826,7 +830,7 @@ const Walkers = (() => {
 
     // Create villain walker
     const imgFile = typeof getCharImage === 'function' ? getCharImage(villainChar, state) : villainChar.image;
-    const img = `assets/characters/${imgFile}`;
+    const img = assetUrl(`assets/characters/${imgFile}`);
     const el = createWalkerElement(img);
     el.classList.add('villain');
     renderer.mapContainer.appendChild(el);
@@ -1672,7 +1676,7 @@ const Walkers = (() => {
       if (!char) return;
 
       const imgFile = resolveWalkerImage(entry, char);
-      const img = `assets/characters/${imgFile}`;
+      const img = assetUrl(`assets/characters/${imgFile}`);
       const el = createWalkerElement(img);
       container.appendChild(el);
 
@@ -1859,7 +1863,7 @@ const Walkers = (() => {
 
         card.innerHTML = `
           <div class="walker-card-img">
-            <img src="assets/characters/${stage.image}" alt="${label}" loading="lazy" />
+            <img src="${assetUrl(`assets/characters/${stage.image}`)}" alt="${label}" loading="lazy" />
             <span class="walker-check">✔</span>
             <span class="walker-remove">✕</span>
           </div>

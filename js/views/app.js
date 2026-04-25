@@ -38,13 +38,14 @@ const AppView = {
 
       <div id="map-wrapper">
         <div id="world-viewport">
-          <svg id="world-continents" aria-hidden="true" viewBox="0 0 4000 1700" preserveAspectRatio="none"></svg>
-          <div id="cosmos-starfield" aria-hidden="true"></div>
-
           <div id="map-container">
-            <!-- #region-glows sits INSIDE #map-container so fight-zoom's
-                 transform applies to backdrops, pins, and roads together —
-                 otherwise pins/roads would drift off their location box. -->
+            <!-- All backdrop layers live INSIDE #map-container so the
+                 fight-zoom transform applies to continents, starfield,
+                 glows, roads, and pins together. When any of these sit
+                 outside they get "left behind" during a zoom — the world
+                 map stays put while the pins scale, which looks broken. -->
+            <svg id="world-continents" aria-hidden="true" viewBox="0 0 8000 3400" preserveAspectRatio="none"></svg>
+            <div id="cosmos-starfield" aria-hidden="true"></div>
             <div id="region-glows" aria-hidden="true"></div>
             <svg id="connections"></svg>
             <div id="nodes"></div>
@@ -101,6 +102,9 @@ const AppView = {
     });
 
     $("#logout-btn")?.addEventListener("click", () => {
+      // Flush any pending debounced progress save before we tear down auth —
+      // otherwise the user's last click never reaches the server.
+      state.flushPersist?.();
       localStorage.removeItem("mcu_token");
       localStorage.removeItem("mcu_username");
       // Reset init flags so next login re-fetches data
