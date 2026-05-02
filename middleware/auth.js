@@ -74,6 +74,10 @@ async function auth(req, res, next) {
       return res.status(403).json({ error: 'Account suspended', reason: cached.banReason || '' });
     }
     req.user = payload;
+    // Authed responses are user-specific — don't let browser/proxy caches
+    // serve User A's response to User B sharing the same tab. `private`
+    // forbids shared caches; `no-store` skips the local cache entirely.
+    res.set('Cache-Control', 'private, no-store');
     touchLastActive(payload.id);
     return next();
   }
@@ -102,6 +106,7 @@ async function auth(req, res, next) {
 
   cacheSet(cacheKey, { ok: true });
   req.user = payload;
+  res.set('Cache-Control', 'private, no-store');
   touchLastActive(payload.id);
   next();
 }

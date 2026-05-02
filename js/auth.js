@@ -50,6 +50,15 @@ const Auth = {
   logout() {
     Auth.clearToken();
     localStorage.removeItem("mcu_username");
+    // Clear per-user data so the next account-switch in the same browser
+    // tab doesn't briefly show the previous user's walkers / watch
+    // progress before the server fetch overwrites them. Per-device
+    // preferences (mcu_fights_enabled, mcu_dialogues_enabled) are kept
+    // intentionally — those are device choices, not user-specific.
+    localStorage.removeItem("mcu_walkers");
+    if (typeof CONFIG !== 'undefined' && CONFIG.STORAGE_KEY) {
+      localStorage.removeItem(CONFIG.STORAGE_KEY);
+    }
     if (typeof Router !== 'undefined') {
       Router.go('/login');
     } else {

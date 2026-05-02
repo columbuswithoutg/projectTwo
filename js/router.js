@@ -7,6 +7,14 @@ const Router = (() => {
   let currentView = null;
   let appContainer = null;
 
+  // Routes anyone can reach without being logged in. Every other route
+  // gets force-redirected to /login by the auth gate inside navigate().
+  // Keep this list tight — adding a route here exposes it to anonymous
+  // visitors. The per-view auth checks remain as a backup so a future
+  // view that's accidentally added without going through navigate (e.g.
+  // a test harness calling view.mount() directly) still self-defends.
+  const PUBLIC_ROUTES = new Set(['/login']);
+
   function register(path, view) {
     routes[path] = view;
   }
@@ -43,6 +51,17 @@ const Router = (() => {
     if (path.endsWith('.html')) path = path.slice(0, -5);
     if (path === '' || path === '/index' || path === '/index.html') path = '/';
 
+    // Auth gate. If the user isn't logged in and asked for anything other
+    // than a public route, force-redirect to /login. Use replaceState (not
+    // push) so the unauthorized URL doesn't sit in the browser history —
+    // the back button won't take them back into the gated route.
+    let redirectedToLogin = false;
+    const authReady = typeof Auth !== 'undefined';
+    if (authReady && !PUBLIC_ROUTES.has(path) && !Auth.isLoggedIn()) {
+      path = '/login';
+      redirectedToLogin = true;
+    }
+
     const view = routes[path];
     if (!view) {
       // Last resort: go to /
@@ -55,7 +74,12 @@ const Router = (() => {
     // Skip if already on this view
     if (view === currentView && pushState) return;
 
-    if (pushState) {
+    if (redirectedToLogin) {
+      // Rewrite the URL to /login without a new history entry.
+      if (location.pathname !== '/login') {
+        history.replaceState(null, '', '/login');
+      }
+    } else if (pushState) {
       history.pushState(null, '', path);
     }
 
