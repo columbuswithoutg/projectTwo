@@ -16,35 +16,17 @@
  * Locations with worldY > CONFIG_WORLD.cosmosThresholdY render in the
  * cosmos band (space / multiverse / TVA).
  ************************************************/
-const CONFIG_WORLD = {
-  worldWidth: 8000,
-  worldHeight: 5600,
-  // Minimum and world-view zoom halved to match the 2× canvas so the
-  // whole Earth still fits on screen when you hit "W". zoomDefault and
-  // zoomRegionPreset stay the same — at those zoom levels cards appear
-  // at the same screen size they did before the scale-up; you just see
-  // less of the world at once, which is the point.
-  zoomMin: 0.125,
-  zoomMax: 2.0,
-  zoomDefault: 0.55,
-  zoomWorldPreset: 0.175,
-  zoomRegionPreset: 1.0,
-  cosmosThresholdY: 3400,
-  snapDurationMs: 600,
-  nodeGap: 24,
-  // Pin row spec (consumed by layout.packLocation)
-  pinWidth: 30,
-  pinHeight: 45,
-  pinGap: 4,
-  pinShelfPad: 14,
-};
+// CONFIG_WORLD moved to js/world-config.js as a separate small static
+// script (display geometry, not editable content). LOCATIONS below is
+// now `var` so the boot-time /api/content/locations fetch can overwrite
+// it with the live DB version; the literal remains as the fallback.
 
 // Sizes roughly track expected movie count per location at full unlock:
 //   1-2 members → 280×200
 //   3-4 members → 400×280
 //   5-7 members → 540×340
 //   27+ members (NYC) → 1000×600
-const LOCATIONS = [
+var LOCATIONS = [
   // EARTH — now that the map image is gone, locations sit as islands on
   // the open ocean. Positions preserve real-world spatial relationships
   // (SF west of NYC, London east of the Americas, Tokyo east of London,

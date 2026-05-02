@@ -2,7 +2,9 @@
  * CHARACTERS DATABASE
  * debut: matches exact node IDs from projects.js
  ************************************************/
-const characters = [
+// Phase 3: var (not const) so the boot-time content fetch can overwrite.
+// See projects.js for the full rationale.
+var characters = [
 
   // ─── PHASE 1 ───────────────────────────────
   { id: "ironman",        name: "Iron Man",                   debut: "ironman1",      image: "ironman.jpg",

@@ -1,4 +1,8 @@
-const projects = [
+// Phase 3: declared as `var` (not `const`) so the boot-time fetch from
+// /api/content/projects can overwrite this default with the live DB
+// version. The literal below remains as the client-side fallback used
+// when the fetch fails (offline, server unreachable, network blip).
+var projects = [
   // PHASE 1
   { id: "ironman1", title: "Iron Man", release: "2008-05-02", prerequisites: [], phase: "Phase 1", gridX: 0, gridY: 1, location: "malibu", watched: false, image: "ironman.png" },
   { id: "ironman2", title: "Iron Man 2", release: "2010-05-07", prerequisites: ["ironman1"], phase: "Phase 1", gridX: 0, gridY: 2, location: "malibu", watched: false, image: "ironman2.png" },

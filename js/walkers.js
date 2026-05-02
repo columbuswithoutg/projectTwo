@@ -10,14 +10,52 @@
 const Walkers = (() => {
   const STORAGE_KEY = 'mcu_walkers';
 
-  const PHYSICS = Object.freeze({
+  // PHYSICS is intentionally NOT frozen — applyConfig() below merges admin-
+  // tunable values into the sub-objects at boot and on live admin saves.
+  // Object.freeze is shallow anyway, but dropping it makes the intent
+  // explicit. Hot loops read these directly (e.g. PHYSICS.WALKER.speed at
+  // frame time), so a merge takes effect on the very next tick.
+  const PHYSICS = {
     WALKER:     { size: 24, r: 12, speed: 40, pauseMin: 800, pauseMax: 2500 },
     ROAD:       { halfW: 13, damping: 0.998, bounce: 0.85 },
     ENCOUNTER:  { dist: 26, cooldown: 30000, lineDuration: 2500 },
     WEAPON:     { radius: 18, size: 14, baseSpeed: 3.5, hitCooldown: 300 },
     FIGHT:      { spawnChance: 0.15, villainHpMult: 1.5, defeatDisplayMs: 2000, deployGrace: 5000, noShowTimeoutMs: 8000 },
     PROJECTILE: { speed: 120, cooldown: 1400, size: 6 },
-  });
+  };
+
+  // Merge admin-tunable values from the server into PHYSICS. Only the keys
+  // exposed in the admin Config tab are honored — anything else in `cfg`
+  // is ignored so a stale or hostile server response can't poke at WEAPON
+  // internals or sprite sizes that the UI doesn't tune.
+  function applyConfig(cfg) {
+    if (!cfg || typeof cfg !== 'object') return;
+    const w = cfg.walker || {};
+    if (typeof w.speed === 'number')    PHYSICS.WALKER.speed = w.speed;
+    if (typeof w.pauseMin === 'number') PHYSICS.WALKER.pauseMin = w.pauseMin;
+    if (typeof w.pauseMax === 'number') PHYSICS.WALKER.pauseMax = w.pauseMax;
+    const e = cfg.encounter || {};
+    if (typeof e.dist === 'number')     PHYSICS.ENCOUNTER.dist = e.dist;
+    if (typeof e.cooldown === 'number') PHYSICS.ENCOUNTER.cooldown = e.cooldown;
+    const f = cfg.fight || {};
+    if (typeof f.spawnChance === 'number') PHYSICS.FIGHT.spawnChance = f.spawnChance;
+  }
+
+  // Server-default semantics: only apply the flag if the user has NEVER
+  // toggled it locally. Once a user makes a choice the admin can't yank
+  // it out from under them. New users (or those who clear localStorage)
+  // get the current server default.
+  function applyFlagDefaults(flags) {
+    if (!flags || typeof flags !== 'object') return;
+    try {
+      if (localStorage.getItem(FIGHTS_STORAGE_KEY) === null && typeof flags.fightsEnabled === 'boolean') {
+        fightsEnabled = flags.fightsEnabled;
+      }
+      if (localStorage.getItem(DIALOGUES_STORAGE_KEY) === null && typeof flags.dialoguesEnabled === 'boolean') {
+        dialoguesEnabled = flags.dialoguesEnabled;
+      }
+    } catch (_) { /* private mode — keep hardcoded defaults */ }
+  }
 
   // Primary walker state. `paused` remains an orthogonal flag (a walker can
   // be paused during WALKING, ENCOUNTER, or after DEFEATED revive).
@@ -2113,5 +2151,5 @@ const Walkers = (() => {
 
   function getDialoguesEnabled() { return dialoguesEnabled; }
 
-  return { init, deploy, destroy, resetInit, showWalkerPicker, getSelectedIds, getSelectedEntries, getMaxSlots, getUnlockedCharacters, toggleCharacter, setCharacterStage, setSelections, deployWithSelections, restoreSelections, setFightsEnabled, getFightsEnabled, setDialoguesEnabled, getDialoguesEnabled };
+  return { init, deploy, destroy, resetInit, showWalkerPicker, getSelectedIds, getSelectedEntries, getMaxSlots, getUnlockedCharacters, toggleCharacter, setCharacterStage, setSelections, deployWithSelections, restoreSelections, setFightsEnabled, getFightsEnabled, setDialoguesEnabled, getDialoguesEnabled, applyConfig, applyFlagDefaults };
 })();

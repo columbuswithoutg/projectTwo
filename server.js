@@ -37,7 +37,7 @@ app.use(express.json({ limit: '64kb' }));
 
 // SPA routes — BEFORE static middleware so they take priority over index.html
 const spaFile = path.join(__dirname, 'spa.html');
-['/', '/map', '/login', '/profile', '/characters'].forEach(route => {
+['/', '/map', '/login', '/profile', '/characters', '/admin'].forEach(route => {
   app.get(route, (req, res) => res.sendFile(spaFile));
 });
 
@@ -101,11 +101,37 @@ const uploadLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many uploads, try again in a minute.' },
 });
+// Tighter limit on the admin surface — admin actions are bursty but never
+// that bursty, and a stolen admin token shouldn't be able to nuke users at
+// line-rate. requireAdmin (mounted inside the router) is the actual gate.
+const adminLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many admin requests, slow down.' },
+});
+// Public unauthed surface (currently just /api/config/public for walker
+// physics). Modest IP-keyed limit prevents a misbehaving client from
+// hammering the boot-time fetch.
+const publicConfigLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many config requests.' },
+});
 app.use('/api/auth', authLimiter, require('./routes/auth'));
 app.use('/api/progress', apiLimiter, require('./routes/progress'));
 app.use('/api/friends', apiLimiter, require('./routes/friends'));
 app.use('/api/upload', uploadLimiter, require('./routes/upload'));
 app.use('/api/profile', apiLimiter, require('./routes/profile'));
+app.use('/api/admin', adminLimiter, require('./middleware/requireAdmin'), require('./routes/admin'));
+app.use('/api/config', publicConfigLimiter, require('./routes/config'));
+// Public content (projects, characters, locations, dialogues). Reuses the
+// same modest IP limiter as /api/config since both are cached and called
+// once at boot per client.
+app.use('/api/content', publicConfigLimiter, require('./routes/content'));
 
 // Terminal error handler — Express 5 forwards async rejections here. Without
 // this, unhandled errors in route handlers leak stack traces to the client.

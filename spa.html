@@ -22,7 +22,16 @@
     expects to run anyway.
   -->
 
-  <!-- Shared data -->
+  <!--
+    Shared content. As of Phase 3 these files are CLIENT-SIDE FALLBACKS:
+    boot.js fetches /api/content/* and overwrites the globals with the
+    live DB values. Keeping them static means a network blip during the
+    boot fetch leaves us with last-known-good content rather than blank.
+    world-config.js (display geometry, not editable content) loads first
+    because locations.js used to define CONFIG_WORLD inline and several
+    layout modules read it before locations finishes parsing.
+  -->
+  <script defer src="js/world-config.js"></script>
   <script defer src="projects.js"></script>
   <script defer src="characters.js"></script>
   <script defer src="locations.js"></script>
@@ -50,6 +59,19 @@
   <script defer src="js/views/watchorder.js"></script>
   <script defer src="js/views/profile.js"></script>
   <script defer src="js/views/characters.js"></script>
+
+  <!-- Admin (shell first, then tab modules append into AdminView._tabs) -->
+  <script defer src="js/views/admin/index.js"></script>
+  <script defer src="js/views/admin/users.js"></script>
+  <script defer src="js/views/admin/moderation.js"></script>
+  <script defer src="js/views/admin/config.js"></script>
+  <script defer src="js/views/admin/cms.js"></script>
+  <script defer src="js/views/admin/cms-projects.js"></script>
+  <script defer src="js/views/admin/cms-characters.js"></script>
+  <script defer src="js/views/admin/cms-locations.js"></script>
+  <script defer src="js/views/admin/cms-dialogues.js"></script>
+  <script defer src="js/views/admin/audit.js"></script>
+  <script defer src="js/views/admin/overview.js"></script>
 
   <!-- Boot (also deferred via inline defer pattern — use DOMContentLoaded) -->
   <script defer src="js/boot.js"></script>

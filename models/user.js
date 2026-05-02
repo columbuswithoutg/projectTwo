@@ -17,7 +17,20 @@ const UserSchema = new mongoose.Schema({
   password: { type: String, required: true },
   watchedProjects: { type: [WatchEntrySchema], default: [] },
   profilePicture: { type: String, default: '' },
-  walkers: { type: mongoose.Schema.Types.Mixed, default: [] }
-});
+  walkers: { type: mongoose.Schema.Types.Mixed, default: [] },
+  // Admin-panel fields. isAdmin is set manually in MongoDB (no public path
+  // to admin promotion). banned/bannedAt/banReason gate the user out of the
+  // app; tokenVersion is bumped on ban so existing JWTs invalidate without
+  // a per-request DB hit on the common path (compare claim vs stored).
+  isAdmin: { type: Boolean, default: false, index: true },
+  banned: { type: Boolean, default: false, index: true },
+  bannedAt: { type: Date, default: null },
+  banReason: { type: String, default: '', maxlength: 280 },
+  tokenVersion: { type: Number, default: 0 },
+  // Last time this user made an authed request. Updated by the auth
+  // middleware at most once per minute per user (throttled in-memory) so
+  // the "online" badge in the admin Users tab doesn't 2x our DB writes.
+  lastActiveAt: { type: Date, default: null, index: true }
+}, { timestamps: true });
 
 module.exports = mongoose.model('User', UserSchema);

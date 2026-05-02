@@ -10,11 +10,14 @@ const ProfileView = {
       return;
     }
 
+    const adminLink = Auth.isAdmin()
+      ? `<button id="admin-link-btn" class="admin-link-btn" title="Admin panel">⚙</button>`
+      : `<div style="width:48px"></div>`;
     container.innerHTML = `
       <header id="header">
         <button id="back-btn">← Back</button>
         <h1>Profile</h1>
-        <div style="width:48px"></div>
+        ${adminLink}
       </header>
 
       <div id="profile-wrapper">
@@ -60,6 +63,8 @@ const ProfileView = {
     `;
 
     document.getElementById('back-btn').addEventListener('click', () => Router.go('/'));
+    const adminLinkBtn = document.getElementById('admin-link-btn');
+    if (adminLinkBtn) adminLinkBtn.addEventListener('click', () => Router.go('/admin'));
 
     // DOM refs scoped to this mount
     const avatarImg      = document.getElementById('profile-avatar-img');

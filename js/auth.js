@@ -1,12 +1,31 @@
 /************************************************
  * AUTH HELPERS
  ************************************************/
+// Decode a JWT without verifying. Browser-only, used to read the isAdmin
+// claim for UX gating — server enforcement (requireAdmin) is the real gate
+// since the JWT can be tampered or stale after demotion.
+function decodeJwtPayload(token) {
+  try {
+    const part = token.split('.')[1];
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/'));
+    return JSON.parse(decodeURIComponent(escape(json)));
+  } catch {
+    return null;
+  }
+}
+
 const Auth = {
   getToken: () => localStorage.getItem("mcu_token"),
   getUsername: () => localStorage.getItem("mcu_username"),
   setToken: (t) => localStorage.setItem("mcu_token", t),
   clearToken: () => localStorage.removeItem("mcu_token"),
   isLoggedIn: () => !!localStorage.getItem("mcu_token"),
+  isAdmin: () => {
+    const token = localStorage.getItem("mcu_token");
+    if (!token) return false;
+    const payload = decodeJwtPayload(token);
+    return !!(payload && payload.isAdmin);
+  },
 
   async register(username, password) {
     const res = await fetch(`${API}/auth/register`, {

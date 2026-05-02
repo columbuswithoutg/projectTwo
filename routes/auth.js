@@ -44,9 +44,33 @@ router.post('/login', async (req, res) => {
   const user = await User.findOne({ username: username.trim() });
   if (!user || !(await bcrypt.compare(password, user.password)))
     return res.status(401).json({ error: 'Invalid credentials' });
+  // Banned users can authenticate with the right password but receive no
+  // token — surfaces a clear message instead of silently failing the next
+  // protected call with a confusing 401.
+  if (user.banned) {
+    return res.status(403).json({
+      error: 'Account suspended',
+      reason: user.banReason || ''
+    });
+  }
 
-  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-  res.json({ token, username: user.username, watchedProjects: user.watchedProjects });
+  // tokenVersion is bumped on ban; auth middleware rejects mismatched JWTs
+  // so a banned user's existing browser tabs lose access on the next call.
+  // isAdmin is included so the SPA can render the /admin link without a
+  // round trip; the actual admin gate is enforced server-side by
+  // requireAdmin (which re-fetches the user — a JWT claim alone can be
+  // stale up to 7 days after demotion).
+  const token = jwt.sign(
+    { id: user._id, isAdmin: !!user.isAdmin, tv: user.tokenVersion || 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+  res.json({
+    token,
+    username: user.username,
+    watchedProjects: user.watchedProjects,
+    isAdmin: !!user.isAdmin
+  });
 });
 
 module.exports = router;

@@ -14,7 +14,12 @@
  ************************************************/
 const WALKER_DIALOGUES = (() => {
 
-  const pairs = {
+  // Phase 3: data is now mutable so applyData() can replace it after the
+  // boot-time /api/content/dialogues fetch. The literal embedded below
+  // remains as the in-file fallback if the fetch fails or the page is
+  // run offline — this is the same data the server-side contentLoader
+  // extracts for its Mongo fallback.
+  let pairs = {
 
     // ── Iron Man relationships ──
     "cap|ironman": [
@@ -410,7 +415,7 @@ const WALKER_DIALOGUES = (() => {
   }
 
   // ── Villain defeat lines (shown when villain HP reaches 0) ──
-  const villainDefeatLines = {
+  let villainDefeatLines = {
     thanos_snap:    ["I am... inevitable. Or perhaps not.", "You could not live with your own failure."],
     loki:           ["The sun will shine on us again...", "I assure you, brother... this isn't over."],
     ultron:         ["There are... no strings... on me...", "You want to protect the world... but you don't want it to change."],
@@ -447,7 +452,7 @@ const WALKER_DIALOGUES = (() => {
   }
 
   // ── Villain victory lines (shown when all walkers faint) ──
-  const villainVictoryLines = {
+  let villainVictoryLines = {
     thanos_snap:    ["I am inevitable.", "Dread it. Run from it. Destiny arrives all the same."],
     loki:           ["Kneel.", "I am burdened with glorious purpose."],
     ultron:         ["There are no strings on me.", "Upon this rock, I will build my church."],
@@ -483,5 +488,17 @@ const WALKER_DIALOGUES = (() => {
     return lines[Math.floor(Math.random() * lines.length)];
   }
 
-  return { getDialogue, getKey, getDefeatLine, getVictoryLine };
+  // Replace the dialogue dataset wholesale. Called from boot.js after the
+  // /api/content/dialogues fetch resolves. Each field is optional so a
+  // partial response (e.g. only pairs were edited) doesn't blank the
+  // others. Hot loops in walkers.js read these via the closure on every
+  // encounter, so the change takes effect on the next walker meeting.
+  function applyData(data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.pairs && typeof data.pairs === 'object') pairs = data.pairs;
+    if (data.villainDefeatLines && typeof data.villainDefeatLines === 'object') villainDefeatLines = data.villainDefeatLines;
+    if (data.villainVictoryLines && typeof data.villainVictoryLines === 'object') villainVictoryLines = data.villainVictoryLines;
+  }
+
+  return { getDialogue, getKey, getDefeatLine, getVictoryLine, applyData };
 })();
