@@ -38,7 +38,8 @@ projectOne/
 │
 ├── models/                    Mongoose schemas
 │   ├── user.js                username, password, watchedProjects, walkers,
-│   │                          isAdmin, banned, tokenVersion, lastActiveAt
+│   │                          isAdmin, banned, tokenVersion, lastActiveAt,
+│   │                          homeCharacter (4-slot layered-SVG config)
 │   ├── Friend.js              friend & watch-party requests
 │   ├── AuditLog.js            forensic log of every destructive admin action
 │   ├── AdminConfig.js         singleton — walker physics overrides
@@ -88,12 +89,15 @@ projectOne/
     ├── friends.js             Friends UI
     ├── memory.js              Memory upload UI
     ├── utils.js
+    ├── playground.js          /home engine — layered-SVG character + RAF loop
     └── views/
         ├── login.js           /login
         ├── watchorder.js      /
         ├── app.js             /map
         ├── profile.js         /profile  (⚙ admin link visible to admins)
         ├── characters.js      /characters
+        ├── home.js            /home — playground shell
+        ├── home-builder.js    /home character builder modal
         └── admin/
             ├── index.js       /admin shell — six tabs
             ├── users.js       Tab: Users (search, ban, reset, delete, online dot)
@@ -255,6 +259,21 @@ Brief summary of what changed and why.
 ```
 
 ---
+
+### 2026-05-02 — /home playground (v1)
+
+A new `/home` route: a fixed 1500×1000 px room where the user's customized layered-SVG character walks around in third-person (camera-follow). WASD + arrow keys on desktop, fixed bottom-center virtual joystick on mobile (portrait-first). 4-slot character builder (skin / hair style + color / shirt / pants) opens automatically on first visit and on demand thereafter. Designed as the foundation for a future room-per-Marvel-project memory system.
+
+- Added: `js/playground.js` — engine (RAF loop, input adapter for keyboard + touch joystick, layered SVG renderer with 5 skin tones × 6 hair styles × 6 hair colors × 8 shirt × 8 pants palette options, scenery backdrop). Exposes `init/destroy/setCharacter/renderCharacter`.
+- Added: `js/views/home.js` — `HomeView` with header, drawer (own copy of nav menu), Customize button. Fetches saved character on mount, opens builder on first visit, hot-swaps the sprite on save.
+- Added: `js/views/home-builder.js` — `HomeBuilder` modal with live preview that re-renders on every selection change. Saves via `PUT /api/profile/home-character`.
+- Added: `homeCharacter` field on User schema (5 small int slots, defaults to null until first save).
+- Added: `GET /api/profile/home-character` and `PUT /api/profile/home-character` in `routes/profile.js` with per-slot range validation.
+- Modified: `js/views/watchorder.js` and `js/views/app.js` — `🏠 Home` button at the top of the existing nav drawer + click handler routing to `/home`.
+- Modified: `js/boot.js` — `Router.register('/home', HomeView)`.
+- Modified: `server.js` — `/home` added to SPA route list.
+- Modified: `spa.html` — `js/playground.js`, `js/views/home-builder.js`, `js/views/home.js` script tags wired in.
+- Styles: `.pg-stage`, `.pg-room`, `.pg-sprite`, `.pg-joy`, `.pg-modal*` appended to `styles.css`. Mobile breakpoint at 600 px scales the joystick down and stacks the modal preview.
 
 ### 2026-05-02 — Centralized auth gate in the router
 

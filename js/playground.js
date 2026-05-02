@@ -1,0 +1,433 @@
+/************************************************
+ * PLAYGROUND ENGINE — /home view
+ *
+ * Top-down 2D fixed-room engine. Renders a layered-SVG character built
+ * via the character builder; moves it via WASD/arrows on desktop or a
+ * fixed bottom-center virtual joystick on mobile (portrait-first).
+ *
+ * Designed for one room now (loadRoom('default')) with a clean seam to
+ * support multiple connected rooms in v2 — see README "Forward-
+ * compatibility notes" in the plan.
+ ************************************************/
+const Playground = (() => {
+
+  // Option palettes — these are the source of truth for what the
+  // character builder offers. Server-side validation in routes/profile.js
+  // mirrors the count of each (max = length-1). Keep in sync.
+  const SKIN_TONES   = ['#f5d4a8', '#e8b48a', '#c98c5d', '#8b5a3c', '#5d3a24'];
+  const HAIR_COLORS  = ['#1a1a1a', '#5a3a22', '#a06030', '#dca960', '#cccccc', '#9b59b6'];
+  const SHIRT_COLORS = ['#e23636', '#3a85f0', '#39b54a', '#f0c040', '#9b59b6', '#ff7eb6', '#444444', '#f08020'];
+  const PANTS_COLORS = ['#1f3a68', '#444444', '#222222', '#5a3a22', '#7a6a3a', '#7d4a3a', '#0e3a2e', '#3a3a3a'];
+
+  // Hair style index → SVG path "d" attribute. Drawn in a 32×48 viewBox
+  // sized to the character. The head is a circle at (cx=16, cy=13, r=7),
+  // so the head outline at y=18 sits at x≈20.9 / x≈11.1, and at y=12
+  // sits at x≈22.7 / x≈9.3.
+  //
+  // Each hair shape is designed so:
+  //   - bangs end at y≈12 — just above the eyes (which are at y=13),
+  //     so the hair never crosses the face features
+  //   - the silhouette is rounded (Q curves) rather than ending in
+  //     sharp diagonal flaps, which previously read as ears/tabs
+  //   - any extension beyond the head outline is small (≤1 px) so it
+  //     reads as 'a slightly larger head profile', not as 'flaps'
+  // 'bald' is intentionally empty — it renders nothing.
+  const HAIR_STYLES = [
+    // 0 — pixie: small cap on the crown, contained within the head.
+    'M 10 12 Q 11 5 16 4 Q 21 5 22 12 Q 16 9 10 12 Z',
+    // 1 — bob: rounded mushroom shape, side curtains ending at chin.
+    'M 8 13 Q 8 5 16 3 Q 24 5 24 13 Q 24 18 22 18 L 22 12 Q 16 9 10 12 L 10 18 Q 8 18 8 13 Z',
+    // 2 — spiky: zigzag across the crown, sits above the eyes.
+    'M 11 11 L 12 5 L 14 10 L 15 4 L 17 9 L 18 4 L 20 10 L 21 5 L 21 11 Q 16 9 11 11 Z',
+    // 3 — long: same crown shape as bob, falls past the shoulders.
+    'M 8 13 Q 8 5 16 3 Q 24 5 24 13 L 24 28 L 22 28 L 22 12 Q 16 9 10 12 L 10 28 L 8 28 Z',
+    // 4 — bald: nothing
+    '',
+    // 5 — cap: rounded dome with a brim sticking out symmetrically.
+    'M 6 13 L 6 11 L 9 11 Q 9 5 16 5 Q 23 5 23 11 L 26 11 L 26 13 Z'
+  ];
+
+  // ------ engine state ------
+  const PHYSICS = {
+    SPEED: 220,           // px/sec at full stick deflection
+    ROOM_W: 1500,
+    ROOM_H: 1000,
+    SPRITE_W: 32,
+    SPRITE_H: 48,
+    BOB_PERIOD_MS: 280    // how often the walking bob flips
+  };
+
+  let _container = null;
+  let _roomEl = null;
+  let _spriteEl = null;
+  let _camera = { x: 0, y: 0 }; // top-left of the visible viewport in room coords
+  let _state = {
+    x: PHYSICS.ROOM_W / 2,
+    y: PHYSICS.ROOM_H / 2,
+    facing: 1,            // 1 = right, -1 = left
+    bobPhase: 0,
+    bobAccum: 0
+  };
+  let _input = null;        // input adapter instance
+  let _rafId = null;
+  let _lastTime = 0;
+  let _running = false;
+
+  // ------ public API ------
+
+  function init(container, character) {
+    _container = container;
+    _running = true;
+    _state.x = PHYSICS.ROOM_W / 2;
+    _state.y = PHYSICS.ROOM_H / 2;
+    _state.facing = 1;
+    _camera.x = 0;
+    _camera.y = 0;
+
+    // Build DOM. The viewport clips the room; the room is the
+    // translatable layer; the sprite sits inside the room.
+    container.innerHTML = '';
+    const viewport = document.createElement('div');
+    viewport.className = 'pg-viewport';
+
+    _roomEl = document.createElement('div');
+    _roomEl.className = 'pg-room';
+    _roomEl.style.width = PHYSICS.ROOM_W + 'px';
+    _roomEl.style.height = PHYSICS.ROOM_H + 'px';
+
+    // Backdrop layer — simple authored decoration, no external art.
+    const backdrop = document.createElement('div');
+    backdrop.className = 'pg-backdrop';
+    backdrop.innerHTML = scenerySvg();
+    _roomEl.appendChild(backdrop);
+
+    // Props layer (empty in v1; reserved z-index slot for future props).
+    const propsLayer = document.createElement('div');
+    propsLayer.className = 'pg-props';
+    _roomEl.appendChild(propsLayer);
+
+    _spriteEl = renderCharacter(character || defaultCharacter());
+    _spriteEl.classList.add('pg-sprite');
+    _spriteEl.style.left = (_state.x - PHYSICS.SPRITE_W / 2) + 'px';
+    _spriteEl.style.top = (_state.y - PHYSICS.SPRITE_H / 2) + 'px';
+    _roomEl.appendChild(_spriteEl);
+
+    viewport.appendChild(_roomEl);
+    container.appendChild(viewport);
+
+    _input = makeInput(viewport);
+
+    _lastTime = performance.now();
+    _rafId = requestAnimationFrame(tick);
+  }
+
+  function destroy() {
+    _running = false;
+    if (_rafId) cancelAnimationFrame(_rafId);
+    _rafId = null;
+    if (_input) {
+      _input.detach();
+      _input = null;
+    }
+    if (_container) _container.innerHTML = '';
+    _container = null;
+    _roomEl = null;
+    _spriteEl = null;
+  }
+
+  // Re-render the character sprite without restarting the engine. Used
+  // when the builder modal saves a new look mid-session.
+  function setCharacter(character) {
+    if (!_roomEl || !_spriteEl) return;
+    const fresh = renderCharacter(character);
+    fresh.classList.add('pg-sprite');
+    fresh.style.left = _spriteEl.style.left;
+    fresh.style.top = _spriteEl.style.top;
+    fresh.style.transform = _spriteEl.style.transform;
+    _roomEl.replaceChild(fresh, _spriteEl);
+    _spriteEl = fresh;
+  }
+
+  // ------ frame loop ------
+
+  function tick(now) {
+    if (!_running) return;
+    const dt = Math.min(0.05, (now - _lastTime) / 1000);
+    _lastTime = now;
+
+    const axis = _input ? _input.getAxis() : { x: 0, y: 0 };
+    const len = Math.hypot(axis.x, axis.y);
+    let nx = axis.x, ny = axis.y;
+    if (len > 1) { nx /= len; ny /= len; }
+
+    if (len > 0.05) {
+      _state.x += nx * PHYSICS.SPEED * dt;
+      _state.y += ny * PHYSICS.SPEED * dt;
+      // Mirror the sprite to face the dominant horizontal direction —
+      // pure-vertical movement keeps the previous facing.
+      if (Math.abs(nx) > 0.1) _state.facing = nx > 0 ? 1 : -1;
+      // Walking-bob accumulator
+      _state.bobAccum += dt * 1000;
+      if (_state.bobAccum >= PHYSICS.BOB_PERIOD_MS) {
+        _state.bobAccum = 0;
+        _state.bobPhase = _state.bobPhase ? 0 : 1;
+      }
+    } else {
+      _state.bobAccum = 0;
+      _state.bobPhase = 0;
+    }
+
+    // Clamp to room bounds (sprite center can't pass the wall).
+    const halfW = PHYSICS.SPRITE_W / 2;
+    const halfH = PHYSICS.SPRITE_H / 2;
+    if (_state.x < halfW) _state.x = halfW;
+    if (_state.y < halfH) _state.y = halfH;
+    if (_state.x > PHYSICS.ROOM_W - halfW) _state.x = PHYSICS.ROOM_W - halfW;
+    if (_state.y > PHYSICS.ROOM_H - halfH) _state.y = PHYSICS.ROOM_H - halfH;
+
+    // Camera-follow: center the viewport on the player, clamped so the
+    // room edge never reveals empty space outside it. On screens larger
+    // than the room, the room is centered and the camera doesn't move.
+    if (_roomEl && _spriteEl) {
+      const vw = _roomEl.parentElement.clientWidth;
+      const vh = _roomEl.parentElement.clientHeight;
+
+      let cx = _state.x - vw / 2;
+      let cy = _state.y - vh / 2;
+      if (PHYSICS.ROOM_W < vw) cx = (PHYSICS.ROOM_W - vw) / 2;
+      else cx = Math.max(0, Math.min(PHYSICS.ROOM_W - vw, cx));
+      if (PHYSICS.ROOM_H < vh) cy = (PHYSICS.ROOM_H - vh) / 2;
+      else cy = Math.max(0, Math.min(PHYSICS.ROOM_H - vh, cy));
+      _camera.x = cx;
+      _camera.y = cy;
+      _roomEl.style.transform = `translate(${-cx}px, ${-cy}px)`;
+
+      _spriteEl.style.left = (_state.x - halfW) + 'px';
+      _spriteEl.style.top = (_state.y - halfH) + 'px';
+      const bobOffset = _state.bobPhase ? -1 : 0;
+      _spriteEl.style.transform =
+        `scale(${_state.facing}, 1) translate(0, ${bobOffset}px)`;
+    }
+
+    _rafId = requestAnimationFrame(tick);
+  }
+
+  // ------ input ------
+
+  function makeInput(viewport) {
+    // Multi-source axis: keyboard always-on, joystick mobile-only. Whichever
+    // produced a non-zero reading most recently wins.
+    const keys = { up: false, down: false, left: false, right: false };
+    let joyAxis = { x: 0, y: 0 };
+    let joyActive = false;
+
+    function isTextField(el) {
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+    }
+
+    function onKey(e, down) {
+      if (isTextField(document.activeElement)) return;
+      let handled = true;
+      switch (e.key) {
+        case 'w': case 'W': case 'ArrowUp':    keys.up = down; break;
+        case 's': case 'S': case 'ArrowDown':  keys.down = down; break;
+        case 'a': case 'A': case 'ArrowLeft':  keys.left = down; break;
+        case 'd': case 'D': case 'ArrowRight': keys.right = down; break;
+        default: handled = false;
+      }
+      if (handled) e.preventDefault();
+    }
+    const onKeyDown = e => onKey(e, true);
+    const onKeyUp = e => onKey(e, false);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+
+    // Touch joystick — only render on touch-capable devices. Show even on
+    // touch laptops; harmless for keyboard users.
+    let joyEl = null, stickEl = null, joyCenter = null, joyRadius = 56;
+    let activeTouchId = null;
+
+    if ('ontouchstart' in window) {
+      joyEl = document.createElement('div');
+      joyEl.className = 'pg-joy';
+      stickEl = document.createElement('div');
+      stickEl.className = 'pg-joy-stick';
+      joyEl.appendChild(stickEl);
+      viewport.appendChild(joyEl);
+    }
+
+    function joyStart(t) {
+      if (!joyEl) return;
+      activeTouchId = t.identifier;
+      joyActive = true;
+      const rect = joyEl.getBoundingClientRect();
+      joyCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      joyRadius = rect.width / 2;
+      joyMove(t);
+    }
+    function joyMove(t) {
+      if (!joyEl || !joyCenter) return;
+      let dx = t.clientX - joyCenter.x;
+      let dy = t.clientY - joyCenter.y;
+      const d = Math.hypot(dx, dy);
+      if (d > joyRadius) { dx = dx / d * joyRadius; dy = dy / d * joyRadius; }
+      stickEl.style.transform = `translate(${dx}px, ${dy}px)`;
+      joyAxis = { x: dx / joyRadius, y: dy / joyRadius };
+    }
+    function joyEnd() {
+      activeTouchId = null;
+      joyActive = false;
+      joyAxis = { x: 0, y: 0 };
+      if (stickEl) stickEl.style.transform = 'translate(0,0)';
+    }
+
+    function onTouchStart(e) {
+      if (!joyEl) return;
+      for (const t of e.changedTouches) {
+        if (joyEl.contains(t.target)) {
+          e.preventDefault();
+          joyStart(t);
+          return;
+        }
+      }
+    }
+    function onTouchMove(e) {
+      if (activeTouchId === null) return;
+      for (const t of e.changedTouches) {
+        if (t.identifier === activeTouchId) {
+          e.preventDefault();
+          joyMove(t);
+          return;
+        }
+      }
+    }
+    function onTouchEnd(e) {
+      if (activeTouchId === null) return;
+      for (const t of e.changedTouches) {
+        if (t.identifier === activeTouchId) {
+          e.preventDefault();
+          joyEnd();
+          return;
+        }
+      }
+    }
+    if (joyEl) {
+      // passive:false so we can preventDefault and stop pinch/scroll.
+      viewport.addEventListener('touchstart', onTouchStart, { passive: false });
+      window.addEventListener('touchmove', onTouchMove, { passive: false });
+      window.addEventListener('touchend', onTouchEnd);
+      window.addEventListener('touchcancel', onTouchEnd);
+    }
+
+    function getAxis() {
+      // Joystick wins when actively held; otherwise sum keyboard.
+      if (joyActive) return { x: joyAxis.x, y: joyAxis.y };
+      let x = 0, y = 0;
+      if (keys.left)  x -= 1;
+      if (keys.right) x += 1;
+      if (keys.up)    y -= 1;
+      if (keys.down)  y += 1;
+      return { x, y };
+    }
+
+    function detach() {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      if (joyEl) {
+        viewport.removeEventListener('touchstart', onTouchStart);
+        window.removeEventListener('touchmove', onTouchMove);
+        window.removeEventListener('touchend', onTouchEnd);
+        window.removeEventListener('touchcancel', onTouchEnd);
+      }
+    }
+
+    return { getAxis, detach };
+  }
+
+  // ------ character renderer ------
+
+  function defaultCharacter() {
+    // Used when no homeCharacter is saved yet — renders a neutral default
+    // so the engine has something to draw before the builder modal saves.
+    return { skin: 0, hairStyle: 0, hairColor: 0, shirtColor: 1, pantsColor: 0 };
+  }
+
+  function renderCharacter(c) {
+    const skin = SKIN_TONES[c.skin ?? 0] || SKIN_TONES[0];
+    const hairColor = HAIR_COLORS[c.hairColor ?? 0] || HAIR_COLORS[0];
+    const shirt = SHIRT_COLORS[c.shirtColor ?? 0] || SHIRT_COLORS[0];
+    const pants = PANTS_COLORS[c.pantsColor ?? 0] || PANTS_COLORS[0];
+    const hairPath = HAIR_STYLES[c.hairStyle ?? 0] || '';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'pg-char';
+    wrap.style.width = PHYSICS.SPRITE_W + 'px';
+    wrap.style.height = PHYSICS.SPRITE_H + 'px';
+    wrap.innerHTML = `
+      <svg viewBox="0 0 32 48" width="${PHYSICS.SPRITE_W}" height="${PHYSICS.SPRITE_H}" xmlns="http://www.w3.org/2000/svg">
+        <!-- shadow -->
+        <ellipse cx="16" cy="46" rx="9" ry="2" fill="rgba(0,0,0,0.35)" />
+        <!-- legs / pants -->
+        <rect x="11" y="32" width="4" height="12" rx="1" fill="${pants}" />
+        <rect x="17" y="32" width="4" height="12" rx="1" fill="${pants}" />
+        <!-- shoes -->
+        <rect x="10" y="43" width="6" height="3" rx="1" fill="#1a1a1a" />
+        <rect x="16" y="43" width="6" height="3" rx="1" fill="#1a1a1a" />
+        <!-- torso / shirt -->
+        <rect x="9" y="20" width="14" height="14" rx="2" fill="${shirt}" />
+        <!-- arms (skin tone, hands tucked into shirt sides) -->
+        <rect x="6" y="22" width="3" height="10" rx="1.5" fill="${skin}" />
+        <rect x="23" y="22" width="3" height="10" rx="1.5" fill="${skin}" />
+        <!-- neck -->
+        <rect x="14" y="18" width="4" height="3" fill="${skin}" />
+        <!-- head -->
+        <circle cx="16" cy="13" r="7" fill="${skin}" />
+        <!-- eyes -->
+        <circle cx="13" cy="13" r="0.9" fill="#1a1a1a" />
+        <circle cx="19" cy="13" r="0.9" fill="#1a1a1a" />
+        <!-- mouth -->
+        <path d="M 14 16 Q 16 17.5 18 16" stroke="#1a1a1a" stroke-width="0.6" fill="none" stroke-linecap="round" />
+        <!-- hair (last so it overlays head) -->
+        ${hairPath ? `<path d="${hairPath}" fill="${hairColor}" />` : ''}
+      </svg>
+    `;
+    return wrap;
+  }
+
+  // ------ scenery (authored room backdrop, no external assets) ------
+
+  function scenerySvg() {
+    return `
+      <svg viewBox="0 0 1500 1000" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="pg-floor" cx="50%" cy="50%" r="70%">
+            <stop offset="0%" stop-color="#2a3050" />
+            <stop offset="100%" stop-color="#0e1024" />
+          </radialGradient>
+          <pattern id="pg-tiles" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse">
+            <rect width="100" height="100" fill="transparent" />
+            <path d="M 100 0 L 0 0 0 100" stroke="rgba(201,162,39,0.06)" stroke-width="1" fill="none" />
+          </pattern>
+        </defs>
+        <rect width="1500" height="1000" fill="url(#pg-floor)" />
+        <rect width="1500" height="1000" fill="url(#pg-tiles)" />
+        <!-- Soft glow rug at center -->
+        <ellipse cx="750" cy="500" rx="280" ry="180" fill="rgba(201,162,39,0.06)" />
+        <!-- Decorative corner tufts -->
+        <circle cx="120" cy="120" r="36" fill="rgba(74,222,128,0.06)" />
+        <circle cx="1380" cy="120" r="36" fill="rgba(245,99,99,0.06)" />
+        <circle cx="120" cy="880" r="36" fill="rgba(79,142,247,0.06)" />
+        <circle cx="1380" cy="880" r="36" fill="rgba(245,210,99,0.06)" />
+        <!-- Wall border -->
+        <rect x="2" y="2" width="1496" height="996" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="4" rx="12" />
+      </svg>
+    `;
+  }
+
+  return {
+    init, destroy, setCharacter, renderCharacter, defaultCharacter,
+    SKIN_TONES, HAIR_COLORS, SHIRT_COLORS, PANTS_COLORS, HAIR_STYLES
+  };
+})();

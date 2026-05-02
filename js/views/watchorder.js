@@ -26,6 +26,7 @@ const WatchOrderView = {
           <div id="nav-drawer-content">
             <button id="close-drawer">✕</button>
             <nav>
+              <button id="home-btn">🏠 Home</button>
               <button id="profile-btn">👤 Profile</button>
               <button id="characters-btn">🦸 Characters</button>
               <button id="walkers-btn">🚶 Walkers</button>
@@ -76,6 +77,7 @@ const WatchOrderView = {
     document.getElementById('nav-drawer-overlay').addEventListener('click', closeDrawer);
 
     // SPA navigation buttons
+    document.getElementById('home-btn')?.addEventListener('click', () => Router.go('/home'));
     document.getElementById('profile-btn')?.addEventListener('click', () => Router.go('/profile'));
     document.getElementById('characters-btn')?.addEventListener('click', () => Router.go('/characters'));
 

@@ -60,4 +60,53 @@ router.post('/picture', auth, async (req, res) => {
   res.json({ profilePicture });
 });
 
+// /home playground character. Server-side validation must mirror the option
+// counts defined client-side in js/playground.js. Bumping any of these maxes
+// requires updating BOTH places. Returns null fields when the user has never
+// saved — the client treats that as "open the builder modal".
+const HOME_CHARACTER_RANGES = {
+  skin:       { max: 4 },
+  hairStyle:  { max: 5 },
+  hairColor:  { max: 5 },
+  shirtColor: { max: 7 },
+  pantsColor: { max: 7 }
+};
+
+function pickInt(value, max) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const v = Math.floor(value);
+  if (v < 0 || v > max) return null;
+  return v;
+}
+
+router.get('/home-character', auth, async (req, res) => {
+  const user = await User.findById(req.user.id).select('homeCharacter').lean();
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({ homeCharacter: user.homeCharacter || null });
+});
+
+router.put('/home-character', auth, async (req, res) => {
+  const body = req.body || {};
+  const update = {};
+  const errors = {};
+  for (const [key, rule] of Object.entries(HOME_CHARACTER_RANGES)) {
+    const v = pickInt(body[key], rule.max);
+    if (v === null) {
+      errors[key] = `must be an integer 0..${rule.max}`;
+    } else {
+      update['homeCharacter.' + key] = v;
+    }
+  }
+  if (Object.keys(errors).length) {
+    return res.status(400).json({ error: 'Validation failed', fields: errors });
+  }
+  const user = await User.findByIdAndUpdate(
+    req.user.id,
+    { $set: update },
+    { new: true, projection: { homeCharacter: 1 } }
+  ).lean();
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({ homeCharacter: user.homeCharacter });
+});
+
 module.exports = router;

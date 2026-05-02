@@ -30,7 +30,19 @@ const UserSchema = new mongoose.Schema({
   // Last time this user made an authed request. Updated by the auth
   // middleware at most once per minute per user (throttled in-memory) so
   // the "online" badge in the admin Users tab doesn't 2x our DB writes.
-  lastActiveAt: { type: Date, default: null, index: true }
+  lastActiveAt: { type: Date, default: null, index: true },
+  // /home playground character — the four-slot layered SVG figure built
+  // via the in-app character builder. Each value is a small integer index
+  // into the option arrays defined client-side in js/playground.js. Stays
+  // unset (null) until the user saves their first build, which is also
+  // the cue that triggers the builder modal automatically on first visit.
+  homeCharacter: {
+    skin:        { type: Number, default: null, min: 0, max: 4 },
+    hairStyle:   { type: Number, default: null, min: 0, max: 5 },
+    hairColor:   { type: Number, default: null, min: 0, max: 5 },
+    shirtColor:  { type: Number, default: null, min: 0, max: 7 },
+    pantsColor:  { type: Number, default: null, min: 0, max: 7 }
+  }
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', UserSchema);

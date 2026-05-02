@@ -34,6 +34,7 @@ bootContent().catch(() => { /* fallbacks already in place */ }).finally(() => {
   Router.register('/login', LoginView);
   Router.register('/profile', ProfileView);
   Router.register('/characters', CharactersView);
+  Router.register('/home', HomeView);
   Router.register('/admin', AdminView);
   Router.init('app');
 });
