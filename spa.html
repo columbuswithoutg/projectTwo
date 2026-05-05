@@ -8,6 +8,25 @@
   <link rel="stylesheet" href="styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+  <!--
+    Three.js for the /home 3D playground. Loaded via importmap so the
+    no-bundler script setup keeps working. The module script below imports
+    three and exposes it on window.THREE so the deferred classic script
+    js/playground3d.js can use it without itself being a module.
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    window.THREE = THREE;
+    window.dispatchEvent(new Event('three-ready'));
+  </script>
 </head>
 
 <body>
@@ -52,6 +71,8 @@
   <script defer src="js/walkerView.js"></script>
   <script defer src="js/walkers.js"></script>
   <script defer src="js/playground.js"></script>
+  <script defer src="js/theme-color.js"></script>
+  <script defer src="js/playground3d.js"></script>
 
   <!-- Router + Views -->
   <script defer src="js/router.js"></script>
@@ -62,6 +83,7 @@
   <script defer src="js/views/characters.js"></script>
   <script defer src="js/views/home-builder.js"></script>
   <script defer src="js/views/home.js"></script>
+  <script defer src="js/views/home-edit.js"></script>
 
   <!-- Admin (shell first, then tab modules append into AdminView._tabs) -->
   <script defer src="js/views/admin/index.js"></script>

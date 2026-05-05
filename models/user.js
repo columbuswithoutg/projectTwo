@@ -42,6 +42,21 @@ const UserSchema = new mongoose.Schema({
     hairColor:   { type: Number, default: null, min: 0, max: 5 },
     shirtColor:  { type: Number, default: null, min: 0, max: 7 },
     pantsColor:  { type: Number, default: null, min: 0, max: 7 }
+  },
+  // Project-themed room layout for /home. Each room is a 1×1 grid cell;
+  // world-space cell size + wall/doorway geometry are derived at render time
+  // (see js/playground3d.js). The room count is gated server-side to
+  // floor(watchedProjects.length / 2) — see routes/profile.js validation.
+  homeLayout: {
+    rooms: {
+      type: [{
+        projectId: { type: String, required: true },
+        gx:        { type: Number, required: true },
+        gy:        { type: Number, required: true },
+        _id: false
+      }],
+      default: []
+    }
   }
 }, { timestamps: true });
 

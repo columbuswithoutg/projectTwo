@@ -109,4 +109,102 @@ router.put('/home-character', auth, async (req, res) => {
   res.json({ homeCharacter: user.homeCharacter });
 });
 
+// /home room layout. Each room is a 1×1 grid cell {projectId, gx, gy}. The
+// cap is floor(user.watchedProjects.length / 2) — every 2 watched projects
+// unlocks a slot. We also enforce: every projectId must be in the user's
+// watchedProjects, no two rooms share a (gx,gy), grid coords are clamped,
+// and (when 2+ rooms) the layout is one connected component.
+const GRID_LIMIT = 32; // |gx|, |gy| max — bounds growth to a sane region.
+
+function isLayoutConnected(rooms) {
+  if (rooms.length <= 1) return true;
+  const set = new Set(rooms.map(r => `${r.gx},${r.gy}`));
+  const seen = new Set([`${rooms[0].gx},${rooms[0].gy}`]);
+  const queue = [rooms[0]];
+  while (queue.length) {
+    const r = queue.shift();
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const k = `${r.gx + dx},${r.gy + dy}`;
+      if (set.has(k) && !seen.has(k)) {
+        seen.add(k);
+        queue.push({ gx: r.gx + dx, gy: r.gy + dy });
+      }
+    }
+  }
+  return seen.size === rooms.length;
+}
+
+router.get('/home-layout', auth, async (req, res) => {
+  const user = await User.findById(req.user.id).select('homeLayout watchedProjects').lean();
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const watchedIds = (user.watchedProjects || []).map(e => e.projectId);
+  res.json({
+    homeLayout: user.homeLayout || { rooms: [] },
+    maxRooms: Math.floor(watchedIds.length / 2),
+    watchedCount: watchedIds.length,
+    watchedIds
+  });
+});
+
+router.put('/home-layout', auth, async (req, res) => {
+  const body = req.body || {};
+  if (!Array.isArray(body.rooms)) {
+    return res.status(400).json({ error: 'rooms must be an array' });
+  }
+
+  // Shape check + integer coercion.
+  const rooms = [];
+  for (const r of body.rooms) {
+    if (!r || typeof r.projectId !== 'string' || r.projectId.length === 0 || r.projectId.length > 64) {
+      return res.status(400).json({ error: 'each room needs a non-empty projectId string' });
+    }
+    const gx = pickInt(r.gx, GRID_LIMIT);
+    const gy = pickInt(r.gy, GRID_LIMIT);
+    // pickInt rejects negatives; allow ±GRID_LIMIT by checking bounds directly.
+    if (typeof r.gx !== 'number' || !Number.isFinite(r.gx) || Math.abs(r.gx) > GRID_LIMIT ||
+        typeof r.gy !== 'number' || !Number.isFinite(r.gy) || Math.abs(r.gy) > GRID_LIMIT) {
+      return res.status(400).json({ error: `grid coords must be integers within ±${GRID_LIMIT}` });
+    }
+    rooms.push({ projectId: r.projectId, gx: Math.floor(r.gx), gy: Math.floor(r.gy) });
+  }
+
+  // No duplicate cells, no duplicate projectIds.
+  const cellSet = new Set();
+  const idSet = new Set();
+  for (const r of rooms) {
+    const k = `${r.gx},${r.gy}`;
+    if (cellSet.has(k)) return res.status(400).json({ error: `two rooms share grid cell (${r.gx}, ${r.gy})` });
+    cellSet.add(k);
+    if (idSet.has(r.projectId)) return res.status(400).json({ error: `project ${r.projectId} appears twice` });
+    idSet.add(r.projectId);
+  }
+
+  // Per-user gating: count + projectId membership.
+  const user = await User.findById(req.user.id).select('watchedProjects').lean();
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const watchedIds = new Set((user.watchedProjects || []).map(e => e.projectId));
+  const maxRooms = Math.floor(watchedIds.size / 2);
+  if (rooms.length > maxRooms) {
+    return res.status(400).json({ error: `rooms.length (${rooms.length}) exceeds allowed (${maxRooms})` });
+  }
+  for (const r of rooms) {
+    if (!watchedIds.has(r.projectId)) {
+      return res.status(400).json({ error: `project ${r.projectId} is not in your watched list` });
+    }
+  }
+
+  // Connectivity (BFS).
+  if (!isLayoutConnected(rooms)) {
+    return res.status(400).json({ error: 'layout is not connected — every room must be reachable from every other' });
+  }
+
+  const updated = await User.findByIdAndUpdate(
+    req.user.id,
+    { $set: { 'homeLayout.rooms': rooms } },
+    { new: true, projection: { homeLayout: 1 } }
+  ).lean();
+  if (!updated) return res.status(404).json({ error: 'User not found' });
+  res.json({ homeLayout: updated.homeLayout });
+});
+
 module.exports = router;

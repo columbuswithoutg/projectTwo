@@ -1,10 +1,11 @@
 /************************************************
  * HOME VIEW — /home
  *
- * The playground room. Mounts the Playground engine, fetches the user's
- * saved homeCharacter (or opens the builder modal on first visit),
- * surfaces a Customize button, and exposes the same nav drawer as the
- * other primary views so users can navigate out.
+ * Mounts the 3D playground when the user has rooms placed; otherwise
+ * shows a static "your home unlocks at 2 watched projects" card with a
+ * link to the Watch Order. The ✎ button opens a small action menu with
+ * "Edit character" (existing builder modal) and "Edit rooms" (routes to
+ * /home/edit). One room unlocks per 2 watched projects (server-gated).
  ************************************************/
 const HomeView = {
   title: 'Home — MCU Tracker',
@@ -16,10 +17,10 @@ const HomeView = {
     }
 
     container.innerHTML = `
-      <header id="header" class="pg-header">
+      <header class="pg-header">
         <button id="nav-toggle">☰</button>
         <h1 class="pg-title">Home</h1>
-        <button id="pg-customize-btn" title="Customize character">✎</button>
+        <button id="pg-customize-btn" title="Edit">✎</button>
 
         <div id="nav-drawer">
           <div id="nav-drawer-overlay"></div>
@@ -55,49 +56,139 @@ const HomeView = {
       Auth.logout();
     });
 
-    document.getElementById('pg-customize-btn').addEventListener('click', () => {
-      HomeView._openBuilder();
+    document.getElementById('pg-customize-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      HomeView._toggleEditMenu();
     });
+    // Click outside the menu to dismiss.
+    document.addEventListener('click', HomeView._onDocClick = () => HomeView._closeEditMenu());
 
     HomeView._stage = document.getElementById('pg-stage');
     HomeView._loadAndStart();
   },
 
   async _loadAndStart() {
+    // Fetch character + layout in parallel so the first render isn't gated
+    // on the slower of the two.
     let character = null;
+    let layout = { rooms: [] };
+    let maxRooms = 0;
+    let watchedCount = 0;
     try {
-      const res = await fetch(`${API}/profile/home-character`, {
-        headers: { Authorization: `Bearer ${Auth.getToken()}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const [charRes, layoutRes] = await Promise.all([
+        fetch(`${API}/profile/home-character`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } }),
+        fetch(`${API}/profile/home-layout`,    { headers: { Authorization: `Bearer ${Auth.getToken()}` } })
+      ]);
+      if (charRes.ok) {
+        const data = await charRes.json();
         character = data.homeCharacter;
       }
+      if (layoutRes.ok) {
+        const data = await layoutRes.json();
+        layout = data.homeLayout || { rooms: [] };
+        maxRooms = data.maxRooms || 0;
+        watchedCount = data.watchedCount || 0;
+      }
     } catch (_) {
-      // Network/server issue — fall through with null and use defaults so
-      // the user isn't locked out of the playground.
+      // Network/server issue — fall through with empty layout and defaults
+      // so the user still sees a reasonable page rather than a blank.
     }
 
     const isFresh = !character || character.skin == null;
     HomeView._character = character && character.skin != null ? character : null;
-    Playground.init(HomeView._stage, HomeView._character || Playground.defaultCharacter());
+    HomeView._layout = layout;
+    HomeView._maxRooms = maxRooms;
+    HomeView._watchedCount = watchedCount;
+
+    if (!layout.rooms || layout.rooms.length === 0) {
+      HomeView._renderEmptyHome();
+      // Open the character builder on the first visit so users still get
+      // the "make your character" moment even when there are no rooms yet.
+      if (isFresh) HomeView._openBuilder({ firstTime: true });
+      return;
+    }
+
+    Playground3D.init(
+      HomeView._stage,
+      HomeView._character || Playground3D.defaultCharacter(),
+      layout
+    );
 
     if (isFresh) {
-      // First-time visitor — open the builder right away with defaults.
       HomeView._openBuilder({ firstTime: true });
     }
   },
 
+  _renderEmptyHome() {
+    const watched = HomeView._watchedCount || 0;
+    const needed = Math.max(0, 2 - watched);
+    const heading = needed > 0
+      ? 'Your home unlocks at 2 watched projects'
+      : 'Pick your first room';
+    const sub = needed > 0
+      ? `You've watched ${watched} so far — ${needed} more to unlock your first room.`
+      : `You've earned ${HomeView._maxRooms} room slot${HomeView._maxRooms === 1 ? '' : 's'}. Open the editor to place your first room.`;
+    const cta = needed > 0
+      ? `<a class="pg-empty-cta" href="/" data-link>Go to Watch Order</a>`
+      : `<button class="pg-empty-cta" type="button" id="pg-empty-edit">Edit rooms</button>`;
+    HomeView._stage.innerHTML = `
+      <div class="pg-empty">
+        <div class="pg-empty-card">
+          <h2>${heading}</h2>
+          <p>${sub}</p>
+          ${cta}
+        </div>
+      </div>
+    `;
+    const editBtn = document.getElementById('pg-empty-edit');
+    if (editBtn) editBtn.addEventListener('click', () => Router.go('/home/edit'));
+  },
+
+  _toggleEditMenu() {
+    if (HomeView._menuEl) { HomeView._closeEditMenu(); return; }
+    const btn = document.getElementById('pg-customize-btn');
+    if (!btn) return;
+    const menu = document.createElement('div');
+    menu.className = 'pg-menu';
+    menu.innerHTML = `
+      <button type="button" class="pg-menu-item" data-action="character">🧑 Edit character</button>
+      <button type="button" class="pg-menu-item" data-action="rooms">🏠 Edit rooms</button>
+    `;
+    document.body.appendChild(menu);
+    HomeView._menuEl = menu;
+    // Position under the ✎ button, right-aligned.
+    const r = btn.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.top = `${r.bottom + 6}px`;
+    menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+    menu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const action = e.target?.dataset?.action;
+      if (action === 'character') {
+        HomeView._closeEditMenu();
+        HomeView._openBuilder();
+      } else if (action === 'rooms') {
+        HomeView._closeEditMenu();
+        Router.go('/home/edit');
+      }
+    });
+  },
+
+  _closeEditMenu() {
+    if (HomeView._menuEl && HomeView._menuEl.parentNode) {
+      HomeView._menuEl.parentNode.removeChild(HomeView._menuEl);
+    }
+    HomeView._menuEl = null;
+  },
+
   _openBuilder({ firstTime = false } = {}) {
     HomeBuilder.open({
-      initial: HomeView._character || Playground.defaultCharacter(),
+      initial: HomeView._character || Playground3D.defaultCharacter(),
       onSave: (saved) => {
         HomeView._character = saved;
-        Playground.setCharacter(saved);
+        Playground3D.setCharacter(saved);
       },
       onCancel: () => {
-        // First-time cancel keeps the default so the engine still has
-        // something visible. Nothing to revert otherwise.
         if (firstTime) {
           // no-op: default is already drawn
         }
@@ -106,8 +197,14 @@ const HomeView = {
   },
 
   unmount() {
-    Playground.destroy();
+    HomeView._closeEditMenu();
+    if (HomeView._onDocClick) {
+      document.removeEventListener('click', HomeView._onDocClick);
+      HomeView._onDocClick = null;
+    }
+    Playground3D.destroy();
     HomeView._stage = null;
     HomeView._character = null;
+    HomeView._layout = null;
   }
 };
