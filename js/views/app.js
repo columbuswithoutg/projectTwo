@@ -26,6 +26,7 @@ const AppView = {
             <button id="close-drawer">✕</button>
             <nav>
               <button id="home-btn">🏠 Home</button>
+              <button id="world-btn">🌍 World</button>
               <button id="profile-btn">👤 Profile</button>
               <button id="characters-btn">🦸 Characters</button>
               <button id="walkers-btn">🚶 Walkers</button>
@@ -96,6 +97,7 @@ const AppView = {
 
     // Navigation — SPA routes instead of .html redirects
     document.getElementById('home-btn')?.addEventListener('click', () => Router.go('/home'));
+    document.getElementById('world-btn')?.addEventListener('click', () => Router.go('/world'));
     document.getElementById('profile-btn')?.addEventListener('click', () => Router.go('/profile'));
     document.getElementById('characters-btn')?.addEventListener('click', () => Router.go('/characters'));
 

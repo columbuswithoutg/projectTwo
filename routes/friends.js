@@ -171,6 +171,64 @@ router.get('/list', auth, async (req, res) => {
 });
 
 // View a friend's progress
+// Username-keyed lookup used by the dedicated /friend/:username SPA routes.
+// Resolves the username to an _id, verifies friendship, and returns the
+// same payload as /progress/:friendId (plus profilePicture so the friend
+// profile tab can show their avatar). 404 for unknown user, 403 for not-
+// friends — the SPA treats both as a generic 404 visit page.
+router.get('/by-username/:username', auth, async (req, res) => {
+    const username = String(req.params.username || '').trim();
+    if (!username || username.length > 40) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    try {
+        const friend = await User.findOne({ username })
+            .select('_id username profilePicture watchedProjects walkers homeLayout homeCharacter');
+        if (!friend) return res.status(404).json({ error: 'User not found' });
+
+        const friendship = await Friend.findOne({
+            $and: [
+                { $or: [
+                    { requester: req.user.id, recipient: friend._id },
+                    { requester: friend._id, recipient: req.user.id }
+                ] },
+                { status: 'accepted' },
+                { $or: [
+                    { type: 'friend' },
+                    { type: { $exists: false } },
+                    { type: null }
+                ] }
+            ]
+        });
+        if (!friendship) return res.status(403).json({ error: 'Not friends' });
+
+        const watchedProjects = (friend.watchedProjects || []).map(entry => {
+            if (typeof entry === 'string') {
+                return { projectId: entry, count: 1, watchedWith: [], memories: [] };
+            }
+            return {
+                projectId: entry.projectId,
+                count: entry.count || 1,
+                watchedWith: entry.watchedWith || [],
+                memories: entry.memories || []
+            };
+        });
+
+        res.json({
+            id: friend._id,
+            username: friend.username,
+            profilePicture: friend.profilePicture || '',
+            watchedProjects,
+            walkers: friend.walkers || [],
+            homeLayout: friend.homeLayout || { rooms: [] },
+            homeCharacter: friend.homeCharacter || null
+        });
+    } catch (err) {
+        console.error('by-username error', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 router.get('/progress/:friendId', auth, async (req, res) => {
     if (!validId(req.params.friendId))
         return res.status(400).json({ error: 'Invalid friend id' });
@@ -196,7 +254,7 @@ router.get('/progress/:friendId', auth, async (req, res) => {
         if (!friendship) return res.status(403).json({ error: 'Not friends' });
 
         const friend = await User.findById(req.params.friendId)
-            .select('username watchedProjects walkers');
+            .select('username watchedProjects walkers homeLayout homeCharacter');
         if (!friend) return res.status(404).json({ error: 'User not found' });
 
         // Normalize data shape — handle both old string array and new object array
@@ -212,7 +270,13 @@ router.get('/progress/:friendId', auth, async (req, res) => {
             };
         });
 
-        res.json({ username: friend.username, watchedProjects, walkers: friend.walkers || [] });
+        res.json({
+            username: friend.username,
+            watchedProjects,
+            walkers: friend.walkers || [],
+            homeLayout: friend.homeLayout || { rooms: [] },
+            homeCharacter: friend.homeCharacter || null
+        });
     } catch (e) {
         console.error('Progress route error:', e);
         res.status(500).json({ error: 'Server error' });

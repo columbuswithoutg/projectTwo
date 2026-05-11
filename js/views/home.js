@@ -29,6 +29,7 @@ const HomeView = {
             <nav>
               <button data-route="/">📋 Watch Order</button>
               <button data-route="/map">🗺 Universe Map</button>
+              <button data-route="/world">🌍 World</button>
               <button data-route="/profile">👤 Profile</button>
               <button data-route="/characters">🦸 Characters</button>
               <button id="logout-btn">🚪 Logout</button>

@@ -36,7 +36,12 @@ bootContent().catch(() => { /* fallbacks already in place */ }).finally(() => {
   Router.register('/characters', CharactersView);
   Router.register('/home', HomeView);
   Router.register('/home/edit', HomeEditView);
+  Router.register('/world', WorldView);
   Router.register('/admin', AdminView);
+  Router.register('/friend/:username',         FriendWatchView);
+  Router.register('/friend/:username/map',     FriendMapView);
+  Router.register('/friend/:username/home',    FriendHomeView);
+  Router.register('/friend/:username/profile', FriendProfileView);
   Router.init('app');
 });
 

@@ -54,6 +54,17 @@ const Friends = {
     return res.json();
   },
 
+  // Username-keyed lookup used by the dedicated /friend/:username SPA
+  // routes via FriendView.enter(username). Returns the friend payload
+  // or { error } on 4xx/5xx — callers (FriendView.enter) coerce errors
+  // to null so each friend view can render the 404 card uniformly.
+  async getByUsername(username) {
+    const res = await fetch(`${API}/friends/by-username/${encodeURIComponent(username)}`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` }
+    });
+    return res.json();
+  },
+
   async remove(friendId) {
     const res = await fetch(`${API}/friends/remove/${friendId}`, {
       method: 'DELETE',
@@ -248,7 +259,9 @@ function loadFriendList(panel) {
     container.querySelectorAll('.friend-view-btn').forEach(btn => {
       btn.onclick = () => {
         panel.remove();
-        viewFriendProgress(btn.dataset.id, btn.dataset.name);
+        // Dedicated route — username goes in the URL, FriendView.enter
+        // does the fetch/swap/walker work inside the friend view's mount.
+        Router.go('/friend/' + encodeURIComponent(btn.dataset.name));
       };
     });
 
@@ -262,62 +275,6 @@ function loadFriendList(panel) {
   });
 }
 
-async function viewFriendProgress(friendId, friendName) {
-  const data = await Friends.getProgress(friendId);
-  if (data.error) return alert(data.error);
-
-  const mapWrapperCheck = document.getElementById('map-wrapper');
-  if (!mapWrapperCheck) return; // not on the app view — bail safely
-
-  const originalData = new Map(state.data);
-
-  // Block state.save from pushing the friend's data onto our account while
-  // the UI is in friend-view. Cleared when exiting the banner.
-  state.readonly = true;
-
-  state.data.clear();
-  data.watchedProjects.forEach(entry => {
-    state.data.set(entry.projectId, {
-      count: entry.count,
-      watchedWith: entry.watchedWith || [],
-      memories: entry.memories || []
-    });
-  });
-  // Fire listeners so the layout cache invalidates; otherwise we'd keep
-  // rendering the viewer's own watched set instead of the friend's.
-  state.listeners.forEach(fn => fn(state.data));
-
-  const originalHeader = document.getElementById('header');
-  originalHeader.style.display = 'none';
-
-  const banner = document.createElement('header');
-  banner.className = 'friend-view-banner';
-  banner.innerHTML = `
-    <h1>Viewing <strong>${esc(friendName)}</strong>'s Progress</h1>
-    <button id="exit-friend-view">← Back to My Progress</button>
-  `;
-
-  banner.querySelector('#exit-friend-view').onclick = () => {
-    state.data.clear();
-    originalData.forEach((v, k) => state.data.set(k, v));
-    // Re-enable saves before the first post-exit listener fires.
-    state.readonly = false;
-    // Fire listeners so the layout cache invalidates on return; without
-    // this the map renders the friend's stale layout over the viewer's data.
-    state.listeners.forEach(fn => fn(state.data));
-    banner.remove();
-    originalHeader.style.display = '';
-    renderer.nodesContainer.classList.remove('readonly');
-    renderer.render();
-    Walkers.restoreSelections();
-  };
-
-  const mapWrapper = document.getElementById('map-wrapper');
-  mapWrapper.parentNode.insertBefore(banner, mapWrapper);
-  renderer.nodesContainer.classList.add('readonly');
-  renderer.render();
-  Walkers.deployWithSelections(data.walkers || []);
-}
 
 async function showWatchedWithFriendModal(project) {
   const friends = await Friends.getList();

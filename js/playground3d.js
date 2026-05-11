@@ -54,6 +54,41 @@ const Playground3D = (() => {
   const DOORWAY_WIDTH = 2.0;      // gap centered on each shared cell edge
   const SKY_COLOR = 0xbfe0ff;
 
+  // /world-mode constants — different geometry style from /home rooms.
+  // Platforms are sized to match the /home room footprint (12×12) so the
+  // character feels at the same scale on either map. Roads are the only
+  // walkable strips between platforms — see _isInWalkable() collision.
+  const WORLD = {
+    SCALE: 18,                    // world units per project grid unit (room-sized + gap)
+    PLATFORM_W: 12,
+    PLATFORM_H: 0.4,
+    PLATFORM_D: 12,
+    PLATFORM_RAISE: -0.2,         // mesh center y; with PLATFORM_H=0.4 puts platform top at y=0
+    ROAD_W: 2.5,                  // wide enough to comfortably walk along
+    ROAD_H: 0.12,
+    ROAD_RAISE: -0.08,            // mesh center y; road top sits ~2cm below platform top so the platform poster always renders on top without z-fight
+    PERIMETER_PAD: 30,            // extra ground around the bounding box
+    REMOTE_LERP_RATE: 8,          // per-second lerp factor for remote interp
+    EMOTE_DURATION_MS: 1500,
+    GROUND_COLOR: 0x2a3a2e,
+    ROAD_COLOR: 0xc9a04f,
+    // Wall fence around each platform — character-height (1.8u) so the
+    // top-down camera still sees over them but you can't walk off the
+    // platform anywhere except through a doorway that lines up with a
+    // connecting road.
+    WALL_HEIGHT: 1.8,
+    WALL_THICKNESS: 0.3,
+    WALL_COLOR: 0xa68a4d,
+    DOORWAY_WIDTH: 4.0            // wide enough for the player with margin
+  };
+
+  // Jump physics — applies in both /home and /world. Tuned for an arcade
+  // hop, max height ~1.3u, total air time ~0.7s.
+  const JUMP = {
+    GRAVITY: 22,                  // world units / s²
+    INITIAL_V: 7.5                // initial upward velocity on spacebar
+  };
+
   // ── engine state ──
   let _container = null;
   let _viewport = null;
@@ -73,13 +108,45 @@ const Playground3D = (() => {
   let _idleClock = 0;
   let _currentChar = null;
   let _layout = null;             // { rooms: [{ projectId, gx, gy }] }
+  // ── world-mode state ──
+  let _mode = 'home';             // 'home' | 'world'
+  let _hudLayer = null;            // HTMLDivElement overlay for nametags/bubbles/prompts
+  let _worldNodes = new Map();    // projectId → { mesh, project, anchor: Vector3, labelEl }
+  let _worldRoads = new Map();    // "a→b" key (sorted) → mesh
+  let _remotePlayers = new Map(); // socketId → { rig, target:{x,z,yaw,walking}, current, nameEl, bubbleEls[], emoteUntil }
+  let _worldStateUnsub = null;
+  let _activeNode = null;          // project currently within PROXIMITY
+  let _activePromptEl = null;
+  let _localEmoteUntil = 0;        // ms timestamp; while > now, override right-arm pose
+  let _projectClickHandler = null; // set by view to handle prompt clicks
+  let _localWalking = false;       // set each tick; read by getLocalState() for MP broadcast
+  let _walkableRoads = [];         // [{ cx, cz, cos, sin, halfW, halfL }] for point-in-rotated-rect tests
+  let _velY = 0;                   // vertical velocity for jump physics
 
   // ── public API ──
 
   function init(container, character, layout) {
+    _mode = 'home';
     _container = container;
     _currentChar = character || defaultCharacter();
     _layout = (layout && Array.isArray(layout.rooms)) ? layout : { rooms: [] };
+    _waitForThree(container);
+  }
+
+  // World-mode entry — builds the walkable universe map from the global
+  // `projects` array + `state` (for unlock checks). Same character + camera
+  // + input + animation as home mode. The caller (WorldView) wires the
+  // multiplayer socket separately and uses the addRemotePlayer / chat /
+  // emote APIs to render others.
+  function initWorld(container, character) {
+    _mode = 'world';
+    _container = container;
+    _currentChar = character || defaultCharacter();
+    _layout = null;
+    _waitForThree(container);
+  }
+
+  function _waitForThree(container) {
     if (window.THREE) {
       _initInternal();
     } else {
@@ -98,6 +165,7 @@ const Playground3D = (() => {
     _rafId = null;
     if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
     if (_input) { _input.detach(); _input = null; }
+    if (_worldStateUnsub) { try { _worldStateUnsub(); } catch (_) {} _worldStateUnsub = null; }
     if (_renderer) {
       _renderer.dispose();
       if (_renderer.domElement && _renderer.domElement.parentNode) {
@@ -114,6 +182,19 @@ const Playground3D = (() => {
         });
       }
     });
+    // World-mode cleanup.
+    _worldNodes.clear();
+    _worldRoads.clear();
+    _walkableRoads = [];
+    _remotePlayers.clear();
+    _activeNode = null;
+    _activePromptEl = null;
+    _hudLayer = null;
+    _localEmoteUntil = 0;
+    _projectClickHandler = null;
+    _localWalking = false;
+    _velY = 0;
+    _mode = 'home';
     if (_container) _container.innerHTML = '';
     _container = _viewport = _renderer = _scene = _camera = null;
     _player = _rig = null;
@@ -129,6 +210,7 @@ const Playground3D = (() => {
     const yaw = _player.rotation.y;
     _player.parent.remove(_player);
     _player = _buildPlayer(character);
+    _rig = _player.userData.bones;        // re-point local rig to the new build
     _player.position.copy(pos);
     _player.rotation.y = yaw;
     _scene.add(_player);
@@ -153,6 +235,12 @@ const Playground3D = (() => {
     _viewport.className = 'pg3d-viewport';
     _container.appendChild(_viewport);
 
+    // HUD overlay — name tags, chat bubbles, interaction prompts. Their
+    // world-space anchors get projected to screen each tick.
+    _hudLayer = document.createElement('div');
+    _hudLayer.className = 'pg3d-hud';
+    _viewport.appendChild(_hudLayer);
+
     _renderer = new THREE.WebGLRenderer({ antialias: true });
     _renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     _renderer.shadowMap.enabled = true;
@@ -171,21 +259,37 @@ const Playground3D = (() => {
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
     const cam = sun.shadow.camera;
-    cam.left = -32; cam.right = 32; cam.top = 32; cam.bottom = -32;
-    cam.near = 0.5; cam.far = 80;
+    // World mode covers a much larger area than home — widen the
+    // directional light's shadow frustum so the whole map gets shade.
+    if (_mode === 'world') {
+      cam.left = -160; cam.right = 160; cam.top = 160; cam.bottom = -160;
+      cam.near = 0.5; cam.far = 400;
+    } else {
+      cam.left = -32; cam.right = 32; cam.top = 32; cam.bottom = -32;
+      cam.near = 0.5; cam.far = 80;
+    }
     _scene.add(sun);
 
     _walls = [];
-    _buildLayoutScene();
+    let spawn;
+    if (_mode === 'world') {
+      _buildWorldScene();
+      spawn = _worldSpawn();
+    } else {
+      _buildLayoutScene();
+      spawn = _layoutSpawn();
+    }
 
     // Player.
     _player = _buildPlayer(_currentChar);
-    const spawn = _layoutSpawn();
+    _rig = _player.userData.bones;        // local rig — animated by _tick
     _player.position.set(spawn.x, 0, spawn.z);
     _scene.add(_player);
 
     // Camera.
-    _camera = new THREE.PerspectiveCamera(60, 1, 0.1, 200);
+    // Far plane wide enough to cover /world's ~360u-wide map without
+    // clipping platforms / roads when the player stands at one edge.
+    _camera = new THREE.PerspectiveCamera(60, 1, 0.1, 600);
     _orbit = {
       azimuth: 0,                 // 0 = behind player (looking toward -Z relative to yaw)
       elevation: CAMERA.DEFAULT_ELEV,
@@ -385,7 +489,11 @@ const Playground3D = (() => {
       leg.position.y = -LEG_LEN / 2;
       pivot.add(leg);
       const foot = mkBox(LEG_W * 1.6, FOOT_H, LEG_D * 1.4, shoeMat);
-      foot.position.set(0, -LEG_LEN - FOOT_H / 2 + 0.02, 0.05);
+      // Foot center sits half its own height above the leg's bottom, so
+      // the foot's bottom face is flush with the leg bottom (y=0 in the
+      // root's frame). Previously it hung 0.16u below the leg bottom and
+      // visibly clipped into the floor.
+      foot.position.set(0, -LEG_LEN + FOOT_H / 2, 0.05);
       pivot.add(foot);
       return pivot;
     };
@@ -449,10 +557,12 @@ const Playground3D = (() => {
 
     // Default forward: character faces -Z by convention. The engine yaws
     // the root via root.rotation.y to face the movement direction.
+    // userData.bones is read both by the local _tick() (via the module-
+    // level _rig set by the local-only call sites) and by
+    // _tickRemotePlayers() (via the remote rig stored in _remotePlayers).
     root.userData.bones = {
       body, head, torso, leftArm, rightArm, leftLeg, rightLeg
     };
-    _rig = root.userData.bones;
     return root;
   }
 
@@ -536,6 +646,10 @@ const Playground3D = (() => {
     const keys = { up: false, down: false, left: false, right: false };
     let joyAxis = { x: 0, y: 0 };
     let joyActive = false;
+    // Jump is a one-shot edge trigger: keydown sets the flag; the tick
+    // consumes it (and resets) when applying the impulse. This stops
+    // hold-space from auto-bouncing.
+    let jumpRequested = false;
 
     function isTextField(el) {
       if (!el) return false;
@@ -551,6 +665,11 @@ const Playground3D = (() => {
         case 's': case 'S': case 'ArrowDown':  keys.down = down; break;
         case 'a': case 'A': case 'ArrowLeft':  keys.left = down; break;
         case 'd': case 'D': case 'ArrowRight': keys.right = down; break;
+        case ' ': case 'Spacebar':
+          // Suppress the browser's default (page scroll) regardless of
+          // direction; only the keydown sets the one-shot request flag.
+          if (down) jumpRequested = true;
+          break;
         default: handled = false;
       }
       if (handled) e.preventDefault();
@@ -597,7 +716,12 @@ const Playground3D = (() => {
     let activeCamTouchId = null;
     let lastCamTouch = { x: 0, y: 0 };
 
-    if ('ontouchstart' in window) {
+    // Broaden detection — some mobile browsers / DevTools mobile emulation
+    // don't set 'ontouchstart' on window but do report maxTouchPoints.
+    const hasTouch = ('ontouchstart' in window) ||
+      (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0);
+    try { console.log('[Playground3D] touch=' + hasTouch); } catch (_) {}
+    if (hasTouch) {
       joyEl = document.createElement('div');
       joyEl.className = 'pg-joy';
       stickEl = document.createElement('div');
@@ -696,6 +820,14 @@ const Playground3D = (() => {
       return mouseDragging || activeCamTouchId !== null;
     }
 
+    // One-shot jump request. Tick reads and clears once per keydown so
+    // that hold-space doesn't auto-bounce repeatedly.
+    function consumeJump() {
+      if (!jumpRequested) return false;
+      jumpRequested = false;
+      return true;
+    }
+
     function detach() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
@@ -711,7 +843,7 @@ const Playground3D = (() => {
       }
     }
 
-    return { getAxis, isOrbiting, detach };
+    return { getAxis, isOrbiting, consumeJump, detach };
   }
 
   // ── tick / animation ──
@@ -748,6 +880,22 @@ const Playground3D = (() => {
       const targetYaw = Math.atan2(moveX, moveZ);
       _player.rotation.y = _lerpAngle(_player.rotation.y, targetYaw, Math.min(1, PHYSICS.TURN_RATE * dt));
     }
+    _localWalking = moved;
+
+    // Jump physics — applies in both /home and /world. Space (or the
+    // input adapter's consumeJump()) sets initial upward velocity if
+    // grounded; gravity decelerates each frame until we hit y=0 again.
+    if (_input && _input.consumeJump && _input.consumeJump()) {
+      if (_player.position.y <= 0.01) _velY = JUMP.INITIAL_V;
+    }
+    if (_velY !== 0 || _player.position.y > 0) {
+      _velY -= JUMP.GRAVITY * dt;
+      _player.position.y += _velY * dt;
+      if (_player.position.y <= 0) {
+        _player.position.y = 0;
+        _velY = 0;
+      }
+    }
 
     // Third-person auto-follow: when the player is moving and the user
     // isn't actively orbiting the camera, lerp the camera's azimuth toward
@@ -782,6 +930,22 @@ const Playground3D = (() => {
       _rig.body.scale.y = breath;
     }
 
+    // Local wave emote — overrides right-arm pose while active. Doesn't
+    // interrupt walking; it just replaces the right arm's animation pose.
+    if (_rig && _rig.rightArm && _localEmoteUntil > now) {
+      const phase = (now - (_localEmoteUntil - WORLD.EMOTE_DURATION_MS)) / 200;
+      _rig.rightArm.rotation.x = -Math.PI * 0.9;
+      _rig.rightArm.rotation.z = Math.sin(phase) * 0.4;
+    } else if (_rig && _rig.rightArm) {
+      _rig.rightArm.rotation.z = 0;
+    }
+
+    // World-mode-only ticks (no-ops in home mode).
+    if (_mode === 'world') {
+      _tickRemotePlayers(dt, now);
+      _tickHUD(now);
+    }
+
     _updateCamera();
     _renderer.render(_scene, _camera);
     _rafId = requestAnimationFrame(_tick);
@@ -789,8 +953,10 @@ const Playground3D = (() => {
 
   function _moveWithCollision(dx, dz) {
     const r = PHYSICS.PLAYER_RADIUS;
-    let x = _player.position.x + dx;
-    let z = _player.position.z + dz;
+    const startX = _player.position.x;
+    const startZ = _player.position.z;
+    let x = startX + dx;
+    let z = startZ + dz;
     for (const w of _walls) {
       // Player AABB (approx capsule by box) overlaps wall AABB.
       const minX = x - r, maxX = x + r;
@@ -810,6 +976,15 @@ const Playground3D = (() => {
         const penZ = dz > 0 ? (w.minZ - r - z) : (w.maxZ + r - z);
         if (Math.abs(penX) < Math.abs(penZ)) x += penX; else z += penZ;
       }
+    }
+    // World-mode walkability: must end up on a node or road. Stepping
+    // off into open ground is rejected for whichever axis caused it,
+    // giving natural slide-along-edge behavior because outer movement
+    // already comes in per-axis.
+    if (_mode === 'world' && !_isInWalkable(x, z)) {
+      if (dx !== 0 && dz === 0) x = startX;
+      else if (dz !== 0 && dx === 0) z = startZ;
+      else { x = startX; z = startZ; }
     }
     _player.position.x = x;
     _player.position.z = z;
@@ -840,5 +1015,558 @@ const Playground3D = (() => {
     return a + diff * t;
   }
 
-  return { init, destroy, setCharacter, defaultCharacter };
+  // ────────────────────────────────────────────────────────────────────
+  // WORLD MODE — walkable universe map
+  // ────────────────────────────────────────────────────────────────────
+
+  function _isProjectUnlocked(p) {
+    // Strict: only watched projects are visible in /world. Start nodes
+    // (no prereqs — e.g. Iron Man) are always visible so a fresh user
+    // has an entry point; otherwise their world would be empty.
+    if (typeof state !== 'undefined' && state.isWatched && state.isWatched(p.id)) return true;
+    return !p.prerequisites || p.prerequisites.length === 0;
+  }
+
+  function _worldSpawn() {
+    // Spawn near the first unlocked node so a brand-new user lands on
+    // Iron Man (which has no prereqs and is always unlocked).
+    if (typeof projects !== 'undefined' && Array.isArray(projects)) {
+      const first = projects.find(p => _isProjectUnlocked(p));
+      if (first) return { x: first.gridX * WORLD.SCALE, z: first.gridY * WORLD.SCALE };
+    }
+    return { x: 0, z: 0 };
+  }
+
+  function _buildWorldScene() {
+    if (typeof projects === 'undefined' || !Array.isArray(projects)) return;
+    const THREE = window.THREE;
+
+    // Compute bounding box of ALL projects so the ground & perimeter
+    // cover the eventual reveal area, even before everything is unlocked.
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const p of projects) {
+      if (typeof p.gridX !== 'number' || typeof p.gridY !== 'number') continue;
+      const x = p.gridX * WORLD.SCALE, z = p.gridY * WORLD.SCALE;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+    }
+    if (!isFinite(minX)) { minX = -50; maxX = 50; minZ = -50; maxZ = 50; }
+    const pad = WORLD.PERIMETER_PAD;
+    const groundW = (maxX - minX) + pad * 2;
+    const groundD = (maxZ - minZ) + pad * 2;
+    const groundCx = (minX + maxX) / 2;
+    const groundCz = (minZ + maxZ) / 2;
+
+    // Ground.
+    const groundMat = new THREE.MeshLambertMaterial({ color: WORLD.GROUND_COLOR });
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(groundW, groundD), groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    // Sit ground slightly below the platform/road tops (y=0) so platforms
+    // read as gently raised over the grass without z-fighting.
+    ground.position.set(groundCx, -0.05, groundCz);
+    ground.receiveShadow = true;
+    _scene.add(ground);
+
+    // Invisible perimeter walls — same AABB list the existing collision
+    // system already consumes. Player can't walk off the ground.
+    const halfW = groundW / 2, halfD = groundD / 2;
+    const t = 1.0;  // wall thickness (invisible — just collision)
+    _walls.push({ minX: groundCx - halfW - t, maxX: groundCx - halfW,     minZ: groundCz - halfD - t, maxZ: groundCz + halfD + t });
+    _walls.push({ minX: groundCx + halfW,     maxX: groundCx + halfW + t, minZ: groundCz - halfD - t, maxZ: groundCz + halfD + t });
+    _walls.push({ minX: groundCx - halfW - t, maxX: groundCx + halfW + t, minZ: groundCz - halfD - t, maxZ: groundCz - halfD     });
+    _walls.push({ minX: groundCx - halfW - t, maxX: groundCx + halfW + t, minZ: groundCz + halfD,     maxZ: groundCz + halfD + t });
+
+    // Initial node/road materialization. The state subscription handles
+    // newly-unlocked nodes mid-session.
+    _rebuildWorldNodes();
+    if (typeof state !== 'undefined' && state.subscribe) {
+      _worldStateUnsub = state.subscribe(() => _rebuildWorldNodes());
+    }
+  }
+
+  // Idempotently materialize every project that has just become unlocked.
+  // Called once at scene-build and again on every state change.
+  function _rebuildWorldNodes() {
+    if (_mode !== 'world' || !_scene || typeof projects === 'undefined') return;
+    const THREE = window.THREE;
+    const loader = new THREE.TextureLoader();
+
+    for (const p of projects) {
+      if (!_isProjectUnlocked(p)) continue;
+      if (_worldNodes.has(p.id)) continue;
+      if (typeof p.gridX !== 'number' || typeof p.gridY !== 'number') continue;
+
+      // Platform.
+      const x = p.gridX * WORLD.SCALE;
+      const z = p.gridY * WORLD.SCALE;
+      const geom = new THREE.BoxGeometry(WORLD.PLATFORM_W, WORLD.PLATFORM_H, WORLD.PLATFORM_D);
+      // Per-face materials so only the top face shows the poster.
+      const side = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+      const top  = new THREE.MeshLambertMaterial({ color: 0xffffff });
+      const url = (typeof CONFIG !== 'undefined' && CONFIG.IMAGE_BASE && p.image)
+        ? `${CONFIG.IMAGE_BASE}${p.image}` : '';
+      if (url) {
+        loader.load(url, (tex) => { top.map = tex; top.needsUpdate = true; });
+      }
+      // BoxGeometry material slots: +x, -x, +y(top), -y(bottom), +z, -z
+      const mats = [side, side, top, side, side, side];
+      const mesh = new THREE.Mesh(geom, mats);
+      mesh.position.set(x, WORLD.PLATFORM_RAISE, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.userData.projectId = p.id;
+      _scene.add(mesh);
+
+      // HUD label for the platform — title above it. The label itself is
+      // managed through the HUD-projection tick; we just create the element.
+      const labelEl = document.createElement('div');
+      labelEl.className = 'pg3d-nodelabel';
+      labelEl.textContent = p.title || p.id;
+      _hudLayer.appendChild(labelEl);
+
+      const anchor = new THREE.Vector3(x, WORLD.PLATFORM_RAISE + WORLD.PLATFORM_H / 2 + 1.6, z);
+      const node = { mesh, project: p, anchor, labelEl, walls: [] };
+      _worldNodes.set(p.id, node);
+
+      // Roads to any already-unlocked prereq.
+      const prereqs = Array.isArray(p.prerequisites) ? p.prerequisites : [];
+      for (const preId of prereqs) {
+        const pre = _worldNodes.get(preId);
+        if (!pre) continue;
+        _buildWorldRoad(p.id, preId);
+      }
+      // …and from any already-unlocked successor pointing at us.
+      for (const q of projects) {
+        if (q.id === p.id) continue;
+        if (!_worldNodes.has(q.id)) continue;
+        if (!q.prerequisites || !q.prerequisites.includes(p.id)) continue;
+        _buildWorldRoad(q.id, p.id);
+      }
+
+      // Build this node's wall fence. Then re-build walls on every
+      // neighbor that just gained a road to us, so their fence has a
+      // fresh doorway facing this node.
+      _buildNodeWalls(node);
+      for (const neighbor of _getConnectedNodes(p.id)) {
+        if (neighbor.project.id !== p.id) _buildNodeWalls(neighbor);
+      }
+    }
+  }
+
+  // All currently-visible nodes that connect to this project via roads.
+  // Used when (re)building wall fences so doorways align with roads.
+  function _getConnectedNodes(id) {
+    const me = _worldNodes.get(id);
+    if (!me) return [];
+    const out = [];
+    const prereqs = Array.isArray(me.project.prerequisites) ? me.project.prerequisites : [];
+    for (const preId of prereqs) {
+      const pre = _worldNodes.get(preId);
+      if (pre) out.push(pre);
+    }
+    for (const q of projects) {
+      if (q.id === id) continue;
+      const succ = _worldNodes.get(q.id);
+      if (!succ) continue;
+      if (Array.isArray(q.prerequisites) && q.prerequisites.includes(id)) out.push(succ);
+    }
+    return out;
+  }
+
+  // Pick the side a road exits through, and where along that side the
+  // doorway should be centered. Roads from the platform center toward a
+  // neighbor cross exactly one boundary of the AABB; the dominant axis
+  // (|dx| vs |dz|) tells us which side. Diagonals don't get a corner
+  // doorway — they get a doorway on the dominant side at the exact
+  // intersection point, so the doorway lines up with the road.
+  function _doorwayOnSide(node, other) {
+    const cx = node.mesh.position.x, cz = node.mesh.position.z;
+    const ox = other.mesh.position.x, oz = other.mesh.position.z;
+    const dx = ox - cx, dz = oz - cz;
+    const HALF = WORLD.PLATFORM_W / 2;
+    if (Math.abs(dx) >= Math.abs(dz)) {
+      const side = dx > 0 ? 'E' : 'W';
+      // Exit Z along the side (parametric line until x = ±HALF).
+      const exitZ = Math.abs(dx) > 0.001 ? cz + dz * (HALF / Math.abs(dx)) : cz;
+      return { side, coord: Math.max(cz - HALF + 0.5, Math.min(cz + HALF - 0.5, exitZ)) };
+    }
+    const side = dz > 0 ? 'S' : 'N';
+    const exitX = Math.abs(dz) > 0.001 ? cx + dx * (HALF / Math.abs(dz)) : cx;
+    return { side, coord: Math.max(cx - HALF + 0.5, Math.min(cx + HALF - 0.5, exitX)) };
+  }
+
+  // Build (or rebuild) the four-sided wall fence around a platform with
+  // doorways cut at every connecting-road exit. Removing old walls also
+  // drops them from the _walls collision list so the player can pass.
+  function _buildNodeWalls(node) {
+    const THREE = window.THREE;
+    // Tear down any existing walls first — they may be stale because
+    // a neighbor just unlocked and we now need a new doorway there.
+    if (node.walls && node.walls.length) {
+      const aabbsToDrop = new Set();
+      for (const w of node.walls) {
+        if (w.mesh.parent) w.mesh.parent.remove(w.mesh);
+        if (w.mesh.geometry) w.mesh.geometry.dispose();
+        if (w.mesh.material) w.mesh.material.dispose();
+        aabbsToDrop.add(w.aabb);
+      }
+      _walls = _walls.filter(a => !aabbsToDrop.has(a));
+    }
+    node.walls = [];
+
+    const connections = _getConnectedNodes(node.project.id);
+    // A node with no current connections (e.g. the spawn node before its
+    // first prereq is watched) gets no walls so the player isn't trapped
+    // inside the platform with no doorway out.
+    if (connections.length === 0) return;
+
+    const sides = { N: [], S: [], E: [], W: [] };
+    for (const other of connections) {
+      const { side, coord } = _doorwayOnSide(node, other);
+      sides[side].push(coord);
+    }
+
+    const cx = node.mesh.position.x, cz = node.mesh.position.z;
+    const HALF = WORLD.PLATFORM_W / 2;
+    const T = WORLD.WALL_THICKNESS;
+    const H = WORLD.WALL_HEIGHT;
+    const D = WORLD.DOORWAY_WIDTH;
+    const wallY = WORLD.PLATFORM_RAISE + WORLD.PLATFORM_H / 2 + H / 2;
+
+    // For each side, compute wall segments around its doorway gaps and
+    // build a thin box per segment. Walls are inset by T/2 so they sit
+    // visibly ON the platform rather than at its edge.
+    function buildSide(sideName, axisStart, axisEnd, fixed, horizontal) {
+      const sorted = [...sides[sideName]].sort((a, b) => a - b);
+      // Compute segments between gaps.
+      let segs = [], cursor = axisStart;
+      for (const dCenter of sorted) {
+        const dStart = Math.max(axisStart, dCenter - D / 2);
+        const dEnd   = Math.min(axisEnd,   dCenter + D / 2);
+        if (dStart > cursor + 0.05) segs.push([cursor, dStart]);
+        cursor = Math.max(cursor, dEnd);
+      }
+      if (cursor < axisEnd - 0.05) segs.push([cursor, axisEnd]);
+
+      for (const [s, e] of segs) {
+        const len = e - s;
+        if (len <= 0.1) continue;
+        let mx, mz, sx, sz;
+        if (horizontal) {
+          mx = (s + e) / 2;
+          mz = (sideName === 'N') ? (fixed + T / 2) : (fixed - T / 2);
+          sx = len; sz = T;
+        } else {
+          mz = (s + e) / 2;
+          mx = (sideName === 'W') ? (fixed + T / 2) : (fixed - T / 2);
+          sx = T; sz = len;
+        }
+        const geom = new THREE.BoxGeometry(sx, H, sz);
+        const mat = new THREE.MeshLambertMaterial({ color: WORLD.WALL_COLOR });
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.position.set(mx, wallY, mz);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        _scene.add(mesh);
+        const aabb = {
+          minX: mx - sx / 2, maxX: mx + sx / 2,
+          minZ: mz - sz / 2, maxZ: mz + sz / 2
+        };
+        _walls.push(aabb);
+        node.walls.push({ mesh, aabb });
+      }
+    }
+
+    buildSide('N', cx - HALF, cx + HALF, cz - HALF, true);
+    buildSide('S', cx - HALF, cx + HALF, cz + HALF, true);
+    buildSide('W', cz - HALF, cz + HALF, cx - HALF, false);
+    buildSide('E', cz - HALF, cz + HALF, cx + HALF, false);
+  }
+
+  function _buildWorldRoad(aId, bId) {
+    const a = _worldNodes.get(aId);
+    const b = _worldNodes.get(bId);
+    if (!a || !b) return;
+    const key = aId < bId ? `${aId}→${bId}` : `${bId}→${aId}`;
+    if (_worldRoads.has(key)) return;
+    const THREE = window.THREE;
+    const ax = a.mesh.position.x, az = a.mesh.position.z;
+    const bx = b.mesh.position.x, bz = b.mesh.position.z;
+    const dx = bx - ax, dz = bz - az;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.01) return;
+    const angle = Math.atan2(dx, dz);
+
+    // Road runs center-to-center so the walkable strip from platform A
+    // smoothly meets the walkable strip from platform B with no gap.
+    // Its top sits ~2cm BELOW the platform top (via ROAD_RAISE) so the
+    // platform poster always renders on top inside the platform AABB
+    // without polygonOffset (which was clipping the road at the camera's
+    // far plane and made distant roads vanish).
+    const mat = new THREE.MeshLambertMaterial({ color: WORLD.ROAD_COLOR });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(WORLD.ROAD_W, WORLD.ROAD_H, len), mat);
+    mesh.position.set((ax + bx) / 2, WORLD.ROAD_RAISE, (az + bz) / 2);
+    mesh.rotation.y = angle;
+    mesh.receiveShadow = true;
+    _scene.add(mesh);
+    _worldRoads.set(key, mesh);
+
+    // Walkable corridor is the full center-to-center rectangle so stepping
+    // from inside a platform onto its connecting road is continuous.
+    _walkableRoads.push({
+      cx: (ax + bx) / 2,
+      cz: (az + bz) / 2,
+      cosA: Math.cos(angle),
+      sinA: Math.sin(angle),
+      halfW: WORLD.ROAD_W / 2,
+      halfL: len / 2
+    });
+  }
+
+  // Point-in-region test: world position (x, z) is walkable iff it's
+  // inside ANY unlocked node's AABB OR ANY road's rotated rectangle.
+  // The ground outside nodes/roads is not walkable in /world.
+  function _isInWalkable(x, z) {
+    // Node platforms (axis-aligned).
+    const halfP = WORLD.PLATFORM_W / 2;
+    for (const node of _worldNodes.values()) {
+      const dx = x - node.mesh.position.x;
+      const dz = z - node.mesh.position.z;
+      if (Math.abs(dx) <= halfP && Math.abs(dz) <= halfP) return true;
+    }
+    // Roads (rotated rectangles). World→local rotation by -angle:
+    //   local_x =  dx * cosA - dz * sinA
+    //   local_z =  dx * sinA + dz * cosA
+    for (const r of _walkableRoads) {
+      const dx = x - r.cx;
+      const dz = z - r.cz;
+      const lx = dx * r.cosA - dz * r.sinA;
+      const lz = dx * r.sinA + dz * r.cosA;
+      if (Math.abs(lx) <= r.halfW && Math.abs(lz) <= r.halfL) return true;
+    }
+    return false;
+  }
+
+  // ── HUD projection (call each tick) ──
+
+  function _projectAnchor(anchor) {
+    if (!_camera || !_viewport) return null;
+    const v = anchor.clone().project(_camera);
+    if (v.z > 1) return null;            // behind camera
+    return {
+      x: (v.x * 0.5 + 0.5) * _viewport.clientWidth,
+      y: (-v.y * 0.5 + 0.5) * _viewport.clientHeight,
+      depth: v.z
+    };
+  }
+
+  function _placeHudEl(el, anchor, yOffset) {
+    const a = anchor.clone();
+    if (typeof yOffset === 'number') a.y += yOffset;
+    const p = _projectAnchor(a);
+    if (!p) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    el.style.transform = `translate(-50%, -100%) translate(${Math.round(p.x)}px, ${Math.round(p.y)}px)`;
+  }
+
+  function _tickHUD(now) {
+    if (_mode !== 'world' || !_hudLayer) return;
+
+    // Node title labels.
+    for (const node of _worldNodes.values()) {
+      _placeHudEl(node.labelEl, node.anchor, 0);
+    }
+
+    // Active-node "click to view" prompt — re-evaluate nearest node.
+    let nearest = null, nearestDist = Infinity;
+    const px = _player.position.x, pz = _player.position.z;
+    for (const node of _worldNodes.values()) {
+      const dx = node.mesh.position.x - px;
+      const dz = node.mesh.position.z - pz;
+      const d = Math.hypot(dx, dz);
+      if (d < nearestDist) { nearest = node; nearestDist = d; }
+    }
+    if (nearest && nearestDist <= WORLD.PROXIMITY) {
+      if (_activeNode !== nearest.project) {
+        _activeNode = nearest.project;
+        if (!_activePromptEl) {
+          _activePromptEl = document.createElement('div');
+          _activePromptEl.className = 'pg3d-prompt';
+          _activePromptEl.addEventListener('click', _openActiveNode);
+          _hudLayer.appendChild(_activePromptEl);
+        }
+        _activePromptEl.innerHTML = `📺 Click to view <em></em>`;
+        _activePromptEl.querySelector('em').textContent = nearest.project.title || nearest.project.id;
+      }
+      _placeHudEl(_activePromptEl, nearest.anchor, 0.6);
+    } else {
+      _activeNode = null;
+      if (_activePromptEl) _activePromptEl.style.display = 'none';
+    }
+
+    // Remote-player tags + bubbles.
+    for (const rp of _remotePlayers.values()) {
+      const headY = 1.6;     // approx top-of-head Y in local rig space
+      const anchor = new THREE.Vector3(rp.rig.position.x, headY + 0.4, rp.rig.position.z);
+      if (rp.nameEl) _placeHudEl(rp.nameEl, anchor, 0);
+      let stack = 0.4;
+      for (const b of rp.bubbleEls) {
+        stack += 0.5;
+        _placeHudEl(b, anchor, stack);
+      }
+    }
+  }
+
+  function _openActiveNode() {
+    if (!_activeNode) return;
+    if (_projectClickHandler) _projectClickHandler(_activeNode);
+    else if (typeof showPopup === 'function') showPopup(_activeNode);
+  }
+
+  // ── remote player API ──
+
+  function addRemotePlayer(id, character, username, x, z, yaw) {
+    if (!_scene || !window.THREE) return;
+    if (_remotePlayers.has(id)) return;
+    const rig = _buildPlayer(character || defaultCharacter());
+    rig.position.set(x || 0, 0, z || 0);
+    rig.rotation.y = yaw || 0;
+    _scene.add(rig);
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'pg3d-nametag';
+    nameEl.textContent = username || 'Anon';
+    if (_hudLayer) _hudLayer.appendChild(nameEl);
+
+    _remotePlayers.set(id, {
+      rig,
+      target: { x: x || 0, z: z || 0, yaw: yaw || 0, walking: false },
+      current: { x: x || 0, z: z || 0, yaw: yaw || 0 },
+      stepClock: 0,
+      nameEl,
+      bubbleEls: [],
+      emoteUntil: 0
+    });
+  }
+
+  function updateRemotePlayer(id, x, z, yaw, walking) {
+    const rp = _remotePlayers.get(id);
+    if (!rp) return;
+    rp.target.x = x;
+    rp.target.z = z;
+    rp.target.yaw = yaw;
+    rp.target.walking = !!walking;
+  }
+
+  function removeRemotePlayer(id) {
+    const rp = _remotePlayers.get(id);
+    if (!rp) return;
+    if (rp.rig.parent) rp.rig.parent.remove(rp.rig);
+    rp.rig.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach(m => { if (m.map) m.map.dispose(); m.dispose(); });
+      }
+    });
+    if (rp.nameEl && rp.nameEl.parentNode) rp.nameEl.parentNode.removeChild(rp.nameEl);
+    for (const b of rp.bubbleEls) if (b.parentNode) b.parentNode.removeChild(b);
+    _remotePlayers.delete(id);
+  }
+
+  function showRemoteChat(id, username, text) {
+    const rp = _remotePlayers.get(id);
+    if (!rp || !_hudLayer) return;
+    const el = document.createElement('div');
+    el.className = 'pg3d-bubble';
+    el.textContent = text;
+    _hudLayer.appendChild(el);
+    rp.bubbleEls.push(el);
+    setTimeout(() => {
+      if (!el.parentNode) return;
+      el.classList.add('fading');
+      setTimeout(() => {
+        if (el.parentNode) el.parentNode.removeChild(el);
+        rp.bubbleEls = rp.bubbleEls.filter(b => b !== el);
+      }, 600);
+    }, 3500);
+  }
+
+  function playRemoteEmote(id, kind) {
+    const rp = _remotePlayers.get(id);
+    if (!rp || kind !== 'wave') return;
+    rp.emoteUntil = performance.now() + WORLD.EMOTE_DURATION_MS;
+  }
+
+  function playLocalEmote(kind) {
+    if (kind !== 'wave') return;
+    _localEmoteUntil = performance.now() + WORLD.EMOTE_DURATION_MS;
+  }
+
+  // Per-tick interpolation + walking animation for remote players.
+  function _tickRemotePlayers(dt, now) {
+    for (const rp of _remotePlayers.values()) {
+      const k = Math.min(1, dt * WORLD.REMOTE_LERP_RATE);
+      rp.current.x += (rp.target.x - rp.current.x) * k;
+      rp.current.z += (rp.target.z - rp.current.z) * k;
+      rp.current.yaw = _lerpAngle(rp.current.yaw, rp.target.yaw, k);
+      rp.rig.position.x = rp.current.x;
+      rp.rig.position.z = rp.current.z;
+      rp.rig.rotation.y = rp.current.yaw;
+      const bones = rp.rig.userData.bones;
+      if (!bones) continue;
+      if (rp.target.walking) {
+        rp.stepClock += dt;
+        const phase = (rp.stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
+        const swing = Math.sin(phase) * 0.6;
+        bones.leftLeg.rotation.x = swing;
+        bones.rightLeg.rotation.x = -swing;
+        bones.leftArm.rotation.x = -swing * 0.7;
+        bones.rightArm.rotation.x = swing * 0.7;
+        bones.body.position.y = Math.abs(Math.sin(phase)) * 0.04;
+      } else {
+        rp.stepClock = 0;
+        const damp = Math.min(1, dt * 8);
+        bones.leftLeg.rotation.x  *= 1 - damp;
+        bones.rightLeg.rotation.x *= 1 - damp;
+        bones.leftArm.rotation.x  *= 1 - damp;
+        bones.rightArm.rotation.x *= 1 - damp;
+        bones.body.position.y *= 1 - damp;
+      }
+      // Wave emote — overrides right arm pose while active.
+      if (rp.emoteUntil > now && bones.rightArm) {
+        const t = (now - (rp.emoteUntil - WORLD.EMOTE_DURATION_MS)) / 200;
+        bones.rightArm.rotation.x = -Math.PI * 0.9;
+        bones.rightArm.rotation.z = Math.sin(t) * 0.4;
+      } else if (bones.rightArm) {
+        bones.rightArm.rotation.z = 0;
+      }
+    }
+  }
+
+  // ── public world-only getters / actions ──
+
+  function getLocalState() {
+    if (!_player) return null;
+    return {
+      x: _player.position.x,
+      z: _player.position.z,
+      yaw: _player.rotation.y,
+      // Walking = local stepClock advanced recently (set in the main tick).
+      walking: !!_localWalking
+    };
+  }
+
+  function getActiveNode() { return _activeNode; }
+  function setProjectClickHandler(fn) { _projectClickHandler = fn; }
+
+  return {
+    init, initWorld, destroy, setCharacter, defaultCharacter,
+    // World/multiplayer surface — no-ops in home mode.
+    addRemotePlayer, updateRemotePlayer, removeRemotePlayer,
+    showRemoteChat, playRemoteEmote, playLocalEmote,
+    getLocalState, getActiveNode, setProjectClickHandler
+  };
 })();

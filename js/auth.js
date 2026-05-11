@@ -14,15 +14,47 @@ function decodeJwtPayload(token) {
   }
 }
 
+// Returns true iff the token decodes and isn't past its `exp` claim. Used by
+// isLoggedIn so a stale token left in localStorage from a prior session
+// doesn't fool the SPA into routing the user to / instead of /login.
+function isTokenValid(token) {
+  if (!token) return false;
+  const payload = decodeJwtPayload(token);
+  if (!payload) return false;
+  if (typeof payload.exp === 'number') {
+    // exp is seconds-since-epoch per RFC 7519; allow a 30s skew.
+    if (Date.now() / 1000 > payload.exp + 30) return false;
+  }
+  return true;
+}
+
 const Auth = {
-  getToken: () => localStorage.getItem("mcu_token"),
+  getToken: () => {
+    const t = localStorage.getItem("mcu_token");
+    if (!t) return null;
+    if (!isTokenValid(t)) {
+      localStorage.removeItem("mcu_token");
+      return null;
+    }
+    return t;
+  },
   getUsername: () => localStorage.getItem("mcu_username"),
   setToken: (t) => localStorage.setItem("mcu_token", t),
   clearToken: () => localStorage.removeItem("mcu_token"),
-  isLoggedIn: () => !!localStorage.getItem("mcu_token"),
+  isLoggedIn: () => {
+    const t = localStorage.getItem("mcu_token");
+    if (!t) return false;
+    if (!isTokenValid(t)) {
+      // Self-clean stale tokens so subsequent calls don't keep checking
+      // the same dead JWT and so logout-style cleanup is unnecessary.
+      localStorage.removeItem("mcu_token");
+      return false;
+    }
+    return true;
+  },
   isAdmin: () => {
     const token = localStorage.getItem("mcu_token");
-    if (!token) return false;
+    if (!token || !isTokenValid(token)) return false;
     const payload = decodeJwtPayload(token);
     return !!(payload && payload.isAdmin);
   },

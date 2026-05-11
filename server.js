@@ -13,10 +13,12 @@ require('dotenv').config();
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 const express = require('express');
+const http = require('http');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
+const { Server: SocketIOServer } = require('socket.io');
 
 const app = express();
 
@@ -37,9 +39,14 @@ app.use(express.json({ limit: '64kb' }));
 
 // SPA routes — BEFORE static middleware so they take priority over index.html
 const spaFile = path.join(__dirname, 'spa.html');
-['/', '/map', '/login', '/profile', '/characters', '/home', '/admin'].forEach(route => {
+['/', '/map', '/login', '/profile', '/characters', '/home', '/admin', '/world'].forEach(route => {
   app.get(route, (req, res) => res.sendFile(spaFile));
 });
+// Parameterized SPA routes — `/friend/:username` and its sub-tabs all
+// serve spa.html so the client-side router resolves the username.
+app.get(/^\/friend\/[^/]+(\/(map|home|profile))?$/, (req, res) => res.sendFile(spaFile));
+// /home/edit also goes through the SPA shell.
+app.get('/home/edit', (req, res) => res.sendFile(spaFile));
 
 // Static serving — scoped allowlist. Previously `express.static('.')` exposed
 // server.js, routes/, models/, middleware/, .env, package.json, etc. over HTTP.
@@ -142,5 +149,15 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: 'Server error' });
 });
 
+// Wrap the Express app in a Node HTTP server so Socket.IO can share the
+// same listener. /world's real-time presence + chat + emotes ride on this.
+const server = http.createServer(app);
+const io = new SocketIOServer(server, {
+  // Same-origin only; /world is auth-gated and never expected to be
+  // embedded by another site. CORS would only matter for cross-origin.
+  cors: { origin: false }
+});
+require('./routes/world-socket')(io);
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));

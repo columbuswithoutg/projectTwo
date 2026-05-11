@@ -212,7 +212,6 @@ body {
    SHARED: GOLD BUTTONS
 ====================== */
 .popup-action.watch-again,
-.friend-view-banner button,
 .memory-view-btn {
   background: var(--gold-gradient);
   color: #000;
@@ -1558,46 +1557,179 @@ body.auth-page {
   margin: 4px 0;
 }
 
-/* Friend progress view header */
-.friend-view-banner {
-  height: var(--header-height);
+/* ── /friend/:username header ──
+   The dedicated friend routes own their entire chrome — no host view's
+   #header is ever rendered, so the friend header IS the top of the page
+   (no fixed positioning needed; stays in normal flow). */
+.friend-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
+  gap: 12px;
+  height: var(--header-height);
+  padding: 0 12px;
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+  padding-top: env(safe-area-inset-top);
   background: linear-gradient(180deg, var(--color-dark-gradient-top) 0%, var(--color-bg) 100%);
   border-bottom: 1px solid var(--gold-025);
   box-shadow: 0 2px 20px rgba(0, 0, 0, 0.6);
   color: #fff;
-  z-index: 999;
+  position: relative;
+  z-index: 5;
 }
-
-.friend-view-banner h1 {
-  margin: 0;
+.friend-header-text {
   font-family: var(--font-display);
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 0;
 }
-
-.friend-view-banner h1 strong {
+.friend-header-name {
   color: var(--gold);
+  font-weight: 700;
+  text-decoration: none;
 }
-
-.friend-view-banner button {
-  padding: 8px 16px;
+.friend-header-name:hover { text-decoration: underline; }
+.friend-header-tabs {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.friend-header-tab {
+  padding: 6px 12px;
   border-radius: 8px;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.friend-header-tab:hover { background: rgba(201, 162, 39, 0.12); }
+.friend-header-tab.active {
+  background: var(--gold-gradient);
+  color: #000;
+  border-color: var(--gold);
+}
+.friend-header-back {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
   font-family: var(--font-display);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 600;
   letter-spacing: 0.04em;
+}
+.friend-header-back:hover { background: rgba(255, 255, 255, 0.14); }
+
+/* 404 card shown when /friend/:username can't be resolved (no such user
+   or not friends with them). */
+.friend-404 {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #07080f;
+}
+.friend-404-card {
+  max-width: 420px;
+  background: rgba(20, 22, 36, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  padding: 28px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+.friend-404-card h2 {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: 20px;
+  color: var(--color-text-warm);
+}
+.friend-404-card p {
+  margin: 0 0 18px;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Friend profile tab — minimal read-only card. */
+.friend-profile-body {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 32px 16px;
+}
+.friend-profile-card {
+  max-width: 380px;
+  width: 100%;
+  background: rgba(20, 22, 36, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 24px;
+  text-align: center;
+  color: #fff;
+}
+.friend-profile-avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  margin: 0 auto 14px;
+  display: block;
+  object-fit: cover;
+  border: 2px solid var(--gold-025);
+  background: rgba(255, 255, 255, 0.06);
+}
+.friend-profile-initials {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--gold);
+}
+.friend-profile-name {
+  margin: 0 0 18px;
+  font-family: var(--font-display);
+  font-size: 22px;
+}
+.friend-profile-stats {
+  display: flex;
+  justify-content: space-around;
+  gap: 12px;
+}
+.friend-profile-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.friend-profile-stat strong {
+  font-family: var(--font-display);
+  font-size: 22px;
+  color: var(--gold);
+}
+.friend-profile-stat span {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
 }
 
 /* ======================
@@ -2733,25 +2865,24 @@ body.auth-page {
     font-size: 1rem;
   }
 
-  /* Friend view banner */
-  .friend-view-banner {
-    padding: 0 16px;
-    font-size: 0.9rem;
-    gap: 10px;
-  }
+  /* Friend header — tighten on small screens. The "Viewing X's progress"
+     label takes its name only at narrow widths to make room for the tabs. */
+  .friend-header { gap: 6px; padding: 0 8px; }
+  .friend-header-text { font-size: 0.75rem; }
+  .friend-header-tab { padding: 5px 9px; font-size: 0.7rem; }
+  .friend-header-back { padding: 5px 9px; font-size: 0.7rem; }
 
-  .friend-view-banner h1 {
-    font-size: 0.95rem;
-    margin: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  /* World chat row — lift above the joystick on mobile so they don't
+     overlap. The joystick sits ~28px from the bottom; bump the chat
+     row higher and slim the input a touch. */
+  .world-chat-row {
+    bottom: auto;
+    top: calc(var(--header-height) + env(safe-area-inset-top) + 8px);
+    width: calc(100vw - 16px);
+    padding: 0 8px;
   }
-
-  .friend-view-banner button {
-    padding: 10px 16px;
-    font-size: 0.9rem;
-  }
+  .pg3d-chat { height: 36px; font-size: 13px; }
+  .pg3d-emote { width: 36px; height: 36px; font-size: 18px; }
 
   /* Memories */
   .memory-item img,
@@ -3923,6 +4054,154 @@ body.fight-active .flow-wrapper {
   width: 100% !important;
   height: 100% !important;
 }
+
+/* HUD overlay — name tags, chat bubbles, node titles, "click to view"
+   prompts. Children are positioned via per-frame projection in the
+   playground tick: transform: translate(-50%, -100%) translate(px, py). */
+.pg3d-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.pg3d-hud > * {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+.pg3d-nametag {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: rgba(20, 22, 36, 0.78);
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.pg3d-bubble {
+  max-width: 220px;
+  font-size: 13px;
+  color: #fff;
+  background: rgba(15, 17, 28, 0.92);
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(201, 162, 39, 0.4);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  word-wrap: break-word;
+  text-align: center;
+  transition: opacity 0.5s ease;
+}
+.pg3d-bubble.fading { opacity: 0; }
+.pg3d-nodelabel {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.55);
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+.pg3d-prompt {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  color: #000;
+  background: var(--gold-gradient);
+  padding: 8px 14px;
+  border-radius: 999px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+  pointer-events: auto;
+  white-space: nowrap;
+}
+.pg3d-prompt em { font-style: normal; font-weight: 600; }
+.pg3d-prompt:hover { filter: brightness(1.1); }
+
+/* World view header + chat row. Header is the same gradient style as the
+   site header; chat row is pinned bottom-center, above any joystick. */
+.world-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--header-height);
+  padding: 0 12px;
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+  padding-top: env(safe-area-inset-top);
+  background: linear-gradient(180deg, var(--color-dark-gradient-top) 0%, var(--color-bg) 100%);
+  border-bottom: 1px solid var(--gold-025);
+  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.6);
+  color: #fff;
+  position: relative;
+  z-index: 5;
+}
+#world-back {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+#world-back:hover { background: rgba(201, 162, 39, 0.12); }
+.world-title {
+  flex: 1;
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  margin: 0;
+  text-align: center;
+  color: var(--color-text-warm);
+}
+.world-header-spacer { width: 60px; flex-shrink: 0; }
+
+.world-chat-row {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  z-index: 6;
+  padding: 0 12px;
+  width: min(560px, calc(100vw - 32px));
+}
+.pg3d-chat {
+  flex: 1;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(15, 17, 28, 0.88);
+  color: #fff;
+  font-size: 14px;
+  outline: none;
+}
+.pg3d-chat::placeholder { color: rgba(255, 255, 255, 0.4); }
+.pg3d-chat:focus { border-color: var(--color-primary); }
+.pg3d-emote {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(15, 17, 28, 0.88);
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.pg3d-emote:hover { background: rgba(201, 162, 39, 0.18); }
 
 /* Virtual joystick — fixed bottom-center, portrait-friendly. */
 .pg-joy {
