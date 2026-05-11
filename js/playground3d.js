@@ -684,6 +684,9 @@ const Playground3D = (() => {
     let lastMouse = { x: 0, y: 0 };
     function onMouseDown(e) {
       if (e.button !== 0) return;
+      // The joystick's pointerdown handler may have just activated and
+      // captured this pointer for itself — don't double-engage the camera.
+      if (activeJoyPointerId !== null) return;
       mouseDragging = true;
       lastMouse.x = e.clientX;
       lastMouse.y = e.clientY;
@@ -729,10 +732,14 @@ const Playground3D = (() => {
     joyEl.appendChild(stickEl);
     viewport.appendChild(joyEl);
 
-    // Joystick uses Pointer Events so a single code path handles mouse,
-    // touch, and pen — covers real mobile + DevTools mobile emulation
-    // (where touch events often don't fire unless touch emulation is
-    // explicitly toggled, but pointerdown ALWAYS fires for mouse clicks).
+    // Joystick uses Pointer Events bound to the VIEWPORT (not joyEl).
+    // joyEl-bound listeners were silently failing on Chrome DevTools
+    // mobile emulator — probably a stacking-context / event-target quirk
+    // we can't diagnose remotely. Viewport-level is guaranteed to receive
+    // every pointer event in its bounds; we hit-test the click against
+    // joyEl.getBoundingClientRect() ourselves to decide if it's a
+    // joystick interaction or should fall through to the camera-orbit
+    // handler.
     let activeJoyPointerId = null;
     function joyMovePtr(e) {
       let dx = e.clientX - joyCenter.x;
@@ -742,34 +749,45 @@ const Playground3D = (() => {
       stickEl.style.transform = `translate(${dx}px, ${dy}px)`;
       joyAxis = { x: dx / joyRadius, y: dy / joyRadius };
     }
-    joyEl.addEventListener('pointerdown', (e) => {
+    function onJoyPointerDown(e) {
       if (activeJoyPointerId !== null) return;
+      const rect = joyEl.getBoundingClientRect();
+      // Joystick is hidden on desktop (display: none) — width=0 means
+      // we shouldn't hit-test or activate it.
+      if (rect.width < 1) return;
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top  + rect.height / 2;
+      const dx = e.clientX - cx;
+      const dy = e.clientY - cy;
+      if (Math.hypot(dx, dy) > rect.width / 2) return;
       e.preventDefault();
       e.stopPropagation();
       activeJoyPointerId = e.pointerId;
-      try { joyEl.setPointerCapture(e.pointerId); } catch (_) {}
+      try { viewport.setPointerCapture(e.pointerId); } catch (_) {}
       joyActive = true;
-      const rect = joyEl.getBoundingClientRect();
-      joyCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      joyCenter = { x: cx, y: cy };
       joyRadius = rect.width / 2;
-      try { console.log('[Playground3D] joyDown type=' + e.pointerType + ' id=' + e.pointerId + ' rect=' + rect.width.toFixed(0) + 'x' + rect.height.toFixed(0)); } catch (_) {}
+      try { console.log('[Playground3D] joyDown ptr=' + e.pointerType + ' id=' + e.pointerId + ' offset=' + dx.toFixed(0) + ',' + dy.toFixed(0)); } catch (_) {}
       joyMovePtr(e);
-    });
-    joyEl.addEventListener('pointermove', (e) => {
+    }
+    function onJoyPointerMove(e) {
       if (e.pointerId !== activeJoyPointerId) return;
       joyMovePtr(e);
-    });
-    function _joyPointerEnd(e) {
+    }
+    function onJoyPointerEnd(e) {
       if (e.pointerId !== activeJoyPointerId) return;
       activeJoyPointerId = null;
       joyActive = false;
       joyAxis = { x: 0, y: 0 };
       if (stickEl) stickEl.style.transform = 'translate(0,0)';
-      try { joyEl.releasePointerCapture(e.pointerId); } catch (_) {}
+      try { viewport.releasePointerCapture(e.pointerId); } catch (_) {}
       try { console.log('[Playground3D] joyUp'); } catch (_) {}
     }
-    joyEl.addEventListener('pointerup', _joyPointerEnd);
-    joyEl.addEventListener('pointercancel', _joyPointerEnd);
+    viewport.addEventListener('pointerdown', onJoyPointerDown);
+    viewport.addEventListener('pointermove', onJoyPointerMove);
+    viewport.addEventListener('pointerup', onJoyPointerEnd);
+    viewport.addEventListener('pointercancel', onJoyPointerEnd);
+    try { console.log('[Playground3D] joystick listeners attached'); } catch (_) {}
 
     function joyStart(t) {
       activeJoyTouchId = t.identifier;
@@ -803,6 +821,10 @@ const Playground3D = (() => {
         const hit = joyEl && t0 && joyEl.contains(t0.target);
         console.log('[Playground3D] touchstart n=' + e.changedTouches.length + ' target=' + tag + ' joyHit=' + hit);
       } catch (_) {}
+      // The pointerdown path may have just activated the joystick — don't
+      // also engage the touch-based joystick branch or the camera-orbit
+      // drag, otherwise both would race the same finger.
+      if (activeJoyPointerId !== null) return;
       for (const t of e.changedTouches) {
         // Joystick gets priority hit-test.
         if (joyEl && joyEl.contains(t.target)) {
