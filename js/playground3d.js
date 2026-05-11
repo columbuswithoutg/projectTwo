@@ -716,19 +716,60 @@ const Playground3D = (() => {
     let activeCamTouchId = null;
     let lastCamTouch = { x: 0, y: 0 };
 
-    // Broaden detection — some mobile browsers / DevTools mobile emulation
-    // don't set 'ontouchstart' on window but do report maxTouchPoints.
+    // Always create the joystick element. CSS gates visibility via a
+    // (pointer: coarse) / narrow-viewport media query so it shows on
+    // mobile and stays out of the way on desktop.
     const hasTouch = ('ontouchstart' in window) ||
       (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0);
     try { console.log('[Playground3D] touch=' + hasTouch); } catch (_) {}
-    if (hasTouch) {
-      joyEl = document.createElement('div');
-      joyEl.className = 'pg-joy';
-      stickEl = document.createElement('div');
-      stickEl.className = 'pg-joy-stick';
-      joyEl.appendChild(stickEl);
-      viewport.appendChild(joyEl);
+    joyEl = document.createElement('div');
+    joyEl.className = 'pg-joy';
+    stickEl = document.createElement('div');
+    stickEl.className = 'pg-joy-stick';
+    joyEl.appendChild(stickEl);
+    viewport.appendChild(joyEl);
+
+    // Joystick uses Pointer Events so a single code path handles mouse,
+    // touch, and pen — covers real mobile + DevTools mobile emulation
+    // (where touch events often don't fire unless touch emulation is
+    // explicitly toggled, but pointerdown ALWAYS fires for mouse clicks).
+    let activeJoyPointerId = null;
+    function joyMovePtr(e) {
+      let dx = e.clientX - joyCenter.x;
+      let dy = e.clientY - joyCenter.y;
+      const d = Math.hypot(dx, dy);
+      if (d > joyRadius) { dx = dx / d * joyRadius; dy = dy / d * joyRadius; }
+      stickEl.style.transform = `translate(${dx}px, ${dy}px)`;
+      joyAxis = { x: dx / joyRadius, y: dy / joyRadius };
     }
+    joyEl.addEventListener('pointerdown', (e) => {
+      if (activeJoyPointerId !== null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      activeJoyPointerId = e.pointerId;
+      try { joyEl.setPointerCapture(e.pointerId); } catch (_) {}
+      joyActive = true;
+      const rect = joyEl.getBoundingClientRect();
+      joyCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      joyRadius = rect.width / 2;
+      try { console.log('[Playground3D] joyDown type=' + e.pointerType + ' id=' + e.pointerId + ' rect=' + rect.width.toFixed(0) + 'x' + rect.height.toFixed(0)); } catch (_) {}
+      joyMovePtr(e);
+    });
+    joyEl.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== activeJoyPointerId) return;
+      joyMovePtr(e);
+    });
+    function _joyPointerEnd(e) {
+      if (e.pointerId !== activeJoyPointerId) return;
+      activeJoyPointerId = null;
+      joyActive = false;
+      joyAxis = { x: 0, y: 0 };
+      if (stickEl) stickEl.style.transform = 'translate(0,0)';
+      try { joyEl.releasePointerCapture(e.pointerId); } catch (_) {}
+      try { console.log('[Playground3D] joyUp'); } catch (_) {}
+    }
+    joyEl.addEventListener('pointerup', _joyPointerEnd);
+    joyEl.addEventListener('pointercancel', _joyPointerEnd);
 
     function joyStart(t) {
       activeJoyTouchId = t.identifier;
@@ -736,6 +777,7 @@ const Playground3D = (() => {
       const rect = joyEl.getBoundingClientRect();
       joyCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
       joyRadius = rect.width / 2;
+      try { console.log('[Playground3D] joyStart id=' + t.identifier + ' rect=' + rect.width + 'x' + rect.height + ' center=' + joyCenter.x.toFixed(0) + ',' + joyCenter.y.toFixed(0)); } catch (_) {}
       joyMove(t);
     }
     function joyMove(t) {
@@ -751,9 +793,16 @@ const Playground3D = (() => {
       joyActive = false;
       joyAxis = { x: 0, y: 0 };
       if (stickEl) stickEl.style.transform = 'translate(0,0)';
+      try { console.log('[Playground3D] joyEnd'); } catch (_) {}
     }
 
     function onTouchStart(e) {
+      try {
+        const t0 = e.changedTouches[0];
+        const tag = t0 && t0.target && (t0.target.className || t0.target.tagName);
+        const hit = joyEl && t0 && joyEl.contains(t0.target);
+        console.log('[Playground3D] touchstart n=' + e.changedTouches.length + ' target=' + tag + ' joyHit=' + hit);
+      } catch (_) {}
       for (const t of e.changedTouches) {
         // Joystick gets priority hit-test.
         if (joyEl && joyEl.contains(t.target)) {
@@ -796,12 +845,12 @@ const Playground3D = (() => {
         }
       }
     }
-    if (joyEl) {
-      viewport.addEventListener('touchstart', onTouchStart, { passive: false });
-      window.addEventListener('touchmove', onTouchMove, { passive: false });
-      window.addEventListener('touchend', onTouchEnd);
-      window.addEventListener('touchcancel', onTouchEnd);
-    }
+    // Touch listeners are always attached. Devices without touch input
+    // simply never dispatch these events; no overhead.
+    viewport.addEventListener('touchstart', onTouchStart, { passive: false });
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd);
+    window.addEventListener('touchcancel', onTouchEnd);
 
     function getAxis() {
       if (joyActive) return { x: joyAxis.x, y: joyAxis.y };
@@ -835,12 +884,10 @@ const Playground3D = (() => {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       viewport.removeEventListener('wheel', onWheel);
-      if (joyEl) {
-        viewport.removeEventListener('touchstart', onTouchStart);
-        window.removeEventListener('touchmove', onTouchMove);
-        window.removeEventListener('touchend', onTouchEnd);
-        window.removeEventListener('touchcancel', onTouchEnd);
-      }
+      viewport.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchEnd);
     }
 
     return { getAxis, isOrbiting, consumeJump, detach };
@@ -1427,11 +1474,11 @@ const Playground3D = (() => {
 
   // ── remote player API ──
 
-  function addRemotePlayer(id, character, username, x, z, yaw) {
+  function addRemotePlayer(id, character, username, x, z, yaw, y) {
     if (!_scene || !window.THREE) return;
     if (_remotePlayers.has(id)) return;
     const rig = _buildPlayer(character || defaultCharacter());
-    rig.position.set(x || 0, 0, z || 0);
+    rig.position.set(x || 0, y || 0, z || 0);
     rig.rotation.y = yaw || 0;
     _scene.add(rig);
 
@@ -1442,8 +1489,8 @@ const Playground3D = (() => {
 
     _remotePlayers.set(id, {
       rig,
-      target: { x: x || 0, z: z || 0, yaw: yaw || 0, walking: false },
-      current: { x: x || 0, z: z || 0, yaw: yaw || 0 },
+      target: { x: x || 0, y: y || 0, z: z || 0, yaw: yaw || 0, walking: false },
+      current: { x: x || 0, y: y || 0, z: z || 0, yaw: yaw || 0 },
       stepClock: 0,
       nameEl,
       bubbleEls: [],
@@ -1451,11 +1498,12 @@ const Playground3D = (() => {
     });
   }
 
-  function updateRemotePlayer(id, x, z, yaw, walking) {
+  function updateRemotePlayer(id, x, z, yaw, walking, y) {
     const rp = _remotePlayers.get(id);
     if (!rp) return;
     rp.target.x = x;
     rp.target.z = z;
+    rp.target.y = (typeof y === 'number' && Number.isFinite(y)) ? y : 0;
     rp.target.yaw = yaw;
     rp.target.walking = !!walking;
   }
@@ -1511,8 +1559,10 @@ const Playground3D = (() => {
       const k = Math.min(1, dt * WORLD.REMOTE_LERP_RATE);
       rp.current.x += (rp.target.x - rp.current.x) * k;
       rp.current.z += (rp.target.z - rp.current.z) * k;
+      rp.current.y = (rp.current.y || 0) + (((rp.target.y || 0)) - (rp.current.y || 0)) * k;
       rp.current.yaw = _lerpAngle(rp.current.yaw, rp.target.yaw, k);
       rp.rig.position.x = rp.current.x;
+      rp.rig.position.y = rp.current.y;
       rp.rig.position.z = rp.current.z;
       rp.rig.rotation.y = rp.current.yaw;
       const bones = rp.rig.userData.bones;
@@ -1552,6 +1602,7 @@ const Playground3D = (() => {
     if (!_player) return null;
     return {
       x: _player.position.x,
+      y: _player.position.y,
       z: _player.position.z,
       yaw: _player.rotation.y,
       // Walking = local stepClock advanced recently (set in the main tick).

@@ -4203,7 +4203,10 @@ body.fight-active .flow-wrapper {
 }
 .pg3d-emote:hover { background: rgba(201, 162, 39, 0.18); }
 
-/* Virtual joystick — fixed bottom-center, portrait-friendly. */
+/* Virtual joystick — fixed bottom-center, portrait-friendly. The
+   element is always created by Playground3D; visibility is gated by
+   media queries below so it shows on mobile-class devices and stays
+   out of the way on desktop. */
 .pg-joy {
   position: absolute;
   left: 50%;
@@ -4217,7 +4220,14 @@ body.fight-active .flow-wrapper {
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   touch-action: none;
-  z-index: 4;
+  z-index: 50;        /* above HUD overlays and any chat-row that drifts in */
+  display: none;
+}
+/* Show on touch primary-input devices OR small viewports (covers iOS
+   standalone web apps where pointer detection sometimes lies, plus
+   DevTools mobile emulation). */
+@media (pointer: coarse), (max-width: 768px) {
+  .pg-joy { display: block; }
 }
 .pg-joy-stick {
   position: absolute;

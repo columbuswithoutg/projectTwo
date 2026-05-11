@@ -14,7 +14,7 @@ const WorldView = (() => {
   let _stage = null;
   let _socket = null;
   let _posTimer = null;
-  let _lastPosSent = { x: 0, z: 0, yaw: 0, walking: false };
+  let _lastPosSent = { x: 0, y: 0, z: 0, yaw: 0, walking: false };
   let _onKeyDown = null;
   let _onKeyUp = null;
 
@@ -131,14 +131,14 @@ const WorldView = (() => {
 
     _socket.on('world:snapshot', ({ players }) => {
       for (const p of (players || [])) {
-        Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw);
+        Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y);
       }
     });
     _socket.on('world:joined', (p) => {
-      Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw);
+      Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y);
     });
     _socket.on('world:pos', (p) => {
-      Playground3D.updateRemotePlayer(p.id, p.x, p.z, p.yaw, p.walking);
+      Playground3D.updateRemotePlayer(p.id, p.x, p.z, p.yaw, p.walking, p.y);
     });
     _socket.on('world:left', ({ id }) => {
       Playground3D.removeRemotePlayer(id);
@@ -163,9 +163,10 @@ const WorldView = (() => {
       if (!s || !_socket || !_socket.connected) return;
       const dx = Math.abs(s.x - _lastPosSent.x);
       const dz = Math.abs(s.z - _lastPosSent.z);
+      const dy = Math.abs((s.y || 0) - (_lastPosSent.y || 0));
       const dyaw = Math.abs(((s.yaw - _lastPosSent.yaw) + Math.PI) % (2 * Math.PI) - Math.PI);
-      if (dx < POS_EPSILON && dz < POS_EPSILON && dyaw < YAW_EPSILON && s.walking === _lastPosSent.walking) return;
-      _lastPosSent = { x: s.x, z: s.z, yaw: s.yaw, walking: s.walking };
+      if (dx < POS_EPSILON && dz < POS_EPSILON && dy < POS_EPSILON && dyaw < YAW_EPSILON && s.walking === _lastPosSent.walking) return;
+      _lastPosSent = { x: s.x, y: s.y || 0, z: s.z, yaw: s.yaw, walking: s.walking };
       _socket.emit('world:pos', _lastPosSent);
     }, POS_INTERVAL_MS);
   }

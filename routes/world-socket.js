@@ -49,7 +49,7 @@ module.exports = (io) => {
         userId:   socket.data.userId,
         username,
         character,
-        x: 0, z: 0, yaw: 0,
+        x: 0, y: 0, z: 0, yaw: 0,
         walking: false,
         lastChat: 0
       };
@@ -71,10 +71,14 @@ module.exports = (io) => {
       if (Math.abs(raw.x) > POSITION_BOUND || Math.abs(raw.z) > POSITION_BOUND) return;
       p.x = raw.x;
       p.z = raw.z;
+      // y is optional (jump height) — clamp to a sane range so a hacked
+      // client can't fling its character to the moon for everyone else.
+      const rawY = (typeof raw.y === 'number' && Number.isFinite(raw.y)) ? raw.y : 0;
+      p.y = Math.max(-2, Math.min(10, rawY));
       p.yaw = (typeof raw.yaw === 'number' && Number.isFinite(raw.yaw)) ? raw.yaw : 0;
       p.walking = !!raw.walking;
       socket.to('world').emit('world:pos', {
-        id: socket.id, x: p.x, z: p.z, yaw: p.yaw, walking: p.walking
+        id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking
       });
     });
 
