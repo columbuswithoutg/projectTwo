@@ -732,61 +732,144 @@ const Playground3D = (() => {
     joyEl.appendChild(stickEl);
     viewport.appendChild(joyEl);
 
-    // Joystick uses Pointer Events bound to the VIEWPORT (not joyEl).
-    // joyEl-bound listeners were silently failing on Chrome DevTools
-    // mobile emulator — probably a stacking-context / event-target quirk
-    // we can't diagnose remotely. Viewport-level is guaranteed to receive
-    // every pointer event in its bounds; we hit-test the click against
-    // joyEl.getBoundingClientRect() ourselves to decide if it's a
-    // joystick interaction or should fall through to the camera-orbit
-    // handler.
+    // Joystick activation — three redundant entry points (pointer, mouse,
+    // document-level pointer) all funnel through engageJoystick(). A
+    // small on-screen DEBUG HUD shows live state so we can diagnose
+    // failures from a single screenshot.
     let activeJoyPointerId = null;
-    function joyMovePtr(e) {
-      let dx = e.clientX - joyCenter.x;
-      let dy = e.clientY - joyCenter.y;
+
+    // ── on-screen DEBUG HUD ──
+    const dbgEl = document.createElement('div');
+    dbgEl.className = 'pg-joy-debug';
+    dbgEl.style.cssText =
+      'position:absolute;top:60px;right:8px;z-index:100;' +
+      'padding:6px 8px;background:rgba(0,0,0,0.8);color:#fff;' +
+      'font:11px/1.3 monospace;border-radius:6px;pointer-events:none;' +
+      'max-width:200px;white-space:pre;';
+    viewport.appendChild(dbgEl);
+    const dbg = {
+      attached: false,
+      lastEvent: '-',
+      lastXY:    '-',
+      joyRect:   '-',
+      hitTest:   '-',
+      joyActive: false,
+      joyAxis:   { x: 0, y: 0 },
+      evtCount:  0
+    };
+    function _renderDbg() {
+      dbgEl.textContent =
+        'attached=' + dbg.attached + '\n' +
+        'lastEvt=' + dbg.lastEvent + '\n' +
+        'lastXY=' + dbg.lastXY + '\n' +
+        'rect=' + dbg.joyRect + '\n' +
+        'hit=' + dbg.hitTest + '\n' +
+        'active=' + dbg.joyActive + '\n' +
+        'axis=' + dbg.joyAxis.x.toFixed(2) + ',' + dbg.joyAxis.y.toFixed(2) + '\n' +
+        'evts=' + dbg.evtCount;
+    }
+    _renderDbg();
+
+    function moveJoystick(cx, cy) {
+      if (!joyCenter) return;
+      let dx = cx - joyCenter.x;
+      let dy = cy - joyCenter.y;
       const d = Math.hypot(dx, dy);
       if (d > joyRadius) { dx = dx / d * joyRadius; dy = dy / d * joyRadius; }
       stickEl.style.transform = `translate(${dx}px, ${dy}px)`;
       joyAxis = { x: dx / joyRadius, y: dy / joyRadius };
+      dbg.joyAxis = joyAxis;
+      _renderDbg();
     }
-    function onJoyPointerDown(e) {
-      if (activeJoyPointerId !== null) return;
-      const rect = joyEl.getBoundingClientRect();
-      // Joystick is hidden on desktop (display: none) — width=0 means
-      // we shouldn't hit-test or activate it.
-      if (rect.width < 1) return;
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top  + rect.height / 2;
-      const dx = e.clientX - cx;
-      const dy = e.clientY - cy;
-      if (Math.hypot(dx, dy) > rect.width / 2) return;
-      e.preventDefault();
-      e.stopPropagation();
-      activeJoyPointerId = e.pointerId;
-      try { viewport.setPointerCapture(e.pointerId); } catch (_) {}
-      joyActive = true;
-      joyCenter = { x: cx, y: cy };
-      joyRadius = rect.width / 2;
-      try { console.log('[Playground3D] joyDown ptr=' + e.pointerType + ' id=' + e.pointerId + ' offset=' + dx.toFixed(0) + ',' + dy.toFixed(0)); } catch (_) {}
-      joyMovePtr(e);
-    }
-    function onJoyPointerMove(e) {
-      if (e.pointerId !== activeJoyPointerId) return;
-      joyMovePtr(e);
-    }
-    function onJoyPointerEnd(e) {
-      if (e.pointerId !== activeJoyPointerId) return;
+    function releaseJoystick() {
       activeJoyPointerId = null;
       joyActive = false;
       joyAxis = { x: 0, y: 0 };
       if (stickEl) stickEl.style.transform = 'translate(0,0)';
-      try { viewport.releasePointerCapture(e.pointerId); } catch (_) {}
+      dbg.joyActive = false;
+      dbg.joyAxis = joyAxis;
+      _renderDbg();
       try { console.log('[Playground3D] joyUp'); } catch (_) {}
     }
-    viewport.addEventListener('pointerdown', onJoyPointerDown);
-    viewport.addEventListener('pointermove', onJoyPointerMove);
-    viewport.addEventListener('pointerup', onJoyPointerEnd);
-    viewport.addEventListener('pointercancel', onJoyPointerEnd);
+    function engageJoystick(cx, cy, pid, type, e) {
+      dbg.evtCount++;
+      dbg.lastEvent = type;
+      dbg.lastXY = cx.toFixed(0) + ',' + cy.toFixed(0);
+      const rect = joyEl.getBoundingClientRect();
+      dbg.joyRect = rect.left.toFixed(0) + ',' + rect.top.toFixed(0) + ' ' + rect.width.toFixed(0) + 'x' + rect.height.toFixed(0);
+      if (rect.width < 1) { dbg.hitTest = 'no-rect'; _renderDbg(); return false; }
+      const jcx = rect.left + rect.width / 2;
+      const jcy = rect.top  + rect.height / 2;
+      const dx  = cx - jcx;
+      const dy  = cy - jcy;
+      const hit = Math.hypot(dx, dy) <= rect.width / 2;
+      dbg.hitTest = hit ? 'YES' : 'miss';
+      _renderDbg();
+      if (!hit) return false;
+      if (activeJoyPointerId !== null) return false;
+      if (e) { try { e.preventDefault(); e.stopPropagation(); } catch (_) {} }
+      activeJoyPointerId = pid;
+      joyActive = true;
+      dbg.joyActive = true;
+      joyCenter = { x: jcx, y: jcy };
+      joyRadius = rect.width / 2;
+      if (e && typeof viewport.setPointerCapture === 'function' && typeof pid === 'number') {
+        try { viewport.setPointerCapture(pid); } catch (_) {}
+      }
+      try { console.log('[Playground3D] joyDown via=' + type + ' offset=' + dx.toFixed(0) + ',' + dy.toFixed(0)); } catch (_) {}
+      return true;
+    }
+
+    // Pointer events (modern; mouse + touch + pen).
+    viewport.addEventListener('pointerdown', (e) => {
+      if (engageJoystick(e.clientX, e.clientY, e.pointerId, 'pdown', e)) {
+        moveJoystick(e.clientX, e.clientY);
+      }
+    });
+    viewport.addEventListener('pointermove', (e) => {
+      if (e.pointerId === activeJoyPointerId) moveJoystick(e.clientX, e.clientY);
+    });
+    viewport.addEventListener('pointerup', (e) => {
+      if (e.pointerId === activeJoyPointerId) {
+        try { viewport.releasePointerCapture(e.pointerId); } catch (_) {}
+        releaseJoystick();
+      }
+    });
+    viewport.addEventListener('pointercancel', (e) => {
+      if (e.pointerId === activeJoyPointerId) releaseJoystick();
+    });
+
+    // Mouse-event fallback for browsers where pointer events don't fire
+    // or are intercepted. Uses a sentinel pointerId 'mouse' so the
+    // pointer-event listeners above don't accidentally route mouse moves
+    // (they'd compare e.pointerId === 'mouse' which is false for a real
+    // pointer event).
+    viewport.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (engageJoystick(e.clientX, e.clientY, 'mouse', 'mdown', e)) {
+        moveJoystick(e.clientX, e.clientY);
+      }
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (activeJoyPointerId === 'mouse') moveJoystick(e.clientX, e.clientY);
+    });
+    window.addEventListener('mouseup', () => {
+      if (activeJoyPointerId === 'mouse') releaseJoystick();
+    });
+
+    // Document-level capture-phase listener — last-resort safety net for
+    // stacking quirks where viewport's pointerdown never reaches us.
+    // Hit-test gates engagement to clicks actually inside joyEl's rect,
+    // so it never steals clicks from elsewhere.
+    document.addEventListener('pointerdown', (e) => {
+      if (activeJoyPointerId !== null) return;
+      if (engageJoystick(e.clientX, e.clientY, e.pointerId, 'doc-pdown', e)) {
+        moveJoystick(e.clientX, e.clientY);
+      }
+    }, true);
+
+    dbg.attached = true;
+    _renderDbg();
     try { console.log('[Playground3D] joystick listeners attached'); } catch (_) {}
 
     function joyStart(t) {

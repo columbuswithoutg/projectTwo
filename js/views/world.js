@@ -17,10 +17,12 @@ const WorldView = (() => {
   let _lastPosSent = { x: 0, y: 0, z: 0, yaw: 0, walking: false };
   let _onKeyDown = null;
   let _onKeyUp = null;
+  let _chatLog = [];
 
   const POS_INTERVAL_MS = 100;
   const POS_EPSILON = 0.05;
   const YAW_EPSILON = 0.02;
+  const CHAT_LOG_MAX = 20;        // hard cap on entries kept in memory
 
   function mount(container) {
     if (!Auth.isLoggedIn()) {
@@ -36,8 +38,11 @@ const WorldView = (() => {
       </header>
       <div id="pg-stage" class="pg-stage"></div>
       <div class="world-chat-row">
-        <input class="pg3d-chat" id="world-chat-input" placeholder="Say something…" maxlength="200" autocomplete="off" />
-        <button class="pg3d-emote" id="world-emote-btn" type="button" aria-label="Wave">👋</button>
+        <div class="world-chat-log" id="world-chat-log" aria-live="polite"></div>
+        <div class="world-chat-inputrow">
+          <input class="pg3d-chat" id="world-chat-input" placeholder="Say something…" maxlength="200" autocomplete="off" />
+          <button class="pg3d-emote" id="world-emote-btn" type="button" aria-label="Wave">👋</button>
+        </div>
       </div>
     `;
     document.getElementById('world-back').addEventListener('click', () => Router.go('/'));
@@ -148,6 +153,7 @@ const WorldView = (() => {
       // player's bubble is also rendered through this code path so the
       // bubble lifetime / styling is consistent with remote bubbles.
       Playground3D.showRemoteChat(id, username, text);
+      _appendChatLog(username, text);
     });
     _socket.on('world:emote', ({ id, kind }) => {
       Playground3D.playRemoteEmote(id, kind);
@@ -171,6 +177,24 @@ const WorldView = (() => {
     }, POS_INTERVAL_MS);
   }
 
+  function _appendChatLog(username, text) {
+    _chatLog.push({ username, text });
+    if (_chatLog.length > CHAT_LOG_MAX) _chatLog.shift();
+    _renderChatLog();
+  }
+
+  function _renderChatLog() {
+    const el = document.getElementById('world-chat-log');
+    if (!el) return;
+    const esc = (s) => String(s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    el.innerHTML = _chatLog.map(m =>
+      `<div class="world-chat-line"><span class="world-chat-name">${esc(m.username)}</span>${esc(m.text)}</div>`
+    ).join('');
+    // Auto-scroll so the newest line is visible inside the fixed-height panel.
+    el.scrollTop = el.scrollHeight;
+  }
+
   function _isTextField(el) {
     if (!el) return false;
     const t = el.tagName;
@@ -181,6 +205,7 @@ const WorldView = (() => {
     if (_onKeyDown) { window.removeEventListener('keydown', _onKeyDown); _onKeyDown = null; }
     if (_posTimer) { clearInterval(_posTimer); _posTimer = null; }
     if (_socket) { try { _socket.disconnect(); } catch (_) {} _socket = null; }
+    _chatLog = [];
     Playground3D.destroy();
     _stage = null;
     _lastPosSent = { x: 0, z: 0, yaw: 0, walking: false };
