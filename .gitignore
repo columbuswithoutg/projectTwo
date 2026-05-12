@@ -7,3 +7,7 @@ node_modules/
 Thumbs.db
 .vscode/
 .idea/
+
+# Personal Claude context — never push
+PROJECT_CONTEXT.md
+CLAUDE.md

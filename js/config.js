@@ -6,7 +6,10 @@ const CONFIG = {
   V_SPACING: 260,
   NODE_WIDTH: 120,
   NODE_HEIGHT: 180,
-  IMAGE_BASE: "assets/images/",
+  // Absolute path — relative ("assets/images/") would resolve wrong on
+  // nested routes like /friend/:username/home (browser would try
+  // /friend/:username/assets/images/...).
+  IMAGE_BASE: "/assets/images/",
   START_NODE_ID: "ironman1",
   STORAGE_KEY: "watchProgress_v2",
   // Bumped when an asset file is replaced in-place (same filename, new

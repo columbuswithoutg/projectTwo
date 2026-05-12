@@ -5,24 +5,16 @@
  * Locked projects (prereqs not met) aren't rendered. Mounting walks the
  * character at the first unlocked node (Iron Man for fresh accounts).
  *
- * Multiplayer: opens a Socket.IO connection on mount, joins the global
- * 'world' room, broadcasts position ~10Hz, relays chat / emote / remote
- * presence via Playground3D's world-mode API.
+ * Multiplayer: delegates socket lifecycle, chat, emotes, and position
+ * broadcast to the shared Multiplayer module (js/home-socket.js).
+ * /world is one global room; /home and /friend/:user/home use the same
+ * module with the home:* event names.
  ************************************************/
 const WorldView = (() => {
 
   let _stage = null;
-  let _socket = null;
-  let _posTimer = null;
-  let _lastPosSent = { x: 0, y: 0, z: 0, yaw: 0, walking: false };
   let _onKeyDown = null;
-  let _onKeyUp = null;
-  let _chatLog = [];
-
-  const POS_INTERVAL_MS = 100;
-  const POS_EPSILON = 0.05;
-  const YAW_EPSILON = 0.02;
-  const CHAT_LOG_MAX = 20;        // hard cap on entries kept in memory
+  let _mp = null;
 
   function mount(container) {
     if (!Auth.isLoggedIn()) {
@@ -73,7 +65,8 @@ const WorldView = (() => {
       state.initProjects(projects);
     }
 
-    Playground3D.initWorld(_stage, character || Playground3D.defaultCharacter());
+    if (!character) character = Playground3D.defaultCharacter();
+    Playground3D.initWorld(_stage, character);
 
     // Clicking a node prompt opens the same popup the watch order uses.
     Playground3D.setProjectClickHandler((project) => {
@@ -92,107 +85,13 @@ const WorldView = (() => {
     };
     window.addEventListener('keydown', _onKeyDown);
 
-    // Chat input wiring.
-    const input = document.getElementById('world-chat-input');
-    if (input) {
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          const text = input.value.trim();
-          input.value = '';
-          if (text && _socket) _socket.emit('world:chat', { text });
-        } else if (e.key === 'Escape') {
-          input.value = '';
-          input.blur();
-        }
-      });
-    }
-
-    // Emote button.
-    const emoteBtn = document.getElementById('world-emote-btn');
-    if (emoteBtn) {
-      emoteBtn.addEventListener('click', () => {
-        if (_socket) _socket.emit('world:emote', { kind: 'wave' });
-        Playground3D.playLocalEmote('wave');
-      });
-    }
-
-    _connectSocket(character || Playground3D.defaultCharacter());
-  }
-
-  function _connectSocket(character) {
-    if (typeof io !== 'function') {
-      console.warn('[WorldView] socket.io client not loaded');
-      return;
-    }
-    _socket = io({ auth: { token: Auth.getToken() } });
-
-    _socket.on('connect', () => {
-      _socket.emit('world:join', {
-        username: Auth.getUsername() || 'Anon',
+    if (typeof Multiplayer !== 'undefined' && Multiplayer.start) {
+      _mp = Multiplayer.start({
+        events: Multiplayer.WORLD_EVENTS,
+        joinPayload: {},
         character
       });
-    });
-
-    _socket.on('world:snapshot', ({ players }) => {
-      for (const p of (players || [])) {
-        Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y);
-      }
-    });
-    _socket.on('world:joined', (p) => {
-      Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y);
-    });
-    _socket.on('world:pos', (p) => {
-      Playground3D.updateRemotePlayer(p.id, p.x, p.z, p.yaw, p.walking, p.y);
-    });
-    _socket.on('world:left', ({ id }) => {
-      Playground3D.removeRemotePlayer(id);
-    });
-    _socket.on('world:chat', ({ id, username, text }) => {
-      // Server broadcasts to everyone including the sender. The local
-      // player's bubble is also rendered through this code path so the
-      // bubble lifetime / styling is consistent with remote bubbles.
-      Playground3D.showRemoteChat(id, username, text);
-      _appendChatLog(username, text);
-    });
-    _socket.on('world:emote', ({ id, kind }) => {
-      Playground3D.playRemoteEmote(id, kind);
-    });
-
-    _socket.on('connect_error', (err) => {
-      console.warn('[WorldView] socket connect_error', err.message);
-    });
-
-    // Throttled position broadcast — only emit when state moved by epsilon.
-    _posTimer = setInterval(() => {
-      const s = Playground3D.getLocalState && Playground3D.getLocalState();
-      if (!s || !_socket || !_socket.connected) return;
-      const dx = Math.abs(s.x - _lastPosSent.x);
-      const dz = Math.abs(s.z - _lastPosSent.z);
-      const dy = Math.abs((s.y || 0) - (_lastPosSent.y || 0));
-      const dyaw = Math.abs(((s.yaw - _lastPosSent.yaw) + Math.PI) % (2 * Math.PI) - Math.PI);
-      if (dx < POS_EPSILON && dz < POS_EPSILON && dy < POS_EPSILON && dyaw < YAW_EPSILON && s.walking === _lastPosSent.walking) return;
-      _lastPosSent = { x: s.x, y: s.y || 0, z: s.z, yaw: s.yaw, walking: s.walking };
-      _socket.emit('world:pos', _lastPosSent);
-    }, POS_INTERVAL_MS);
-  }
-
-  function _appendChatLog(username, text) {
-    _chatLog.push({ username, text });
-    if (_chatLog.length > CHAT_LOG_MAX) _chatLog.shift();
-    _renderChatLog();
-  }
-
-  function _renderChatLog() {
-    const el = document.getElementById('world-chat-log');
-    if (!el) return;
-    const esc = (s) => String(s).replace(/[&<>"']/g, c =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    el.innerHTML = _chatLog.map(m =>
-      `<div class="world-chat-line"><span class="world-chat-name">${esc(m.username)}</span>${esc(m.text)}</div>`
-    ).join('');
-    // Auto-scroll so the newest line is visible inside the fixed-height panel.
-    el.scrollTop = el.scrollHeight;
+    }
   }
 
   function _isTextField(el) {
@@ -203,12 +102,9 @@ const WorldView = (() => {
 
   function unmount() {
     if (_onKeyDown) { window.removeEventListener('keydown', _onKeyDown); _onKeyDown = null; }
-    if (_posTimer) { clearInterval(_posTimer); _posTimer = null; }
-    if (_socket) { try { _socket.disconnect(); } catch (_) {} _socket = null; }
-    _chatLog = [];
+    if (_mp) { try { _mp.stop(); } catch (_) {} _mp = null; }
     Playground3D.destroy();
     _stage = null;
-    _lastPosSent = { x: 0, z: 0, yaw: 0, walking: false };
   }
 
   return { mount, unmount, title: 'World — MCU Tracker' };

@@ -109,11 +109,34 @@ const HomeView = {
       return;
     }
 
-    Playground3D.init(
-      HomeView._stage,
-      HomeView._character || Playground3D.defaultCharacter(),
-      layout
-    );
+    // Inject the multiplayer chat row (same DOM ids as /world so the
+    // shared Multiplayer module's input/emote/log wiring just works).
+    // Sits as a sibling of #pg-stage; the joystick fix already promoted
+    // .pg-joy to the root stacking context so the chat row no longer
+    // occludes it.
+    const stageHost = HomeView._stage.parentNode || document.body;
+    if (!stageHost.querySelector('.world-chat-row')) {
+      stageHost.insertAdjacentHTML('beforeend', `
+        <div class="world-chat-row">
+          <div class="world-chat-log" id="world-chat-log" aria-live="polite"></div>
+          <div class="world-chat-inputrow">
+            <input class="pg3d-chat" id="world-chat-input" placeholder="Say something…" maxlength="200" autocomplete="off" />
+            <button class="pg3d-emote" id="world-emote-btn" type="button" aria-label="Wave">👋</button>
+          </div>
+        </div>
+      `);
+    }
+
+    const localChar = HomeView._character || Playground3D.defaultCharacter();
+    Playground3D.init(HomeView._stage, localChar, layout);
+
+    if (typeof Multiplayer !== 'undefined' && Multiplayer.start) {
+      HomeView._mp = Multiplayer.start({
+        events: Multiplayer.HOME_EVENTS,
+        joinPayload: { ownerUsername: Auth.getUsername() },
+        character: localChar
+      });
+    }
 
     if (isFresh) {
       HomeView._openBuilder({ firstTime: true });
@@ -203,6 +226,9 @@ const HomeView = {
       document.removeEventListener('click', HomeView._onDocClick);
       HomeView._onDocClick = null;
     }
+    // Stop multiplayer BEFORE Playground3D.destroy() so the leave event
+    // reaches the server while the socket is still open.
+    if (HomeView._mp) { try { HomeView._mp.stop(); } catch (_) {} HomeView._mp = null; }
     Playground3D.destroy();
     HomeView._stage = null;
     HomeView._character = null;

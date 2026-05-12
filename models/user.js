@@ -37,11 +37,11 @@ const UserSchema = new mongoose.Schema({
   // unset (null) until the user saves their first build, which is also
   // the cue that triggers the builder modal automatically on first visit.
   homeCharacter: {
-    skin:        { type: Number, default: null, min: 0, max: 4 },
-    hairStyle:   { type: Number, default: null, min: 0, max: 5 },
-    hairColor:   { type: Number, default: null, min: 0, max: 5 },
-    shirtColor:  { type: Number, default: null, min: 0, max: 7 },
-    pantsColor:  { type: Number, default: null, min: 0, max: 7 }
+    skin:        { type: Number, default: null, min: 0, max: 7 },
+    hairStyle:   { type: Number, default: null, min: 0, max: 9 },
+    hairColor:   { type: Number, default: null, min: 0, max: 9 },
+    shirtColor:  { type: Number, default: null, min: 0, max: 11 },
+    pantsColor:  { type: Number, default: null, min: 0, max: 11 }
   },
   // Project-themed room layout for /home. Each room is a 1×1 grid cell;
   // world-space cell size + wall/doorway geometry are derived at render time

@@ -628,6 +628,49 @@ const Playground3D = (() => {
         grp.add(brim);
         break;
       }
+      case 6: { // ponytail — thin cap + long tied tail hanging behind
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(headSize * 1.04, 0.14, headSize * 1.04), mat);
+        cap.position.y = top - 0.02;
+        cap.castShadow = true;
+        grp.add(cap);
+        const tail = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.55, 0.14), mat);
+        tail.position.set(0, -0.10, -headSize / 2 - 0.05);
+        tail.castShadow = true;
+        grp.add(tail);
+        break;
+      }
+      case 7: { // mohawk — narrow vertical crest down the centerline
+        const crest = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.30, headSize * 1.10), mat);
+        crest.position.y = top + 0.12;
+        crest.castShadow = true;
+        grp.add(crest);
+        break;
+      }
+      case 8: { // afro — oversized rounded halo
+        const halo = new THREE.Mesh(new THREE.SphereGeometry(headSize * 0.85, 14, 12), mat);
+        halo.position.y = top - 0.05;
+        halo.castShadow = true;
+        grp.add(halo);
+        break;
+      }
+      case 9: { // curly — base cap + scattered ringlet bumps
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(headSize * 1.04, 0.12, headSize * 1.04), mat);
+        cap.position.y = top - 0.02;
+        cap.castShadow = true;
+        grp.add(cap);
+        const bumps = [
+          [ 0.14, 0.04,  0.14], [-0.14, 0.04,  0.14],
+          [ 0.14, 0.04, -0.14], [-0.14, 0.04, -0.14],
+          [ 0.00, 0.10,  0.00]
+        ];
+        for (const [px, py, pz] of bumps) {
+          const b = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), mat);
+          b.position.set(px, top + py, pz);
+          b.castShadow = true;
+          grp.add(b);
+        }
+        break;
+      }
     }
     return grp;
   }
@@ -730,45 +773,20 @@ const Playground3D = (() => {
     stickEl = document.createElement('div');
     stickEl.className = 'pg-joy-stick';
     joyEl.appendChild(stickEl);
-    viewport.appendChild(joyEl);
+    // Appended to <body>, not viewport, so its z-index lives at the
+    // root stacking context — otherwise sibling overlays like
+    // .world-chat-row (z-index: 6) would paint over the joystick even
+    // though the joystick has z-index: 50 inside .pg-stage's context.
+    document.body.appendChild(joyEl);
 
     // Joystick activation — three redundant entry points (pointer, mouse,
-    // document-level pointer) all funnel through engageJoystick(). A
-    // small on-screen DEBUG HUD shows live state so we can diagnose
-    // failures from a single screenshot.
+    // document-level pointer) all funnel through engageJoystick().
     let activeJoyPointerId = null;
-
-    // ── on-screen DEBUG HUD ──
-    const dbgEl = document.createElement('div');
-    dbgEl.className = 'pg-joy-debug';
-    dbgEl.style.cssText =
-      'position:absolute;top:60px;right:8px;z-index:100;' +
-      'padding:6px 8px;background:rgba(0,0,0,0.8);color:#fff;' +
-      'font:11px/1.3 monospace;border-radius:6px;pointer-events:none;' +
-      'max-width:200px;white-space:pre;';
-    viewport.appendChild(dbgEl);
-    const dbg = {
-      attached: false,
-      lastEvent: '-',
-      lastXY:    '-',
-      joyRect:   '-',
-      hitTest:   '-',
-      joyActive: false,
-      joyAxis:   { x: 0, y: 0 },
-      evtCount:  0
-    };
-    function _renderDbg() {
-      dbgEl.textContent =
-        'attached=' + dbg.attached + '\n' +
-        'lastEvt=' + dbg.lastEvent + '\n' +
-        'lastXY=' + dbg.lastXY + '\n' +
-        'rect=' + dbg.joyRect + '\n' +
-        'hit=' + dbg.hitTest + '\n' +
-        'active=' + dbg.joyActive + '\n' +
-        'axis=' + dbg.joyAxis.x.toFixed(2) + ',' + dbg.joyAxis.y.toFixed(2) + '\n' +
-        'evts=' + dbg.evtCount;
-    }
-    _renderDbg();
+    // Pointer-event-based camera-orbit drag — kicks in when a touch
+    // misses the joystick. Separate id from activeJoyPointerId so the
+    // two finger tracks don't collide.
+    let activeCamPointerId = null;
+    const lastCamPointer = { x: 0, y: 0 };
 
     function moveJoystick(cx, cy) {
       if (!joyCenter) return;
@@ -778,99 +796,120 @@ const Playground3D = (() => {
       if (d > joyRadius) { dx = dx / d * joyRadius; dy = dy / d * joyRadius; }
       stickEl.style.transform = `translate(${dx}px, ${dy}px)`;
       joyAxis = { x: dx / joyRadius, y: dy / joyRadius };
-      dbg.joyAxis = joyAxis;
-      _renderDbg();
     }
     function releaseJoystick() {
       activeJoyPointerId = null;
       joyActive = false;
       joyAxis = { x: 0, y: 0 };
       if (stickEl) stickEl.style.transform = 'translate(0,0)';
-      dbg.joyActive = false;
-      dbg.joyAxis = joyAxis;
-      _renderDbg();
-      try { console.log('[Playground3D] joyUp'); } catch (_) {}
     }
     function engageJoystick(cx, cy, pid, type, e) {
-      dbg.evtCount++;
-      dbg.lastEvent = type;
-      dbg.lastXY = cx.toFixed(0) + ',' + cy.toFixed(0);
       const rect = joyEl.getBoundingClientRect();
-      dbg.joyRect = rect.left.toFixed(0) + ',' + rect.top.toFixed(0) + ' ' + rect.width.toFixed(0) + 'x' + rect.height.toFixed(0);
-      if (rect.width < 1) { dbg.hitTest = 'no-rect'; _renderDbg(); return false; }
+      if (rect.width < 1) return false;
       const jcx = rect.left + rect.width / 2;
       const jcy = rect.top  + rect.height / 2;
       const dx  = cx - jcx;
       const dy  = cy - jcy;
       const hit = Math.hypot(dx, dy) <= rect.width / 2;
-      dbg.hitTest = hit ? 'YES' : 'miss';
-      _renderDbg();
       if (!hit) return false;
       if (activeJoyPointerId !== null) return false;
       if (e) { try { e.preventDefault(); e.stopPropagation(); } catch (_) {} }
       activeJoyPointerId = pid;
       joyActive = true;
-      dbg.joyActive = true;
       joyCenter = { x: jcx, y: jcy };
       joyRadius = rect.width / 2;
       if (e && typeof viewport.setPointerCapture === 'function' && typeof pid === 'number') {
         try { viewport.setPointerCapture(pid); } catch (_) {}
       }
-      try { console.log('[Playground3D] joyDown via=' + type + ' offset=' + dx.toFixed(0) + ',' + dy.toFixed(0)); } catch (_) {}
       return true;
     }
 
-    // Pointer events (modern; mouse + touch + pen).
-    viewport.addEventListener('pointerdown', (e) => {
+    // Pointer events (modern; mouse + touch + pen). Named so detach()
+    // can remove them.
+    const onPointerDown = (e) => {
       if (engageJoystick(e.clientX, e.clientY, e.pointerId, 'pdown', e)) {
         moveJoystick(e.clientX, e.clientY);
+        return;
       }
-    });
-    viewport.addEventListener('pointermove', (e) => {
-      if (e.pointerId === activeJoyPointerId) moveJoystick(e.clientX, e.clientY);
-    });
-    viewport.addEventListener('pointerup', (e) => {
+      // Joystick miss — on touch, treat the drag as a camera orbit so
+      // swiping outside the joystick looks around the character (mirrors
+      // desktop mouse-drag behavior).
+      if (e.pointerType === 'touch' && activeCamPointerId === null) {
+        activeCamPointerId = e.pointerId;
+        lastCamPointer.x = e.clientX;
+        lastCamPointer.y = e.clientY;
+        if (typeof viewport.setPointerCapture === 'function') {
+          try { viewport.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+      }
+    };
+    const onPointerMove = (e) => {
+      if (e.pointerId === activeJoyPointerId) {
+        moveJoystick(e.clientX, e.clientY);
+        return;
+      }
+      if (e.pointerId === activeCamPointerId && _orbit) {
+        const dx = e.clientX - lastCamPointer.x;
+        const dy = e.clientY - lastCamPointer.y;
+        lastCamPointer.x = e.clientX;
+        lastCamPointer.y = e.clientY;
+        _orbit.azimuth -= dx * CAMERA.ROTATE_SPEED;
+        _orbit.elevation = Math.max(CAMERA.MIN_ELEV,
+          Math.min(CAMERA.MAX_ELEV, _orbit.elevation - dy * CAMERA.ROTATE_SPEED));
+      }
+    };
+    const onPointerUp = (e) => {
       if (e.pointerId === activeJoyPointerId) {
         try { viewport.releasePointerCapture(e.pointerId); } catch (_) {}
         releaseJoystick();
+        return;
       }
-    });
-    viewport.addEventListener('pointercancel', (e) => {
+      if (e.pointerId === activeCamPointerId) {
+        try { viewport.releasePointerCapture(e.pointerId); } catch (_) {}
+        activeCamPointerId = null;
+      }
+    };
+    const onPointerCancel = (e) => {
       if (e.pointerId === activeJoyPointerId) releaseJoystick();
-    });
+      if (e.pointerId === activeCamPointerId) activeCamPointerId = null;
+    };
+    viewport.addEventListener('pointerdown', onPointerDown);
+    viewport.addEventListener('pointermove', onPointerMove);
+    viewport.addEventListener('pointerup', onPointerUp);
+    viewport.addEventListener('pointercancel', onPointerCancel);
 
     // Mouse-event fallback for browsers where pointer events don't fire
     // or are intercepted. Uses a sentinel pointerId 'mouse' so the
     // pointer-event listeners above don't accidentally route mouse moves
     // (they'd compare e.pointerId === 'mouse' which is false for a real
     // pointer event).
-    viewport.addEventListener('mousedown', (e) => {
+    const onJoyMouseDown = (e) => {
       if (e.button !== 0) return;
       if (engageJoystick(e.clientX, e.clientY, 'mouse', 'mdown', e)) {
         moveJoystick(e.clientX, e.clientY);
       }
-    });
-    window.addEventListener('mousemove', (e) => {
+    };
+    const onJoyMouseMove = (e) => {
       if (activeJoyPointerId === 'mouse') moveJoystick(e.clientX, e.clientY);
-    });
-    window.addEventListener('mouseup', () => {
+    };
+    const onJoyMouseUp = () => {
       if (activeJoyPointerId === 'mouse') releaseJoystick();
-    });
+    };
+    viewport.addEventListener('mousedown', onJoyMouseDown);
+    window.addEventListener('mousemove', onJoyMouseMove);
+    window.addEventListener('mouseup', onJoyMouseUp);
 
     // Document-level capture-phase listener — last-resort safety net for
     // stacking quirks where viewport's pointerdown never reaches us.
     // Hit-test gates engagement to clicks actually inside joyEl's rect,
     // so it never steals clicks from elsewhere.
-    document.addEventListener('pointerdown', (e) => {
+    const onDocPointerDown = (e) => {
       if (activeJoyPointerId !== null) return;
       if (engageJoystick(e.clientX, e.clientY, e.pointerId, 'doc-pdown', e)) {
         moveJoystick(e.clientX, e.clientY);
       }
-    }, true);
-
-    dbg.attached = true;
-    _renderDbg();
-    try { console.log('[Playground3D] joystick listeners attached'); } catch (_) {}
+    };
+    document.addEventListener('pointerdown', onDocPointerDown, true);
 
     function joyStart(t) {
       activeJoyTouchId = t.identifier;
@@ -953,6 +992,10 @@ const Playground3D = (() => {
     // Touch listeners are always attached. Devices without touch input
     // simply never dispatch these events; no overhead.
     viewport.addEventListener('touchstart', onTouchStart, { passive: false });
+    // joyEl now lives outside the viewport DOM subtree, so taps on it
+    // wouldn't fire viewport's touchstart on older Android WebViews
+    // that don't synthesize pointer events. Bind directly as a safety net.
+    joyEl.addEventListener('touchstart', onTouchStart, { passive: false });
     window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', onTouchEnd);
     window.addEventListener('touchcancel', onTouchEnd);
@@ -989,10 +1032,23 @@ const Playground3D = (() => {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       viewport.removeEventListener('wheel', onWheel);
+      viewport.removeEventListener('pointerdown', onPointerDown);
+      viewport.removeEventListener('pointermove', onPointerMove);
+      viewport.removeEventListener('pointerup', onPointerUp);
+      viewport.removeEventListener('pointercancel', onPointerCancel);
+      viewport.removeEventListener('mousedown', onJoyMouseDown);
+      window.removeEventListener('mousemove', onJoyMouseMove);
+      window.removeEventListener('mouseup', onJoyMouseUp);
+      document.removeEventListener('pointerdown', onDocPointerDown, true);
       viewport.removeEventListener('touchstart', onTouchStart);
+      if (joyEl) joyEl.removeEventListener('touchstart', onTouchStart);
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('touchend', onTouchEnd);
       window.removeEventListener('touchcancel', onTouchEnd);
+      // joyEl is appended to <body>, not viewport — won't get cleaned up
+      // by Playground3D's container.innerHTML='' on init/destroy. Pull it
+      // out explicitly so re-init doesn't leak nodes.
+      if (joyEl && joyEl.parentNode) joyEl.parentNode.removeChild(joyEl);
     }
 
     return { getAxis, isOrbiting, consumeJump, detach };

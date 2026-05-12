@@ -65,11 +65,11 @@ router.post('/picture', auth, async (req, res) => {
 // requires updating BOTH places. Returns null fields when the user has never
 // saved — the client treats that as "open the builder modal".
 const HOME_CHARACTER_RANGES = {
-  skin:       { max: 4 },
-  hairStyle:  { max: 5 },
-  hairColor:  { max: 5 },
-  shirtColor: { max: 7 },
-  pantsColor: { max: 7 }
+  skin:       { max: 7 },
+  hairStyle:  { max: 9 },
+  hairColor:  { max: 9 },
+  shirtColor: { max: 11 },
+  pantsColor: { max: 11 }
 };
 
 function pickInt(value, max) {

@@ -4236,7 +4236,11 @@ body.fight-active .flow-wrapper {
    media queries below so it shows on mobile-class devices and stays
    out of the way on desktop. */
 .pg-joy {
-  position: absolute;
+  /* Fixed (not absolute) so the joystick is anchored to the viewport
+     rather than its DOM parent's containing block — Playground3D
+     appends it to <body> so its z-index escapes .pg-stage's stacking
+     context and floats above sibling overlays like .world-chat-row. */
+  position: fixed;
   left: 50%;
   bottom: 28px;
   transform: translateX(-50%);
@@ -4248,19 +4252,22 @@ body.fight-active .flow-wrapper {
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   touch-action: none;
-  z-index: 50;        /* above HUD overlays and any chat-row that drifts in */
+  z-index: 50;
   display: none;
-  /* TEMP DEBUG — bright outline so the joystick base is unmistakable in
-     screenshots while we diagnose why clicks aren't engaging. Remove once
-     the joystick works. */
-  outline: 2px dashed #ff00ff !important;
-  outline-offset: 4px;
 }
 /* Show on touch primary-input devices OR small viewports (covers iOS
    standalone web apps where pointer detection sometimes lies, plus
    DevTools mobile emulation). */
 @media (pointer: coarse), (max-width: 768px) {
   .pg-joy { display: block; }
+}
+/* Hide gameplay HUD (joystick + multiplayer chat row) while the nav
+   drawer is open — they're appended outside .pg-header so no sibling
+   selector reaches them, and on mobile they leak through the drawer's
+   stacking context and block taps on menu items. */
+body:has(#nav-drawer.open) .pg-joy,
+body:has(#nav-drawer.open) .world-chat-row {
+  display: none;
 }
 .pg-joy-stick {
   position: absolute;

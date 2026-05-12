@@ -14,10 +14,10 @@ const Playground = (() => {
   // Option palettes — these are the source of truth for what the
   // character builder offers. Server-side validation in routes/profile.js
   // mirrors the count of each (max = length-1). Keep in sync.
-  const SKIN_TONES   = ['#f5d4a8', '#e8b48a', '#c98c5d', '#8b5a3c', '#5d3a24'];
-  const HAIR_COLORS  = ['#1a1a1a', '#5a3a22', '#a06030', '#dca960', '#cccccc', '#9b59b6'];
-  const SHIRT_COLORS = ['#e23636', '#3a85f0', '#39b54a', '#f0c040', '#9b59b6', '#ff7eb6', '#444444', '#f08020'];
-  const PANTS_COLORS = ['#1f3a68', '#444444', '#222222', '#5a3a22', '#7a6a3a', '#7d4a3a', '#0e3a2e', '#3a3a3a'];
+  const SKIN_TONES   = ['#f5d4a8', '#e8b48a', '#c98c5d', '#8b5a3c', '#5d3a24', '#fce4d0', '#d6a878', '#3a2418'];
+  const HAIR_COLORS  = ['#1a1a1a', '#5a3a22', '#a06030', '#dca960', '#cccccc', '#9b59b6', '#e74c3c', '#3498db', '#1abc9c', '#ff69b4'];
+  const SHIRT_COLORS = ['#e23636', '#3a85f0', '#39b54a', '#f0c040', '#9b59b6', '#ff7eb6', '#444444', '#f08020', '#ffffff', '#2c3e50', '#a52a2a', '#16a085'];
+  const PANTS_COLORS = ['#1f3a68', '#444444', '#222222', '#5a3a22', '#7a6a3a', '#7d4a3a', '#0e3a2e', '#3a3a3a', '#888888', '#5a2a8a', '#003366', '#8b4513'];
 
   // Hair style index → SVG path "d" attribute. Drawn in a 32×48 viewBox
   // sized to the character. The head is a circle at (cx=16, cy=13, r=7),
@@ -44,7 +44,15 @@ const Playground = (() => {
     // 4 — bald: nothing
     '',
     // 5 — cap: rounded dome with a brim sticking out symmetrically.
-    'M 6 13 L 6 11 L 9 11 Q 9 5 16 5 Q 23 5 23 11 L 26 11 L 26 13 Z'
+    'M 6 13 L 6 11 L 9 11 Q 9 5 16 5 Q 23 5 23 11 L 26 11 L 26 13 Z',
+    // 6 — ponytail: pixie cap + a high tied tuft on top.
+    'M 10 12 Q 11 5 16 4 Q 21 5 22 12 Q 16 9 10 12 Z M 14 4 Q 14 0 16 0 Q 18 0 18 4 Q 16 2 14 4 Z',
+    // 7 — mohawk: thin vertical crest down the center, head-edges bare.
+    'M 14 12 L 14 2 Q 14 0 16 0 Q 18 0 18 2 L 18 12 Q 16 11 14 12 Z',
+    // 8 — afro: oversized rounded halo around the head.
+    'M 5 13 Q 4 5 16 2 Q 28 5 27 13 Q 22 11 16 11 Q 10 11 5 13 Z',
+    // 9 — curly: bumpy crown, individual ringlets along the hairline.
+    'M 9 13 Q 8 11 9 9 Q 11 7 12 8 Q 14 5 16 5 Q 18 5 20 8 Q 21 7 23 9 Q 24 11 23 13 Q 21 11 19 11 Q 17 11 16 11 Q 15 11 13 11 Q 11 11 9 13 Z'
   ];
 
   // ------ engine state ------

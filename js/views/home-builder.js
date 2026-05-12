@@ -9,7 +9,7 @@
  ************************************************/
 const HomeBuilder = (() => {
 
-  const HAIR_STYLE_LABELS = ['Pixie', 'Bob', 'Spiky', 'Long', 'Bald', 'Cap'];
+  const HAIR_STYLE_LABELS = ['Pixie', 'Bob', 'Spiky', 'Long', 'Bald', 'Cap', 'Ponytail', 'Mohawk', 'Afro', 'Curly'];
 
   function open({ initial, onSave, onCancel }) {
     const initialChar = initial ? { ...initial } : Playground.defaultCharacter();
