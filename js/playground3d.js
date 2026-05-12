@@ -111,7 +111,7 @@ const Playground3D = (() => {
   // ── world-mode state ──
   let _mode = 'home';             // 'home' | 'world'
   let _hudLayer = null;            // HTMLDivElement overlay for nametags/bubbles/prompts
-  let _worldNodes = new Map();    // projectId → { mesh, project, anchor: Vector3, labelEl }
+  let _worldNodes = new Map();    // projectId → { mesh, project, anchor: Vector3, walls }
   let _worldRoads = new Map();    // "a→b" key (sorted) → mesh
   let _remotePlayers = new Map(); // socketId → { rig, target:{x,z,yaw,walking}, current, nameEl, bubbleEls[], emoteUntil }
   let _worldStateUnsub = null;
@@ -1327,15 +1327,10 @@ const Playground3D = (() => {
       mesh.userData.projectId = p.id;
       _scene.add(mesh);
 
-      // HUD label for the platform — title above it. The label itself is
-      // managed through the HUD-projection tick; we just create the element.
-      const labelEl = document.createElement('div');
-      labelEl.className = 'pg3d-nodelabel';
-      labelEl.textContent = p.title || p.id;
-      _hudLayer.appendChild(labelEl);
-
+      // The 'anchor' is still used by the active-node prompt placement
+      // tick — kept even though we no longer render a floating title.
       const anchor = new THREE.Vector3(x, WORLD.PLATFORM_RAISE + WORLD.PLATFORM_H / 2 + 1.6, z);
-      const node = { mesh, project: p, anchor, labelEl, walls: [] };
+      const node = { mesh, project: p, anchor, walls: [] };
       _worldNodes.set(p.id, node);
 
       // Roads to any already-unlocked prereq.
@@ -1581,11 +1576,6 @@ const Playground3D = (() => {
 
   function _tickHUD(now) {
     if (_mode !== 'world' || !_hudLayer) return;
-
-    // Node title labels.
-    for (const node of _worldNodes.values()) {
-      _placeHudEl(node.labelEl, node.anchor, 0);
-    }
 
     // Active-node "click to view" prompt — re-evaluate nearest node.
     let nearest = null, nearestDist = Infinity;
