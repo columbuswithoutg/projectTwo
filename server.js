@@ -16,11 +16,28 @@ const express = require('express');
 const http = require('http');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 const { Server: SocketIOServer } = require('socket.io');
 
 const app = express();
+
+// Compress JSON + HTML responses. Cuts response sizes ~70% on text payloads.
+// Already-compressed binaries in /assets are skipped automatically by content-type.
+app.use(compression());
+
+// Baseline security headers. CSP is disabled for now because the SPA uses an
+// inline importmap, a CDN script (unpkg.com for Three.js), Cloudinary images,
+// and Google Fonts — a strict default-src 'self' would brick first paint.
+// COEP is disabled and CORP set to cross-origin so Cloudinary memories and
+// /assets still load in friend-views.
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 
 // CORS: explicit allowlist only. Previously a NODE_ENV=development fallback
 // reflected any origin, which silently opened up any environment where that
@@ -64,18 +81,25 @@ app.use('/js', express.static(path.join(__dirname, 'js'), { maxAge: '1d', etag: 
 // characters.html, profile.html) and their scripts are deliberately omitted
 // so old links can't resurrect the broken flow.
 const ROOT_FILES = ['index.html', 'spa.html', 'styles.css', 'auth.js',
-                    'projects.js', 'characters.js', 'locations.js'];
+                    'projects.js', 'characters.js', 'locations.js',
+                    'manifest.json', 'sw.js'];
 // Same caching policy as /js — one-day max-age keeps the network out of the
 // critical path on repeat visits. HTML (spa.html, index.html) is served with
-// no-cache so shell updates reach users immediately.
+// no-cache so shell updates reach users immediately. sw.js is also served
+// no-cache so service-worker updates can't be pinned by the HTTP cache.
 const HTML_FILES = new Set(['index.html', 'spa.html']);
+const NO_CACHE_FILES = new Set(['sw.js']);
 ROOT_FILES.forEach(name => {
   app.get('/' + name, (req, res) => {
-    if (HTML_FILES.has(name)) {
+    if (HTML_FILES.has(name) || NO_CACHE_FILES.has(name)) {
       res.set('Cache-Control', 'no-cache');
     } else {
       res.set('Cache-Control', 'public, max-age=86400');
     }
+    // The service worker must be allowed to control the whole origin even
+    // though it sits at root — defensive header for hosting setups that
+    // otherwise narrow scope.
+    if (name === 'sw.js') res.set('Service-Worker-Allowed', '/');
     res.sendFile(path.join(__dirname, name));
   });
 });

@@ -32,7 +32,7 @@ const FriendProfileView = {
 
     const initials = friend.username ? friend.username[0].toUpperCase() : '?';
     const avatarHtml = friend.profilePicture
-      ? `<img class="friend-profile-avatar" src="${safe(friend.profilePicture)}" alt="" />`
+      ? `<img class="friend-profile-avatar" src="${safe(friend.profilePicture)}" alt="" loading="lazy" />`
       : `<div class="friend-profile-avatar friend-profile-initials">${safe(initials)}</div>`;
 
     container.innerHTML = `

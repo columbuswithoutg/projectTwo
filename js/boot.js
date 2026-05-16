@@ -65,3 +65,15 @@ fetch(`${API}/config/public`)
 // The fetch inside _persistNow uses keepalive so the browser preserves it
 // across the navigation.
 window.addEventListener('pagehide', () => state?.flushPersist?.());
+
+// Register the PWA service worker. Runs after load so it never competes with
+// first-paint work. Network-only for /api/*, stale-while-revalidate for the
+// SPA shell — see sw.js. Registration failure is non-fatal; the app works the
+// same without it, just no offline shell or install prompt.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(err => {
+      console.warn('SW registration failed', err);
+    });
+  });
+}

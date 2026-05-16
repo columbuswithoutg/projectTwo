@@ -60,7 +60,7 @@ ${!isReadonly ? `
           <div class="memory-item" data-index="${i}">
             ${m.type === 'video'
               ? `<video src="${esc(m.url)}" preload="metadata"></video>`
-              : `<img src="${esc(m.url)}" alt="${esc(m.caption)}" />`
+              : `<img src="${esc(m.url)}" alt="${esc(m.caption)}" loading="lazy" />`
             }
             <div class="memory-overlay">
               <button class="memory-view-btn" data-index="${i}">View</button>

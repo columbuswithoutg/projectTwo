@@ -123,6 +123,33 @@ const Playground3D = (() => {
   let _walkableRoads = [];         // [{ cx, cz, cos, sin, halfW, halfL }] for point-in-rotated-rect tests
   let _velY = 0;                   // vertical velocity for jump physics
 
+  // ── shared, mount-persistent resources ──
+  // Project poster textures are shared across mount cycles — switching between
+  // /home and /world should not re-download them. Keyed by URL.
+  const _textureCache = new Map();
+  let _textureLoader = null;
+  // Set true at the end of _initInternal, false at the top of destroy(). Texture
+  // load callbacks check this before assigning to a material, so a late-firing
+  // load doesn't write to a disposed scene.
+  let _sceneAlive = false;
+  // Reused per-frame for HUD anchor projection — set() instead of new each tick.
+  let _hudAnchor = null;
+
+  // Cached TextureLoader. Returns the cached Texture synchronously when hit;
+  // otherwise loads once and stores. The onReady callback only fires while
+  // _sceneAlive is still true.
+  function _loadTexture(url, onReady) {
+    const THREE = window.THREE;
+    if (!THREE || !url) return;
+    const cached = _textureCache.get(url);
+    if (cached) { onReady(cached); return; }
+    _textureLoader = _textureLoader || new THREE.TextureLoader();
+    _textureLoader.load(url, (tex) => {
+      _textureCache.set(url, tex);
+      if (_sceneAlive) onReady(tex);
+    });
+  }
+
   // ── public API ──
 
   function init(container, character, layout) {
@@ -161,6 +188,7 @@ const Playground3D = (() => {
 
   function destroy() {
     _running = false;
+    _sceneAlive = false;
     if (_rafId) cancelAnimationFrame(_rafId);
     _rafId = null;
     if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
@@ -176,10 +204,9 @@ const Playground3D = (() => {
       if (obj.geometry) obj.geometry.dispose();
       if (obj.material) {
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-        mats.forEach(m => {
-          if (m.map) m.map.dispose();
-          m.dispose();
-        });
+        // Note: m.map textures are owned by _textureCache and shared across
+        // mount cycles, so we deliberately do not dispose them here.
+        mats.forEach(m => m.dispose());
       }
     });
     // World-mode cleanup.
@@ -229,6 +256,8 @@ const Playground3D = (() => {
   function _initInternal() {
     const THREE = window.THREE;
     _running = true;
+    _sceneAlive = true;
+    _hudAnchor = _hudAnchor || new THREE.Vector3();
 
     _container.innerHTML = '';
     _viewport = document.createElement('div');
@@ -334,7 +363,6 @@ const Playground3D = (() => {
     if (!_layout || !_layout.rooms.length) return;
     const THREE = window.THREE;
     const cellSet = new Set(_layout.rooms.map(r => `${r.gx},${r.gy}`));
-    const loader = new THREE.TextureLoader();
 
     for (const room of _layout.rooms) {
       const project = _findProject(room.projectId);
@@ -347,7 +375,7 @@ const Playground3D = (() => {
       // Floor — textured with the project's poster.
       const floorMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
       if (imgUrl) {
-        loader.load(imgUrl, (tex) => {
+        _loadTexture(imgUrl, (tex) => {
           // Default ClampToEdge wrapping is fine — image stretches over
           // the full 12×12 floor cell (one copy per cell).
           floorMat.map = tex;
@@ -1299,7 +1327,6 @@ const Playground3D = (() => {
   function _rebuildWorldNodes() {
     if (_mode !== 'world' || !_scene || typeof projects === 'undefined') return;
     const THREE = window.THREE;
-    const loader = new THREE.TextureLoader();
 
     for (const p of projects) {
       if (!_isProjectUnlocked(p)) continue;
@@ -1316,7 +1343,7 @@ const Playground3D = (() => {
       const url = (typeof CONFIG !== 'undefined' && CONFIG.IMAGE_BASE && p.image)
         ? `${CONFIG.IMAGE_BASE}${p.image}` : '';
       if (url) {
-        loader.load(url, (tex) => { top.map = tex; top.needsUpdate = true; });
+        _loadTexture(url, (tex) => { top.map = tex; top.needsUpdate = true; });
       }
       // BoxGeometry material slots: +x, -x, +y(top), -y(bottom), +z, -z
       const mats = [side, side, top, side, side, side];
@@ -1604,15 +1631,16 @@ const Playground3D = (() => {
       if (_activePromptEl) _activePromptEl.style.display = 'none';
     }
 
-    // Remote-player tags + bubbles.
+    // Remote-player tags + bubbles. _hudAnchor is module-scoped and reused
+    // each frame to avoid per-tick GC churn — set() instead of new.
     for (const rp of _remotePlayers.values()) {
       const headY = 1.6;     // approx top-of-head Y in local rig space
-      const anchor = new THREE.Vector3(rp.rig.position.x, headY + 0.4, rp.rig.position.z);
-      if (rp.nameEl) _placeHudEl(rp.nameEl, anchor, 0);
+      _hudAnchor.set(rp.rig.position.x, headY + 0.4, rp.rig.position.z);
+      if (rp.nameEl) _placeHudEl(rp.nameEl, _hudAnchor, 0);
       let stack = 0.4;
       for (const b of rp.bubbleEls) {
         stack += 0.5;
-        _placeHudEl(b, anchor, stack);
+        _placeHudEl(b, _hudAnchor, stack);
       }
     }
   }

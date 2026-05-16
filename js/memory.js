@@ -39,7 +39,7 @@ async function showAddMemoryModal(project) {
     previewBlobUrl = URL.createObjectURL(file);
     preview.innerHTML = file.type.startsWith('video')
       ? `<video src="${previewBlobUrl}" controls style="max-width:100%; border-radius:8px; margin-top:8px"></video>`
-      : `<img src="${previewBlobUrl}" style="max-width:100%; border-radius:8px; margin-top:8px" />`;
+      : `<img src="${previewBlobUrl}" style="max-width:100%; border-radius:8px; margin-top:8px" loading="lazy" />`;
   };
 
   modal.querySelector('#memory-upload-btn').onclick = async () => {
@@ -114,7 +114,7 @@ function showMemoryLightbox(memories, startIndex, project) {
         <div class="lightbox-media">
           ${m.type === 'video'
             ? `<video src="${esc(m.url)}" controls autoplay></video>`
-            : `<img src="${esc(m.url)}" alt="${esc(m.caption)}" />`
+            : `<img src="${esc(m.url)}" alt="${esc(m.caption)}" loading="lazy" />`
           }
           ${m.caption ? `<p class="lightbox-caption">${esc(m.caption)}</p>` : ''}
           <p class="lightbox-counter">${current + 1} / ${memories.length}</p>

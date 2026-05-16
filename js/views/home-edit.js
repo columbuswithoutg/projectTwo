@@ -273,7 +273,7 @@ const HomeEditView = (() => {
         if (!project) continue;
         const disabled = remaining === 0;
         html += `<li class="pg-edit-avail-item${disabled ? ' is-disabled' : ''}" data-action="hint-avail">`;
-        html += `<img src="${_imageUrl(project)}" alt="" />`;
+        html += `<img src="${_imageUrl(project)}" alt="" loading="lazy" />`;
         html += `<span>${_escape(project.title || id)}</span>`;
         html += `</li>`;
       }
