@@ -376,9 +376,33 @@ body {
 #nav-drawer-content nav {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   flex: 1;
+  /* Allow the nav block to scroll internally on short phones where 11
+     items + 4 section headers exceed the drawer height. */
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
+
+/* Drawer section grouping — small uppercase header + a column of buttons. */
+.nav-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nav-section-title {
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(201, 162, 39, 0.75);
+  padding: 0 4px;
+  margin-top: 4px;
+}
+.nav-section:first-child .nav-section-title { margin-top: 0; }
+/* Pin the Data section (the one containing logout) to the bottom of the
+   drawer, replacing the old `#logout-btn { margin-top: auto }` rule. */
+.nav-section:has(#logout-btn) { margin-top: auto; }
 
 #nav-drawer-content nav button {
   background: rgba(255, 255, 255, 0.04);
@@ -400,7 +424,6 @@ body {
 }
 
 #logout-btn {
-  margin-top: auto !important;
   color: rgba(226, 54, 54, 0.85) !important;
   border-color: rgba(226, 54, 54, 0.2) !important;
 }
@@ -2883,6 +2906,7 @@ body.auth-page {
   }
   .pg3d-chat { height: 36px; font-size: 13px; }
   .pg3d-emote { width: 36px; height: 36px; font-size: 18px; }
+  .pg3d-voice { width: 36px; height: 36px; font-size: 16px; }
   .world-chat-log { max-height: 100px; font-size: 11px; padding: 6px 10px; }
 
   /* Memories */
@@ -4083,6 +4107,12 @@ body.fight-active .flow-wrapper {
   border: 1px solid rgba(255, 255, 255, 0.18);
   white-space: nowrap;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  transition: box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.pg3d-nametag.speaking {
+  border-color: rgba(120, 220, 140, 0.95);
+  box-shadow: 0 0 0 2px rgba(120, 220, 140, 0.35),
+              0 0 12px rgba(120, 220, 140, 0.55);
 }
 .pg3d-bubble {
   max-width: 220px;
@@ -4231,6 +4261,28 @@ body.fight-active .flow-wrapper {
 }
 .pg3d-emote:hover { background: rgba(201, 162, 39, 0.18); }
 
+.pg3d-voice {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(15, 17, 28, 0.88);
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.pg3d-voice:hover { background: rgba(201, 162, 39, 0.18); }
+.pg3d-voice:disabled { opacity: 0.45; cursor: not-allowed; }
+.pg3d-voice[aria-pressed="true"] {
+  background: rgba(120, 220, 140, 0.22);
+  border-color: rgba(120, 220, 140, 0.85);
+  box-shadow: 0 0 0 2px rgba(120, 220, 140, 0.25),
+              0 0 14px rgba(120, 220, 140, 0.45);
+}
+
 /* Virtual joystick — fixed bottom-center, portrait-friendly. The
    element is always created by Playground3D; visibility is gated by
    media queries below so it shows on mobile-class devices and stays
@@ -4333,17 +4385,24 @@ body:has(#nav-drawer.open) .world-chat-row {
   gap: 16px;
   padding: 16px 18px;
   overflow-y: auto;
+  /* Stop drag-rotate momentum on the preview from leaking into a page
+     scroll behind the modal on mobile. */
+  overscroll-behavior: contain;
 }
 .pg-modal-preview {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;     /* let the 3D canvas fill the cross-axis */
+  justify-content: stretch;
   background: rgba(0,0,0,0.3);
   border-radius: 8px;
   border: 1px solid rgba(255,255,255,0.05);
-  padding: 12px;
-  min-height: 160px;
+  padding: 0;
+  min-height: 240px;
+  position: relative;
+  overflow: hidden;
 }
+.pg-modal-preview canvas { display: block; }
+.pg-preview-canvas { width: 100%; height: 100%; }
 .pg-builder-sprite {
   transform: scale(2.5);
   transform-origin: center;
@@ -4352,6 +4411,29 @@ body:has(#nav-drawer.open) .world-chat-row {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+/* Builder modal is wider so the two-column control grid has room. */
+.pg-builder-modal {
+  width: min(820px, 100%);
+}
+.pg-modal-controls.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 18px;
+}
+.pg-builder-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pg-builder-coltitle {
+  margin: 0 0 2px 0;
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-primary-light);
+  opacity: 0.9;
 }
 .pg-builder-group {
   border: 0;
@@ -4646,8 +4728,18 @@ body:has(#nav-drawer.open) .world-chat-row {
   .pg-modal-body {
     grid-template-columns: 1fr;
   }
+  /* Pin the preview so the live 3D rig stays visible while the user
+     scrolls through the long single-column control list. */
   .pg-modal-preview {
-    min-height: 140px;
+    min-height: 180px;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--color-surface);
+    box-shadow: 0 6px 12px -8px rgba(0, 0, 0, 0.6);
+  }
+  .pg-modal-controls.two-col {
+    grid-template-columns: 1fr;
   }
   .pg-joy {
     width: 110px;

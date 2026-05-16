@@ -64,12 +64,24 @@ router.post('/picture', auth, async (req, res) => {
 // counts defined client-side in js/playground.js. Bumping any of these maxes
 // requires updating BOTH places. Returns null fields when the user has never
 // saved — the client treats that as "open the builder modal".
+//
+// PUT is a partial update: any key that is missing from the body is left
+// untouched in Mongo, so older clients (and progressive new-field rollouts)
+// don't 400 just for not knowing about a slot. A key that IS present must
+// validate or the whole request 400s.
 const HOME_CHARACTER_RANGES = {
-  skin:       { max: 7 },
-  hairStyle:  { max: 9 },
-  hairColor:  { max: 9 },
-  shirtColor: { max: 11 },
-  pantsColor: { max: 11 }
+  skin:            { max: 11 },
+  hairStyle:       { max: 13 },
+  hairColor:       { max: 13 },
+  shirtColor:      { max: 15 },
+  pantsColor:      { max: 15 },
+  eyeColor:        { max: 7 },
+  eyeShape:        { max: 4 },
+  facialHairStyle: { max: 5 },
+  facialHairColor: { max: 13 },
+  glasses:         { max: 4 },
+  hat:             { max: 4 },
+  shoeColor:       { max: 7 }
 };
 
 function pickInt(value, max) {
@@ -90,6 +102,7 @@ router.put('/home-character', auth, async (req, res) => {
   const update = {};
   const errors = {};
   for (const [key, rule] of Object.entries(HOME_CHARACTER_RANGES)) {
+    if (!(key in body)) continue;          // partial update — skip missing keys
     const v = pickInt(body[key], rule.max);
     if (v === null) {
       errors[key] = `must be an integer 0..${rule.max}`;
@@ -99,6 +112,9 @@ router.put('/home-character', auth, async (req, res) => {
   }
   if (Object.keys(errors).length) {
     return res.status(400).json({ error: 'Validation failed', fields: errors });
+  }
+  if (Object.keys(update).length === 0) {
+    return res.status(400).json({ error: 'No valid fields supplied' });
   }
   const user = await User.findByIdAndUpdate(
     req.user.id,

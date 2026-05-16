@@ -27,12 +27,22 @@ const HomeView = {
           <div id="nav-drawer-content">
             <button id="close-drawer">✕</button>
             <nav>
-              <button data-route="/">📋 Watch Order</button>
-              <button data-route="/map">🗺 Universe Map</button>
-              <button data-route="/world">🌍 World</button>
-              <button data-route="/profile">👤 Profile</button>
-              <button data-route="/characters">🦸 Characters</button>
-              <button id="logout-btn">🚪 Logout</button>
+              <div class="nav-section">
+                <div class="nav-section-title">Navigate</div>
+                <button data-route="/">📋 Watch Order</button>
+                <button data-route="/map">🗺 Universe Map</button>
+                <button data-route="/world">🌍 World</button>
+                <button data-route="/profile">👤 Profile</button>
+                <button data-route="/characters">🦸 Characters</button>
+              </div>
+              <div class="nav-section">
+                <div class="nav-section-title">You</div>
+                <button id="nav-character-btn">🧑 Customize character</button>
+              </div>
+              <div class="nav-section">
+                <div class="nav-section-title">Data</div>
+                <button id="logout-btn">🚪 Logout</button>
+              </div>
             </nav>
           </div>
         </div>
@@ -55,6 +65,12 @@ const HomeView = {
     });
     document.getElementById('logout-btn')?.addEventListener('click', () => {
       Auth.logout();
+    });
+    // Drawer shortcut to the character editor — reuse the same path as the
+    // ✎ button so onSave still hot-swaps the live 3D playground.
+    document.getElementById('nav-character-btn')?.addEventListener('click', () => {
+      closeDrawer();
+      HomeView._openBuilder();
     });
 
     document.getElementById('pg-customize-btn').addEventListener('click', (e) => {
@@ -122,6 +138,7 @@ const HomeView = {
           <div class="world-chat-inputrow">
             <input class="pg3d-chat" id="world-chat-input" placeholder="Say something…" maxlength="200" autocomplete="off" />
             <button class="pg3d-emote" id="world-emote-btn" type="button" aria-label="Wave">👋</button>
+            <button class="pg3d-voice" id="world-voice-btn" type="button" aria-label="Toggle voice chat" aria-pressed="false" title="Voice chat (off)">🎙️</button>
           </div>
         </div>
       `);
@@ -138,9 +155,51 @@ const HomeView = {
       });
     }
 
+    HomeView._wireVoiceToggle();
+
     if (isFresh) {
       HomeView._openBuilder({ firstTime: true });
     }
+  },
+
+  _wireVoiceToggle() {
+    const btn = document.getElementById('world-voice-btn');
+    if (!btn) return;
+    HomeView._voiceBtn = btn;
+    if (typeof VoiceManager === 'undefined' || !VoiceManager.start) {
+      btn.disabled = true;
+      btn.title = 'Voice chat unavailable';
+      return;
+    }
+    HomeView._voiceBtnHandler = () => {
+      if (HomeView._voice) {
+        try { HomeView._voice.stop(); } catch (_) {}
+        HomeView._voice = null;
+        btn.setAttribute('aria-pressed', 'false');
+        btn.title = 'Voice chat (off)';
+        return;
+      }
+      if (!HomeView._mp || !HomeView._mp.getSocket) return;
+      HomeView._voice = VoiceManager.start({
+        socket: HomeView._mp.getSocket(),
+        scope: 'home',
+        getLocalState: () => Playground3D.getLocalState && Playground3D.getLocalState(),
+        getRemotePlayers: () => Playground3D.getRemotePlayers && Playground3D.getRemotePlayers(),
+        onError: (msg) => {
+          btn.setAttribute('aria-pressed', 'false');
+          btn.title = msg || 'Voice chat error';
+          HomeView._voice = null;
+        },
+        onPeerStateChange: (peerId, st) => {
+          if (Playground3D.setRemotePlayerSpeaking) {
+            Playground3D.setRemotePlayerSpeaking(peerId, !!st.speaking);
+          }
+        }
+      });
+      btn.setAttribute('aria-pressed', 'true');
+      btn.title = 'Voice chat (on) — click to mute';
+    };
+    btn.addEventListener('click', HomeView._voiceBtnHandler);
   },
 
   _renderEmptyHome() {
@@ -226,6 +285,14 @@ const HomeView = {
       document.removeEventListener('click', HomeView._onDocClick);
       HomeView._onDocClick = null;
     }
+    // Voice must stop BEFORE multiplayer so voice:leave reaches the room
+    // while the socket is still open.
+    if (HomeView._voice) { try { HomeView._voice.stop(); } catch (_) {} HomeView._voice = null; }
+    if (HomeView._voiceBtn && HomeView._voiceBtnHandler) {
+      HomeView._voiceBtn.removeEventListener('click', HomeView._voiceBtnHandler);
+    }
+    HomeView._voiceBtn = null;
+    HomeView._voiceBtnHandler = null;
     // Stop multiplayer BEFORE Playground3D.destroy() so the leave event
     // reaches the server while the socket is still open.
     if (HomeView._mp) { try { HomeView._mp.stop(); } catch (_) {} HomeView._mp = null; }

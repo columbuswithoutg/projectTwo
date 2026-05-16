@@ -1,51 +1,118 @@
 /************************************************
  * HOME — CHARACTER BUILDER (modal overlay)
  *
- * Four selectors — skin tone, hair (style + color), shirt color, pants
- * color — with a live SVG preview that re-renders on every change.
- * Saves the chosen indices to /api/profile/home-character. The Save
- * callback receives the new character so HomeView can hot-swap the
- * playground sprite without restarting the engine.
+ * Two-column ("Face" + "Outfit") selector grid with a live SVG preview
+ * that re-renders on every change. Saves the chosen indices to
+ * /api/profile/home-character. The Save callback receives the new
+ * character so HomeView can hot-swap the playground sprite without
+ * restarting the engine.
  ************************************************/
 const HomeBuilder = (() => {
 
-  const HAIR_STYLE_LABELS = ['Pixie', 'Bob', 'Spiky', 'Long', 'Bald', 'Cap', 'Ponytail', 'Mohawk', 'Afro', 'Curly'];
+  const HAIR_STYLE_LABELS = [
+    'Pixie', 'Bob', 'Spiky', 'Long', 'Bald', 'Cap', 'Ponytail', 'Mohawk', 'Afro', 'Curly',
+    'Buzz', 'Side-part', 'Topknot', 'Undercut'
+  ];
+  const EYE_SHAPE_LABELS    = ['Round', 'Narrow', 'Wide', 'Sharp', 'Soft'];
+  const FACIAL_HAIR_LABELS  = ['Clean', 'Stubble', 'Mustache', 'Goatee', 'Beard', 'Chinstrap'];
+  const GLASSES_LABELS      = ['None', 'Round', 'Square', 'Aviator', 'Half-rim'];
+  const HAT_LABELS          = ['None', 'Beanie', 'Cap', 'Top hat', 'Hood'];
 
-  function open({ initial, onSave, onCancel }) {
-    const initialChar = initial ? { ...initial } : Playground.defaultCharacter();
+  // If callers don't pass `initial`, fetch the saved character ourselves so
+  // entry points outside HomeView (e.g. drawer buttons in /map or /) don't
+  // each have to duplicate the request. Falls back to defaults on failure.
+  async function _fetchSaved() {
+    try {
+      const res = await fetch(`${API}/profile/home-character`, {
+        headers: { Authorization: `Bearer ${Auth.getToken()}` }
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.homeCharacter || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function open({ initial, onSave, onCancel } = {}) {
+    const baseDefault = Playground.defaultCharacter();
+    // If no `initial` was provided, fetch it now so the modal opens with the
+    // user's saved look rather than the bare default.
+    if (initial === undefined) {
+      const fetched = await _fetchSaved();
+      if (fetched && fetched.skin != null) initial = fetched;
+    }
+    // Fill any missing slots on an older saved character with defaults so
+    // every fieldset has something to highlight as "active".
+    const initialChar = initial ? { ...baseDefault, ...initial } : { ...baseDefault };
     let current = { ...initialChar };
+    let previewHandle = null;
 
     const overlay = document.createElement('div');
     overlay.className = 'pg-modal-overlay';
     overlay.innerHTML = `
-      <div class="pg-modal" role="dialog" aria-modal="true" aria-labelledby="pg-modal-title">
+      <div class="pg-modal pg-builder-modal" role="dialog" aria-modal="true" aria-labelledby="pg-modal-title">
         <header class="pg-modal-head">
           <h2 id="pg-modal-title">Customize your character</h2>
           <button class="pg-modal-close" type="button" aria-label="Close">✕</button>
         </header>
         <div class="pg-modal-body">
           <div class="pg-modal-preview" id="pg-builder-preview"></div>
-          <div class="pg-modal-controls">
-            <fieldset class="pg-builder-group" data-key="skin">
-              <legend>Skin</legend>
-              <div class="pg-swatches" data-target="skin"></div>
-            </fieldset>
-            <fieldset class="pg-builder-group" data-key="hairStyle">
-              <legend>Hair style</legend>
-              <div class="pg-styles" data-target="hairStyle"></div>
-            </fieldset>
-            <fieldset class="pg-builder-group" data-key="hairColor">
-              <legend>Hair color</legend>
-              <div class="pg-swatches" data-target="hairColor"></div>
-            </fieldset>
-            <fieldset class="pg-builder-group" data-key="shirtColor">
-              <legend>Shirt</legend>
-              <div class="pg-swatches" data-target="shirtColor"></div>
-            </fieldset>
-            <fieldset class="pg-builder-group" data-key="pantsColor">
-              <legend>Pants</legend>
-              <div class="pg-swatches" data-target="pantsColor"></div>
-            </fieldset>
+          <div class="pg-modal-controls two-col">
+            <div class="pg-builder-col">
+              <h3 class="pg-builder-coltitle">Face</h3>
+              <fieldset class="pg-builder-group" data-key="skin">
+                <legend>Skin</legend>
+                <div class="pg-swatches" data-target="skin"></div>
+              </fieldset>
+              <fieldset class="pg-builder-group" data-key="eyeColor">
+                <legend>Eye color</legend>
+                <div class="pg-swatches" data-target="eyeColor"></div>
+              </fieldset>
+              <fieldset class="pg-builder-group" data-key="eyeShape">
+                <legend>Eye shape</legend>
+                <div class="pg-styles" data-target="eyeShape"></div>
+              </fieldset>
+              <fieldset class="pg-builder-group" data-key="facialHairStyle">
+                <legend>Facial hair</legend>
+                <div class="pg-styles" data-target="facialHairStyle"></div>
+              </fieldset>
+              <fieldset class="pg-builder-group" data-key="facialHairColor">
+                <legend>Beard color</legend>
+                <div class="pg-swatches" data-target="facialHairColor"></div>
+              </fieldset>
+              <fieldset class="pg-builder-group" data-key="glasses">
+                <legend>Glasses</legend>
+                <div class="pg-styles" data-target="glasses"></div>
+              </fieldset>
+            </div>
+            <div class="pg-builder-col">
+              <h3 class="pg-builder-coltitle">Hair &amp; outfit</h3>
+              <fieldset class="pg-builder-group" data-key="hairStyle">
+                <legend>Hair style</legend>
+                <div class="pg-styles" data-target="hairStyle"></div>
+              </fieldset>
+              <fieldset class="pg-builder-group" data-key="hairColor">
+                <legend>Hair color</legend>
+                <div class="pg-swatches" data-target="hairColor"></div>
+              </fieldset>
+              <fieldset class="pg-builder-group" data-key="hat">
+                <legend>Hat</legend>
+                <div class="pg-styles" data-target="hat"></div>
+              </fieldset>
+              <fieldset class="pg-builder-group" data-key="shirtColor">
+                <legend>Shirt</legend>
+                <div class="pg-swatches" data-target="shirtColor"></div>
+              </fieldset>
+              <fieldset class="pg-builder-group" data-key="pantsColor">
+                <legend>Pants</legend>
+                <div class="pg-swatches" data-target="pantsColor"></div>
+              </fieldset>
+              <fieldset class="pg-builder-group" data-key="shoeColor">
+                <legend>Shoes</legend>
+                <div class="pg-swatches" data-target="shoeColor"></div>
+              </fieldset>
+            </div>
           </div>
         </div>
         <footer class="pg-modal-foot">
@@ -72,16 +139,16 @@ const HomeBuilder = (() => {
       });
     }
 
-    function renderHairStyles() {
-      const host = overlay.querySelector('[data-target="hairStyle"]');
-      host.innerHTML = HAIR_STYLE_LABELS.map((label, idx) => `
+    function renderLabels(targetKey, labels) {
+      const host = overlay.querySelector(`[data-target="${targetKey}"]`);
+      host.innerHTML = labels.map((label, idx) => `
         <button type="button" class="pg-style" data-idx="${idx}">${label}</button>
       `).join('');
-      markActive('hairStyle');
+      markActive(targetKey);
       host.querySelectorAll('.pg-style').forEach(btn => {
         btn.addEventListener('click', () => {
-          current.hairStyle = parseInt(btn.dataset.idx, 10);
-          markActive('hairStyle');
+          current[targetKey] = parseInt(btn.dataset.idx, 10);
+          markActive(targetKey);
           updatePreview();
         });
       });
@@ -97,21 +164,41 @@ const HomeBuilder = (() => {
 
     function updatePreview() {
       const preview = overlay.querySelector('#pg-builder-preview');
+      // 3D preview — instantiate once, then just swap the rig on changes.
+      if (typeof Playground3D !== 'undefined' && Playground3D.createPreview) {
+        if (!previewHandle) {
+          preview.innerHTML = '';
+          previewHandle = Playground3D.createPreview(preview, current);
+        } else {
+          previewHandle.setCharacter(current);
+        }
+        return;
+      }
+      // 2D fallback (if Playground3D isn't loaded for some reason).
       preview.innerHTML = '';
-      // Render at 2× scale for visibility.
       const sprite = Playground.renderCharacter(current);
       sprite.classList.add('pg-builder-sprite');
       preview.appendChild(sprite);
     }
 
-    renderSwatches('skin', Playground.SKIN_TONES);
-    renderHairStyles();
-    renderSwatches('hairColor', Playground.HAIR_COLORS);
-    renderSwatches('shirtColor', Playground.SHIRT_COLORS);
-    renderSwatches('pantsColor', Playground.PANTS_COLORS);
+    // Face column
+    renderSwatches('skin',            Playground.SKIN_TONES);
+    renderSwatches('eyeColor',        Playground.EYE_COLORS);
+    renderLabels  ('eyeShape',        EYE_SHAPE_LABELS);
+    renderLabels  ('facialHairStyle', FACIAL_HAIR_LABELS);
+    renderSwatches('facialHairColor', Playground.HAIR_COLORS);
+    renderLabels  ('glasses',         GLASSES_LABELS);
+    // Hair & outfit column
+    renderLabels  ('hairStyle',       HAIR_STYLE_LABELS);
+    renderSwatches('hairColor',       Playground.HAIR_COLORS);
+    renderLabels  ('hat',             HAT_LABELS);
+    renderSwatches('shirtColor',      Playground.SHIRT_COLORS);
+    renderSwatches('pantsColor',      Playground.PANTS_COLORS);
+    renderSwatches('shoeColor',       Playground.SHOE_COLORS);
     updatePreview();
 
     function close() {
+      if (previewHandle) { try { previewHandle.destroy(); } catch (_) {} previewHandle = null; }
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
     }
 

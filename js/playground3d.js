@@ -200,15 +200,7 @@ const Playground3D = (() => {
         _renderer.domElement.parentNode.removeChild(_renderer.domElement);
       }
     }
-    if (_scene) _scene.traverse(obj => {
-      if (obj.geometry) obj.geometry.dispose();
-      if (obj.material) {
-        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-        // Note: m.map textures are owned by _textureCache and shared across
-        // mount cycles, so we deliberately do not dispose them here.
-        mats.forEach(m => m.dispose());
-      }
-    });
+    if (_scene) _disposeRig(_scene);
     // World-mode cleanup.
     _worldNodes.clear();
     _worldRoads.clear();
@@ -248,7 +240,12 @@ const Playground3D = (() => {
     if (typeof Playground !== 'undefined' && Playground.defaultCharacter) {
       return Playground.defaultCharacter();
     }
-    return { skin: 0, hairStyle: 0, hairColor: 0, shirtColor: 1, pantsColor: 0 };
+    return {
+      skin: 0, hairStyle: 0, hairColor: 0, shirtColor: 1, pantsColor: 0,
+      eyeColor: 6, eyeShape: 0,
+      facialHairStyle: 0, facialHairColor: 0,
+      glasses: 0, hat: 0, shoeColor: 0
+    };
   }
 
   // ── init ──
@@ -475,20 +472,42 @@ const Playground3D = (() => {
 
   // ── character rig ──
 
+  // Walk a subtree and dispose every geometry + material it owns. Used
+  // both by the engine's destroy() (on the whole scene) and by createPreview's
+  // rig swap (on a single rig group). Textures are owned by _textureCache and
+  // are intentionally not disposed here.
+  function _disposeRig(obj) {
+    obj.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach(m => m.dispose());
+      }
+    });
+  }
+
   function _buildPlayer(c) {
     const THREE = window.THREE;
     const skinHex = _palette('SKIN_TONES', c.skin);
     const shirtHex = _palette('SHIRT_COLORS', c.shirtColor);
     const pantsHex = _palette('PANTS_COLORS', c.pantsColor);
     const hairHex = _palette('HAIR_COLORS', c.hairColor);
+    const shoeHex = _palette('SHOE_COLORS', c.shoeColor);
+    const eyeHex  = _palette('EYE_COLORS', c.eyeColor);
+    const beardHex = _palette('HAIR_COLORS', c.facialHairColor ?? c.hairColor);
     const styleIdx = c.hairStyle ?? 0;
+    const eyeShapeIdx = c.eyeShape ?? 0;
+    const beardIdx = c.facialHairStyle ?? 0;
+    const glassesIdx = c.glasses ?? 0;
+    const hatIdx = c.hat ?? 0;
 
     const skinMat  = new THREE.MeshLambertMaterial({ color: skinHex });
     const shirtMat = new THREE.MeshLambertMaterial({ color: shirtHex });
     const pantsMat = new THREE.MeshLambertMaterial({ color: pantsHex });
     const hairMat  = new THREE.MeshLambertMaterial({ color: hairHex });
-    const shoeMat  = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
-    const eyeMat   = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+    const shoeMat  = new THREE.MeshLambertMaterial({ color: shoeHex });
+    const eyeMat   = new THREE.MeshLambertMaterial({ color: eyeHex });
+    const beardMat = new THREE.MeshLambertMaterial({ color: beardHex });
 
     const mkBox = (w, h, d, mat, cast = true) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -564,22 +583,45 @@ const Playground3D = (() => {
     head.position.y = HIP_Y + TORSO_H + HEAD_SZ / 2 + 0.02;
     const headBox = mkBox(HEAD_SZ, HEAD_SZ, HEAD_SZ, skinMat);
     head.add(headBox);
-    // Eyes — flat black squares on the front face (positive Z is "front").
-    const eyeGeom = new THREE.BoxGeometry(0.06, 0.06, 0.02);
-    const leftEye = new THREE.Mesh(eyeGeom, eyeMat);
-    leftEye.position.set(-0.12, 0.04, HEAD_SZ / 2 + 0.001);
+    // Eyes — shape varies by eyeShape index. Positive Z is "front".
+    const eyeFrontZ = HEAD_SZ / 2 + 0.001;
+    const eyeShapeDims = _eyeShapeDims(eyeShapeIdx);
+    const leftEye = new THREE.Mesh(
+      new THREE.BoxGeometry(eyeShapeDims.w, eyeShapeDims.h, 0.02),
+      eyeMat
+    );
+    leftEye.position.set(-0.12, 0.04, eyeFrontZ);
+    leftEye.rotation.z = eyeShapeDims.rot || 0;
     head.add(leftEye);
-    const rightEye = new THREE.Mesh(eyeGeom, eyeMat);
-    rightEye.position.set(0.12, 0.04, HEAD_SZ / 2 + 0.001);
+    const rightEye = new THREE.Mesh(
+      new THREE.BoxGeometry(eyeShapeDims.w, eyeShapeDims.h, 0.02),
+      eyeMat
+    );
+    rightEye.position.set(0.12, 0.04, eyeFrontZ);
+    rightEye.rotation.z = -(eyeShapeDims.rot || 0);
     head.add(rightEye);
     // Mouth — small dark bar.
-    const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.03, 0.02), eyeMat);
+    const mouthMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+    const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.03, 0.02), mouthMat);
     mouth.position.set(0, -0.12, HEAD_SZ / 2 + 0.001);
     head.add(mouth);
+
+    // Facial hair — sits on the front of the head; built per-style.
+    const beard = _buildFacialHair(beardIdx, beardMat, HEAD_SZ);
+    if (beard) head.add(beard);
 
     // Hair — per-style box arrangement on top of head.
     const hair = _buildHair(styleIdx, hairMat, HEAD_SZ);
     if (hair) head.add(hair);
+
+    // Glasses — sit just in front of the eye plane.
+    const glasses = _buildGlasses(glassesIdx, HEAD_SZ);
+    if (glasses) head.add(glasses);
+
+    // Hat — sits above the hair on top of the head. Cap variant borrows
+    // the shirt color so it can match the outfit.
+    const hat = _buildHat(hatIdx, HEAD_SZ, shirtHex);
+    if (hat) head.add(hat);
 
     body.add(head);
 
@@ -697,6 +739,236 @@ const Playground3D = (() => {
           b.castShadow = true;
           grp.add(b);
         }
+        break;
+      }
+      case 10: { // buzz — extremely thin cap hugging the crown
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(headSize * 1.01, 0.05, headSize * 1.01), mat);
+        cap.position.y = top - 0.01;
+        cap.castShadow = true;
+        grp.add(cap);
+        break;
+      }
+      case 11: { // side-part — asymmetric cap with a swept bang up front
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(headSize * 1.04, 0.14, headSize * 1.04), mat);
+        cap.position.y = top - 0.02;
+        cap.castShadow = true;
+        grp.add(cap);
+        const sweep = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.10, 0.18), mat);
+        sweep.position.set(-headSize * 0.18, top + 0.04, headSize * 0.32);
+        sweep.rotation.z = 0.4;
+        sweep.castShadow = true;
+        grp.add(sweep);
+        break;
+      }
+      case 12: { // topknot — pixie cap + a small bun on top
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(headSize * 1.02, 0.10, headSize * 1.02), mat);
+        cap.position.y = top - 0.02;
+        cap.castShadow = true;
+        grp.add(cap);
+        const knot = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 10), mat);
+        knot.position.y = top + 0.18;
+        knot.castShadow = true;
+        grp.add(knot);
+        break;
+      }
+      case 13: { // undercut — tall block on top, shaved sides
+        const top1 = new THREE.Mesh(new THREE.BoxGeometry(headSize * 0.82, 0.26, headSize * 1.0), mat);
+        top1.position.y = top + 0.08;
+        top1.castShadow = true;
+        grp.add(top1);
+        break;
+      }
+    }
+    return grp;
+  }
+
+  // Eye-shape index → box width/height (depth stays at 0.02 from the
+  // caller). Index 0 is round (0.06×0.06) so existing characters look
+  // identical when eyeShape is null/0.
+  function _eyeShapeDims(idx) {
+    switch (idx) {
+      case 1: return { w: 0.12, h: 0.04 };               // narrow / sleepy
+      case 2: return { w: 0.10, h: 0.12 };               // wide / expressive
+      case 3: return { w: 0.13, h: 0.05, rot: -0.26 };   // sharp / angled
+      case 4: return { w: 0.09, h: 0.07 };               // soft / oval
+      case 0:
+      default: return { w: 0.06, h: 0.06 };              // round (legacy)
+    }
+  }
+
+  function _buildFacialHair(styleIdx, mat, headSize) {
+    const THREE = window.THREE;
+    if (!styleIdx) return null;
+    const grp = new THREE.Group();
+    const front = headSize / 2 + 0.005;
+    switch (styleIdx) {
+      case 1: { // stubble — thin sheet across the lower face
+        const sheet = new THREE.Mesh(new THREE.BoxGeometry(headSize * 0.92, 0.16, 0.02), mat);
+        sheet.position.set(0, -0.16, front);
+        grp.add(sheet);
+        break;
+      }
+      case 2: { // mustache — small bar above mouth
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.04, 0.03), mat);
+        bar.position.set(0, -0.08, front);
+        grp.add(bar);
+        break;
+      }
+      case 3: { // goatee — small patch below mouth
+        const patch = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.10, 0.03), mat);
+        patch.position.set(0, -0.20, front);
+        grp.add(patch);
+        break;
+      }
+      case 4: { // full beard — wraps chin and jaw
+        const front_ = new THREE.Mesh(new THREE.BoxGeometry(headSize * 0.95, 0.22, 0.04), mat);
+        front_.position.set(0, -0.18, front);
+        grp.add(front_);
+        const left = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.22, headSize * 0.7), mat);
+        left.position.set(-headSize / 2 - 0.005, -0.16, 0);
+        grp.add(left);
+        const right = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.22, headSize * 0.7), mat);
+        right.position.set(headSize / 2 + 0.005, -0.16, 0);
+        grp.add(right);
+        const stache = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.04, 0.04), mat);
+        stache.position.set(0, -0.08, front);
+        grp.add(stache);
+        break;
+      }
+      case 5: { // chinstrap — thin band running jawline
+        const left = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, headSize * 0.6), mat);
+        left.position.set(-headSize / 2 - 0.005, -0.12, 0);
+        grp.add(left);
+        const right = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, headSize * 0.6), mat);
+        right.position.set(headSize / 2 + 0.005, -0.12, 0);
+        grp.add(right);
+        const chin = new THREE.Mesh(new THREE.BoxGeometry(headSize * 0.9, 0.05, 0.04), mat);
+        chin.position.set(0, -0.22, front);
+        grp.add(chin);
+        break;
+      }
+    }
+    grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    return grp;
+  }
+
+  function _buildGlasses(styleIdx, headSize) {
+    const THREE = window.THREE;
+    if (!styleIdx) return null;
+    const frameMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+    const grp = new THREE.Group();
+    const z = headSize / 2 + 0.025;
+    const xL = -0.12, xR = 0.12, y = 0.04;
+    switch (styleIdx) {
+      case 1: { // round
+        const lensL = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.012, 8, 16), frameMat);
+        lensL.position.set(xL, y, z); lensL.rotation.y = 0; grp.add(lensL);
+        const lensR = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.012, 8, 16), frameMat);
+        lensR.position.set(xR, y, z); grp.add(lensR);
+        const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.015, 0.015), frameMat);
+        bridge.position.set(0, y, z); grp.add(bridge);
+        break;
+      }
+      case 2: { // square
+        const mkFrame = (x) => {
+          const f = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.10, 0.02), frameMat);
+          f.position.set(x, y, z);
+          return f;
+        };
+        grp.add(mkFrame(xL));
+        grp.add(mkFrame(xR));
+        const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.015, 0.015), frameMat);
+        bridge.position.set(0, y, z); grp.add(bridge);
+        break;
+      }
+      case 3: { // aviator — slightly larger teardrops
+        const lensMat = new THREE.MeshLambertMaterial({ color: 0x4a6a8a, transparent: true, opacity: 0.6 });
+        const mkLens = (x) => {
+          const g = new THREE.Group();
+          const ring = new THREE.Mesh(new THREE.TorusGeometry(0.10, 0.012, 8, 18), frameMat);
+          g.add(ring);
+          const fill = new THREE.Mesh(new THREE.CircleGeometry(0.09, 18), lensMat);
+          g.add(fill);
+          g.position.set(x, y - 0.01, z);
+          return g;
+        };
+        grp.add(mkLens(xL));
+        grp.add(mkLens(xR));
+        const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.012, 0.012), frameMat);
+        bridge.position.set(0, y + 0.02, z); grp.add(bridge);
+        break;
+      }
+      case 4: { // half-rim — bottom arc only
+        const mkBottom = (x) => {
+          const arc = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.01, 6, 12, Math.PI), frameMat);
+          arc.rotation.z = Math.PI; // open side up
+          arc.position.set(x, y, z);
+          return arc;
+        };
+        grp.add(mkBottom(xL));
+        grp.add(mkBottom(xR));
+        const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.012, 0.012), frameMat);
+        bridge.position.set(0, y, z); grp.add(bridge);
+        break;
+      }
+    }
+    return grp;
+  }
+
+  function _buildHat(styleIdx, headSize, shirtHex) {
+    const THREE = window.THREE;
+    if (!styleIdx) return null;
+    const top = headSize / 2;
+    const grp = new THREE.Group();
+    switch (styleIdx) {
+      case 1: { // beanie — knit cap with cuff
+        const mat = new THREE.MeshLambertMaterial({ color: 0x3a4a8a });
+        const cuffMat = new THREE.MeshLambertMaterial({ color: 0x243466 });
+        const cap = new THREE.Mesh(new THREE.SphereGeometry(headSize * 0.62, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), mat);
+        cap.position.y = top;
+        cap.castShadow = true;
+        grp.add(cap);
+        const cuff = new THREE.Mesh(new THREE.CylinderGeometry(headSize * 0.62, headSize * 0.62, 0.10, 16), cuffMat);
+        cuff.position.y = top + 0.02;
+        cuff.castShadow = true;
+        grp.add(cuff);
+        break;
+      }
+      case 2: { // cap — dome + brim, painted with shirt color
+        const mat = new THREE.MeshLambertMaterial({ color: shirtHex });
+        const dome = new THREE.Mesh(new THREE.SphereGeometry(headSize * 0.60, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), mat);
+        dome.position.y = top;
+        dome.castShadow = true;
+        grp.add(dome);
+        const brim = new THREE.Mesh(new THREE.BoxGeometry(headSize * 1.3, 0.04, headSize * 0.55), mat);
+        brim.position.set(0, top - 0.01, headSize * 0.45);
+        brim.castShadow = true;
+        grp.add(brim);
+        break;
+      }
+      case 3: { // top hat — tall cylinder + thin brim with red band
+        const mat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+        const bandMat = new THREE.MeshLambertMaterial({ color: 0xa02828 });
+        const brim = new THREE.Mesh(new THREE.CylinderGeometry(headSize * 0.80, headSize * 0.80, 0.04, 20), mat);
+        brim.position.y = top + 0.02;
+        brim.castShadow = true;
+        grp.add(brim);
+        const stack = new THREE.Mesh(new THREE.CylinderGeometry(headSize * 0.50, headSize * 0.50, 0.55, 20), mat);
+        stack.position.y = top + 0.32;
+        stack.castShadow = true;
+        grp.add(stack);
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(headSize * 0.51, headSize * 0.51, 0.06, 20), bandMat);
+        band.position.y = top + 0.08;
+        band.castShadow = true;
+        grp.add(band);
+        break;
+      }
+      case 4: { // hood — cowl around the head, tucked behind
+        const mat = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+        const cowl = new THREE.Mesh(new THREE.SphereGeometry(headSize * 0.78, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2 + 0.3), mat);
+        cowl.position.set(0, top - 0.05, -0.05);
+        cowl.castShadow = true;
+        grp.add(cowl);
         break;
       }
     }
@@ -1672,9 +1944,34 @@ const Playground3D = (() => {
       current: { x: x || 0, y: y || 0, z: z || 0, yaw: yaw || 0 },
       stepClock: 0,
       nameEl,
+      username: username || 'Anon',
       bubbleEls: [],
       emoteUntil: 0
     });
+  }
+
+  // Snapshot for voice-chat distance attenuation. Reads the lerped (current)
+  // position so volume tracks what the user actually sees on screen.
+  function getRemotePlayers() {
+    const out = [];
+    _remotePlayers.forEach((rp, id) => {
+      out.push({
+        id,
+        x: rp.current.x,
+        y: rp.current.y || 0,
+        z: rp.current.z,
+        username: rp.username
+      });
+    });
+    return out;
+  }
+
+  // Toggle the .speaking class on a remote player's nametag. Used by
+  // VoiceManager to highlight whoever is currently transmitting audio.
+  function setRemotePlayerSpeaking(id, isSpeaking) {
+    const rp = _remotePlayers.get(id);
+    if (!rp || !rp.nameEl) return;
+    rp.nameEl.classList.toggle('speaking', !!isSpeaking);
   }
 
   function updateRemotePlayer(id, x, z, yaw, walking, y) {
@@ -1792,11 +2089,175 @@ const Playground3D = (() => {
   function getActiveNode() { return _activeNode; }
   function setProjectClickHandler(fn) { _projectClickHandler = fn; }
 
+  // ── standalone 3D preview ──
+  //
+  // Self-contained mini-renderer for the character builder modal. Owns its
+  // own WebGL renderer, scene, camera, lights, RAF loop and a single rig
+  // group — does NOT touch any module-level engine state, so it can run
+  // simultaneously with the main /home or /world scene without conflict.
+  function createPreview(container, character) {
+    let renderer = null, scene = null, camera = null;
+    let rig = null, rotGroup = null, rafId = null;
+    let dragging = false, lastX = 0, yaw = 0;
+    const autoYawVel = 0.4; // rad/s when not being dragged
+    let alive = false;
+    let pending = character;
+
+    function _size() {
+      const w = Math.max(1, container.clientWidth);
+      const h = Math.max(1, container.clientHeight);
+      return { w, h };
+    }
+
+    function start() {
+      const THREE = window.THREE;
+      const { w, h } = _size();
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(w, h, false);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.domElement.className = 'pg-preview-canvas';
+      renderer.domElement.style.touchAction = 'none';
+      renderer.domElement.style.cursor = 'grab';
+      renderer.domElement.style.width = '100%';
+      renderer.domElement.style.height = '100%';
+      container.appendChild(renderer.domElement);
+
+      scene = new THREE.Scene();
+
+      // Lighting — bright ambient + key light angled from the front-right.
+      scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+      const key = new THREE.DirectionalLight(0xffffff, 0.85);
+      key.position.set(2, 4, 3);
+      key.castShadow = true;
+      key.shadow.mapSize.set(512, 512);
+      const sc = key.shadow.camera;
+      sc.left = -2; sc.right = 2; sc.top = 2; sc.bottom = -2;
+      sc.near = 0.5; sc.far = 12;
+      scene.add(key);
+
+      // Subtle ground disc so the character isn't floating in pure
+      // transparency; receives the key light's shadow.
+      const discMat = new THREE.MeshLambertMaterial({ color: 0x0a0a14, transparent: true, opacity: 0.55 });
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(0.9, 28), discMat);
+      disc.rotation.x = -Math.PI / 2;
+      disc.receiveShadow = true;
+      scene.add(disc);
+
+      camera = new THREE.PerspectiveCamera(32, w / h, 0.1, 50);
+      camera.position.set(0, 1.4, 5.8);
+      camera.lookAt(0, 1.0, 0);
+
+      rotGroup = new THREE.Group();
+      scene.add(rotGroup);
+      rig = _buildPlayer(pending);
+      rotGroup.add(rig);
+
+      _attachPointer();
+      _attachResize();
+
+      alive = true;
+      let last = performance.now();
+      const loop = (now) => {
+        if (!alive) return;
+        const dt = Math.min(0.05, (now - last) / 1000);
+        last = now;
+        if (!dragging) yaw += autoYawVel * dt;
+        rotGroup.rotation.y = yaw;
+        renderer.render(scene, camera);
+        rafId = requestAnimationFrame(loop);
+      };
+      rafId = requestAnimationFrame(loop);
+    }
+
+    function _attachPointer() {
+      const el = renderer.domElement;
+      const onDown = (e) => {
+        dragging = true;
+        lastX = e.clientX;
+        try { el.setPointerCapture(e.pointerId); } catch (_) {}
+        el.style.cursor = 'grabbing';
+        e.preventDefault();
+      };
+      const onMove = (e) => {
+        if (!dragging) return;
+        yaw += (e.clientX - lastX) * 0.012;
+        lastX = e.clientX;
+      };
+      const onUp = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        el.style.cursor = 'grab';
+        try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+      };
+      el.addEventListener('pointerdown', onDown);
+      el.addEventListener('pointermove', onMove);
+      el.addEventListener('pointerup', onUp);
+      el.addEventListener('pointercancel', onUp);
+      el.addEventListener('pointerleave', onUp);
+    }
+
+    let resizeObs = null;
+    function _attachResize() {
+      if (typeof ResizeObserver === 'undefined') return;
+      resizeObs = new ResizeObserver(() => {
+        if (!renderer || !camera) return;
+        const { w, h } = _size();
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      });
+      resizeObs.observe(container);
+    }
+
+    function setCharacter(c) {
+      pending = c;
+      if (!rig || !rotGroup) return;
+      rotGroup.remove(rig);
+      _disposeRig(rig);
+      rig = _buildPlayer(c);
+      rotGroup.add(rig);
+    }
+
+    function destroy() {
+      alive = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
+      if (rig && rotGroup) { rotGroup.remove(rig); _disposeRig(rig); }
+      if (scene) _disposeRig(scene);
+      if (renderer) {
+        renderer.dispose();
+        if (renderer.domElement && renderer.domElement.parentNode) {
+          renderer.domElement.parentNode.removeChild(renderer.domElement);
+        }
+      }
+      renderer = scene = camera = rig = rotGroup = null;
+    }
+
+    // Three.js may not be ready yet — gate the same way the engine does.
+    if (window.THREE) {
+      start();
+    } else {
+      const onReady = () => {
+        window.removeEventListener('three-ready', onReady);
+        // Container may have been detached by the time THREE arrives.
+        if (container.isConnected) start();
+      };
+      window.addEventListener('three-ready', onReady);
+    }
+
+    return { setCharacter, destroy };
+  }
+
   return {
-    init, initWorld, destroy, setCharacter, defaultCharacter,
+    init, initWorld, destroy, setCharacter, defaultCharacter, createPreview,
     // World/multiplayer surface — no-ops in home mode.
     addRemotePlayer, updateRemotePlayer, removeRemotePlayer,
     showRemoteChat, playRemoteEmote, playLocalEmote,
-    getLocalState, getActiveNode, setProjectClickHandler
+    getLocalState, getActiveNode, setProjectClickHandler,
+    // Voice-chat surface — distance attenuation + speaking indicator.
+    getRemotePlayers, setRemotePlayerSpeaking
   };
 })();

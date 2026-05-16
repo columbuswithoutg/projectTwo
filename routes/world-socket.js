@@ -24,10 +24,19 @@ const worldPlayers = new Map();
 // and homePlayers; the two maps are independent.
 const homePlayers = new Map();
 
+// Voice-chat mesh membership (WebRTC P2P). Independent of position presence:
+// a socket can be in worldPlayers/homePlayers without being voice-enabled.
+// voiceWorld holds socketIds that opted into voice in the world room.
+// voiceHomes maps ownerId → Set<socketId> for per-home voice meshes.
+const voiceWorld = new Set();
+const voiceHomes = new Map();
+
 const MAX_USERNAME = 40;
 const MAX_CHAT_LEN = 200;
 const CHAT_INTERVAL_MS = 1000;
 const POSITION_BOUND = 1000;          // sanity clamp; world is < 300u square in practice
+const VOICE_SIGNAL_INTERVAL_MS = 50;  // per-pair signaling rate cap (~20/sec)
+const VOICE_SIGNAL_MAX_BYTES = 8192;  // SDP fragments + ICE candidates are tiny
 
 module.exports = (io) => {
   // Handshake auth — reject connections without a valid JWT.
@@ -207,6 +216,113 @@ module.exports = (io) => {
       socket.to('home:' + p.ownerId).emit('home:left', { id: socket.id });
     });
 
+    // ── voice:* events ──
+    //
+    // WebRTC signaling relay. The server never touches media — it only
+    // forwards SDP offer/answer/ICE between in-voice peers in the same
+    // room. Each signal is validated to be a single-target relay within
+    // the sender's room (no cross-room leaks, no broadcasts).
+    //
+    // socket.data.lastVoiceSignal tracks the per-sender signaling cadence.
+
+    function voicePeersInSameRoom(scope) {
+      if (scope === 'world') {
+        return voiceWorld.has(socket.id)
+          ? [...voiceWorld].filter(id => id !== socket.id)
+          : [];
+      }
+      if (scope === 'home') {
+        const home = homePlayers.get(socket.id);
+        if (!home) return [];
+        const set = voiceHomes.get(home.ownerId);
+        if (!set || !set.has(socket.id)) return [];
+        return [...set].filter(id => id !== socket.id);
+      }
+      return [];
+    }
+
+    function emitVoicePeerEvent(scope, event, payload) {
+      if (scope === 'world') {
+        socket.to('world').emit(event, payload);
+      } else if (scope === 'home') {
+        const home = homePlayers.get(socket.id);
+        if (home) socket.to('home:' + home.ownerId).emit(event, payload);
+      }
+    }
+
+    socket.on('voice:announce', (raw) => {
+      const scope = raw && raw.scope;
+      if (scope === 'world') {
+        if (!worldPlayers.has(socket.id)) return;
+        if (voiceWorld.has(socket.id)) return;
+        voiceWorld.add(socket.id);
+      } else if (scope === 'home') {
+        const home = homePlayers.get(socket.id);
+        if (!home) return;
+        let set = voiceHomes.get(home.ownerId);
+        if (!set) { set = new Set(); voiceHomes.set(home.ownerId, set); }
+        if (set.has(socket.id)) return;
+        set.add(socket.id);
+      } else {
+        return;
+      }
+      socket.data.voiceScope = scope;
+      const peers = voicePeersInSameRoom(scope);
+      socket.emit('voice:peers', { scope, peers });
+      emitVoicePeerEvent(scope, 'voice:peer-joined', { id: socket.id });
+    });
+
+    socket.on('voice:leave', () => {
+      const scope = socket.data.voiceScope;
+      if (!scope) return;
+      let removed = false;
+      if (scope === 'world') {
+        removed = voiceWorld.delete(socket.id);
+      } else if (scope === 'home') {
+        const home = homePlayers.get(socket.id);
+        if (home) {
+          const set = voiceHomes.get(home.ownerId);
+          if (set) {
+            removed = set.delete(socket.id);
+            if (set.size === 0) voiceHomes.delete(home.ownerId);
+          }
+        }
+      }
+      if (removed) emitVoicePeerEvent(scope, 'voice:peer-left', { id: socket.id });
+      socket.data.voiceScope = null;
+    });
+
+    socket.on('voice:signal', (raw) => {
+      const scope = socket.data.voiceScope;
+      if (!scope) return;
+      if (!raw || typeof raw.to !== 'string') return;
+      const kind = raw.kind;
+      if (kind !== 'offer' && kind !== 'answer' && kind !== 'ice') return;
+      if (!raw.data || typeof raw.data !== 'object') return;
+      try {
+        // Cheap size guard against accidentally huge payloads.
+        const size = JSON.stringify(raw.data).length;
+        if (size > VOICE_SIGNAL_MAX_BYTES) return;
+      } catch (_) { return; }
+
+      // Per-pair rate cap to defang accidental loops.
+      const now = Date.now();
+      socket.data.lastVoiceSignal = socket.data.lastVoiceSignal || new Map();
+      const last = socket.data.lastVoiceSignal.get(raw.to) || 0;
+      if (now - last < VOICE_SIGNAL_INTERVAL_MS) return;
+      socket.data.lastVoiceSignal.set(raw.to, now);
+
+      // Same-room validation: target must be a voice peer in the same room.
+      const peers = voicePeersInSameRoom(scope);
+      if (!peers.includes(raw.to)) return;
+
+      io.to(raw.to).emit('voice:signal', {
+        from: socket.id,
+        kind,
+        data: raw.data
+      });
+    });
+
     socket.on('disconnect', () => {
       if (worldPlayers.has(socket.id)) {
         worldPlayers.delete(socket.id);
@@ -216,6 +332,17 @@ module.exports = (io) => {
       if (home) {
         homePlayers.delete(socket.id);
         socket.to('home:' + home.ownerId).emit('home:left', { id: socket.id });
+      }
+      // Voice mesh cleanup — broadcast peer-left to surviving voice peers.
+      if (voiceWorld.delete(socket.id)) {
+        socket.to('world').emit('voice:peer-left', { id: socket.id });
+      }
+      if (home) {
+        const set = voiceHomes.get(home.ownerId);
+        if (set && set.delete(socket.id)) {
+          socket.to('home:' + home.ownerId).emit('voice:peer-left', { id: socket.id });
+          if (set.size === 0) voiceHomes.delete(home.ownerId);
+        }
       }
     });
   });

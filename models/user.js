@@ -31,17 +31,28 @@ const UserSchema = new mongoose.Schema({
   // middleware at most once per minute per user (throttled in-memory) so
   // the "online" badge in the admin Users tab doesn't 2x our DB writes.
   lastActiveAt: { type: Date, default: null, index: true },
-  // /home playground character — the four-slot layered SVG figure built
-  // via the in-app character builder. Each value is a small integer index
-  // into the option arrays defined client-side in js/playground.js. Stays
-  // unset (null) until the user saves their first build, which is also
-  // the cue that triggers the builder modal automatically on first visit.
+  // /home playground character — the layered SVG / 3D rig built via the
+  // in-app character builder. Each value is a small integer index into the
+  // option arrays defined client-side in js/playground.js (palettes) and
+  // both renderers (playground.js + playground3d.js for hair/face/hat/etc.).
+  // Stays unset (null) until the user saves their first build, which is
+  // also the cue that triggers the builder modal automatically on first
+  // visit (the `character.skin == null` check in views/home.js).
+  // Slots: skin, hair (style+color), shirt, pants, eyes (color+shape),
+  // facial hair (style+color), glasses, hat, shoes.
   homeCharacter: {
-    skin:        { type: Number, default: null, min: 0, max: 7 },
-    hairStyle:   { type: Number, default: null, min: 0, max: 9 },
-    hairColor:   { type: Number, default: null, min: 0, max: 9 },
-    shirtColor:  { type: Number, default: null, min: 0, max: 11 },
-    pantsColor:  { type: Number, default: null, min: 0, max: 11 }
+    skin:            { type: Number, default: null, min: 0, max: 11 },
+    hairStyle:       { type: Number, default: null, min: 0, max: 13 },
+    hairColor:       { type: Number, default: null, min: 0, max: 13 },
+    shirtColor:      { type: Number, default: null, min: 0, max: 15 },
+    pantsColor:      { type: Number, default: null, min: 0, max: 15 },
+    eyeColor:        { type: Number, default: null, min: 0, max: 7 },
+    eyeShape:        { type: Number, default: null, min: 0, max: 4 },
+    facialHairStyle: { type: Number, default: null, min: 0, max: 5 },
+    facialHairColor: { type: Number, default: null, min: 0, max: 13 },
+    glasses:         { type: Number, default: null, min: 0, max: 4 },
+    hat:             { type: Number, default: null, min: 0, max: 4 },
+    shoeColor:       { type: Number, default: null, min: 0, max: 7 }
   },
   // Project-themed room layout for /home. Each room is a 1×1 grid cell;
   // world-space cell size + wall/doorway geometry are derived at render time

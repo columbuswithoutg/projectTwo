@@ -12,6 +12,9 @@
  ************************************************/
 const FriendHomeView = (() => {
   let _mp = null;
+  let _voice = null;
+  let _voiceBtn = null;
+  let _voiceBtnHandler = null;
 
   async function mount(container, params) {
     if (!Auth.isLoggedIn()) {
@@ -35,6 +38,7 @@ const FriendHomeView = (() => {
         <div class="world-chat-inputrow">
           <input class="pg3d-chat" id="world-chat-input" placeholder="Say something…" maxlength="200" autocomplete="off" />
           <button class="pg3d-emote" id="world-emote-btn" type="button" aria-label="Wave">👋</button>
+          <button class="pg3d-voice" id="world-voice-btn" type="button" aria-label="Toggle voice chat" aria-pressed="false" title="Voice chat (off)">🎙️</button>
         </div>
       </div>
     `;
@@ -79,9 +83,55 @@ const FriendHomeView = (() => {
         character
       });
     }
+
+    _wireVoiceToggle();
+  }
+
+  function _wireVoiceToggle() {
+    _voiceBtn = document.getElementById('world-voice-btn');
+    if (!_voiceBtn) return;
+    if (typeof VoiceManager === 'undefined' || !VoiceManager.start) {
+      _voiceBtn.disabled = true;
+      _voiceBtn.title = 'Voice chat unavailable';
+      return;
+    }
+    _voiceBtnHandler = () => {
+      if (_voice) {
+        try { _voice.stop(); } catch (_) {}
+        _voice = null;
+        _voiceBtn.setAttribute('aria-pressed', 'false');
+        _voiceBtn.title = 'Voice chat (off)';
+        return;
+      }
+      if (!_mp || !_mp.getSocket) return;
+      _voice = VoiceManager.start({
+        socket: _mp.getSocket(),
+        scope: 'home',
+        getLocalState: () => Playground3D.getLocalState && Playground3D.getLocalState(),
+        getRemotePlayers: () => Playground3D.getRemotePlayers && Playground3D.getRemotePlayers(),
+        onError: (msg) => {
+          _voiceBtn.setAttribute('aria-pressed', 'false');
+          _voiceBtn.title = msg || 'Voice chat error';
+          _voice = null;
+        },
+        onPeerStateChange: (peerId, st) => {
+          if (Playground3D.setRemotePlayerSpeaking) {
+            Playground3D.setRemotePlayerSpeaking(peerId, !!st.speaking);
+          }
+        }
+      });
+      _voiceBtn.setAttribute('aria-pressed', 'true');
+      _voiceBtn.title = 'Voice chat (on) — click to mute';
+    };
+    _voiceBtn.addEventListener('click', _voiceBtnHandler);
   }
 
   function unmount() {
+    if (_voice) { try { _voice.stop(); } catch (_) {} _voice = null; }
+    if (_voiceBtn && _voiceBtnHandler) {
+      _voiceBtn.removeEventListener('click', _voiceBtnHandler);
+    }
+    _voiceBtn = null; _voiceBtnHandler = null;
     if (_mp) { try { _mp.stop(); } catch (_) {} _mp = null; }
     if (typeof Playground3D !== 'undefined' && Playground3D.destroy) {
       Playground3D.destroy();

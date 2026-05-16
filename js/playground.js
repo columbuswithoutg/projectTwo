@@ -14,10 +14,12 @@ const Playground = (() => {
   // Option palettes — these are the source of truth for what the
   // character builder offers. Server-side validation in routes/profile.js
   // mirrors the count of each (max = length-1). Keep in sync.
-  const SKIN_TONES   = ['#f5d4a8', '#e8b48a', '#c98c5d', '#8b5a3c', '#5d3a24', '#fce4d0', '#d6a878', '#3a2418'];
-  const HAIR_COLORS  = ['#1a1a1a', '#5a3a22', '#a06030', '#dca960', '#cccccc', '#9b59b6', '#e74c3c', '#3498db', '#1abc9c', '#ff69b4'];
-  const SHIRT_COLORS = ['#e23636', '#3a85f0', '#39b54a', '#f0c040', '#9b59b6', '#ff7eb6', '#444444', '#f08020', '#ffffff', '#2c3e50', '#a52a2a', '#16a085'];
-  const PANTS_COLORS = ['#1f3a68', '#444444', '#222222', '#5a3a22', '#7a6a3a', '#7d4a3a', '#0e3a2e', '#3a3a3a', '#888888', '#5a2a8a', '#003366', '#8b4513'];
+  const SKIN_TONES   = ['#f5d4a8', '#e8b48a', '#c98c5d', '#8b5a3c', '#5d3a24', '#fce4d0', '#d6a878', '#3a2418', '#fbe7d7', '#c79a6b', '#7a5230', '#2a160a'];
+  const HAIR_COLORS  = ['#1a1a1a', '#5a3a22', '#a06030', '#dca960', '#cccccc', '#9b59b6', '#e74c3c', '#3498db', '#1abc9c', '#ff69b4', '#f5f0e6', '#9c4a2b', '#3a1d5a', '#8eead0'];
+  const SHIRT_COLORS = ['#e23636', '#3a85f0', '#39b54a', '#f0c040', '#9b59b6', '#ff7eb6', '#444444', '#f08020', '#ffffff', '#2c3e50', '#a52a2a', '#16a085', '#1f8a8a', '#c8b4ff', '#d8a93a', '#f5e6c8'];
+  const PANTS_COLORS = ['#1f3a68', '#444444', '#222222', '#5a3a22', '#7a6a3a', '#7d4a3a', '#0e3a2e', '#3a3a3a', '#888888', '#5a2a8a', '#003366', '#8b4513', '#a89058', '#6a1a2a', '#7ab8e8', '#1a4a2a'];
+  const EYE_COLORS   = ['#5a3a22', '#3a85f0', '#2c8a3a', '#a06030', '#7a7a7a', '#d6a040', '#1a1a1a', '#7a3aa6'];
+  const SHOE_COLORS  = ['#1a1a1a', '#5a3a22', '#ffffff', '#8b4513', '#a02828', '#3a85f0', '#f0c040', '#7a7a7a'];
 
   // Hair style index → SVG path "d" attribute. Drawn in a 32×48 viewBox
   // sized to the character. The head is a circle at (cx=16, cy=13, r=7),
@@ -52,7 +54,78 @@ const Playground = (() => {
     // 8 — afro: oversized rounded halo around the head.
     'M 5 13 Q 4 5 16 2 Q 28 5 27 13 Q 22 11 16 11 Q 10 11 5 13 Z',
     // 9 — curly: bumpy crown, individual ringlets along the hairline.
-    'M 9 13 Q 8 11 9 9 Q 11 7 12 8 Q 14 5 16 5 Q 18 5 20 8 Q 21 7 23 9 Q 24 11 23 13 Q 21 11 19 11 Q 17 11 16 11 Q 15 11 13 11 Q 11 11 9 13 Z'
+    'M 9 13 Q 8 11 9 9 Q 11 7 12 8 Q 14 5 16 5 Q 18 5 20 8 Q 21 7 23 9 Q 24 11 23 13 Q 21 11 19 11 Q 17 11 16 11 Q 15 11 13 11 Q 11 11 9 13 Z',
+    // 10 — buzz: super-short cap, hugs the head closely.
+    'M 10 11 Q 10 7 16 6 Q 22 7 22 11 Q 16 9 10 11 Z',
+    // 11 — side-part: rounded cap with a sweeping bang on one side.
+    'M 9 12 Q 8 5 16 4 Q 24 5 23 12 Q 22 9 19 9 Q 17 11 14 11 Q 11 10 9 12 Z',
+    // 12 — topknot: pixie cap + a round bun on top.
+    'M 10 12 Q 11 6 16 5 Q 21 6 22 12 Q 16 9 10 12 Z M 14 4 Q 14 1 16 1 Q 18 1 18 4 Q 18 6 16 6 Q 14 6 14 4 Z',
+    // 13 — undercut: tall top with a hard line, shaved sides.
+    'M 12 12 Q 11 4 16 3 Q 21 4 20 12 Q 16 10 12 12 Z'
+  ];
+
+  // Eye shape index → { left, right } pairs of attributes for two <ellipse>
+  // elements. cx/cy in the same 32×48 viewBox; rx/ry are radii. Index 0 is
+  // the original round look so existing characters render identically.
+  const EYE_SHAPES = [
+    // 0 — round
+    { left: { cx: 13, cy: 13, rx: 0.9, ry: 0.9 }, right: { cx: 19, cy: 13, rx: 0.9, ry: 0.9 } },
+    // 1 — narrow (sleepy slits)
+    { left: { cx: 13, cy: 13, rx: 1.2, ry: 0.45 }, right: { cx: 19, cy: 13, rx: 1.2, ry: 0.45 } },
+    // 2 — wide (anime/expressive)
+    { left: { cx: 13, cy: 13, rx: 1.2, ry: 1.4 }, right: { cx: 19, cy: 13, rx: 1.2, ry: 1.4 } },
+    // 3 — sharp (angled outward)
+    { left: { cx: 13, cy: 13, rx: 1.3, ry: 0.6, rotate: -15 }, right: { cx: 19, cy: 13, rx: 1.3, ry: 0.6, rotate: 15 } },
+    // 4 — soft (gentle ovals)
+    { left: { cx: 13, cy: 13.1, rx: 1.0, ry: 0.8 }, right: { cx: 19, cy: 13.1, rx: 1.0, ry: 0.8 } }
+  ];
+
+  // Facial hair style index → SVG path "d" (or '' for clean shaven).
+  // The head circle is at (cx=16, cy=13, r=7) so the chin sits at y≈20 and
+  // the upper lip at y≈15. Mouth is at y≈16. Each path is designed to sit
+  // around the mouth without covering the eyes.
+  const FACIAL_HAIR_STYLES = [
+    // 0 — clean
+    '',
+    // 1 — stubble: a thin shadow along the jawline
+    'M 10 17 Q 16 21 22 17 Q 22 19 16 20 Q 10 19 10 17 Z',
+    // 2 — mustache: small bar above the mouth
+    'M 13 15.4 Q 16 14.6 19 15.4 Q 18 16.2 16 16 Q 14 16.2 13 15.4 Z',
+    // 3 — goatee: small patch below the mouth
+    'M 14.5 17 Q 16 16.8 17.5 17 Q 18 19 16 19.6 Q 14 19 14.5 17 Z',
+    // 4 — full beard: thick band around chin and jaw
+    'M 10 15 Q 10 20 16 21 Q 22 20 22 15 Q 21 17 19 16 Q 16 17 13 16 Q 11 17 10 15 Z',
+    // 5 — chinstrap: thin frame along the jawline
+    'M 10 14.5 Q 10 20 16 20.8 Q 22 20 22 14.5 Q 21.4 15.2 21.3 17 Q 19 19.5 16 19.6 Q 13 19.5 10.7 17 Q 10.6 15.2 10 14.5 Z'
+  ];
+
+  // Glasses style index → SVG snippet (so we can have multi-element frames).
+  // Sits over the eyes at y≈13. Index 0 is no glasses.
+  const GLASSES_STYLES = [
+    '',
+    // 1 — round
+    '<g stroke="#1a1a1a" stroke-width="0.5" fill="none"><circle cx="13" cy="13" r="2.2"/><circle cx="19" cy="13" r="2.2"/><path d="M 15.2 13 L 16.8 13" stroke-width="0.6"/></g>',
+    // 2 — square
+    '<g stroke="#1a1a1a" stroke-width="0.5" fill="none"><rect x="10.8" y="11.2" width="4.4" height="3.6" rx="0.4"/><rect x="16.8" y="11.2" width="4.4" height="3.6" rx="0.4"/><path d="M 15.2 13 L 16.8 13" stroke-width="0.6"/></g>',
+    // 3 — aviator (teardrop)
+    '<g stroke="#2a2a2a" stroke-width="0.5" fill="rgba(120,160,200,0.25)"><path d="M 10.6 12 Q 10.4 15.4 13 15.4 Q 15.4 15.2 15.4 12.6 Q 13.6 11.4 10.6 12 Z"/><path d="M 21.4 12 Q 21.6 15.4 19 15.4 Q 16.6 15.2 16.6 12.6 Q 18.4 11.4 21.4 12 Z"/></g>',
+    // 4 — half-rim (bottom only)
+    '<g stroke="#1a1a1a" stroke-width="0.55" fill="none"><path d="M 10.8 13.2 Q 13 15 15.2 13.2"/><path d="M 16.8 13.2 Q 19 15 21.2 13.2"/><path d="M 15.2 13.2 L 16.8 13.2"/></g>'
+  ];
+
+  // Hat style index → SVG snippet. Sits above the head; index 0 is no hat.
+  const HAT_STYLES = [
+    '',
+    // 1 — beanie: rounded knit cap with a cuff
+    '<g><path d="M 8 7 Q 8 1 16 1 Q 24 1 24 7 Q 24 9 22 9 L 10 9 Q 8 9 8 7 Z" fill="#3a4a8a"/><rect x="7" y="8" width="18" height="2.4" rx="0.6" fill="#243466"/></g>',
+    // 2 — cap: dome with brim
+    '<g><path d="M 7 9 Q 7 3 16 3 Q 25 3 25 9 Z" fill="#1f3a68"/><rect x="6" y="9" width="20" height="2" rx="0.6" fill="#142a4e"/><path d="M 16 9 L 28 11 L 27 12 L 16 11 Z" fill="#142a4e"/></g>',
+    // 3 — top hat: tall cylinder with thin brim (kept inside viewBox so
+    // the stack doesn't get clipped above y=0)
+    '<g><rect x="4" y="9" width="24" height="1.6" rx="0.4" fill="#1a1a1a"/><rect x="10" y="0" width="12" height="9" fill="#1a1a1a"/><rect x="10" y="4" width="12" height="1.4" fill="#a02828"/></g>',
+    // 4 — hood: rounded cowl behind and around the head
+    '<g><path d="M 4 16 Q 4 1 16 0 Q 28 1 28 16 Q 26 9 22 7 Q 16 5 10 7 Q 6 9 4 16 Z" fill="#2a2a2a"/></g>'
   ];
 
   // ------ engine state ------
@@ -359,7 +432,19 @@ const Playground = (() => {
   function defaultCharacter() {
     // Used when no homeCharacter is saved yet — renders a neutral default
     // so the engine has something to draw before the builder modal saves.
-    return { skin: 0, hairStyle: 0, hairColor: 0, shirtColor: 1, pantsColor: 0 };
+    return {
+      skin: 0, hairStyle: 0, hairColor: 0, shirtColor: 1, pantsColor: 0,
+      eyeColor: 6, eyeShape: 0,
+      facialHairStyle: 0, facialHairColor: 0,
+      glasses: 0, hat: 0, shoeColor: 0
+    };
+  }
+
+  function _eyeEl(spec, color) {
+    const r = spec.rotate
+      ? ` transform="rotate(${spec.rotate} ${spec.cx} ${spec.cy})"`
+      : '';
+    return `<ellipse cx="${spec.cx}" cy="${spec.cy}" rx="${spec.rx}" ry="${spec.ry}" fill="${color}"${r} />`;
   }
 
   function renderCharacter(c) {
@@ -367,7 +452,14 @@ const Playground = (() => {
     const hairColor = HAIR_COLORS[c.hairColor ?? 0] || HAIR_COLORS[0];
     const shirt = SHIRT_COLORS[c.shirtColor ?? 0] || SHIRT_COLORS[0];
     const pants = PANTS_COLORS[c.pantsColor ?? 0] || PANTS_COLORS[0];
+    const shoe  = SHOE_COLORS[c.shoeColor ?? 0] || SHOE_COLORS[0];
+    const eye   = EYE_COLORS[c.eyeColor ?? 6] || EYE_COLORS[6];
+    const beardColor = HAIR_COLORS[c.facialHairColor ?? (c.hairColor ?? 0)] || HAIR_COLORS[0];
     const hairPath = HAIR_STYLES[c.hairStyle ?? 0] || '';
+    const eyeSpec  = EYE_SHAPES[c.eyeShape ?? 0] || EYE_SHAPES[0];
+    const beardPath = FACIAL_HAIR_STYLES[c.facialHairStyle ?? 0] || '';
+    const glassesSvg = GLASSES_STYLES[c.glasses ?? 0] || '';
+    const hatSvg = HAT_STYLES[c.hat ?? 0] || '';
 
     const wrap = document.createElement('div');
     wrap.className = 'pg-char';
@@ -381,8 +473,8 @@ const Playground = (() => {
         <rect x="11" y="32" width="4" height="12" rx="1" fill="${pants}" />
         <rect x="17" y="32" width="4" height="12" rx="1" fill="${pants}" />
         <!-- shoes -->
-        <rect x="10" y="43" width="6" height="3" rx="1" fill="#1a1a1a" />
-        <rect x="16" y="43" width="6" height="3" rx="1" fill="#1a1a1a" />
+        <rect x="10" y="43" width="6" height="3" rx="1" fill="${shoe}" />
+        <rect x="16" y="43" width="6" height="3" rx="1" fill="${shoe}" />
         <!-- torso / shirt -->
         <rect x="9" y="20" width="14" height="14" rx="2" fill="${shirt}" />
         <!-- arms (skin tone, hands tucked into shirt sides) -->
@@ -393,12 +485,18 @@ const Playground = (() => {
         <!-- head -->
         <circle cx="16" cy="13" r="7" fill="${skin}" />
         <!-- eyes -->
-        <circle cx="13" cy="13" r="0.9" fill="#1a1a1a" />
-        <circle cx="19" cy="13" r="0.9" fill="#1a1a1a" />
+        ${_eyeEl(eyeSpec.left, eye)}
+        ${_eyeEl(eyeSpec.right, eye)}
         <!-- mouth -->
         <path d="M 14 16 Q 16 17.5 18 16" stroke="#1a1a1a" stroke-width="0.6" fill="none" stroke-linecap="round" />
-        <!-- hair (last so it overlays head) -->
+        <!-- facial hair (over face but under hair/hat) -->
+        ${beardPath ? `<path d="${beardPath}" fill="${beardColor}" />` : ''}
+        <!-- hair (overlays head) -->
         ${hairPath ? `<path d="${hairPath}" fill="${hairColor}" />` : ''}
+        <!-- glasses sit over the eyes and hair bangs -->
+        ${glassesSvg}
+        <!-- hat sits on top of everything on the head -->
+        ${hatSvg}
       </svg>
     `;
     return wrap;
@@ -436,6 +534,7 @@ const Playground = (() => {
 
   return {
     init, destroy, setCharacter, renderCharacter, defaultCharacter,
-    SKIN_TONES, HAIR_COLORS, SHIRT_COLORS, PANTS_COLORS, HAIR_STYLES
+    SKIN_TONES, HAIR_COLORS, SHIRT_COLORS, PANTS_COLORS, HAIR_STYLES,
+    EYE_COLORS, EYE_SHAPES, FACIAL_HAIR_STYLES, GLASSES_STYLES, HAT_STYLES, SHOE_COLORS
   };
 })();

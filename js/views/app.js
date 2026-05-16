@@ -25,16 +25,29 @@ const AppView = {
           <div id="nav-drawer-content">
             <button id="close-drawer">✕</button>
             <nav>
-              <button id="home-btn">🏠 Home</button>
-              <button id="world-btn">🌍 World</button>
-              <button id="profile-btn">👤 Profile</button>
-              <button id="characters-btn">🦸 Characters</button>
-              <button id="walkers-btn">🚶 Walkers</button>
-              <button id="fights-toggle-btn">⚔️ Fights: ON</button>
-              <button id="dialogues-toggle-btn">💬 Dialogues: ON</button>
-              <button id="friends-btn">👥 Friends</button>
-              <button id="clear-progress">🗑 Clear Progress</button>
-              <button id="logout-btn">🚪 Logout</button>
+              <div class="nav-section">
+                <div class="nav-section-title">Navigate</div>
+                <button id="home-btn">🏠 Home</button>
+                <button id="world-btn">🌍 World</button>
+                <button id="profile-btn">👤 Profile</button>
+                <button id="characters-btn">🦸 Characters</button>
+              </div>
+              <div class="nav-section">
+                <div class="nav-section-title">You</div>
+                <button id="nav-character-btn">🧑 Customize character</button>
+                <button id="friends-btn">👥 Friends</button>
+              </div>
+              <div class="nav-section">
+                <div class="nav-section-title">Walkers</div>
+                <button id="walkers-btn">🚶 Walkers</button>
+                <button id="fights-toggle-btn">⚔️ Fights: ON</button>
+                <button id="dialogues-toggle-btn">💬 Dialogues: ON</button>
+              </div>
+              <div class="nav-section">
+                <div class="nav-section-title">Data</div>
+                <button id="clear-progress">🗑 Clear Progress</button>
+                <button id="logout-btn">🚪 Logout</button>
+              </div>
             </nav>
           </div>
         </div>
@@ -137,6 +150,9 @@ const AppView = {
 
     $("#friends-btn")?.addEventListener("click", () => showFriendsPanel());
     $("#walkers-btn")?.addEventListener("click", () => Walkers.showWalkerPicker());
+    // Character editor — same modal as /home; HomeBuilder fetches the saved
+    // character itself when `initial` is omitted.
+    $("#nav-character-btn")?.addEventListener("click", () => HomeBuilder.open({}));
 
     // Fight toggle — flips the persistent setting and updates the label.
     const fightsBtn = $("#fights-toggle-btn");

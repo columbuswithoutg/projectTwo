@@ -10,11 +10,12 @@ This document describes the **current state** of the project. The Changelog at t
 
 | Layer       | Tech                                                                 |
 |-------------|----------------------------------------------------------------------|
-| Backend     | Node.js + Express 5 + Mongoose                                       |
+| Backend     | Node.js + Express 5 + Mongoose + helmet + compression                |
 | Database    | MongoDB Atlas (free tier, cluster name: `Columbus`)                  |
 | File store  | Cloudinary (user memories — images & video)                          |
 | Auth        | JWT (7-day expiry) + bcryptjs                                        |
 | Frontend    | Vanilla JS SPA (no framework)                                        |
+| PWA         | `manifest.json` + `sw.js` — installable, offline shell               |
 | Hosting     | Render.com                                                           |
 
 ---
@@ -23,7 +24,9 @@ This document describes the **current state** of the project. The Changelog at t
 
 ```
 projectOne/
-├── server.js                  Express app entry — routes, rate limits, static allowlist
+├── server.js                  Express app entry — routes, rate limits, static allowlist, helmet, compression
+├── manifest.json              PWA manifest (name, icons, theme color, start_url)
+├── sw.js                      Service worker — precache shell + SWR for /js & /assets; never caches /api
 ├── package.json
 ├── .env                       MONGO_URI, JWT_SECRET, CLOUDINARY_*, CLIENT_URL
 ├── README.md                  ← this file
@@ -237,6 +240,8 @@ node scripts/seed-content.js --wipe   # drop collections then re-seed
 - **CMS edits do not propagate back to the static JS files.** Once you start editing via the admin UI, the JS files become a stale snapshot. There is no automatic export-to-JS-files job (could be built later as `scripts/export-content.js`).
 - **MongoDB SRV lookup fails on default Windows DNS.** Both `server.js` and `scripts/seed-content.js` force Google DNS (`8.8.8.8`) at startup to work around this.
 - **`isAdmin` is set manually in MongoDB.** No promote-from-UI flow exists by design — there's no public path to admin.
+- **Service worker cache invalidation.** `sw.js` precaches the SPA shell + static fallback data and serves stale-while-revalidate for `/js/*` and `/assets/*`. `/api/*` and `/socket.io/*` are never cached. When a deploy must invalidate the precache (precache list changed, shell shape changed), bump `CACHE_VERSION` in `sw.js`; the `activate` handler deletes old caches.
+- **Helmet CSP is currently disabled.** The inline importmap, unpkg.com (Three.js), Cloudinary images, and Google Fonts would all be blocked by helmet's default `contentSecurityPolicy`. Other security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS, COOP, CORP=cross-origin) are on.
 
 ---
 
@@ -257,6 +262,33 @@ Append new entries at the **top** of this section. Use the format:
 Brief summary of what changed and why.
 - file/path:line — what changed
 ```
+
+---
+
+### 2026-05-16 — Proximity voice chat (/home + /world)
+
+Added opt-in WebRTC proximity voice chat to `/world`, `/home`, and `/friend/:user/home`. A 🎙️ toggle in the chat row asks for mic permission, then opens a P2P mesh with every other voice-enabled peer in the same room. Audio is direct peer-to-peer (no server bandwidth, no SFU); the existing Socket.IO connection only relays SDP / ICE. A 100 ms loop reads each remote's lerped position from `Playground3D.getRemotePlayers()` and ramps per-peer `GainNode`s on a linear falloff (full at 0u → silent at 25u), so voices fade as players walk apart. Speaking peers get a green glow on their nametag via RMS-based voice activity detection. STUN-only (Google public STUN) — strict-NAT users will silently fail to connect, no TURN fallback yet.
+
+- `routes/world-socket.js` — added `voiceWorld: Set<socketId>` and `voiceHomes: Map<ownerId, Set<socketId>>` membership tracking; three new signaling events `voice:announce`, `voice:leave`, `voice:signal` plus three server-broadcast notifications `voice:peers`, `voice:peer-joined`, `voice:peer-left`. `voice:signal` is a single-target relay validated to be in the sender's room (no cross-room leak). Per-pair rate cap 50ms, payload size guard 8KB. Disconnect handler extended to clean up voice sets and broadcast `voice:peer-left` to surviving peers.
+- `js/voice-chat.js` (new) — `VoiceManager.start({socket, scope, getLocalState, getRemotePlayers, onError, onPeerStateChange})` IIFE. Acquires mic via `getUserMedia({echoCancellation, noiseSuppression, autoGainControl})`, opens an `RTCPeerConnection` per peer (deterministic glare-safe role: lower `socket.id` initiates), routes incoming audio through hidden `<audio muted autoplay playsInline>` → `MediaStreamSource` → `GainNode` → `audioCtx.destination`. Per-peer `AnalyserNode` for RMS voice activity. Linear distance gain with `setTargetAtTime` smoothing. STUN config: `stun:stun.l.google.com:19302`. Returns `{stop, mutePeer, isMuted}`.
+- `js/playground3d.js` — added `getRemotePlayers()` returning `[{id, x, y, z, username}]` snapshot read from the `current` (lerped) position, and `setRemotePlayerSpeaking(id, on)` toggling `.speaking` on the existing `.pg3d-nametag` element. Stored `username` on the `_remotePlayers` entry shape so the accessor can expose it.
+- `js/views/world.js`, `js/views/home.js`, `js/views/friend-home.js` — added 🎙️ `#world-voice-btn` to `.world-chat-inputrow` next to the emote button; lazy `VoiceManager.start` on first click; `aria-pressed` reflects state; unmount cleanup ordering is `voice.stop() → mp.stop() → Playground3D.destroy()` so `voice:leave` reaches the server while the socket is still open.
+- `spa.html` — `<script defer src="js/voice-chat.js">` wired after `js/home-socket.js` and before the view scripts.
+- `styles.css` — `.pg3d-voice` button styled to match `.pg3d-emote`, `[aria-pressed="true"]` green glow when active; `.pg3d-nametag.speaking` green outline ring; mobile 600px breakpoint shrinks button to 36px to match the emote button.
+
+### 2026-05-16 — Production hardening + PWA shell
+
+Shipped five wins from the prioritized improvement menu: baseline security headers, response compression, lazy-loaded `<img>` tags in modal/secondary views, a per-frame allocation + texture cache rework in the 3D engine, and an installable PWA shell with an offline-capable service worker. The app is now installable on desktop and mobile; the shell renders offline; `/world` has measurably less GC churn during HUD ticks; project poster textures are downloaded once and reused across `/home` ↔ `/world` swaps.
+
+- `package.json` — added `helmet` and `compression` to dependencies.
+- `server.js` — wired `compression()` as the first middleware and `helmet({contentSecurityPolicy: false, crossOriginEmbedderPolicy: false, crossOriginResourcePolicy: 'cross-origin'})` after it. CSP intentionally off (importmap + unpkg + Cloudinary + Fonts would all break under default `default-src 'self'`).
+- `server.js` — `ROOT_FILES` extended with `manifest.json` and `sw.js`. New `NO_CACHE_FILES` set forces `Cache-Control: no-cache` on `sw.js`; `Service-Worker-Allowed: /` header set defensively for root scope.
+- `manifest.json` (new) — name, short_name, theme/background color, 192/512 icons referencing `/assets/favicon.jpg`, `display: standalone`.
+- `sw.js` (new) — `install` precaches the SPA shell + static fallback data, `fetch` does network-only for `/api/*` and `/socket.io/*`, navigation fallback to cached `/spa.html`, stale-while-revalidate for `/js/*` and `/assets/*`. `CACHE_VERSION` bump invalidates on next activate.
+- `spa.html`, `index.html` — added `<link rel="manifest" href="/manifest.json">` and `<meta name="theme-color" content="#daa520">`.
+- `js/boot.js` — registers `/sw.js` inside a `load` listener so registration never competes with first paint.
+- `js/playground3d.js` — module-scoped `_textureCache` Map + lazy `_textureLoader`, surfaced via `_loadTexture(url, onReady)`. Replaces the two inline `new THREE.TextureLoader()` + `loader.load(...)` sites in `_buildLayoutScene` and `_rebuildWorldNodes`. New `_sceneAlive` flag (set true at the end of `_initInternal`, false at the top of `destroy`) guards late-firing texture callbacks against writing to a disposed scene. Module-scoped `_hudAnchor` Vector3 replaces the per-frame `new THREE.Vector3(...)` in `_tickHUD`'s remote-player loop. `destroy` no longer disposes textures (the cache owns them across mount cycles); per-material/geometry disposal preserved.
+- `js/views/friend-profile.js:35`, `js/popup.js:63`, `js/memory.js:42`, `js/memory.js:117`, `js/views/home-edit.js:276` — added `loading="lazy"` to remaining `<img>` tags. `js/nodeFactory.js` and `js/views/characters.js` already had it.
 
 ---
 
