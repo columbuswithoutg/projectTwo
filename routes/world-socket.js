@@ -35,7 +35,13 @@ const MAX_USERNAME = 40;
 const MAX_CHAT_LEN = 200;
 const CHAT_INTERVAL_MS = 1000;
 const POSITION_BOUND = 1000;          // sanity clamp; world is < 300u square in practice
-const VOICE_SIGNAL_INTERVAL_MS = 50;  // per-pair signaling rate cap (~20/sec)
+// Per-pair signaling rate cap — must allow ICE candidate bursts (browsers
+// emit 3–10 candidates within 5–20ms of setLocalDescription). 5ms still
+// blocks accidental tight loops but doesn't strangle handshakes.
+const VOICE_SIGNAL_INTERVAL_MS = 5;
+// Overall per-socket cap (across all pairs) is the real spam guard.
+const VOICE_SIGNAL_BUDGET = 50;          // signals
+const VOICE_SIGNAL_BUDGET_WINDOW_MS = 1000;
 const VOICE_SIGNAL_MAX_BYTES = 8192;  // SDP fragments + ICE candidates are tiny
 
 module.exports = (io) => {
@@ -305,12 +311,19 @@ module.exports = (io) => {
         if (size > VOICE_SIGNAL_MAX_BYTES) return;
       } catch (_) { return; }
 
-      // Per-pair rate cap to defang accidental loops.
+      // Per-pair rate cap to defang accidental tight loops.
       const now = Date.now();
       socket.data.lastVoiceSignal = socket.data.lastVoiceSignal || new Map();
       const last = socket.data.lastVoiceSignal.get(raw.to) || 0;
       if (now - last < VOICE_SIGNAL_INTERVAL_MS) return;
       socket.data.lastVoiceSignal.set(raw.to, now);
+
+      // Overall per-socket budget (sliding 1s window) — the real spam guard.
+      const log = socket.data.voiceSignalLog = socket.data.voiceSignalLog || [];
+      const cutoff = now - VOICE_SIGNAL_BUDGET_WINDOW_MS;
+      while (log.length && log[0] < cutoff) log.shift();
+      if (log.length >= VOICE_SIGNAL_BUDGET) return;
+      log.push(now);
 
       // Same-room validation: target must be a voice peer in the same room.
       const peers = voicePeersInSameRoom(scope);

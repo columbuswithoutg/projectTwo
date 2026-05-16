@@ -194,12 +194,51 @@ const HomeView = {
           if (Playground3D.setRemotePlayerSpeaking) {
             Playground3D.setRemotePlayerSpeaking(peerId, !!st.speaking);
           }
+          if (st && st.connected === false && HomeView._voice && HomeView._voice._diag) {
+            const d = HomeView._voice._diag();
+            const peer = d.peers.find(p => p.id === peerId);
+            if (peer) {
+              console.warn('[Voice] peer disconnected:', peer.username,
+                'connState=' + peer.connectionState,
+                'iceState=' + peer.iceConnectionState,
+                'rxBytes=' + peer.bytesReceived,
+                'iceTypes=' + (peer.iceCandidateTypes || []).join(','));
+            }
+          }
         }
       });
       btn.setAttribute('aria-pressed', 'true');
-      btn.title = 'Voice chat (on) — click to mute';
+      btn.title = 'Voice chat (on) — click to mute, right-click for diagnostics';
     };
     btn.addEventListener('click', HomeView._voiceBtnHandler);
+
+    HomeView._voiceCtxHandler = (e) => {
+      e.preventDefault();
+      if (HomeView._voice && VoiceManager.openDebugPanel) {
+        VoiceManager.openDebugPanel(HomeView._voice, btn);
+      }
+    };
+    btn.addEventListener('contextmenu', HomeView._voiceCtxHandler);
+
+    HomeView._voiceTouchStart = () => {
+      if (HomeView._voiceLongPressTimer) clearTimeout(HomeView._voiceLongPressTimer);
+      HomeView._voiceLongPressTimer = setTimeout(() => {
+        HomeView._voiceLongPressTimer = null;
+        if (HomeView._voice && VoiceManager.openDebugPanel) {
+          VoiceManager.openDebugPanel(HomeView._voice, btn);
+        }
+      }, 600);
+    };
+    HomeView._voiceTouchEnd = () => {
+      if (HomeView._voiceLongPressTimer) {
+        clearTimeout(HomeView._voiceLongPressTimer);
+        HomeView._voiceLongPressTimer = null;
+      }
+    };
+    btn.addEventListener('touchstart', HomeView._voiceTouchStart, { passive: true });
+    btn.addEventListener('touchend',    HomeView._voiceTouchEnd);
+    btn.addEventListener('touchmove',   HomeView._voiceTouchEnd);
+    btn.addEventListener('touchcancel', HomeView._voiceTouchEnd);
   },
 
   _renderEmptyHome() {
@@ -288,11 +327,25 @@ const HomeView = {
     // Voice must stop BEFORE multiplayer so voice:leave reaches the room
     // while the socket is still open.
     if (HomeView._voice) { try { HomeView._voice.stop(); } catch (_) {} HomeView._voice = null; }
-    if (HomeView._voiceBtn && HomeView._voiceBtnHandler) {
-      HomeView._voiceBtn.removeEventListener('click', HomeView._voiceBtnHandler);
+    if (HomeView._voiceBtn) {
+      if (HomeView._voiceBtnHandler) HomeView._voiceBtn.removeEventListener('click', HomeView._voiceBtnHandler);
+      if (HomeView._voiceCtxHandler) HomeView._voiceBtn.removeEventListener('contextmenu', HomeView._voiceCtxHandler);
+      if (HomeView._voiceTouchStart) HomeView._voiceBtn.removeEventListener('touchstart', HomeView._voiceTouchStart);
+      if (HomeView._voiceTouchEnd) {
+        HomeView._voiceBtn.removeEventListener('touchend',    HomeView._voiceTouchEnd);
+        HomeView._voiceBtn.removeEventListener('touchmove',   HomeView._voiceTouchEnd);
+        HomeView._voiceBtn.removeEventListener('touchcancel', HomeView._voiceTouchEnd);
+      }
+    }
+    if (HomeView._voiceLongPressTimer) {
+      clearTimeout(HomeView._voiceLongPressTimer);
+      HomeView._voiceLongPressTimer = null;
     }
     HomeView._voiceBtn = null;
     HomeView._voiceBtnHandler = null;
+    HomeView._voiceCtxHandler = null;
+    HomeView._voiceTouchStart = null;
+    HomeView._voiceTouchEnd = null;
     // Stop multiplayer BEFORE Playground3D.destroy() so the leave event
     // reaches the server while the socket is still open.
     if (HomeView._mp) { try { HomeView._mp.stop(); } catch (_) {} HomeView._mp = null; }

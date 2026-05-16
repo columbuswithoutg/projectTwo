@@ -16,6 +16,12 @@
  * position from Playground3D.getRemotePlayers(), then sets the per-peer
  * GainNode using a linear falloff (full at 0u → silent at 25u).
  *
+ * Diagnostics: handle._diag() returns a live snapshot of per-peer state
+ * (connection state, ICE state, inbound audio level, getStats() byte
+ * counters). VoiceManager.openDebugPanel(handle, anchorEl) shows it as
+ * a floating overlay (right-click 🎙️ button in the views). Console
+ * logs every state transition with [Voice:scope:peer] prefixes.
+ *
  * Depends on globals: io socket (passed in), Playground3D.
  ************************************************/
 const VoiceManager = (() => {
@@ -23,10 +29,28 @@ const VoiceManager = (() => {
   const FALLOFF_MAX = 25;       // world units; gain reaches 0 here
   const GAIN_RAMP_TIME = 0.05;  // seconds (setTargetAtTime time constant)
   const UPDATE_INTERVAL_MS = 100;
-  const SPEAKING_RMS_THRESHOLD = 0.02;
+  const STATS_INTERVAL_MS = 5000;
+  const SPEAKING_RMS_THRESHOLD = 0.01;
+
+  // STUN only. Open Relay's no-signup public TURN credentials stopped
+  // working at some point — leaving dead TURN entries here would just
+  // slow ICE gathering with auth-failure timeouts. For production
+  // cross-NAT support (different WiFi, cellular CGNAT), sign up for a
+  // free TURN tier at https://www.metered.ca/tools/openrelay and add:
+  //   { urls: 'turn:<host>:80',  username: '<u>', credential: '<p>' }
+  //   { urls: 'turn:<host>:443?transport=tcp', username: '<u>', credential: '<p>' }
+  // Until then: same-LAN + most home-NAT pairs work via STUN's srflx
+  // candidates; strict-NAT pairs (cellular, corporate) will silently fail.
   const ICE_CONFIG = {
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ],
+    iceCandidatePoolSize: 2
   };
+
+  let _lastHandle = null;
+  let _openPanel = null;
 
   // ── start ──
   //
@@ -38,7 +62,7 @@ const VoiceManager = (() => {
   //   onError(msg)         Optional — called on mic-permission/PC failure
   //   onPeerStateChange(peerId, {speaking, muted, connected})
   //
-  // Returns { stop, mutePeer(peerId, muted), isMuted(peerId) }.
+  // Returns { stop, mutePeer, isMuted, _diag, scope }.
   function start(opts) {
     const { socket, scope, getLocalState, getRemotePlayers,
             onError, onPeerStateChange } = opts || {};
@@ -56,10 +80,21 @@ const VoiceManager = (() => {
 
     let stopped = false;
     let localStream = null;
+    let micState = 'pending';        // 'pending' | 'ok' | 'denied'
     let audioCtx = null;
+    let localAnalyser = null;
+    let localAnalyserBuf = null;
+    let localSrc = null;
+    let localLevel = 0;
     let updateTimer = null;
-    const peers = new Map();  // peerId → { pc, audioEl, gain, src, analyser,
-                              //            analyserBuf, muted, speaking }
+    let statsTimer = null;
+    const peers = new Map();  // peerId → entry (see createPeer)
+
+    function shortId(id) { return id ? String(id).slice(0, 6) : '??'; }
+    function _log(peerId, ...rest) {
+      const tag = '[Voice:' + scope + ':' + shortId(peerId) + ']';
+      console.log(tag, ...rest);
+    }
 
     // ── audio plumbing ──
 
@@ -80,8 +115,26 @@ const VoiceManager = (() => {
             autoGainControl: true
           }
         });
+        micState = 'ok';
+        const trackInfo = localStream.getTracks()
+          .map(t => t.label || t.kind).join(', ') || 'unnamed';
+        _log(null, 'mic acquired (' + localStream.getTracks().length + ' track: ' + trackInfo + ')');
+
+        // Local mic level meter for the diagnostics panel.
+        try {
+          const ctx = ensureAudioCtx();
+          localSrc = ctx.createMediaStreamSource(localStream);
+          localAnalyser = ctx.createAnalyser();
+          localAnalyser.fftSize = 512;
+          localAnalyserBuf = new Uint8Array(localAnalyser.fftSize);
+          localSrc.connect(localAnalyser);
+          // NOT connected to destination — would echo the user's own voice.
+        } catch (e) {
+          console.warn('[VoiceManager] local analyser failed', e && e.message);
+        }
         return localStream;
       } catch (e) {
+        micState = 'denied';
         if (onError) onError('Microphone permission denied');
         else console.warn('[VoiceManager] mic failed', e && e.message);
         throw e;
@@ -93,13 +146,16 @@ const VoiceManager = (() => {
     function createPeer(peerId, shouldInitiate) {
       if (peers.has(peerId)) return peers.get(peerId);
       const pc = new RTCPeerConnection(ICE_CONFIG);
+
+      // Hidden <audio> element — needed for Chrome to actually pump the
+      // WebRTC stream through WebAudio. Setting volume = 0 (NOT muted) so
+      // the pipeline runs but the element produces no audible output;
+      // WebAudio handles the actual distance-attenuated playback.
       const audioEl = document.createElement('audio');
       audioEl.autoplay = true;
       audioEl.playsInline = true;
-      // Muting the element prevents the browser routing it to the default
-      // output — we route the captured MediaStream through WebAudio + GainNode
-      // instead so distance attenuation actually works.
-      audioEl.muted = true;
+      audioEl.volume = 0;
+      audioEl.style.display = 'none';
       document.body.appendChild(audioEl);
 
       const entry = {
@@ -110,7 +166,20 @@ const VoiceManager = (() => {
         analyser: null,
         analyserBuf: null,
         muted: false,
-        speaking: false
+        speaking: false,
+        username: null,
+        distance: 0,
+        gainTarget: 1,
+        lastStats: { bytesReceived: 0, packetsLost: 0, ts: 0 },
+        iceCandidateTypes: [],
+        remoteIceCandidateTypes: [],
+        // Candidates received before setRemoteDescription must be buffered;
+        // addIceCandidate throws InvalidStateError until a remote desc exists.
+        // On localhost (same-machine pair) the dropped candidates are the
+        // host ones — the only ones that can succeed without TURN — so
+        // losing them means ICE fails entirely.
+        pendingIce: [],
+        selectedPair: null
       };
       peers.set(peerId, entry);
 
@@ -120,22 +189,28 @@ const VoiceManager = (() => {
       }
 
       pc.onicecandidate = (e) => {
-        if (e.candidate) {
-          socket.emit('voice:signal', {
-            to: peerId, kind: 'ice', data: e.candidate.toJSON()
-          });
-        }
+        if (!e.candidate) return;
+        const type = e.candidate.type || extractCandidateType(e.candidate.candidate);
+        if (type) entry.iceCandidateTypes.push(type);
+        _log(peerId, 'iceCandidate gathered', type || '?');
+        socket.emit('voice:signal', {
+          to: peerId, kind: 'ice', data: e.candidate.toJSON()
+        });
       };
 
       pc.ontrack = (e) => {
         const stream = e.streams && e.streams[0];
-        if (!stream) return;
+        if (!stream) { _log(peerId, 'ontrack with no stream'); return; }
+        _log(peerId, 'ontrack —', e.streams.length, 'stream(s),',
+          stream.getAudioTracks().length, 'audio track(s)');
         audioEl.srcObject = stream;
         const ctx = ensureAudioCtx();
         try {
           const src = ctx.createMediaStreamSource(stream);
           const gain = ctx.createGain();
-          gain.gain.value = 0;
+          // Start at full volume so audio plays immediately. The 100ms
+          // distance loop will attenuate as soon as positions sync.
+          gain.gain.value = 1;
           const analyser = ctx.createAnalyser();
           analyser.fftSize = 512;
           src.connect(analyser);
@@ -150,8 +225,13 @@ const VoiceManager = (() => {
         }
       };
 
+      pc.oniceconnectionstatechange = () => {
+        _log(peerId, 'iceState →', pc.iceConnectionState);
+      };
+
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
+        _log(peerId, 'connState →', s);
         if (s === 'failed' || s === 'closed' || s === 'disconnected') {
           if (onPeerStateChange) {
             onPeerStateChange(peerId, { connected: false, speaking: false });
@@ -168,6 +248,12 @@ const VoiceManager = (() => {
       return entry;
     }
 
+    function extractCandidateType(candStr) {
+      if (!candStr) return null;
+      const m = /\btyp\s+(\S+)/i.exec(candStr);
+      return m ? m[1] : null;
+    }
+
     async function startOffer(peerId) {
       const entry = peers.get(peerId);
       if (!entry) return;
@@ -175,9 +261,23 @@ const VoiceManager = (() => {
         offerToReceiveAudio: true, offerToReceiveVideo: false
       });
       await entry.pc.setLocalDescription(offer);
+      _log(peerId, 'sent offer');
       socket.emit('voice:signal', {
         to: peerId, kind: 'offer', data: { type: offer.type, sdp: offer.sdp }
       });
+    }
+
+    async function flushPendingIce(peerId, entry) {
+      if (!entry || !entry.pendingIce.length) return;
+      const queued = entry.pendingIce.splice(0);
+      _log(peerId, 'flushing', queued.length, 'buffered ICE candidate(s)');
+      for (const cand of queued) {
+        try {
+          await entry.pc.addIceCandidate(new RTCIceCandidate(cand));
+        } catch (e) {
+          _log(peerId, 'flush addIceCandidate failed', e && e.message);
+        }
+      }
     }
 
     async function handleSignal({ from, kind, data }) {
@@ -185,14 +285,23 @@ const VoiceManager = (() => {
       let entry = peers.get(from);
 
       if (kind === 'offer') {
-        // Glare-safe: incoming offer always wins — drop our half-baked PC
-        // and start fresh as the answerer.
-        if (entry) destroyPeer(from);
-        entry = createPeer(from, false);
+        _log(from, 'received offer');
+        // With the deterministic role rule (lower socket.id initiates) the
+        // answerer never drives a local offer, so signalingState should be
+        // 'stable' here and the existing PC is reusable. Only bail (destroy)
+        // if we somehow ended up with a local offer — true glare.
+        if (entry && entry.pc.signalingState !== 'stable') {
+          _log(from, 'glare detected (signalingState=' + entry.pc.signalingState + '), recreating PC');
+          destroyPeer(from);
+          entry = null;
+        }
+        if (!entry) entry = createPeer(from, false);
         try {
           await entry.pc.setRemoteDescription(new RTCSessionDescription(data));
+          await flushPendingIce(from, entry);
           const answer = await entry.pc.createAnswer();
           await entry.pc.setLocalDescription(answer);
+          _log(from, 'sent answer');
           socket.emit('voice:signal', {
             to: from, kind: 'answer',
             data: { type: answer.type, sdp: answer.sdp }
@@ -203,9 +312,11 @@ const VoiceManager = (() => {
         return;
       }
       if (kind === 'answer') {
+        _log(from, 'received answer');
         if (!entry) return;
         try {
           await entry.pc.setRemoteDescription(new RTCSessionDescription(data));
+          await flushPendingIce(from, entry);
         } catch (e) {
           console.warn('[VoiceManager] setRemote(answer) failed', e && e.message);
         }
@@ -213,10 +324,18 @@ const VoiceManager = (() => {
       }
       if (kind === 'ice') {
         if (!entry) return;
+        const type = (data && data.candidate) ? extractCandidateType(data.candidate) : null;
+        if (type) entry.remoteIceCandidateTypes.push(type);
+        // Buffer until remote description exists — otherwise addIceCandidate
+        // throws InvalidStateError and the candidate is permanently lost.
+        if (!entry.pc.remoteDescription) {
+          entry.pendingIce.push(data);
+          return;
+        }
         try {
           await entry.pc.addIceCandidate(new RTCIceCandidate(data));
         } catch (e) {
-          // Common when remote description isn't set yet — non-fatal.
+          _log(from, 'addIceCandidate failed', e && e.message);
         }
       }
     }
@@ -238,7 +357,7 @@ const VoiceManager = (() => {
       }
     }
 
-    // ── distance loop ──
+    // ── distance loop + level computation ──
 
     function distance2D(ax, az, bx, bz) {
       const dx = ax - bx, dz = az - bz;
@@ -251,8 +370,24 @@ const VoiceManager = (() => {
       return 1 - (dist / FALLOFF_MAX);
     }
 
+    function rmsFromBuffer(buf) {
+      let sumSq = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const v = (buf[i] - 128) / 128;
+        sumSq += v * v;
+      }
+      return Math.sqrt(sumSq / buf.length);
+    }
+
     function updateTick() {
       if (stopped) return;
+
+      // Local mic level for the diagnostics panel.
+      if (localAnalyser && localAnalyserBuf) {
+        localAnalyser.getByteTimeDomainData(localAnalyserBuf);
+        localLevel = rmsFromBuffer(localAnalyserBuf);
+      }
+
       const local = getLocalState();
       if (!local) return;
       const remotes = getRemotePlayers() || [];
@@ -263,14 +398,20 @@ const VoiceManager = (() => {
 
       peers.forEach((entry, peerId) => {
         const rp = remoteById.get(peerId);
-        // If we don't know where the peer is yet (snapshot lag), default
-        // to silent so we don't blast at full volume from across the map.
-        let target = 0;
+        let target;
         if (rp) {
-          const dist = distance2D(local.x, local.z, rp.x, rp.z);
-          target = computeGain(dist);
+          if (rp.username) entry.username = rp.username;
+          entry.distance = distance2D(local.x, local.z, rp.x, rp.z);
+          target = computeGain(entry.distance);
+        } else {
+          // Peer not yet in the position snapshot. Stay audible (full
+          // volume) so users can hear each other immediately, even before
+          // the position broadcaster fires for the first time.
+          entry.distance = 0;
+          target = 1;
         }
         if (entry.muted) target = 0;
+        entry.gainTarget = target;
         if (entry.gain && audioCtx) {
           entry.gain.gain.setTargetAtTime(target, ctxTime, GAIN_RAMP_TIME);
         }
@@ -278,13 +419,9 @@ const VoiceManager = (() => {
         // Voice activity detection — RMS over the analyser buffer.
         if (entry.analyser && entry.analyserBuf) {
           entry.analyser.getByteTimeDomainData(entry.analyserBuf);
-          let sumSq = 0;
-          for (let i = 0; i < entry.analyserBuf.length; i++) {
-            const v = (entry.analyserBuf[i] - 128) / 128;
-            sumSq += v * v;
-          }
-          const rms = Math.sqrt(sumSq / entry.analyserBuf.length);
-          const speakingNow = rms > SPEAKING_RMS_THRESHOLD && !entry.muted && target > 0.05;
+          const rms = rmsFromBuffer(entry.analyserBuf);
+          entry.lastInbound = rms;
+          const speakingNow = rms > SPEAKING_RMS_THRESHOLD && !entry.muted;
           if (speakingNow !== entry.speaking) {
             entry.speaking = speakingNow;
             if (onPeerStateChange) {
@@ -295,10 +432,54 @@ const VoiceManager = (() => {
       });
     }
 
+    // ── periodic getStats() sampler ──
+
+    async function sampleStats() {
+      if (stopped) return;
+      const now = Date.now();
+      for (const [peerId, entry] of peers) {
+        try {
+          const report = await entry.pc.getStats();
+          let bytesReceived = 0;
+          let packetsLost = 0;
+          let nominatedPair = null;
+          const localCands = new Map();
+          const remoteCands = new Map();
+          report.forEach(s => {
+            if (s.type === 'inbound-rtp' && (s.kind === 'audio' || s.mediaType === 'audio')) {
+              bytesReceived += (s.bytesReceived || 0);
+              packetsLost   += (s.packetsLost   || 0);
+            }
+            if (s.type === 'local-candidate')  localCands.set(s.id, s);
+            if (s.type === 'remote-candidate') remoteCands.set(s.id, s);
+            if (s.type === 'candidate-pair' && s.state === 'succeeded' && s.nominated) {
+              nominatedPair = s;
+            }
+          });
+          let selectedPair = null;
+          if (nominatedPair) {
+            const l = localCands.get(nominatedPair.localCandidateId);
+            const r = remoteCands.get(nominatedPair.remoteCandidateId);
+            selectedPair = {
+              local:  l && (l.candidateType || l.type) || '?',
+              remote: r && (r.candidateType || r.type) || '?'
+            };
+          }
+          entry.lastStats = { bytesReceived, packetsLost, ts: now };
+          entry.selectedPair = selectedPair;
+          _log(peerId, 'stats bytesReceived=' + bytesReceived,
+            'packetsLost=' + packetsLost,
+            'iceState=' + entry.pc.iceConnectionState,
+            'pair=' + (selectedPair ? selectedPair.local + '↔' + selectedPair.remote : 'none'));
+        } catch (_) { /* PC may be closed */ }
+      }
+    }
+
     // ── signaling listeners ──
 
     function onVoicePeers({ scope: s, peers: peerList }) {
       if (s !== scope) return;
+      _log(null, 'voice:peers snapshot (' + (peerList || []).length + ' existing)');
       // Initiate to peers with lower socket.id (deterministic glare avoidance).
       for (const peerId of (peerList || [])) {
         const shouldInitiate = String(socket.id) < String(peerId);
@@ -308,11 +489,17 @@ const VoiceManager = (() => {
 
     function onPeerJoined({ id }) {
       if (!id || id === socket.id) return;
-      // The existing peer (us) initiates to the new arrival.
-      createPeer(id, true);
+      _log(id, 'voice:peer-joined');
+      // Use the SAME deterministic rule as onVoicePeers (lower socket.id
+      // initiates). Previously this branch unconditionally initiated,
+      // which caused offer-glare ~half the time and a deadlocked
+      // handshake → ICE checking → FAILED.
+      const shouldInitiate = String(socket.id) < String(id);
+      createPeer(id, shouldInitiate);
     }
 
     function onPeerLeft({ id }) {
+      _log(id, 'voice:peer-left');
       destroyPeer(id);
     }
 
@@ -334,12 +521,14 @@ const VoiceManager = (() => {
         await acquireMic();
         if (stopped) return;
         socket.emit('voice:announce', { scope });
+        _log(null, 'announced scope=' + scope);
       } catch (e) {
         stop();
       }
     })();
 
     updateTimer = setInterval(updateTick, UPDATE_INTERVAL_MS);
+    statsTimer  = setInterval(sampleStats, STATS_INTERVAL_MS);
 
     // ── stop ──
 
@@ -347,6 +536,7 @@ const VoiceManager = (() => {
       if (stopped) return;
       stopped = true;
       if (updateTimer) { clearInterval(updateTimer); updateTimer = null; }
+      if (statsTimer)  { clearInterval(statsTimer);  statsTimer = null; }
       try { socket.emit('voice:leave'); } catch (_) {}
       socket.off('voice:peers', onVoicePeers);
       socket.off('voice:peer-joined', onPeerJoined);
@@ -357,16 +547,21 @@ const VoiceManager = (() => {
         localStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
         localStream = null;
       }
+      try { if (localSrc) localSrc.disconnect(); } catch (_) {}
+      try { if (localAnalyser) localAnalyser.disconnect(); } catch (_) {}
       if (audioCtx) {
         try { audioCtx.close(); } catch (_) {}
         audioCtx = null;
       }
+      if (_openPanel) { try { _openPanel.close(); } catch (_) {} _openPanel = null; }
+      if (_lastHandle === handle) _lastHandle = null;
     }
 
     function mutePeer(peerId, muted) {
       const entry = peers.get(peerId);
       if (!entry) return;
       entry.muted = !!muted;
+      _log(peerId, entry.muted ? 'locally muted' : 'unmuted');
       if (onPeerStateChange) {
         onPeerStateChange(peerId, { muted: entry.muted, speaking: false });
       }
@@ -377,12 +572,183 @@ const VoiceManager = (() => {
       return !!(entry && entry.muted);
     }
 
-    return { stop, mutePeer, isMuted };
+    function _diag() {
+      const peerList = [];
+      peers.forEach((entry, id) => {
+        peerList.push({
+          id,
+          username: entry.username || ('peer ' + shortId(id)),
+          connectionState: entry.pc.connectionState,
+          iceConnectionState: entry.pc.iceConnectionState,
+          signalingState: entry.pc.signalingState,
+          inboundLevel: entry.lastInbound || 0,
+          distance: entry.distance,
+          gainTarget: entry.gainTarget,
+          bytesReceived: entry.lastStats.bytesReceived,
+          packetsLost: entry.lastStats.packetsLost,
+          muted: entry.muted,
+          iceCandidateTypes: entry.iceCandidateTypes.slice(),
+          remoteIceCandidateTypes: entry.remoteIceCandidateTypes.slice(),
+          pendingIce: entry.pendingIce.length,
+          selectedPair: entry.selectedPair
+        });
+      });
+      return {
+        scope,
+        micState,
+        localLevel,
+        peers: peerList
+      };
+    }
+
+    const handle = { stop, mutePeer, isMuted, _diag, scope };
+    _lastHandle = handle;
+    return handle;
   }
 
   function noopHandle() {
-    return { stop() {}, mutePeer() {}, isMuted() { return false; } };
+    return {
+      stop() {}, mutePeer() {}, isMuted() { return false; },
+      _diag() { return { scope: null, micState: 'denied', localLevel: 0, peers: [] }; },
+      scope: null
+    };
   }
 
-  return { start };
+  // ── debug panel UI ──
+
+  function openDebugPanel(handle, anchorEl) {
+    if (!handle || !handle._diag) return null;
+    if (_openPanel) { try { _openPanel.close(); } catch (_) {} _openPanel = null; }
+
+    const panel = document.createElement('div');
+    panel.className = 'pg3d-voice-debug';
+    panel.innerHTML = `
+      <div class="pg3d-voice-debug-head">
+        <span class="pg3d-voice-debug-title">Voice diagnostics — ${escapeHtml(handle.scope || '')}</span>
+        <button type="button" class="pg3d-voice-debug-close" aria-label="Close">×</button>
+      </div>
+      <div class="pg3d-voice-debug-body"></div>
+    `;
+    document.body.appendChild(panel);
+
+    // Anchor near the button (above + left-aligned). Clamp to viewport.
+    function position() {
+      const a = anchorEl && anchorEl.getBoundingClientRect();
+      const w = panel.offsetWidth || 300;
+      const h = panel.offsetHeight || 200;
+      let top, left;
+      if (a) {
+        top  = Math.max(8, a.top - h - 10);
+        left = Math.min(window.innerWidth - w - 8, Math.max(8, a.right - w));
+      } else {
+        top  = Math.max(8, window.innerHeight - h - 80);
+        left = Math.max(8, window.innerWidth - w - 16);
+      }
+      panel.style.top  = top  + 'px';
+      panel.style.left = left + 'px';
+    }
+    position();
+    window.addEventListener('resize', position);
+
+    const body = panel.querySelector('.pg3d-voice-debug-body');
+
+    function badge(state) {
+      const cls = (state === 'connected' || state === 'completed') ? 'ok'
+        : (state === 'failed' || state === 'closed' || state === 'disconnected') ? 'bad'
+        : 'warn';
+      return `<span class="pg3d-voice-badge ${cls}">${escapeHtml(state || '?')}</span>`;
+    }
+
+    function bar(level) {
+      const pct = Math.min(100, Math.round((level || 0) * 100 * 2));
+      return `<div class="pg3d-voice-bar"><div class="pg3d-voice-bar-fill" style="width:${pct}%"></div></div>`;
+    }
+
+    function render() {
+      const d = handle._diag();
+      const micCls = d.micState === 'ok' ? 'ok' : (d.micState === 'denied' ? 'bad' : 'warn');
+      const rows = [];
+      rows.push(`
+        <div class="pg3d-voice-debug-row mic">
+          <div class="pg3d-voice-debug-name">🎙 You <span class="pg3d-voice-badge ${micCls}">${escapeHtml(d.micState)}</span></div>
+          ${bar(d.localLevel)}
+        </div>
+      `);
+      if (!d.peers.length) {
+        rows.push(`<div class="pg3d-voice-debug-empty">No peers connected yet — waiting for someone else to join voice.</div>`);
+      } else {
+        for (const p of d.peers) {
+          const kb = Math.round((p.bytesReceived || 0) / 1024);
+          const tx = (p.iceCandidateTypes || []).join(',') || '–';
+          const rx = (p.remoteIceCandidateTypes || []).join(',') || '–';
+          const pair = p.selectedPair
+            ? p.selectedPair.local + '↔' + p.selectedPair.remote
+            : 'none';
+          rows.push(`
+            <div class="pg3d-voice-debug-row" data-peer="${escapeHtml(p.id)}">
+              <div class="pg3d-voice-debug-name">
+                ${escapeHtml(p.username)}
+                ${badge(p.connectionState)}${badge(p.iceConnectionState)}
+                <button type="button" class="pg3d-voice-mute" data-peer="${escapeHtml(p.id)}">${p.muted ? 'unmute' : 'mute'}</button>
+              </div>
+              ${bar(p.inboundLevel)}
+              <div class="pg3d-voice-debug-meta">
+                dist ${p.distance.toFixed(1)}u · gain ${(p.gainTarget * 100).toFixed(0)}%
+                · ${kb} KB rx · loss ${p.packetsLost || 0}
+              </div>
+              <div class="pg3d-voice-debug-meta">
+                ice tx:${escapeHtml(tx)} rx:${escapeHtml(rx)} · pending ${p.pendingIce} · pair ${escapeHtml(pair)}
+              </div>
+            </div>
+          `);
+        }
+      }
+      body.innerHTML = rows.join('');
+      // Wire mute buttons (delegated would also work; keep it simple).
+      body.querySelectorAll('.pg3d-voice-mute').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = btn.getAttribute('data-peer');
+          handle.mutePeer(id, !handle.isMuted(id));
+          render();
+        });
+      });
+      position();
+    }
+    render();
+    const refresh = setInterval(render, 200);
+
+    function onDocClick(e) {
+      if (panel.contains(e.target)) return;
+      if (anchorEl && anchorEl.contains(e.target)) return;
+      close();
+    }
+    setTimeout(() => document.addEventListener('click', onDocClick), 0);
+
+    panel.querySelector('.pg3d-voice-debug-close').addEventListener('click', close);
+
+    function close() {
+      clearInterval(refresh);
+      window.removeEventListener('resize', position);
+      document.removeEventListener('click', onDocClick);
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
+      if (_openPanel && _openPanel.panel === panel) _openPanel = null;
+    }
+
+    _openPanel = { close, panel };
+    return _openPanel;
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  return {
+    start,
+    openDebugPanel,
+    // Surface the last started handle for quick console poking:
+    //   VoiceManager._lastHandle._diag()
+    get _lastHandle() { return _lastHandle; }
+  };
 })();

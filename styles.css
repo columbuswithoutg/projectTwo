@@ -4283,6 +4283,120 @@ body.fight-active .flow-wrapper {
               0 0 14px rgba(120, 220, 140, 0.45);
 }
 
+/* Voice diagnostics panel — opened via right-click / long-press on the mic. */
+.pg3d-voice-debug {
+  position: fixed;
+  width: min(320px, calc(100vw - 16px));
+  max-height: 60vh;
+  background: rgba(15, 17, 28, 0.96);
+  border: 1px solid rgba(201, 162, 39, 0.45);
+  border-radius: 10px;
+  color: #fff;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.6);
+  z-index: 9999;
+  font-family: var(--font-display, sans-serif);
+  font-size: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.pg3d-voice-debug-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(201, 162, 39, 0.08);
+}
+.pg3d-voice-debug-title {
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  font-size: 11px;
+  color: #e6c97a;
+}
+.pg3d-voice-debug-close {
+  background: transparent;
+  border: 0;
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+.pg3d-voice-debug-body {
+  padding: 8px 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pg3d-voice-debug-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.pg3d-voice-debug-row.mic {
+  background: rgba(120, 220, 140, 0.06);
+  border-color: rgba(120, 220, 140, 0.2);
+}
+.pg3d-voice-debug-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-weight: 600;
+}
+.pg3d-voice-debug-meta {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.6);
+  letter-spacing: 0.02em;
+}
+.pg3d-voice-debug-empty {
+  padding: 12px 4px;
+  color: rgba(255, 255, 255, 0.55);
+  font-style: italic;
+  text-align: center;
+}
+.pg3d-voice-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.pg3d-voice-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4caf50, #cddc39);
+  transition: width 0.12s ease;
+}
+.pg3d-voice-badge {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+}
+.pg3d-voice-badge.ok   { background: rgba(120, 220, 140, 0.18); border-color: rgba(120, 220, 140, 0.6); color: #c7f4c8; }
+.pg3d-voice-badge.warn { background: rgba(255, 200,  80, 0.18); border-color: rgba(255, 200,  80, 0.55); color: #ffe9b3; }
+.pg3d-voice-badge.bad  { background: rgba(255, 100, 100, 0.20); border-color: rgba(255, 100, 100, 0.6); color: #ffd0d0; }
+.pg3d-voice-mute {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+}
+.pg3d-voice-mute:hover { background: rgba(255, 255, 255, 0.16); }
+
 /* Virtual joystick — fixed bottom-center, portrait-friendly. The
    element is always created by Playground3D; visibility is gated by
    media queries below so it shows on mobile-class devices and stays

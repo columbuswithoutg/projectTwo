@@ -18,6 +18,10 @@ const WorldView = (() => {
   let _voice = null;
   let _voiceBtn = null;
   let _voiceBtnHandler = null;
+  let _voiceCtxHandler = null;
+  let _voiceTouchStart = null;
+  let _voiceTouchEnd = null;
+  let _voiceLongPressTimer = null;
 
   function mount(container) {
     if (!Auth.isLoggedIn()) {
@@ -132,12 +136,52 @@ const WorldView = (() => {
           if (Playground3D.setRemotePlayerSpeaking) {
             Playground3D.setRemotePlayerSpeaking(peerId, !!st.speaking);
           }
+          // One-line snapshot on connection failure so users have an
+          // actionable artifact even without the debug panel open.
+          if (st && st.connected === false && _voice && _voice._diag) {
+            const d = _voice._diag();
+            const peer = d.peers.find(p => p.id === peerId);
+            if (peer) {
+              console.warn('[Voice] peer disconnected:', peer.username,
+                'connState=' + peer.connectionState,
+                'iceState=' + peer.iceConnectionState,
+                'rxBytes=' + peer.bytesReceived,
+                'iceTypes=' + (peer.iceCandidateTypes || []).join(','));
+            }
+          }
         }
       });
       _voiceBtn.setAttribute('aria-pressed', 'true');
-      _voiceBtn.title = 'Voice chat (on) — click to mute';
+      _voiceBtn.title = 'Voice chat (on) — click to mute, right-click for diagnostics';
     };
     _voiceBtn.addEventListener('click', _voiceBtnHandler);
+
+    // Right-click → open the diagnostics panel.
+    _voiceCtxHandler = (e) => {
+      e.preventDefault();
+      if (_voice && VoiceManager.openDebugPanel) {
+        VoiceManager.openDebugPanel(_voice, _voiceBtn);
+      }
+    };
+    _voiceBtn.addEventListener('contextmenu', _voiceCtxHandler);
+
+    // Long-press on touch → open the diagnostics panel.
+    _voiceTouchStart = () => {
+      if (_voiceLongPressTimer) clearTimeout(_voiceLongPressTimer);
+      _voiceLongPressTimer = setTimeout(() => {
+        _voiceLongPressTimer = null;
+        if (_voice && VoiceManager.openDebugPanel) {
+          VoiceManager.openDebugPanel(_voice, _voiceBtn);
+        }
+      }, 600);
+    };
+    _voiceTouchEnd = () => {
+      if (_voiceLongPressTimer) { clearTimeout(_voiceLongPressTimer); _voiceLongPressTimer = null; }
+    };
+    _voiceBtn.addEventListener('touchstart', _voiceTouchStart, { passive: true });
+    _voiceBtn.addEventListener('touchend',   _voiceTouchEnd);
+    _voiceBtn.addEventListener('touchmove',  _voiceTouchEnd);
+    _voiceBtn.addEventListener('touchcancel', _voiceTouchEnd);
   }
 
   function _isTextField(el) {
@@ -151,10 +195,19 @@ const WorldView = (() => {
     // Voice must stop BEFORE multiplayer so voice:leave reaches the room
     // while the socket is still open.
     if (_voice) { try { _voice.stop(); } catch (_) {} _voice = null; }
-    if (_voiceBtn && _voiceBtnHandler) {
-      _voiceBtn.removeEventListener('click', _voiceBtnHandler);
+    if (_voiceBtn) {
+      if (_voiceBtnHandler)  _voiceBtn.removeEventListener('click', _voiceBtnHandler);
+      if (_voiceCtxHandler)  _voiceBtn.removeEventListener('contextmenu', _voiceCtxHandler);
+      if (_voiceTouchStart)  _voiceBtn.removeEventListener('touchstart', _voiceTouchStart);
+      if (_voiceTouchEnd) {
+        _voiceBtn.removeEventListener('touchend',    _voiceTouchEnd);
+        _voiceBtn.removeEventListener('touchmove',   _voiceTouchEnd);
+        _voiceBtn.removeEventListener('touchcancel', _voiceTouchEnd);
+      }
     }
-    _voiceBtn = null; _voiceBtnHandler = null;
+    if (_voiceLongPressTimer) { clearTimeout(_voiceLongPressTimer); _voiceLongPressTimer = null; }
+    _voiceBtn = null; _voiceBtnHandler = null; _voiceCtxHandler = null;
+    _voiceTouchStart = null; _voiceTouchEnd = null;
     if (_mp) { try { _mp.stop(); } catch (_) {} _mp = null; }
     Playground3D.destroy();
     _stage = null;
