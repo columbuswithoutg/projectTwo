@@ -171,7 +171,15 @@ const HomeView = {
       btn.title = 'Voice chat unavailable';
       return;
     }
-    HomeView._voiceBtnHandler = () => {
+    HomeView._voiceBtnHandler = (e) => {
+      // Long-press just fired and opened the diag panel; swallow the
+      // synthetic click that follows touchend so we don't immediately
+      // toggle voice off and destroy the panel.
+      if (HomeView._voiceLongPressFired) {
+        HomeView._voiceLongPressFired = false;
+        if (e && e.preventDefault) e.preventDefault();
+        return;
+      }
       if (HomeView._voice) {
         try { HomeView._voice.stop(); } catch (_) {}
         HomeView._voice = null;
@@ -222,8 +230,10 @@ const HomeView = {
 
     HomeView._voiceTouchStart = () => {
       if (HomeView._voiceLongPressTimer) clearTimeout(HomeView._voiceLongPressTimer);
+      HomeView._voiceLongPressFired = false;
       HomeView._voiceLongPressTimer = setTimeout(() => {
         HomeView._voiceLongPressTimer = null;
+        HomeView._voiceLongPressFired = true;
         if (HomeView._voice && VoiceManager.openDebugPanel) {
           VoiceManager.openDebugPanel(HomeView._voice, btn);
         }

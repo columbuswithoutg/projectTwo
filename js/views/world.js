@@ -22,6 +22,7 @@ const WorldView = (() => {
   let _voiceTouchStart = null;
   let _voiceTouchEnd = null;
   let _voiceLongPressTimer = null;
+  let _voiceLongPressFired = false;
 
   function mount(container) {
     if (!Auth.isLoggedIn()) {
@@ -112,7 +113,15 @@ const WorldView = (() => {
       _voiceBtn.title = 'Voice chat unavailable';
       return;
     }
-    _voiceBtnHandler = () => {
+    _voiceBtnHandler = (e) => {
+      // Long-press just fired and opened the diag panel; swallow the
+      // synthetic click that follows touchend so we don't immediately
+      // toggle voice off and destroy the panel.
+      if (_voiceLongPressFired) {
+        _voiceLongPressFired = false;
+        if (e && e.preventDefault) e.preventDefault();
+        return;
+      }
       if (_voice) {
         try { _voice.stop(); } catch (_) {}
         _voice = null;
@@ -168,8 +177,10 @@ const WorldView = (() => {
     // Long-press on touch → open the diagnostics panel.
     _voiceTouchStart = () => {
       if (_voiceLongPressTimer) clearTimeout(_voiceLongPressTimer);
+      _voiceLongPressFired = false;
       _voiceLongPressTimer = setTimeout(() => {
         _voiceLongPressTimer = null;
+        _voiceLongPressFired = true;
         if (_voice && VoiceManager.openDebugPanel) {
           VoiceManager.openDebugPanel(_voice, _voiceBtn);
         }

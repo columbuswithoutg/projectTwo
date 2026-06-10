@@ -32,16 +32,14 @@ const VoiceManager = (() => {
   const STATS_INTERVAL_MS = 5000;
   const SPEAKING_RMS_THRESHOLD = 0.01;
 
-  // STUN only. Open Relay's no-signup public TURN credentials stopped
-  // working at some point — leaving dead TURN entries here would just
-  // slow ICE gathering with auth-failure timeouts. For production
-  // cross-NAT support (different WiFi, cellular CGNAT), sign up for a
-  // free TURN tier at https://www.metered.ca/tools/openrelay and add:
-  //   { urls: 'turn:<host>:80',  username: '<u>', credential: '<p>' }
-  //   { urls: 'turn:<host>:443?transport=tcp', username: '<u>', credential: '<p>' }
-  // Until then: same-LAN + most home-NAT pairs work via STUN's srflx
-  // candidates; strict-NAT pairs (cellular, corporate) will silently fail.
-  const ICE_CONFIG = {
+  // Default config — STUN only. The actual config used for new
+  // RTCPeerConnections is fetched per-session from /api/config/voice-turn
+  // in boot() and assigned to the inner `_iceConfig`. If that fetch fails
+  // (offline / endpoint missing on older deploys), this default is used as
+  // the fallback. To enable TURN for cross-NAT pairs (cellular, strict
+  // NAT, corporate firewalls), set TURN_URLS / TURN_USERNAME /
+  // TURN_CREDENTIAL in the server's .env — see routes/config.js.
+  const DEFAULT_ICE_CONFIG = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' }
@@ -88,6 +86,9 @@ const VoiceManager = (() => {
     let localLevel = 0;
     let updateTimer = null;
     let statsTimer = null;
+    // Per-session ICE config — replaced by fetchIceConfig() in boot() with
+    // the server's response if it includes TURN. Falls back to STUN-only.
+    let _iceConfig = DEFAULT_ICE_CONFIG;
     const peers = new Map();  // peerId → entry (see createPeer)
 
     function shortId(id) { return id ? String(id).slice(0, 6) : '??'; }
@@ -145,7 +146,7 @@ const VoiceManager = (() => {
 
     function createPeer(peerId, shouldInitiate) {
       if (peers.has(peerId)) return peers.get(peerId);
-      const pc = new RTCPeerConnection(ICE_CONFIG);
+      const pc = new RTCPeerConnection(_iceConfig);
 
       // Hidden <audio> element — needed for Chrome to actually pump the
       // WebRTC stream through WebAudio. Setting volume = 0 (NOT muted) so
@@ -510,6 +511,38 @@ const VoiceManager = (() => {
 
     // ── boot ──
 
+    // Fetch the server-side ICE config (STUN + optional TURN) and stash it
+    // in _iceConfig. Best-effort: any failure leaves DEFAULT_ICE_CONFIG in
+    // place, so the only consequence is "no TURN, same as before."
+    async function fetchIceConfig() {
+      try {
+        const base = (typeof API === 'string' && API) || '';
+        const token = (typeof Auth !== 'undefined' && Auth.getToken) ? Auth.getToken() : null;
+        const headers = token ? { Authorization: 'Bearer ' + token } : {};
+        const res = await fetch(base + '/config/voice-turn', { headers });
+        if (!res.ok) {
+          _log(null, 'fetch ice config: ' + res.status + ' — falling back to STUN-only');
+          return;
+        }
+        const json = await res.json();
+        if (json && Array.isArray(json.iceServers) && json.iceServers.length) {
+          _iceConfig = {
+            iceServers: json.iceServers,
+            iceCandidatePoolSize: 2
+          };
+          const hasTurn = json.iceServers.some(s => {
+            const u = s && s.urls;
+            const arr = Array.isArray(u) ? u : [u];
+            return arr.some(x => typeof x === 'string' && x.indexOf('turn:') === 0);
+          });
+          _log(null, 'ice config: ' + json.iceServers.length + ' server(s), TURN ' +
+            (hasTurn ? 'configured' : 'absent'));
+        }
+      } catch (e) {
+        _log(null, 'fetch ice config failed', e && e.message);
+      }
+    }
+
     (async function boot() {
       try {
         ensureAudioCtx();
@@ -519,6 +552,8 @@ const VoiceManager = (() => {
           try { await audioCtx.resume(); } catch (_) {}
         }
         await acquireMic();
+        if (stopped) return;
+        await fetchIceConfig();
         if (stopped) return;
         socket.emit('voice:announce', { scope });
         _log(null, 'announced scope=' + scope);
@@ -593,10 +628,18 @@ const VoiceManager = (() => {
           selectedPair: entry.selectedPair
         });
       });
+      const servers = (_iceConfig && _iceConfig.iceServers) || [];
+      const turnConfigured = servers.some(s => {
+        const u = s && s.urls;
+        const arr = Array.isArray(u) ? u : [u];
+        return arr.some(x => typeof x === 'string' && x.indexOf('turn:') === 0);
+      });
       return {
         scope,
         micState,
         localLevel,
+        iceServerCount: servers.length,
+        turnConfigured,
         peers: peerList
       };
     }
@@ -668,10 +711,15 @@ const VoiceManager = (() => {
       const d = handle._diag();
       const micCls = d.micState === 'ok' ? 'ok' : (d.micState === 'denied' ? 'bad' : 'warn');
       const rows = [];
+      const turnCls = d.turnConfigured ? 'ok' : 'warn';
+      const turnLabel = d.turnConfigured ? 'TURN configured' : 'STUN only';
       rows.push(`
         <div class="pg3d-voice-debug-row mic">
           <div class="pg3d-voice-debug-name">🎙 You <span class="pg3d-voice-badge ${micCls}">${escapeHtml(d.micState)}</span></div>
           ${bar(d.localLevel)}
+          <div class="pg3d-voice-debug-meta">
+            ICE: ${d.iceServerCount} server(s) · <span class="pg3d-voice-badge ${turnCls}">${escapeHtml(turnLabel)}</span>
+          </div>
         </div>
       `);
       if (!d.peers.length) {
