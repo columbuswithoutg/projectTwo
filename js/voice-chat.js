@@ -31,6 +31,11 @@ const VoiceManager = (() => {
   const UPDATE_INTERVAL_MS = 100;
   const STATS_INTERVAL_MS = 5000;
   const SPEAKING_RMS_THRESHOLD = 0.01;
+  // voice:announce is retried until the server's voice:peers reply
+  // confirms membership — covers lost replies and the home-scope race
+  // where the async home:join hasn't landed when we announce.
+  const ANNOUNCE_RETRY_MS = 2000;
+  const ANNOUNCE_MAX_TRIES = 5;
 
   // Default config — STUN only. The actual config used for new
   // RTCPeerConnections is fetched per-session from /api/config/voice-turn
@@ -88,12 +93,18 @@ const VoiceManager = (() => {
     let localLevel = 0;
     let updateTimer = null;
     let statsTimer = null;
+    let announceTimer = null;
+    let announceConfirmed = false;
     // Per-session ICE config — replaced by fetchIceConfig() in boot() with
     // the server's response if it includes TURN. Falls back to STUN-only.
     let _iceConfig = DEFAULT_ICE_CONFIG;
     const peers = new Map();  // peerId → entry (see createPeer)
 
     function shortId(id) { return id ? String(id).slice(0, 6) : '??'; }
+    function isDeadPc(pc) {
+      const s = pc.connectionState;
+      return s === 'failed' || s === 'closed' || s === 'disconnected';
+    }
     function _log(peerId, ...rest) {
       const tag = '[Voice:' + scope + ':' + shortId(peerId) + ']';
       console.log(tag, ...rest);
@@ -242,7 +253,20 @@ const VoiceManager = (() => {
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
         _log(peerId, 'connState →', s);
-        if (s === 'failed' || s === 'closed' || s === 'disconnected') {
+        if (s === 'failed') {
+          // ICE exhausted — this PC is dead for good. Tear it down and,
+          // if we're the deterministic initiator, immediately rebuild
+          // with a fresh offer. The other side rebuilds on that offer
+          // (or via its own 'failed' handler). ICE timeouts make any
+          // fail→rebuild loop self-limiting.
+          _log(peerId, 'connection failed — rebuilding');
+          destroyPeer(peerId);
+          if (!stopped && String(socket.id) < String(peerId)) {
+            createPeer(peerId, true);
+          }
+          return;
+        }
+        if (s === 'closed' || s === 'disconnected') {
           if (onPeerStateChange) {
             onPeerStateChange(peerId, { connected: false, speaking: false });
           }
@@ -298,10 +322,14 @@ const VoiceManager = (() => {
         _log(from, 'received offer');
         // With the deterministic role rule (lower socket.id initiates) the
         // answerer never drives a local offer, so signalingState should be
-        // 'stable' here and the existing PC is reusable. Only bail (destroy)
-        // if we somehow ended up with a local offer — true glare.
-        if (entry && entry.pc.signalingState !== 'stable') {
-          _log(from, 'glare detected (signalingState=' + entry.pc.signalingState + '), recreating PC');
+        // 'stable' here and the existing PC is reusable. Destroy + recreate
+        // if we somehow ended up with a local offer (true glare) OR the
+        // existing PC is dead — a fresh offer from the peer means they
+        // rebuilt their side, so renegotiating a corpse would only produce
+        // a connection that never carries audio.
+        if (entry && (entry.pc.signalingState !== 'stable' || isDeadPc(entry.pc))) {
+          _log(from, 'recreating PC (signalingState=' + entry.pc.signalingState +
+            ', connState=' + entry.pc.connectionState + ')');
           destroyPeer(from);
           entry = null;
         }
@@ -489,6 +517,7 @@ const VoiceManager = (() => {
 
     function onVoicePeers({ scope: s, peers: peerList }) {
       if (s !== scope) return;
+      announceConfirmed = true;
       _log(null, 'voice:peers snapshot (' + (peerList || []).length + ' existing)');
       // Initiate to peers with lower socket.id (deterministic glare avoidance).
       for (const peerId of (peerList || [])) {
@@ -500,10 +529,18 @@ const VoiceManager = (() => {
     function onPeerJoined({ id }) {
       if (!id || id === socket.id) return;
       _log(id, 'voice:peer-joined');
-      // Use the SAME deterministic rule as onVoicePeers (lower socket.id
-      // initiates). Previously this branch unconditionally initiated,
-      // which caused offer-glare ~half the time and a deadlocked
-      // handshake → ICE checking → FAILED.
+      // A peer-joined for an id we already track means that peer started
+      // a fresh voice session (rejoin or re-announce) — its old
+      // RTCPeerConnection is gone, so ours is necessarily stale. If we
+      // kept it, createPeer would return it and silently skip initiating,
+      // deadlocking the handshake. Rebuild from scratch.
+      if (peers.has(id)) {
+        _log(id, 'stale entry for rejoining peer — rebuilding');
+        destroyPeer(id);
+      }
+      // Same deterministic rule as onVoicePeers (lower socket.id
+      // initiates) — unconditional initiation here would cause
+      // offer-glare ~half the time.
       const shouldInitiate = String(socket.id) < String(id);
       createPeer(id, shouldInitiate);
     }
@@ -513,10 +550,43 @@ const VoiceManager = (() => {
       destroyPeer(id);
     }
 
+    // Announce membership, retrying until the server's voice:peers reply
+    // confirms it (server announce is idempotent, so retries are safe).
+    function announce() {
+      if (announceTimer) { clearTimeout(announceTimer); announceTimer = null; }
+      announceConfirmed = false;
+      let tries = 0;
+      const attempt = () => {
+        announceTimer = null;
+        if (stopped || announceConfirmed) return;
+        tries++;
+        socket.emit('voice:announce', { scope });
+        _log(null, 'announce scope=' + scope + ' (attempt ' + tries + ')');
+        if (tries < ANNOUNCE_MAX_TRIES) {
+          announceTimer = setTimeout(attempt, ANNOUNCE_RETRY_MS);
+        }
+      };
+      attempt();
+    }
+
+    // Socket reconnects get a NEW socket.id and a fresh server-side
+    // socket.data — the server already purged our voice membership in its
+    // disconnect handler, so every peer connection is dead and our signals
+    // would be silently dropped. Rebuild: drop all peers, re-announce.
+    // (Multiplayer's own 'connect' handler re-joins presence first — it
+    // was registered earlier, and Socket.IO fires listeners in order.)
+    function onReconnect() {
+      if (stopped) return;
+      _log(null, 'socket reconnected (id=' + shortId(socket.id) + ') — rebuilding voice session');
+      [...peers.keys()].forEach(destroyPeer);
+      announce();
+    }
+
     socket.on('voice:peers', onVoicePeers);
     socket.on('voice:peer-joined', onPeerJoined);
     socket.on('voice:peer-left', onPeerLeft);
     socket.on('voice:signal', handleSignal);
+    socket.on('connect', onReconnect);
 
     // ── boot ──
 
@@ -564,8 +634,7 @@ const VoiceManager = (() => {
         if (stopped) return;
         await fetchIceConfig();
         if (stopped) return;
-        socket.emit('voice:announce', { scope });
-        _log(null, 'announced scope=' + scope);
+        announce();
       } catch (e) {
         stop();
       }
@@ -581,11 +650,13 @@ const VoiceManager = (() => {
       stopped = true;
       if (updateTimer) { clearInterval(updateTimer); updateTimer = null; }
       if (statsTimer)  { clearInterval(statsTimer);  statsTimer = null; }
+      if (announceTimer) { clearTimeout(announceTimer); announceTimer = null; }
       try { socket.emit('voice:leave'); } catch (_) {}
       socket.off('voice:peers', onVoicePeers);
       socket.off('voice:peer-joined', onPeerJoined);
       socket.off('voice:peer-left', onPeerLeft);
       socket.off('voice:signal', handleSignal);
+      socket.off('connect', onReconnect);
       [...peers.keys()].forEach(destroyPeer);
       if (localStream) {
         localStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
