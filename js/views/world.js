@@ -141,6 +141,9 @@ const WorldView = (() => {
           _voiceBtn.title = msg || 'Voice chat error';
           _voice = null;
         },
+        onMicUnavailable: (msg) => {
+          _voiceBtn.title = msg || 'Voice chat (listen-only)';
+        },
         onPeerStateChange: (peerId, st) => {
           if (Playground3D.setRemotePlayerSpeaking) {
             Playground3D.setRemotePlayerSpeaking(peerId, !!st.speaking);

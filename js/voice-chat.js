@@ -57,13 +57,15 @@ const VoiceManager = (() => {
   //   scope                'world' | 'home'
   //   getLocalState        () → { x, y, z, yaw, walking }
   //   getRemotePlayers     () → [{ id, x, y, z, username }, ...]
-  //   onError(msg)         Optional — called on mic-permission/PC failure
+  //   onError(msg)         Optional — called on fatal failure (no WebRTC)
+  //   onMicUnavailable(msg) Optional — mic missing/denied; session continues
+  //                        in listen-only mode (hear others, can't speak)
   //   onPeerStateChange(peerId, {speaking, muted, connected})
   //
   // Returns { stop, mutePeer, isMuted, _diag, scope }.
   function start(opts) {
     const { socket, scope, getLocalState, getRemotePlayers,
-            onError, onPeerStateChange } = opts || {};
+            onError, onMicUnavailable, onPeerStateChange } = opts || {};
     if (!socket || !scope || !getLocalState || !getRemotePlayers) {
       console.warn('[VoiceManager] missing required option');
       return noopHandle();
@@ -78,7 +80,7 @@ const VoiceManager = (() => {
 
     let stopped = false;
     let localStream = null;
-    let micState = 'pending';        // 'pending' | 'ok' | 'denied'
+    let micState = 'pending';        // 'pending' | 'ok' | 'denied' | 'none'
     let audioCtx = null;
     let localAnalyser = null;
     let localAnalyserBuf = null;
@@ -135,10 +137,17 @@ const VoiceManager = (() => {
         }
         return localStream;
       } catch (e) {
-        micState = 'denied';
-        if (onError) onError('Microphone permission denied');
-        else console.warn('[VoiceManager] mic failed', e && e.message);
-        throw e;
+        // No mic (or permission denied) is NOT fatal — continue in
+        // listen-only mode. createPeer() guards `if (localStream)`, so
+        // connections simply carry no outgoing track and the SDP
+        // negotiation degrades to receive-only on our side.
+        micState = (e && e.name === 'NotAllowedError') ? 'denied' : 'none';
+        const msg = micState === 'denied'
+          ? 'Microphone permission denied — listen-only'
+          : 'No microphone found — listen-only';
+        _log(null, 'mic unavailable (' + (e && e.name) + ') — listen-only mode');
+        if (onMicUnavailable) onMicUnavailable(msg);
+        return null;
       }
     }
 
