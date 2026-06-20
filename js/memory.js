@@ -26,10 +26,11 @@ async function showAddMemoryModal(project) {
       previewBlobUrl = null;
     }
   };
-  const closeModal = () => { revokePreview(); modal.remove(); };
-
-  modal.querySelector('.popup-close').onclick = closeModal;
-  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+  document.body.appendChild(modal);
+  const close = wireModalDismiss(modal, () => { revokePreview(); modal.remove(); }, {
+    initialFocus: modal.querySelector('.popup-close')
+  });
+  modal.querySelector('.popup-close').onclick = close;
 
   modal.querySelector('#memory-file').onchange = (e) => {
     const file = e.target.files[0];
@@ -54,19 +55,56 @@ async function showAddMemoryModal(project) {
       return;
     }
 
+    errorEl.style.display = 'none';
     uploadBtn.disabled = true;
-    uploadBtn.textContent = 'Uploading...';
+    uploadBtn.classList.add('loading');
+    uploadBtn.textContent = 'Uploading…';
+
+    // Determinate progress bar — large videos can take many seconds, and a
+    // disabled button alone reads as "frozen". Show real upload progress.
+    const progressWrap = document.createElement('div');
+    progressWrap.className = 'memory-upload-progress';
+    progressWrap.innerHTML = '<div class="memory-upload-bar"></div>';
+    uploadBtn.before(progressWrap);
+    const bar = progressWrap.querySelector('.memory-upload-bar');
+    const setProgress = (frac) => { bar.style.width = Math.round(frac * 100) + '%'; };
+    setProgress(0);
+
+    const resetButton = () => {
+      uploadBtn.disabled = false;
+      uploadBtn.classList.remove('loading');
+      uploadBtn.textContent = 'Upload';
+      progressWrap.remove();
+    };
 
     try {
       const formData = new FormData();
       formData.append('file', file);
 
-      const uploadRes = await fetch(`${API}/upload`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${Auth.getToken()}` },
-        body: formData
+      // XHR (not fetch) so we can surface upload.onprogress.
+      const uploadJson = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API}/upload`);
+        xhr.setRequestHeader('Authorization', `Bearer ${Auth.getToken()}`);
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) setProgress(ev.loaded / ev.total);
+        };
+        xhr.onload = () => {
+          // Bytes are up; Cloudinary may still be processing — show an
+          // indeterminate "almost there" state until the response lands.
+          setProgress(1);
+          progressWrap.classList.add('processing');
+          try {
+            const json = JSON.parse(xhr.responseText || '{}');
+            if (xhr.status >= 200 && xhr.status < 300) resolve(json);
+            else reject(new Error(json.error || `HTTP ${xhr.status}`));
+          } catch (err) { reject(err); }
+        };
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.send(formData);
       });
-      const { url, type, error } = await uploadRes.json();
+
+      const { url, type, error } = uploadJson;
       if (error) throw new Error(error);
 
       const saveRes = await fetch(`${API}/progress/memory`, {
@@ -82,18 +120,15 @@ async function showAddMemoryModal(project) {
       const entry = state.data.get(project.id);
       if (entry) entry.memories = saved.memories;
 
-      closeModal();
+      close();
       showPopup(project);
 
     } catch (e) {
       errorEl.textContent = 'Upload failed. Try again.';
       errorEl.style.display = 'block';
-      uploadBtn.disabled = false;
-      uploadBtn.textContent = 'Upload';
+      resetButton();
     }
   };
-
-  document.body.appendChild(modal);
 }
 
 /************************************************
@@ -105,12 +140,27 @@ function showMemoryLightbox(memories, startIndex, project) {
   const lightbox = document.createElement('div');
   lightbox.className = 'memory-lightbox';
 
+  const go = (delta) => {
+    const next = current + delta;
+    if (next >= 0 && next < memories.length) { current = next; render(); }
+  };
+
+  // ArrowLeft / ArrowRight mirror the on-screen prev/next buttons.
+  function onKey(e) {
+    if (e.key === 'ArrowLeft') go(-1);
+    else if (e.key === 'ArrowRight') go(1);
+  }
+
+  // Forwarder so render() can wire the close button before `close` exists
+  // (it's only ever invoked on click, by which point close is assigned).
+  const dismiss = () => close();
+
   const render = () => {
     const m = memories[current];
     lightbox.innerHTML = `
       <div class="lightbox-inner">
-        <button class="lightbox-close">✕</button>
-        <button class="lightbox-nav prev" ${current === 0 ? 'disabled' : ''}>‹</button>
+        <button class="lightbox-close" aria-label="Close">✕</button>
+        <button class="lightbox-nav prev" aria-label="Previous" ${current === 0 ? 'disabled' : ''}>‹</button>
         <div class="lightbox-media">
           ${m.type === 'video'
             ? `<video src="${esc(m.url)}" controls autoplay></video>`
@@ -119,16 +169,22 @@ function showMemoryLightbox(memories, startIndex, project) {
           ${m.caption ? `<p class="lightbox-caption">${esc(m.caption)}</p>` : ''}
           <p class="lightbox-counter">${current + 1} / ${memories.length}</p>
         </div>
-        <button class="lightbox-nav next" ${current === memories.length - 1 ? 'disabled' : ''}>›</button>
+        <button class="lightbox-nav next" aria-label="Next" ${current === memories.length - 1 ? 'disabled' : ''}>›</button>
       </div>
     `;
 
-    lightbox.querySelector('.lightbox-close').onclick = () => lightbox.remove();
-    lightbox.querySelector('.prev').onclick = () => { if (current > 0) { current--; render(); } };
-    lightbox.querySelector('.next').onclick = () => { if (current < memories.length - 1) { current++; render(); } };
-    lightbox.onclick = (e) => { if (e.target === lightbox) lightbox.remove(); };
+    lightbox.querySelector('.lightbox-close').onclick = dismiss;
+    lightbox.querySelector('.prev').onclick = () => go(-1);
+    lightbox.querySelector('.next').onclick = () => go(1);
   };
 
   render();
   document.body.appendChild(lightbox);
+
+  const close = wireModalDismiss(lightbox, () => {
+    document.removeEventListener('keydown', onKey);
+    lightbox.remove();
+  }, { initialFocus: lightbox.querySelector('.lightbox-close') });
+
+  document.addEventListener('keydown', onKey);
 }

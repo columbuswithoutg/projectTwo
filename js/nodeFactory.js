@@ -16,7 +16,7 @@ const NodeFactory = (() => {
       img.src = CONFIG.IMAGE_BASE + project.image;
       img.loading = "lazy";
       img.draggable = false;
-      img.alt = "";
+      img.alt = project.title || project.id;
       img.onerror = () => img.remove();
       node.appendChild(img);
     }

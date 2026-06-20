@@ -38,9 +38,11 @@ const Playground3D = (() => {
     DEFAULT_DIST: 6.5,
     MIN_DIST: 3.0,
     MAX_DIST: 14.0,
-    DEFAULT_ELEV: 0.45,           // radians above horizon
+    DEFAULT_ELEV: 0.45,           // radians above horizon (home mode)
     MIN_ELEV: 0.05,
     MAX_ELEV: 1.30,
+    WORLD_DEFAULT_ELEV: 0.70,     // ~40°: more top-down so room walls don't block
+    WORLD_MIN_ELEV: 0.40,         // ~23°: floor so you can't tilt under the walls
     ROTATE_SPEED: 0.005,          // radians per pixel
     ZOOM_SPEED: 0.0015,           // distance per wheel delta
     FOLLOW_RATE: 4.0              // lerp speed for auto-follow azimuth
@@ -69,17 +71,40 @@ const Playground3D = (() => {
     ROAD_RAISE: -0.08,            // mesh center y; road top sits ~2cm below platform top so the platform poster always renders on top without z-fight
     PERIMETER_PAD: 30,            // extra ground around the bounding box
     REMOTE_LERP_RATE: 8,          // per-second lerp factor for remote interp
+    FADE_RATE: 12,                // per-second lerp factor for remote fade in/out (~0.2s)
     EMOTE_DURATION_MS: 1500,
-    GROUND_COLOR: 0x2a3a2e,
-    ROAD_COLOR: 0xc9a04f,
-    // Wall fence around each platform — character-height (1.8u) so the
-    // top-down camera still sees over them but you can't walk off the
-    // platform anywhere except through a doorway that lines up with a
-    // connecting road.
-    WALL_HEIGHT: 1.8,
+    // Clean & vibrant daytime palette — bright and readable little stone town.
+    WORLD_BG: 0xa9d8ff,          // bright sky / fog color
+    GROUND_COLOR: 0x4f8a52,      // grass green
+    ROAD_COLOR: 0xc2a878,        // warm stone path
+    APRON_COLOR: 0xc7bca2,       // light stone pad around each building base
+    APRON_MARGIN: 4,             // apron extends this far beyond the platform (walkable)
+    // Wall fence around each platform — room-height (3.0u, above the ~2.2u
+    // player head) so each node reads as an enclosed room and the full-height
+    // doorway clears the character. You can't walk off the platform except
+    // through a doorway that lines up with a connecting road.
+    WALL_HEIGHT: 3.0,
     WALL_THICKNESS: 0.3,
-    WALL_COLOR: 0xa68a4d,
-    DOORWAY_WIDTH: 4.0            // wide enough for the player with margin
+    WALL_COLOR: 0xd9cbb0,        // light stone (plaster body)
+    WALL_TRIM_COLOR: 0x9a8c6f,   // baseboard / door-frame trim (darker stone)
+    CEILING_COLOR: 0x6478a6,     // slate-blue roof (fallback when phase unknown)
+    DOORWAY_WIDTH: 4.0,          // wide enough for the player with margin
+    DOORWAY_MERGE_GAP: 1.0,      // doorways closer than this (overlap or thin sliver) collapse into one
+    // Cozy-village touches. Roof tinted per MCU phase so the town reads as
+    // colored districts; heights jittered per house so the skyline varies.
+    ROOF_PHASE_COLORS: {         // muted, warm-leaning roof palette by phase
+      'Phase 1': 0xb5563f,       // terracotta
+      'Phase 2': 0x6478a6,       // slate-blue
+      'Phase 3': 0x6f8f5a,       // moss green
+      'Phase 4': 0x8a5a86,       // plum
+      'Phase 5': 0x3f8f8f,       // teal
+      'Phase 6': 0xb98a3f        // clay / amber
+    },
+    HEIGHT_VAR_MIN: 0.82,        // wall height = WALL_HEIGHT * lerp(min,max, rand)
+    HEIGHT_VAR_MAX: 1.24,        // ~2.5u .. 3.7u
+    WINDOW_W: 1.5, WINDOW_H: 1.4, // window decal size; placed on long wall segments
+    WINDOW_MIN_SEG: 3.2,         // only segments at least this long get a window
+    LAMP_COLOR: 0xffd98a         // warm lamp glow
   };
 
   // Jump physics — applies in both /home and /world. Tuned for an arcade
@@ -275,12 +300,22 @@ const Playground3D = (() => {
     _viewport.appendChild(_renderer.domElement);
 
     _scene = new THREE.Scene();
-    _scene.background = new THREE.Color(SKY_COLOR);
+    if (_mode === 'world') {
+      // Bright daytime sky + light fog so only the far edges fade into the sky.
+      _scene.background = new THREE.Color(WORLD.WORLD_BG);
+      _scene.fog = new THREE.Fog(WORLD.WORLD_BG, 140, 460);
+    } else {
+      _scene.background = new THREE.Color(SKY_COLOR);
+    }
 
-    // Lighting — hemisphere fill + directional sun.
-    const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x4a4030, 0.55);
+    // Lighting — bright daylight in /world, warm daylight in /home.
+    const hemi = (_mode === 'world')
+      ? new THREE.HemisphereLight(0xcfe6ff, 0x6b7a55, 0.7)
+      : new THREE.HemisphereLight(0xbfd9ff, 0x4a4030, 0.55);
     _scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+    const sun = (_mode === 'world')
+      ? new THREE.DirectionalLight(0xfff4e0, 1.0)
+      : new THREE.DirectionalLight(0xffffff, 0.9);
     sun.position.set(8, 16, 6);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
@@ -318,7 +353,8 @@ const Playground3D = (() => {
     _camera = new THREE.PerspectiveCamera(60, 1, 0.1, 600);
     _orbit = {
       azimuth: 0,                 // 0 = behind player (looking toward -Z relative to yaw)
-      elevation: CAMERA.DEFAULT_ELEV,
+      // World rooms have tall solid walls, so start more top-down to see over them.
+      elevation: _mode === 'world' ? CAMERA.WORLD_DEFAULT_ELEV : CAMERA.DEFAULT_ELEV,
       distance: CAMERA.DEFAULT_DIST
     };
 
@@ -1041,7 +1077,7 @@ const Playground3D = (() => {
       lastMouse.x = e.clientX;
       lastMouse.y = e.clientY;
       _orbit.azimuth -= dx * CAMERA.ROTATE_SPEED;
-      _orbit.elevation = Math.max(CAMERA.MIN_ELEV,
+      _orbit.elevation = Math.max(_minElev(),
         Math.min(CAMERA.MAX_ELEV, _orbit.elevation - dy * CAMERA.ROTATE_SPEED));
     }
     function onMouseUp() { mouseDragging = false; }
@@ -1154,7 +1190,7 @@ const Playground3D = (() => {
         lastCamPointer.x = e.clientX;
         lastCamPointer.y = e.clientY;
         _orbit.azimuth -= dx * CAMERA.ROTATE_SPEED;
-        _orbit.elevation = Math.max(CAMERA.MIN_ELEV,
+        _orbit.elevation = Math.max(_minElev(),
           Math.min(CAMERA.MAX_ELEV, _orbit.elevation - dy * CAMERA.ROTATE_SPEED));
       }
     };
@@ -1274,7 +1310,7 @@ const Playground3D = (() => {
           lastCamTouch.x = t.clientX;
           lastCamTouch.y = t.clientY;
           _orbit.azimuth -= dx * CAMERA.ROTATE_SPEED;
-          _orbit.elevation = Math.max(CAMERA.MIN_ELEV,
+          _orbit.elevation = Math.max(_minElev(),
             Math.min(CAMERA.MAX_ELEV, _orbit.elevation - dy * CAMERA.ROTATE_SPEED));
         }
       }
@@ -1451,6 +1487,7 @@ const Playground3D = (() => {
     // World-mode-only ticks (no-ops in home mode).
     if (_mode === 'world') {
       _tickRemotePlayers(dt, now);
+      _tickRoomCeilings();
       _tickHUD(now);
     }
 
@@ -1496,6 +1533,12 @@ const Playground3D = (() => {
     }
     _player.position.x = x;
     _player.position.z = z;
+  }
+
+  // Minimum camera elevation — higher in /world so you can't tilt under the
+  // tall room walls; normal floor everywhere else.
+  function _minElev() {
+    return _mode === 'world' ? CAMERA.WORLD_MIN_ELEV : CAMERA.MIN_ELEV;
   }
 
   function _updateCamera() {
@@ -1610,7 +1653,7 @@ const Playground3D = (() => {
       const z = p.gridY * WORLD.SCALE;
       const geom = new THREE.BoxGeometry(WORLD.PLATFORM_W, WORLD.PLATFORM_H, WORLD.PLATFORM_D);
       // Per-face materials so only the top face shows the poster.
-      const side = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+      const side = new THREE.MeshLambertMaterial({ color: 0x8a7f68 });
       const top  = new THREE.MeshLambertMaterial({ color: 0xffffff });
       const url = (typeof CONFIG !== 'undefined' && CONFIG.IMAGE_BASE && p.image)
         ? `${CONFIG.IMAGE_BASE}${p.image}` : '';
@@ -1626,10 +1669,65 @@ const Playground3D = (() => {
       mesh.userData.projectId = p.id;
       _scene.add(mesh);
 
+      // Per-house wall height, jittered deterministically from the project id so
+      // the skyline varies but a given house stays the same height every visit.
+      // Stored on the node so _buildNodeWalls reuses the exact same value. (The
+      // footprint stays uniform — roads/apron/collision all assume PLATFORM_W.)
+      const hr = _nodeRand(p.id);
+      const wallHeight = WORLD.WALL_HEIGHT * (WORLD.HEIGHT_VAR_MIN + (WORLD.HEIGHT_VAR_MAX - WORLD.HEIGHT_VAR_MIN) * hr);
+
+      // Ceiling — a solid roof sitting just above the wall tops so the room reads
+      // as an enclosed building from outside. It's hide-able (see
+      // _tickRoomCeilings): the roof of whichever room the player is inside turns
+      // off so they can still see in. A thin SLAB (not a flat plane) gives it real
+      // thickness, so it never sits coplanar with the wall tops — that coplanarity
+      // is what caused the z-fighting shimmer along the roof edges. Tinted by the
+      // project's phase so the town reads as colored districts. Not collidable.
+      const ROOF_T = 0.2;
+      const ceilMat = new THREE.MeshLambertMaterial({ color: _phaseRoofColor(p.phase) });
+      const ceiling = new THREE.Mesh(new THREE.BoxGeometry(WORLD.PLATFORM_W, ROOF_T, WORLD.PLATFORM_D), ceilMat);
+      // Slab bottom rests at this house's wall tops with a tiny downward overlap
+      // (-0.02) so there's no seam between roof and walls; platform top is y=0.
+      ceiling.position.set(x, wallHeight + ROOF_T / 2 - 0.02, z);
+      _scene.add(ceiling);
+
+      // Apron — a stone RING framing the building base (hole the size of the
+      // platform so the poster floor is never covered). It hides the road strips
+      // emerging around the building, and is walkable (see _isInWalkable) so the
+      // player can move around the building's exterior.
+      const apOuter = (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2;  // = 8
+      const apInner = WORLD.PLATFORM_W / 2;                          // = 6 (platform footprint)
+      const apronShape = new THREE.Shape();
+      apronShape.moveTo(-apOuter, -apOuter);
+      apronShape.lineTo(apOuter, -apOuter);
+      apronShape.lineTo(apOuter, apOuter);
+      apronShape.lineTo(-apOuter, apOuter);
+      apronShape.lineTo(-apOuter, -apOuter);
+      const apronHole = new THREE.Path();
+      apronHole.moveTo(-apInner, -apInner);
+      apronHole.lineTo(-apInner, apInner);
+      apronHole.lineTo(apInner, apInner);
+      apronHole.lineTo(apInner, -apInner);
+      apronHole.lineTo(-apInner, -apInner);
+      apronShape.holes.push(apronHole);
+      const apron = new THREE.Mesh(new THREE.ShapeGeometry(apronShape), new THREE.MeshLambertMaterial({
+        color: WORLD.APRON_COLOR,
+        side: THREE.DoubleSide,
+        // Decal-style offset so the ring reliably renders over the ground and the
+        // roads beneath it without z-fighting (it never overlaps the poster).
+        polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
+      }));
+      apron.rotation.x = -Math.PI / 2;
+      // Sit just above the road tops (-0.02) so the ring covers the road strips
+      // around the building; the platform poster (y=0) shows through the hole.
+      apron.position.set(x, -0.01, z);
+      apron.receiveShadow = true;
+      _scene.add(apron);
+
       // The 'anchor' is still used by the active-node prompt placement
       // tick — kept even though we no longer render a floating title.
       const anchor = new THREE.Vector3(x, WORLD.PLATFORM_RAISE + WORLD.PLATFORM_H / 2 + 1.6, z);
-      const node = { mesh, project: p, anchor, walls: [] };
+      const node = { mesh, project: p, anchor, walls: [], ceiling, apron, wallHeight, decor: [] };
       _worldNodes.set(p.id, node);
 
       // Roads to any already-unlocked prereq.
@@ -1717,13 +1815,32 @@ const Playground3D = (() => {
       _walls = _walls.filter(a => !aabbsToDrop.has(a));
     }
     node.walls = [];
+    // Tear down any existing lock icons too — a neighbor may have just
+    // unlocked, turning its locked-wall icon into an open doorway.
+    if (node.lockIcons && node.lockIcons.length) {
+      for (const icon of node.lockIcons) {
+        if (icon.parent) icon.parent.remove(icon);
+        if (icon.geometry) icon.geometry.dispose();
+        if (icon.material) {
+          if (icon.material.map) icon.material.map.dispose();
+          icon.material.dispose();
+        }
+      }
+    }
+    node.lockIcons = [];
+    // Tear down cozy decor (windows, door frames, stoops, lamps) too — doorway
+    // positions move when neighbors unlock, so it's all rebuilt below.
+    if (node.decor && node.decor.length) {
+      for (const d of node.decor) _disposeDecor(d);
+    }
+    node.decor = [];
 
     const connections = _getConnectedNodes(node.project.id);
-    // A node with no current connections (e.g. the spawn node before its
-    // first prereq is watched) gets no walls so the player isn't trapped
-    // inside the platform with no doorway out.
-    if (connections.length === 0) return;
-
+    // We always build the four-sided fence (even with no unlocked
+    // connections) so that sides facing a still-locked neighbor read as a
+    // solid wall we can hang a lock icon on. Doorways are cut only at
+    // unlocked connections below; the player is confined to platforms/roads
+    // by _isInWalkable regardless, so a fully-walled lone platform is fine.
     const sides = { N: [], S: [], E: [], W: [] };
     for (const other of connections) {
       const { side, coord } = _doorwayOnSide(node, other);
@@ -1733,51 +1850,159 @@ const Playground3D = (() => {
     const cx = node.mesh.position.x, cz = node.mesh.position.z;
     const HALF = WORLD.PLATFORM_W / 2;
     const T = WORLD.WALL_THICKNESS;
-    const H = WORLD.WALL_HEIGHT;
+    const H = node.wallHeight || WORLD.WALL_HEIGHT;   // per-house jittered height
     const D = WORLD.DOORWAY_WIDTH;
     const wallY = WORLD.PLATFORM_RAISE + WORLD.PLATFORM_H / 2 + H / 2;
+    // Plaster wall texture with a baked baseboard/trim — ONE texture shared by the
+    // whole town. Each segment gets its own material (so the existing per-wall
+    // material.dispose() teardown is safe) but points at the shared texture map;
+    // material.dispose() does not free the map, so the shared texture survives.
+    const wallTex = _wallTexture();
+
+    // Decor (trim/stoop/lamp) helpers — non-colliding, tracked in node.decor.
+    const trimMat = () => new THREE.MeshLambertMaterial({ color: WORLD.WALL_TRIM_COLOR });
+    const stoopMat = () => new THREE.MeshLambertMaterial({ color: WORLD.APRON_COLOR });
+    const addDecor = (mesh, x, y, z) => { mesh.position.set(x, y, z); mesh.castShadow = true; _scene.add(mesh); node.decor.push(mesh); };
+
+    // Frame a doorway's ACTUAL opening [gStart, gEnd] (already clipped to the
+    // platform edge by the caller) with trim jambs + a lintel, a stoop step on
+    // the apron outside it, and a lamp beside it. Deriving everything from the
+    // real opening edges — not the nominal doorway width — keeps the frame flush
+    // with the wall gap even when the doorway is clamped near a corner. `fixed`
+    // is the side's edge coordinate; the wall plane sits T/2 inside it.
+    function buildDoorFrame(sideName, gStart, gEnd, fixed, horizontal) {
+      const w = gEnd - gStart;
+      if (w < 0.3) return;                       // degenerate / fully-clipped gap
+      const mid = (gStart + gEnd) / 2;
+      const outSign = (sideName === 'N' || sideName === 'W') ? -1 : 1;
+      const line = fixed - outSign * T / 2;      // wall plane on the fixed axis
+      const jW = 0.3, jD = T + 0.12;             // jamb cross-section
+      const lintelY = H - 0.225;                 // top of opening (platform top = y=0)
+      if (horizontal) {
+        addDecor(new THREE.Mesh(new THREE.BoxGeometry(jW, H, jD), trimMat()), gStart, wallY, line);
+        addDecor(new THREE.Mesh(new THREE.BoxGeometry(jW, H, jD), trimMat()), gEnd,   wallY, line);
+        addDecor(new THREE.Mesh(new THREE.BoxGeometry(w + jW, 0.45, jD), trimMat()), mid, lintelY, line);
+        addDecor(new THREE.Mesh(new THREE.BoxGeometry(w, 0.16, 1.2), stoopMat()), mid, 0.06, line + outSign * 0.7);
+        const lamp = _makeLamp(gEnd + 0.4, line + outSign * 0.5);
+        if (lamp) { _scene.add(lamp); node.decor.push(lamp); }
+      } else {
+        addDecor(new THREE.Mesh(new THREE.BoxGeometry(jD, H, jW), trimMat()), line, wallY, gStart);
+        addDecor(new THREE.Mesh(new THREE.BoxGeometry(jD, H, jW), trimMat()), line, wallY, gEnd);
+        addDecor(new THREE.Mesh(new THREE.BoxGeometry(jD, 0.45, w + jW), trimMat()), line, lintelY, mid);
+        addDecor(new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, w), stoopMat()), line + outSign * 0.7, 0.06, mid);
+        const lamp = _makeLamp(line + outSign * 0.5, gEnd + 0.4);
+        if (lamp) { _scene.add(lamp); node.decor.push(lamp); }
+      }
+    }
 
     // For each side, compute wall segments around its doorway gaps and
     // build a thin box per segment. Walls are inset by T/2 so they sit
     // visibly ON the platform rather than at its edge.
     function buildSide(sideName, axisStart, axisEnd, fixed, horizontal) {
       const sorted = [...sides[sideName]].sort((a, b) => a - b);
-      // Compute segments between gaps.
-      let segs = [], cursor = axisStart;
+      // Build clipped opening intervals, then collapse any that overlap or are
+      // separated by only a thin wall sliver (< DOORWAY_MERGE_GAP) into one
+      // opening — so two roads converging on a side become a single doorway with
+      // one frame instead of overlapping frames / a lone thin post. Centers are
+      // sorted and clamping preserves order, so a single left-to-right merge is
+      // correct. Operates only on unlocked doorways, so a side with one path
+      // still yields exactly one opening.
+      const openings = [];
       for (const dCenter of sorted) {
-        const dStart = Math.max(axisStart, dCenter - D / 2);
-        const dEnd   = Math.min(axisEnd,   dCenter + D / 2);
-        if (dStart > cursor + 0.05) segs.push([cursor, dStart]);
-        cursor = Math.max(cursor, dEnd);
+        const a = Math.max(axisStart, dCenter - D / 2);
+        const b = Math.min(axisEnd,   dCenter + D / 2);
+        if (b - a < 0.1) continue;
+        const last = openings[openings.length - 1];
+        if (last && a - last[1] < WORLD.DOORWAY_MERGE_GAP) {
+          last[1] = Math.max(last[1], b);   // overlap or thin sliver → merge
+        } else {
+          openings.push([a, b]);
+        }
+      }
+
+      // Solid wall segments = the complement of the merged openings.
+      let segs = [], cursor = axisStart;
+      for (const [a, b] of openings) {
+        if (a > cursor + 0.05) segs.push([cursor, a]);
+        cursor = Math.max(cursor, b);
       }
       if (cursor < axisEnd - 0.05) segs.push([cursor, axisEnd]);
+
+      // One frame per merged opening so the trim matches the real wall gap.
+      for (const [a, b] of openings) buildDoorFrame(sideName, a, b, fixed, horizontal);
+
+      // Wall plane coordinate on the fixed axis for this side (T/2 inside the edge).
+      const perp = horizontal
+        ? (sideName === 'N' ? fixed + T / 2 : fixed - T / 2)
+        : (sideName === 'W' ? fixed + T / 2 : fixed - T / 2);
+      // Build one wall panel (box) spanning [aStart,aEnd] along the side axis and
+      // [y0,y1] vertically. Textured plaster by default; pass a plain color for the
+      // sill/header that frame a carved window. Tracked in node.walls for teardown;
+      // collision is the whole segment (pushed once per segment, not per panel).
+      function addWallPanel(aStart, aEnd, y0, y1, plainColor) {
+        const wlen = aEnd - aStart, wh = y1 - y0;
+        if (wlen <= 0.02 || wh <= 0.02) return;
+        const px = horizontal ? (aStart + aEnd) / 2 : perp;
+        const pz = horizontal ? perp : (aStart + aEnd) / 2;
+        const gx = horizontal ? wlen : T;
+        const gz = horizontal ? T : wlen;
+        const mat = (plainColor != null)
+          ? new THREE.MeshLambertMaterial({ color: plainColor })
+          : (wallTex ? new THREE.MeshLambertMaterial({ map: wallTex, color: 0xffffff })
+                     : new THREE.MeshLambertMaterial({ color: WORLD.WALL_COLOR }));
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(gx, wh, gz), mat);
+        mesh.position.set(px, (y0 + y1) / 2, pz);   // platform top is y=0
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        _scene.add(mesh);
+        node.walls.push({ mesh });
+      }
 
       for (const [s, e] of segs) {
         const len = e - s;
         if (len <= 0.1) continue;
-        let mx, mz, sx, sz;
-        if (horizontal) {
-          mx = (s + e) / 2;
-          mz = (sideName === 'N') ? (fixed + T / 2) : (fixed - T / 2);
-          sx = len; sz = T;
+        const firstIdx = node.walls.length;
+
+        if (len < WORLD.WINDOW_MIN_SEG) {
+          addWallPanel(s, e, 0, H);                       // plain solid segment
         } else {
-          mz = (s + e) / 2;
-          mx = (sideName === 'W') ? (fixed + T / 2) : (fixed - T / 2);
-          sx = T; sz = len;
+          // Carve a real window: side fillers + a sill below + a header above,
+          // leaving a hole you can actually see through (filled with glass below).
+          const center = (s + e) / 2;
+          const winY = Math.min(H - WORLD.WINDOW_H / 2 - 0.25, H * 0.55);
+          const winL = center - WORLD.WINDOW_W / 2, winR = center + WORLD.WINDOW_W / 2;
+          const sillTop = winY - WORLD.WINDOW_H / 2, headBot = winY + WORLD.WINDOW_H / 2;
+          addWallPanel(s, winL, 0, H);                    // left filler
+          addWallPanel(winR, e, 0, H);                    // right filler
+          addWallPanel(winL, winR, 0, sillTop);           // sill — same plaster as the wall
+          addWallPanel(winL, winR, headBot, H);           // header — same plaster as the wall
+          // Translucent glass pane sitting in the hole — see-through to the interior.
+          const glass = _makeWindowGlass();
+          if (glass) {
+            glass.position.set(horizontal ? center : perp, winY, horizontal ? perp : center);
+            glass.rotation.y = (sideName === 'N') ? Math.PI
+                             : (sideName === 'S') ? 0
+                             : (sideName === 'W') ? -Math.PI / 2 : Math.PI / 2;
+            _scene.add(glass);
+            node.decor.push(glass);
+          }
         }
-        const geom = new THREE.BoxGeometry(sx, H, sz);
-        const mat = new THREE.MeshLambertMaterial({ color: WORLD.WALL_COLOR });
-        const mesh = new THREE.Mesh(geom, mat);
-        mesh.position.set(mx, wallY, mz);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        _scene.add(mesh);
-        const aabb = {
-          minX: mx - sx / 2, maxX: mx + sx / 2,
-          minZ: mz - sz / 2, maxZ: mz + sz / 2
-        };
-        _walls.push(aabb);
-        node.walls.push({ mesh, aabb });
+
+        // Collision: the whole segment blocks movement (a window has a sill, so you
+        // can't walk through it). Keep ONE full-segment AABB regardless of carving,
+        // attached to the first panel built so teardown drops it from _walls.
+        if (node.walls.length > firstIdx) {
+          const fullMx = horizontal ? (s + e) / 2 : perp;
+          const fullMz = horizontal ? perp : (s + e) / 2;
+          const fullSx = horizontal ? len : T;
+          const fullSz = horizontal ? T : len;
+          const aabb = {
+            minX: fullMx - fullSx / 2, maxX: fullMx + fullSx / 2,
+            minZ: fullMz - fullSz / 2, maxZ: fullMz + fullSz / 2
+          };
+          _walls.push(aabb);
+          node.walls[firstIdx].aabb = aabb;
+        }
       }
     }
 
@@ -1785,6 +2010,271 @@ const Playground3D = (() => {
     buildSide('S', cx - HALF, cx + HALF, cz + HALF, true);
     buildSide('W', cz - HALF, cz + HALF, cx - HALF, false);
     buildSide('E', cz - HALF, cz + HALF, cx + HALF, false);
+
+    // Hang a lock icon on the wall facing each still-locked neighbor — at the
+    // spot where the road WOULD exit once that neighbor is unlocked. This hints
+    // a path exists without revealing the destination node or its road.
+    const iconY = WORLD.PLATFORM_RAISE + WORLD.PLATFORM_H / 2 + H * 0.5;
+    // Lay the decal just inside the wall's inner face (walls are inset T/2 from
+    // the platform edge) so it sits flush on the wall, normal facing interior.
+    const inset = T + 0.02;
+    for (const ln of _getLockedNeighbors(node)) {
+      const { side, coord } = _doorwayOnSide(node, { mesh: { position: { x: ln.x, z: ln.z } } });
+      let ix, iz, rotY;
+      if (side === 'N')      { ix = coord;             iz = cz - HALF + inset; rotY = 0; }
+      else if (side === 'S') { ix = coord;             iz = cz + HALF - inset; rotY = Math.PI; }
+      else if (side === 'W') { ix = cx - HALF + inset; iz = coord;             rotY = Math.PI / 2; }
+      else                   { ix = cx + HALF - inset; iz = coord;             rotY = -Math.PI / 2; }  // 'E'
+      const icon = _makeLockDecal(ix, iconY, iz, rotY);
+      if (icon) { _scene.add(icon); node.lockIcons.push(icon); }
+    }
+  }
+
+  // Graph neighbors of this (unlocked) node that are NOT yet built/unlocked.
+  // Looks both at this node's prerequisites and at projects that list this
+  // node as a prerequisite, returning each locked neighbor's world position.
+  function _getLockedNeighbors(node) {
+    if (typeof projects === 'undefined' || !Array.isArray(projects)) return [];
+    const me = node.project;
+    const seen = new Set();
+    const out = [];
+    const consider = (q) => {
+      if (!q || q.id === me.id) return;
+      if (_worldNodes.has(q.id)) return;  // already built → it's unlocked, gets a real road
+      if (typeof q.gridX !== 'number' || typeof q.gridY !== 'number') return;
+      if (seen.has(q.id)) return;
+      seen.add(q.id);
+      out.push({ project: q, x: q.gridX * WORLD.SCALE, z: q.gridY * WORLD.SCALE });
+    };
+    for (const preId of (Array.isArray(me.prerequisites) ? me.prerequisites : [])) {
+      consider(projects.find(p => p.id === preId));
+    }
+    for (const q of projects) {
+      if (Array.isArray(q.prerequisites) && q.prerequisites.includes(me.id)) consider(q);
+    }
+    return out;
+  }
+
+  // Open the roof of whichever room the player is standing in (fade it to
+  // see-through) so they can still see inside, while every other room keeps its
+  // solid roof. Smoothly cross-fades when moving between rooms.
+  function _tickRoomCeilings() {
+    if (!_player) return;
+    const halfP = WORLD.PLATFORM_W / 2;
+    const MARGIN = 0.75;   // hysteresis dead-band (world units)
+    const px = _player.position.x, pz = _player.position.z;
+    for (const node of _worldNodes.values()) {
+      if (!node.ceiling) continue;
+      // Hide the solid roof of the room the player is inside so they can see in;
+      // every other building keeps its roof. Opaque visibility toggle avoids the
+      // flicker that transparent opacity-fading caused. A hysteresis dead-band
+      // around the platform edge stops the roof popping on/off when the player
+      // lingers in a doorway (which sits right on the edge): hide once inside,
+      // only re-show once clearly outside, and hold the current state in between.
+      const dx = Math.abs(px - node.mesh.position.x);
+      const dz = Math.abs(pz - node.mesh.position.z);
+      if (dx <= halfP && dz <= halfP) {
+        node.ceiling.visible = false;           // inside → open the roof
+      } else if (dx > halfP + MARGIN || dz > halfP + MARGIN) {
+        node.ceiling.visible = true;            // clearly outside → solid roof
+      }                                         // in-between → keep current state
+    }
+  }
+
+  // A flat padlock decal laid against a wall face, hand-drawn on a canvas (emoji
+  // fonts render inconsistently across platforms, so we draw the shape
+  // ourselves). Unlike a billboard sprite it stays stuck to the wall as the
+  // camera rotates. `rotationY` orients the plane so its face points toward the
+  // platform interior. Returns null on THREE builds lacking canvas-texture.
+  function _makeLockDecal(x, y, z, rotationY) {
+    const THREE = window.THREE;
+    if (!THREE || !THREE.CanvasTexture) return null;
+    const S = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = S; canvas.height = S;
+    const ctx = canvas.getContext('2d');
+
+    // Dark disc behind the lock for contrast against the gold wall.
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.arc(S / 2, S / 2, 58, 0, Math.PI * 2);
+    ctx.fill();
+
+    const gold = '#ffd24a';
+    ctx.strokeStyle = gold;
+    ctx.fillStyle = gold;
+    ctx.lineCap = 'round';
+
+    // Shackle (open-top arc).
+    ctx.lineWidth = 12;
+    ctx.beginPath();
+    ctx.arc(S / 2, 58, 20, Math.PI, 0);
+    ctx.stroke();
+
+    // Body (rounded rectangle).
+    const bx = 40, by = 58, bw = 48, bh = 44, r = 8;
+    ctx.beginPath();
+    ctx.moveTo(bx + r, by);
+    ctx.arcTo(bx + bw, by, bx + bw, by + bh, r);
+    ctx.arcTo(bx + bw, by + bh, bx, by + bh, r);
+    ctx.arcTo(bx, by + bh, bx, by, r);
+    ctx.arcTo(bx, by, bx + bw, by, r);
+    ctx.closePath();
+    ctx.fill();
+
+    // Keyhole.
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.beginPath();
+    ctx.arc(S / 2, by + 16, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(S / 2 - 2.5, by + 16, 5, 16);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.2), mat);
+    mesh.position.set(x, y, z);
+    mesh.rotation.y = rotationY || 0;
+    return mesh;
+  }
+
+  // Deterministic [0,1) hash of a project id (FNV-1a). Used to jitter per-house
+  // height etc. so a given house looks the same on every rebuild/reload —
+  // Math.random() would re-roll and make the town flicker between visits.
+  function _nodeRand(id) {
+    let h = 2166136261;
+    const s = String(id);
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0) / 4294967296;
+  }
+
+  // Roof tint for a house, keyed by its MCU phase so the town reads as colored
+  // districts. Falls back to the neutral slate roof for unknown/missing phases.
+  function _phaseRoofColor(phase) {
+    const c = WORLD.ROOF_PHASE_COLORS[phase];
+    return (typeof c === 'number') ? c : WORLD.CEILING_COLOR;
+  }
+
+  // One shared plaster/stucco wall texture, drawn once and cached. Just a faint,
+  // uniform speckle over the stone wall color — no baked baseboard/trim lines, so
+  // every wall panel (full segments plus the fillers/sill/header around a carved
+  // window) looks identical and the window reads as a clean hole, not a patch.
+  let _wallTex = null;
+  function _wallTexture() {
+    const THREE = window.THREE;
+    if (!THREE || !THREE.CanvasTexture) return null;
+    if (_wallTex) return _wallTex;
+    const W = 64, H = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    const hex = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
+    // Plaster body.
+    ctx.fillStyle = hex(WORLD.WALL_COLOR);
+    ctx.fillRect(0, 0, W, H);
+    // Faint stucco speckle (deterministic so the cache is stable; no Math.random).
+    let seed = 0x1234567;
+    const rnd = () => { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    for (let i = 0; i < 900; i++) {
+      const a = 0.05 + rnd() * 0.06;
+      ctx.fillStyle = (rnd() > 0.5) ? `rgba(255,255,255,${a})` : `rgba(80,66,44,${a})`;
+      ctx.fillRect(rnd() * W, rnd() * H, 1, 1);
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    _wallTex = tex;
+    return tex;
+  }
+
+  // A translucent glass pane for a carved window opening. The panes are mostly
+  // clear (low-alpha tint) so you can see the interior through the wall hole,
+  // with an opaque frame + mullion cross so it still reads as a window. Caller
+  // positions/orients it in the hole.
+  function _makeWindowGlass() {
+    const THREE = window.THREE;
+    if (!THREE || !THREE.CanvasTexture) return null;
+    const S = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = S; canvas.height = S;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, S, S);                      // start fully transparent
+    // Faint glass tint + a soft sheen across the top so it reads as glass.
+    ctx.fillStyle = 'rgba(200,222,240,0.12)';
+    ctx.fillRect(0, 0, S, S);
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    ctx.fillRect(0, 0, S, S * 0.42);
+    // Opaque frame + mullion cross.
+    ctx.fillStyle = '#6e5a3a';
+    const fr = 8;
+    ctx.fillRect(0, 0, S, fr); ctx.fillRect(0, S - fr, S, fr);
+    ctx.fillRect(0, 0, fr, S); ctx.fillRect(S - fr, 0, fr, S);
+    ctx.fillRect(S / 2 - 3, 0, 6, S); ctx.fillRect(0, S / 2 - 3, S, 6);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide
+    });
+    return new THREE.Mesh(new THREE.PlaneGeometry(WORLD.WINDOW_W, WORLD.WINDOW_H), mat);
+  }
+
+  // A small lamp beside a doorway: a thin post, an emissive head, and a soft
+  // additive glow sprite so it reads as glowing in the fog. Intentionally uses
+  // NO real PointLight — one dynamic light per doorway would wreck framerate and
+  // the single-shadow budget; the emissive head + sprite fake it cheaply.
+  function _makeLamp(x, z) {
+    const THREE = window.THREE;
+    if (!THREE) return null;
+    const group = new THREE.Group();
+    const postH = 2.2;
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.06, 0.08, postH, 6),
+      new THREE.MeshLambertMaterial({ color: 0x3a342a })
+    );
+    post.position.set(x, postH / 2, z);
+    post.castShadow = true;
+    group.add(post);
+    const head = new THREE.Mesh(
+      new THREE.BoxGeometry(0.34, 0.34, 0.34),
+      new THREE.MeshBasicMaterial({ color: WORLD.LAMP_COLOR })
+    );
+    head.position.set(x, postH + 0.12, z);
+    group.add(head);
+    if (THREE.CanvasTexture && THREE.Sprite) {
+      const S = 64;
+      const canvas = document.createElement('canvas');
+      canvas.width = S; canvas.height = S;
+      const ctx = canvas.getContext('2d');
+      const grad = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+      grad.addColorStop(0, 'rgba(255,217,138,0.9)');
+      grad.addColorStop(1, 'rgba(255,217,138,0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, S, S);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: new THREE.CanvasTexture(canvas),
+        blending: THREE.AdditiveBlending, depthWrite: false, transparent: true
+      }));
+      sprite.scale.set(1.6, 1.6, 1);
+      sprite.position.set(x, postH + 0.12, z);
+      group.add(sprite);
+    }
+    return group;
+  }
+
+  // Dispose a mesh/group's geometry, material, and any texture maps. Used to tear
+  // down per-house decor (windows, frames, lamps) cleanly on wall rebuild.
+  function _disposeDecor(obj) {
+    obj.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+      for (const m of mats) {
+        if (m.map && m.map !== _wallTex) m.map.dispose();
+        m.dispose();
+      }
+    });
+    if (obj.parent) obj.parent.remove(obj);
   }
 
   function _buildWorldRoad(aId, bId) {
@@ -1831,12 +2321,12 @@ const Playground3D = (() => {
   // inside ANY unlocked node's AABB OR ANY road's rotated rectangle.
   // The ground outside nodes/roads is not walkable in /world.
   function _isInWalkable(x, z) {
-    // Node platforms (axis-aligned).
-    const halfP = WORLD.PLATFORM_W / 2;
+    // Node platforms + their walkable stone apron (axis-aligned).
+    const halfA = (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2;
     for (const node of _worldNodes.values()) {
       const dx = x - node.mesh.position.x;
       const dz = z - node.mesh.position.z;
-      if (Math.abs(dx) <= halfP && Math.abs(dz) <= halfP) return true;
+      if (Math.abs(dx) <= halfA && Math.abs(dz) <= halfA) return true;
     }
     // Roads (rotated rectangles). World→local rotation by -angle:
     //   local_x =  dx * cosA - dz * sinA
@@ -1946,7 +2436,9 @@ const Playground3D = (() => {
       nameEl,
       username: username || 'Anon',
       bubbleEls: [],
-      emoteUntil: 0
+      emoteUntil: 0,
+      opacity: 1,          // current fade level (1 = fully visible)
+      appliedOpacity: 1    // last value pushed to materials/HUD (skip redundant work)
     });
   }
 
@@ -2006,6 +2498,7 @@ const Playground3D = (() => {
     const el = document.createElement('div');
     el.className = 'pg3d-bubble';
     el.textContent = text;
+    el.style.opacity = String(rp.opacity == null ? 1 : rp.opacity);
     _hudLayer.appendChild(el);
     rp.bubbleEls.push(el);
     setTimeout(() => {
@@ -2029,6 +2522,25 @@ const Playground3D = (() => {
     _localEmoteUntil = performance.now() + WORLD.EMOTE_DURATION_MS;
   }
 
+  // Push a remote player's current fade level onto its rig materials and HUD.
+  // Skips redundant work when the level hasn't changed since last applied.
+  function _applyRemoteOpacity(rp) {
+    if (rp.opacity === rp.appliedOpacity) return;
+    rp.appliedOpacity = rp.opacity;
+    const o = rp.opacity;
+    const vis = o > 0.02;
+    rp.rig.visible = vis;
+    if (vis) {
+      rp.rig.traverse(m => {
+        if (!m.material) return;
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        mats.forEach(mat => { mat.transparent = true; mat.opacity = o; });
+      });
+    }
+    if (rp.nameEl) rp.nameEl.style.opacity = String(o);
+    for (const b of rp.bubbleEls) b.style.opacity = String(o);
+  }
+
   // Per-tick interpolation + walking animation for remote players.
   function _tickRemotePlayers(dt, now) {
     for (const rp of _remotePlayers.values()) {
@@ -2041,6 +2553,16 @@ const Playground3D = (() => {
       rp.rig.position.y = rp.current.y;
       rp.rig.position.z = rp.current.z;
       rp.rig.rotation.y = rp.current.yaw;
+
+      // Fade the avatar out when it stands on geometry the local viewer can't
+      // see (locked nodes/roads aren't built for us), so it doesn't appear to
+      // walk through empty space — and fade back in on return. World-mode only.
+      const visTarget = (_mode === 'world' && !_isInWalkable(rp.current.x, rp.current.z)) ? 0 : 1;
+      const fadeK = Math.min(1, dt * WORLD.FADE_RATE);
+      rp.opacity += (visTarget - rp.opacity) * fadeK;
+      if (Math.abs(rp.opacity - visTarget) < 0.01) rp.opacity = visTarget;
+      _applyRemoteOpacity(rp);
+
       const bones = rp.rig.userData.bones;
       if (!bones) continue;
       if (rp.target.walking) {

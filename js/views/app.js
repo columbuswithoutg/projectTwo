@@ -17,7 +17,7 @@ const AppView = {
 
         <div class="view-tabs" role="tablist" aria-label="View mode">
           <button class="view-tab" data-route="/" role="tab" aria-selected="false">Watch Order</button>
-          <button class="view-tab active" data-route="/map" role="tab" aria-selected="true">Universe Map</button>
+          <button class="view-tab" data-route="/world" role="tab" aria-selected="false">World</button>
         </div>
 
         <div id="nav-drawer">
@@ -27,26 +27,27 @@ const AppView = {
             <nav>
               <div class="nav-section">
                 <div class="nav-section-title">Navigate</div>
-                <button id="home-btn">🏠 Home</button>
-                <button id="world-btn">🌍 World</button>
-                <button id="profile-btn">👤 Profile</button>
-                <button id="characters-btn">🦸 Characters</button>
+                <button id="world-btn">World</button>
+                <button id="home-btn">Home</button>
+                <button id="profile-btn">Profile</button>
+                <button id="characters-btn">Characters</button>
+                <button id="map-btn">Universe Map</button>
               </div>
               <div class="nav-section">
                 <div class="nav-section-title">You</div>
-                <button id="nav-character-btn">🧑 Customize character</button>
-                <button id="friends-btn">👥 Friends</button>
+                <button id="nav-character-btn">Customize character</button>
+                <button id="friends-btn">Friends</button>
               </div>
               <div class="nav-section">
                 <div class="nav-section-title">Walkers</div>
-                <button id="walkers-btn">🚶 Walkers</button>
-                <button id="fights-toggle-btn">⚔️ Fights: ON</button>
-                <button id="dialogues-toggle-btn">💬 Dialogues: ON</button>
+                <button id="walkers-btn">Walkers</button>
+                <button id="fights-toggle-btn">Fights: On</button>
+                <button id="dialogues-toggle-btn">Dialogues: On</button>
               </div>
               <div class="nav-section">
                 <div class="nav-section-title">Data</div>
-                <button id="clear-progress">🗑 Clear Progress</button>
-                <button id="logout-btn">🚪 Logout</button>
+                <button id="clear-progress">Clear Progress</button>
+                <button id="logout-btn">Logout</button>
               </div>
             </nav>
           </div>
@@ -109,12 +110,14 @@ const AppView = {
     document.getElementById('nav-drawer-overlay').addEventListener('click', closeDrawer);
 
     // Navigation — SPA routes instead of .html redirects
-    document.getElementById('home-btn')?.addEventListener('click', () => Router.go('/home'));
     document.getElementById('world-btn')?.addEventListener('click', () => Router.go('/world'));
+    document.getElementById('home-btn')?.addEventListener('click', () => Router.go('/home'));
     document.getElementById('profile-btn')?.addEventListener('click', () => Router.go('/profile'));
     document.getElementById('characters-btn')?.addEventListener('click', () => Router.go('/characters'));
+    document.getElementById('map-btn')?.addEventListener('click', () => Router.go('/map'));
 
-    // View-mode tab toggle (Watch Order ↔ Universe Map)
+    // View-mode tab toggle (Watch Order ↔ World) — the two focal surfaces.
+    // On /map neither is active; the tabs act as quick jumps to a focal view.
     document.querySelectorAll('.view-tab').forEach(tab => {
       tab.addEventListener('click', () => {
         const route = tab.dataset.route;
@@ -127,7 +130,14 @@ const AppView = {
       btn.addEventListener('click', closeDrawer);
     });
 
-    $("#clear-progress")?.addEventListener("click", () => {
+    $("#clear-progress")?.addEventListener("click", async () => {
+      const ok = await confirmDialog({
+        title: 'Clear all progress?',
+        message: "This unmarks every project you've watched. This can't be undone.",
+        confirmLabel: 'Clear progress',
+        danger: true
+      });
+      if (!ok) return;
       state.clear();
       renderer.setCenterTarget(CONFIG.START_NODE_ID);
     });
@@ -157,7 +167,7 @@ const AppView = {
     // Fight toggle — flips the persistent setting and updates the label.
     const fightsBtn = $("#fights-toggle-btn");
     const refreshFightsLabel = () => {
-      if (fightsBtn) fightsBtn.textContent = `⚔️ Fights: ${Walkers.getFightsEnabled() ? 'ON' : 'OFF'}`;
+      if (fightsBtn) fightsBtn.textContent = `Fights: ${Walkers.getFightsEnabled() ? 'On' : 'Off'}`;
     };
     refreshFightsLabel();
     fightsBtn?.addEventListener('click', () => {
@@ -168,7 +178,7 @@ const AppView = {
     // Dialogue toggle — same pattern.
     const dialoguesBtn = $("#dialogues-toggle-btn");
     const refreshDialoguesLabel = () => {
-      if (dialoguesBtn) dialoguesBtn.textContent = `💬 Dialogues: ${Walkers.getDialoguesEnabled() ? 'ON' : 'OFF'}`;
+      if (dialoguesBtn) dialoguesBtn.textContent = `Dialogues: ${Walkers.getDialoguesEnabled() ? 'On' : 'Off'}`;
     };
     refreshDialoguesLabel();
     dialoguesBtn?.addEventListener('click', () => {
@@ -192,22 +202,8 @@ const AppView = {
       Walkers.deploy();
     }, 500);
 
-    // Load profile picture into header
-    if (Auth.isLoggedIn()) {
-      fetch(`${API}/profile`, {
-        headers: { Authorization: `Bearer ${Auth.getToken()}` }
-      }).then(r => r.json()).then(data => {
-        const img      = document.getElementById('header-avatar');
-        const initials = document.getElementById('header-avatar-initials');
-        if (data.profilePicture && img) {
-          img.src = data.profilePicture;
-          img.style.display = 'block';
-          if (initials) initials.style.display = 'none';
-        } else if (initials && data.username) {
-          initials.textContent = data.username[0].toUpperCase();
-        }
-      }).catch(() => {});
-    }
+    // Header avatar — instant initials, then upgrade to the profile photo.
+    initHeaderAvatar();
 
     document.getElementById('header-profile-btn')?.addEventListener('click', () => {
       Router.go('/profile');

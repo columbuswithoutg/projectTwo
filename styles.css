@@ -3063,7 +3063,7 @@ body.auth-page {
 }
 
 /* ==========================================
-   VIEW TABS (Watch Order ↔ Universe Map)
+   VIEW TABS (Watch Order ↔ World)
 ========================================== */
 .view-tabs {
   /* Absolute centering — same trick the original #header h1 used. With
@@ -4878,4 +4878,132 @@ body:has(#nav-drawer.open) .world-chat-row {
   .pg-picker-list {
     grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
   }
+}
+
+/* ════════════════════════════════════════════════
+   Branded confirm dialog (replaces native confirm())
+   ════════════════════════════════════════════════ */
+.confirm-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200; /* above project popups (1000) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: fadeIn 0.18s ease;
+}
+
+.confirm-box {
+  background: rgba(13, 16, 32, 0.85);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--gold-02);
+  border-radius: 14px;
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.85),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  padding: 28px 26px;
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+  animation: authBoxIn 0.35s cubic-bezier(0.22, 0.8, 0.32, 1) both;
+}
+
+.confirm-title {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.confirm-message {
+  margin: 0 0 22px;
+  color: var(--color-text-warm);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.confirm-btn {
+  flex: 1;
+  padding: 11px 16px;
+  border-radius: var(--radius-md);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.confirm-btn:hover { background: rgba(255, 255, 255, 0.1); }
+
+.confirm-btn:focus-visible {
+  outline: 2px solid var(--color-primary-light);
+  outline-offset: 2px;
+}
+
+.confirm-btn.confirm-ok {
+  background: var(--gold-gradient);
+  border-color: transparent;
+  color: #1a1205;
+  font-weight: 700;
+}
+
+.confirm-btn.confirm-ok.danger {
+  background: linear-gradient(135deg, #e64a4a, #c62f2f);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(226, 54, 54, 0.4);
+}
+
+.confirm-btn.confirm-ok:hover { transform: translateY(-1px); }
+
+@media (max-width: 480px) {
+  /* Stack on phones; primary (confirm) ends up on top. */
+  .confirm-actions { flex-direction: column-reverse; }
+}
+
+/* ════════════════════════════════════════════════
+   Memory upload progress bar
+   ════════════════════════════════════════════════ */
+.memory-upload-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  margin: 6px 0 10px;
+}
+
+.memory-upload-bar {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--gold-gradient);
+  transition: width 0.18s ease;
+}
+
+/* Bytes uploaded; Cloudinary still processing — gentle pulse so the bar
+   doesn't read as "stuck" at 100%. */
+.memory-upload-progress.processing .memory-upload-bar {
+  animation: memoryUploadPulse 1s ease-in-out infinite;
+}
+
+@keyframes memoryUploadPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
 }

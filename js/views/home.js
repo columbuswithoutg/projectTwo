@@ -29,19 +29,19 @@ const HomeView = {
             <nav>
               <div class="nav-section">
                 <div class="nav-section-title">Navigate</div>
-                <button data-route="/">📋 Watch Order</button>
-                <button data-route="/map">🗺 Universe Map</button>
-                <button data-route="/world">🌍 World</button>
-                <button data-route="/profile">👤 Profile</button>
-                <button data-route="/characters">🦸 Characters</button>
+                <button data-route="/world">World</button>
+                <button data-route="/">Watch Order</button>
+                <button data-route="/profile">Profile</button>
+                <button data-route="/characters">Characters</button>
+                <button data-route="/map">Universe Map</button>
               </div>
               <div class="nav-section">
                 <div class="nav-section-title">You</div>
-                <button id="nav-character-btn">🧑 Customize character</button>
+                <button id="nav-character-btn">Customize character</button>
               </div>
               <div class="nav-section">
                 <div class="nav-section-title">Data</div>
-                <button id="logout-btn">🚪 Logout</button>
+                <button id="logout-btn">Logout</button>
               </div>
             </nav>
           </div>

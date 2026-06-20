@@ -29,7 +29,7 @@ function showPopup(project) {
 ${watchedWith.length ? (() => {
       const currentUsername = Auth.getUsername();
       const formatted = watchedWith.map(name =>
-        name === currentUsername ? '<span class="watched-with-you">you</span>' : `<span>${esc(name)}</span>`
+        name === currentUsername ? '<span class="watched-with-you">✓ you</span>' : `<span>${esc(name)}</span>`
       );
       return `
     <div class="watched-with-info">
@@ -74,7 +74,11 @@ ${!isReadonly ? `
   ` : ''}
 `;
 
-  popup.querySelector('.popup-close').onclick = () => popup.remove();
+  document.body.appendChild(popup);
+  const close = wireModalDismiss(popup, () => popup.remove(), {
+    initialFocus: popup.querySelector('.popup-close')
+  });
+  popup.querySelector('.popup-close').onclick = close;
 
   if (!isReadonly) {
     popup.querySelector('.popup-action').onclick = () => {
@@ -85,16 +89,16 @@ ${!isReadonly ? `
       }
       // Map view: re-center camera on the project. Flow view: no camera.
       renderer.setCenterTarget?.(project.id);
-      popup.remove();
+      close();
     };
 
     popup.querySelector('#watched-with-friend-btn')?.addEventListener('click', () => {
-      popup.remove();
+      close();
       showWatchedWithFriendModal(project);
     });
 
     popup.querySelector('#add-memory-btn')?.addEventListener('click', () => {
-      popup.remove();
+      close();
       showAddMemoryModal(project);
     });
 
@@ -119,16 +123,11 @@ ${!isReadonly ? `
   popup.querySelectorAll('.memory-view-btn').forEach(btn => {
     btn.onclick = () => {
       const index = parseInt(btn.dataset.index);
-      popup.remove();
+      close();
       showMemoryLightbox(memories, index, project);
     };
   });
 
-  popup.addEventListener('click', (e) => {
-    if (e.target === popup) popup.remove();
-  });
-
-  document.body.appendChild(popup);
 }
 
 /************************************************

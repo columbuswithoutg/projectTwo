@@ -17,6 +17,142 @@ function esc(str) {
 }
 
 /************************************************
+ * MODAL HELPERS — dismissal, focus, confirm dialog
+ *
+ * Shared by the project popup, memory modals/lightbox, and the branded
+ * confirm dialog so every overlay behaves the same: Escape closes,
+ * backdrop click closes, focus moves into the modal on open and is
+ * restored to the trigger on close.
+ ************************************************/
+
+// Wire Escape + backdrop dismissal and focus management onto an overlay
+// element. `closeFn` does the actual teardown (usually `el.remove()`).
+// Returns an idempotent `close()` the caller should use for ALL dismissal
+// paths (close button, action buttons, etc.) so listeners and focus are
+// always cleaned up.
+function wireModalDismiss(overlayEl, closeFn, { initialFocus, backdrop = true } = {}) {
+  const prevFocus = document.activeElement;
+  let closed = false;
+
+  function onKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+  }
+  function onBackdrop(e) {
+    if (e.target === overlayEl) close();
+  }
+
+  function close() {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener('keydown', onKey, true);
+    if (backdrop) overlayEl.removeEventListener('click', onBackdrop);
+    try { closeFn(); }
+    finally {
+      // Restore focus to whatever was focused before — but only if it's
+      // still in the document (the trigger node may have been re-rendered).
+      if (prevFocus && prevFocus.focus && document.contains(prevFocus)) {
+        prevFocus.focus();
+      }
+    }
+  }
+
+  document.addEventListener('keydown', onKey, true);
+  if (backdrop) overlayEl.addEventListener('click', onBackdrop);
+
+  // Move focus into the modal so keyboard users land inside it.
+  const focusTarget = initialFocus
+    || overlayEl.querySelector('.popup-close, .lightbox-close, .confirm-cancel, [autofocus]')
+    || overlayEl;
+  if (focusTarget && focusTarget.focus) {
+    if (focusTarget === overlayEl && !overlayEl.hasAttribute('tabindex')) {
+      overlayEl.setAttribute('tabindex', '-1');
+    }
+    focusTarget.focus();
+  }
+
+  return close;
+}
+
+// Branded confirmation dialog (replaces native confirm()). Resolves true on
+// confirm, false on Cancel / Escape / backdrop. Cancel is auto-focused as
+// the safe default; pass `danger:true` for a destructive (red) confirm.
+function confirmDialog(opts = {}) {
+  const {
+    title = 'Are you sure?',
+    message = '',
+    confirmLabel = 'Confirm',
+    cancelLabel = 'Cancel',
+    danger = false
+  } = opts;
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', title);
+    overlay.innerHTML = `
+      <div class="confirm-box">
+        <h3 class="confirm-title">${esc(title)}</h3>
+        ${message ? `<p class="confirm-message">${esc(message)}</p>` : ''}
+        <div class="confirm-actions">
+          <button type="button" class="confirm-btn confirm-cancel">${esc(cancelLabel)}</button>
+          <button type="button" class="confirm-btn confirm-ok${danger ? ' danger' : ''}">${esc(confirmLabel)}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    let resolved = false;
+    const done = (val) => { if (!resolved) { resolved = true; resolve(val); } };
+
+    const close = wireModalDismiss(
+      overlay,
+      () => { if (overlay.parentNode) overlay.remove(); done(false); },
+      { initialFocus: overlay.querySelector('.confirm-cancel') }
+    );
+
+    overlay.querySelector('.confirm-cancel').addEventListener('click', close);
+    overlay.querySelector('.confirm-ok').addEventListener('click', () => { done(true); close(); });
+  });
+}
+
+/************************************************
+ * HEADER AVATAR — instant initials, then upgrade to photo
+ *
+ * Used by the Watch Order and Map views. Sets the user's initial
+ * synchronously from the cached username so the header never flashes the
+ * generic 👤 placeholder while /profile is in flight; then swaps in the
+ * profile photo once it has actually decoded.
+ ************************************************/
+function initHeaderAvatar() {
+  const img      = document.getElementById('header-avatar');
+  const initials = document.getElementById('header-avatar-initials');
+  if (!initials) return;
+
+  // 1) Instant: initial from the cached username (no network).
+  const cachedName = (typeof Auth !== 'undefined' && Auth.getUsername && Auth.getUsername())
+    || localStorage.getItem('mcu_username') || '';
+  if (cachedName) initials.textContent = cachedName[0].toUpperCase();
+
+  // 2) Upgrade: fetch the profile, swap in the photo if present.
+  if (typeof Auth === 'undefined' || !Auth.isLoggedIn || !Auth.isLoggedIn()) return;
+  fetch(`${API}/profile`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } })
+    .then(r => r.json())
+    .then(data => {
+      if (data.username) initials.textContent = data.username[0].toUpperCase();
+      if (data.profilePicture && img) {
+        // Reveal the <img> only once it has decoded, so the initials never
+        // flash to a half-loaded or broken image.
+        img.onload = () => { img.style.display = 'block'; initials.style.display = 'none'; };
+        img.onerror = () => { img.style.display = 'none'; initials.style.display = ''; };
+        img.src = data.profilePicture;
+      }
+    })
+    .catch(() => { /* keep the initials we already set */ });
+}
+
+/************************************************
  * VISIBILITY & UNLOCK LOGIC
  ************************************************/
 const isPhaseUnlocked = (p) => {
