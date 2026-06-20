@@ -139,6 +139,8 @@ const Playground3D = (() => {
   let _worldNodes = new Map();    // projectId → { mesh, project, anchor: Vector3, walls }
   let _worldRoads = new Map();    // "a→b" key (sorted) → mesh
   let _remotePlayers = new Map(); // socketId → { rig, target:{x,z,yaw,walking}, current, nameEl, bubbleEls[], emoteUntil }
+  let _npcs = [];                 // local Avenger NPCs patrolling their debut nodes (NOT network/voice peers)
+  let _npcSpecs = [];             // declared specs [{ id, name, character, debut }] — materialized as their debut nodes unlock
   let _worldStateUnsub = null;
   let _activeNode = null;          // project currently within PROXIMITY
   let _activePromptEl = null;
@@ -227,6 +229,8 @@ const Playground3D = (() => {
     }
     if (_scene) _disposeRig(_scene);
     // World-mode cleanup.
+    _clearNpcs();          // removes NPC name-tag DOM nodes + clears _npcs
+    _npcSpecs = [];
     _worldNodes.clear();
     _worldRoads.clear();
     _walkableRoads = [];
@@ -536,6 +540,13 @@ const Playground3D = (() => {
     const beardIdx = c.facialHairStyle ?? 0;
     const glassesIdx = c.glasses ?? 0;
     const hatIdx = c.hat ?? 0;
+    // Build (size/bulk) + hero gear. `?? 1`/`?? 0` keep pre-existing saved
+    // characters (which have neither field) at Normal build / no gear.
+    const buildIdx = c.build ?? 1;
+    const gearIdx = c.gear ?? 0;
+    const buildDef = (typeof Playground !== 'undefined' && Playground.BUILDS && Playground.BUILDS[buildIdx])
+      || { scale: 1, bulk: 1 };
+    const bulk = buildDef.bulk;
 
     const skinMat  = new THREE.MeshLambertMaterial({ color: skinHex });
     const shirtMat = new THREE.MeshLambertMaterial({ color: shirtHex });
@@ -561,8 +572,8 @@ const Playground3D = (() => {
     // Legs (with pivots at the hip so we can swing them).
     const HIP_Y = 0.7;
     const LEG_LEN = 0.7;
-    const LEG_W = 0.32;
-    const LEG_D = 0.32;
+    const LEG_W = 0.32 * bulk;
+    const LEG_D = 0.32 * bulk;
     const FOOT_H = 0.18;
 
     const mkLeg = (xOffset) => {
@@ -580,13 +591,14 @@ const Playground3D = (() => {
       pivot.add(foot);
       return pivot;
     };
-    const leftLeg = mkLeg(-0.18);
-    const rightLeg = mkLeg(0.18);
+    const leftLeg = mkLeg(-0.18 * bulk);
+    const rightLeg = mkLeg(0.18 * bulk);
     body.add(leftLeg);
     body.add(rightLeg);
 
-    // Torso.
-    const TORSO_W = 0.85, TORSO_H = 0.75, TORSO_D = 0.45;
+    // Torso. Width/depth widen with `bulk` so a Huge build reads as broad,
+    // not just a bigger copy; height stays fixed (overall scale handles tall).
+    const TORSO_W = 0.85 * bulk, TORSO_H = 0.75, TORSO_D = 0.45 * bulk;
     const torso = mkBox(TORSO_W, TORSO_H, TORSO_D, shirtMat);
     torso.position.y = HIP_Y + TORSO_H / 2;
     body.add(torso);
@@ -594,7 +606,7 @@ const Playground3D = (() => {
     // Arms (pivot at the shoulder, hangs down).
     const SHOULDER_Y = HIP_Y + TORSO_H - 0.05;
     const ARM_LEN = 0.7;
-    const ARM_W = 0.22, ARM_D = 0.22;
+    const ARM_W = 0.22 * bulk, ARM_D = 0.22 * bulk;
 
     const mkArm = (xSign) => {
       const pivot = new THREE.Group();
@@ -660,6 +672,18 @@ const Playground3D = (() => {
     if (hat) head.add(hat);
 
     body.add(head);
+
+    // Hero gear (helmet / shield / cape / weapons) — attaches extra meshes to
+    // the head/torso/arm groups built above. No-op when gearIdx is 0.
+    _buildGear(gearIdx, {
+      head, torso, body, leftArm, rightArm,
+      dims: { HEAD_SZ, TORSO_W, TORSO_H, TORSO_D, HIP_Y, ARM_LEN }
+    });
+
+    // Build scale — grows the whole figure from the feet (root origin is at
+    // foot level, so feet stay planted). Untouched by the tick, which only
+    // animates body.scale (breathing) and root position/rotation.
+    root.scale.setScalar(buildDef.scale);
 
     // Default forward: character faces -Z by convention. The engine yaws
     // the root via root.rotation.y to face the movement direction.
@@ -1009,6 +1033,127 @@ const Playground3D = (() => {
       }
     }
     return grp;
+  }
+
+  // Hero gear — per-Avenger mesh sets (gear index from js/playground.js
+  // GEAR_LABELS / CHARACTER_PRESETS). Index 0 (None) adds nothing. Pieces are
+  // attached directly to the rig's head/torso/arm groups so they move with the
+  // body, swing with the arms, and get disposed with the rest of the rig.
+  function _buildGear(gearIdx, ctx) {
+    if (!gearIdx) return;
+    const THREE = window.THREE;
+    const { head, torso, leftArm, rightArm, dims } = ctx;
+    const { HEAD_SZ, TORSO_W, TORSO_H, TORSO_D, ARM_LEN } = dims;
+    const mk = (w, h, d, color, emissive) => new THREE.Mesh(
+      new THREE.BoxGeometry(w, h, d),
+      new THREE.MeshLambertMaterial({ color, emissive: emissive || 0x000000 })
+    );
+    const cyl = (rt, rb, h, color, emissive) => new THREE.Mesh(
+      new THREE.CylinderGeometry(rt, rb, h, 20),
+      new THREE.MeshLambertMaterial({ color, emissive: emissive || 0x000000 })
+    );
+    const added = [];
+    const add = (parent, mesh) => { parent.add(mesh); added.push(mesh); return mesh; };
+
+    switch (gearIdx) {
+      case 1: { // Iron Man — red/gold helmet, arc reactor, gold forearm cuffs
+        const RED = 0xb1232b, GOLD = 0xd9a420, ARC = 0x9fe6ff;
+        add(head, mk(HEAD_SZ * 1.07, HEAD_SZ * 1.07, HEAD_SZ * 1.07, RED)); // shell over the face
+        const face = add(head, mk(HEAD_SZ * 0.82, HEAD_SZ * 0.7, 0.06, GOLD));
+        face.position.set(0, -0.02, HEAD_SZ / 2 + 0.02);
+        [-0.12, 0.12].forEach(x => {
+          const eye = add(head, mk(0.13, 0.045, 0.02, ARC, ARC));
+          eye.position.set(x, 0.06, HEAD_SZ / 2 + 0.06);
+        });
+        const arc = add(torso, cyl(0.09, 0.09, 0.04, ARC, ARC));
+        arc.rotation.x = Math.PI / 2;
+        arc.position.set(0, 0.08, TORSO_D / 2 + 0.02);
+        [leftArm, rightArm].forEach(a => {
+          const cuff = add(a, mk(0.27, 0.18, 0.27, GOLD));
+          cuff.position.y = -ARM_LEN * 0.86;
+        });
+        break;
+      }
+      case 2: { // Captain America — back shield, blue cowl, chest star
+        const BLUE = 0x2a4a9a, RED = 0xb1232b, WHITE = 0xf0f0f0;
+        const cowl = add(head, mk(HEAD_SZ * 1.06, HEAD_SZ * 0.62, HEAD_SZ * 1.06, BLUE));
+        cowl.position.set(0, HEAD_SZ * 0.2, -0.02);
+        const aMark = add(head, mk(0.1, 0.12, 0.02, WHITE));
+        aMark.position.set(0, HEAD_SZ * 0.24, HEAD_SZ / 2 + 0.02);
+        const shield = new THREE.Group();
+        shield.add(cyl(0.42, 0.42, 0.05, RED));
+        shield.add(cyl(0.31, 0.31, 0.06, WHITE));
+        shield.add(cyl(0.21, 0.21, 0.07, RED));
+        shield.add(cyl(0.12, 0.12, 0.08, BLUE));
+        shield.add(mk(0.12, 0.12, 0.1, WHITE));
+        shield.rotation.x = Math.PI / 2;
+        shield.position.set(0, 0.05, -TORSO_D / 2 - 0.08);
+        add(torso, shield);
+        const cStar = add(torso, mk(0.14, 0.14, 0.02, WHITE));
+        cStar.position.set(0, 0.12, TORSO_D / 2 + 0.01);
+        break;
+      }
+      case 3: { // Thor — red cape, Mjölnir, silver helmet band + wings
+        const CAPE = 0x8a1f24, METAL = 0xb8bcc4, SILVER = 0xd8dce4;
+        const cape = add(torso, mk(TORSO_W * 1.08, TORSO_H + 0.55, 0.05, CAPE));
+        cape.position.set(0, -0.18, -TORSO_D / 2 - 0.03);
+        const hammer = new THREE.Group();
+        const handle = mk(0.06, 0.5, 0.06, 0x5a3a22); handle.position.y = -0.18; hammer.add(handle);
+        const headBlk = mk(0.24, 0.2, 0.2, METAL); headBlk.position.y = 0.1; hammer.add(headBlk);
+        hammer.position.set(0, -ARM_LEN - 0.02, 0.08);
+        add(rightArm, hammer);
+        const band = add(head, cyl(HEAD_SZ * 0.56, HEAD_SZ * 0.56, 0.1, SILVER));
+        band.position.y = HEAD_SZ * 0.42;
+        [-1, 1].forEach(s => {
+          const wing = add(head, mk(0.04, 0.22, 0.12, SILVER));
+          wing.position.set(s * (HEAD_SZ * 0.55), HEAD_SZ * 0.5, 0);
+          wing.rotation.z = s * 0.5;
+        });
+        break;
+      }
+      case 4: // Hulk — no gear; his identity is the green skin + Huge build.
+        break;
+      case 5: { // Black Widow — utility belt, hip batons, hourglass emblem
+        const BLACK = 0x161616, GOLD = 0xd9a420, RED = 0xb1232b;
+        const belt = add(torso, mk(TORSO_W * 1.04, 0.12, TORSO_D * 1.04, BLACK));
+        belt.position.set(0, -TORSO_H / 2 + 0.02, 0);
+        const buckle = add(torso, mk(0.12, 0.1, 0.03, GOLD));
+        buckle.position.set(0, -TORSO_H / 2 + 0.02, TORSO_D / 2 + 0.01);
+        [-1, 1].forEach(s => {
+          const baton = add(torso, mk(0.06, 0.26, 0.06, BLACK));
+          baton.position.set(s * (TORSO_W / 2 + 0.02), -TORSO_H / 2 - 0.05, 0.02);
+        });
+        const hourglass = add(torso, mk(0.1, 0.16, 0.02, RED));
+        hourglass.position.set(0, 0.12, TORSO_D / 2 + 0.01);
+        break;
+      }
+      case 6: { // Hawkeye — bow in hand, back quiver, tactical eye strap
+        const DARK = 0x3a2d5a, TIP = 0xcfd4dc, STRAP = 0x1a1a1a;
+        const bowGrp = new THREE.Group();
+        const bow = new THREE.Mesh(
+          new THREE.TorusGeometry(0.4, 0.025, 8, 20, Math.PI * 1.25),
+          new THREE.MeshLambertMaterial({ color: DARK })
+        );
+        bow.rotation.y = Math.PI / 2;
+        bow.rotation.z = Math.PI * 0.375;
+        bowGrp.add(bow);
+        const string = mk(0.012, 0.76, 0.012, 0xdddddd); bowGrp.add(string);
+        bowGrp.position.set(0, -ARM_LEN, 0.12);
+        add(leftArm, bowGrp);
+        const quiver = add(torso, cyl(0.07, 0.07, 0.5, STRAP));
+        quiver.position.set(-0.18, 0.05, -TORSO_D / 2 - 0.06);
+        quiver.rotation.x = 0.3; quiver.rotation.z = 0.4;
+        [-0.04, 0, 0.04].forEach(o => {
+          const tip = add(torso, mk(0.015, 0.18, 0.015, TIP));
+          tip.position.set(-0.18 + o, 0.34, -TORSO_D / 2 - 0.02);
+          tip.rotation.z = 0.4;
+        });
+        const strap = add(head, mk(HEAD_SZ * 0.92, 0.1, 0.02, STRAP));
+        strap.position.set(0, 0.05, HEAD_SZ / 2 + 0.01);
+        break;
+      }
+    }
+    added.forEach(p => p.traverse(o => { if (o.isMesh) o.castShadow = true; }));
   }
 
   function _palette(name, idx) {
@@ -1487,6 +1632,7 @@ const Playground3D = (() => {
     // World-mode-only ticks (no-ops in home mode).
     if (_mode === 'world') {
       _tickRemotePlayers(dt, now);
+      _tickNpcs(dt, now);
       _tickRoomCeilings();
       _tickHUD(now);
     }
@@ -1753,6 +1899,9 @@ const Playground3D = (() => {
         if (neighbor.project.id !== p.id) _buildNodeWalls(neighbor);
       }
     }
+
+    // Spawn any Avenger whose debut node just became available.
+    _materializeNpcs();
   }
 
   // All currently-visible nodes that connect to this project via roads.
@@ -2405,12 +2554,169 @@ const Playground3D = (() => {
         _placeHudEl(b, _hudAnchor, stack);
       }
     }
+
+    // NPC hero tags — float above each NPC's (build-scaled) head.
+    for (const npc of _npcs) {
+      _hudAnchor.set(npc.x, npc.headY, npc.z);
+      if (npc.nameEl) _placeHudEl(npc.nameEl, _hudAnchor, 0);
+    }
   }
 
   function _openActiveNode() {
     if (!_activeNode) return;
     if (_projectClickHandler) _projectClickHandler(_activeNode);
     else if (typeof showPopup === 'function') showPopup(_activeNode);
+  }
+
+  // ── local NPCs (Avengers patrolling their debut nodes) ──
+  // Purely client-side wanderers — deliberately kept OUT of _remotePlayers so
+  // they never register as network or voice peers. They reuse the rig builder,
+  // the walk-cycle math, _isInWalkable, and the HUD projection helpers.
+
+  const NPC_SPEED = 1.5;     // world units / sec — a leisurely stroll
+  const NPC_TURN  = 0.5;     // radians to steer per blocked sub-step (hug the ring)
+
+  // Public: declare which heroes should roam. Each spec is
+  // { id, name, character, debut }. Stored so a hero can pop in the moment its
+  // debut node unlocks mid-session (re-invoked from _rebuildWorldNodes).
+  function setWorldNpcs(specs) {
+    _npcSpecs = Array.isArray(specs) ? specs : [];
+    _materializeNpcs();
+  }
+
+  // Spawn any spec whose debut node now exists and isn't already spawned.
+  function _materializeNpcs() {
+    if (_mode !== 'world' || !_scene || !window.THREE) return;
+    for (const spec of _npcSpecs) {
+      if (_npcs.some(n => n.id === spec.id)) continue;   // already roaming
+      const node = _worldNodes.get(spec.debut);
+      if (!node) continue;                                // debut node still locked
+      const homeX = node.mesh.position.x;
+      const homeZ = node.mesh.position.z;
+
+      const rig = _buildPlayer(spec.character || defaultCharacter());
+      // Start on the SQUARE apron ring at a deterministic per-hero angle so
+      // heroes sharing a node (Thor + Hawkeye at thor1) don't stack. The apron
+      // is axis-aligned, so scale the polar radius by 1/max(|cos|,|sin|) to land
+      // at a fixed Chebyshev distance (≈7) — squarely on the ring, off the poster.
+      const angle0 = _hashAngle(spec.id);
+      const m0 = Math.max(Math.abs(Math.cos(angle0)), Math.abs(Math.sin(angle0))) || 1;
+      const r0 = 7.0 / m0;
+      const x = homeX + Math.cos(angle0) * r0;
+      const z = homeZ + Math.sin(angle0) * r0;
+      const dir = (_hashAngle(spec.id + 'd') > Math.PI) ? 1 : -1;
+      const heading = angle0 + dir * Math.PI / 2;   // tangent → start strolling around the ring
+      rig.position.set(x, 0, z);
+      rig.rotation.y = heading;
+      _scene.add(rig);
+
+      const nameEl = document.createElement('div');
+      nameEl.className = 'pg3d-nametag pg3d-npc-nametag';
+      nameEl.textContent = spec.name || '';
+      if (_hudLayer) _hudLayer.appendChild(nameEl);
+
+      const bScale = (rig.scale && rig.scale.y) || 1;   // taller builds → higher tag
+      _npcs.push({
+        id: spec.id, name: spec.name, rig, nameEl,
+        homeX, homeZ, x, z, yaw: heading, heading, dir,
+        stepClock: 0, walking: false, pauseUntil: 0,
+        headY: 2.05 * bScale + 0.3
+      });
+    }
+  }
+
+  // Deterministic angle [0, 2π) from a string — keeps a hero's start angle and
+  // patrol direction stable across rebuilds (no spawn-time Math.random jump).
+  function _hashAngle(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return ((Math.abs(h) % 360) / 360) * Math.PI * 2;
+  }
+
+  // Can an NPC stand at (x,z)? It must be on legal ground (_isInWalkable),
+  // OUTSIDE its home node's poster footprint, and still within that node's
+  // apron band — this confines each hero to a ring around its own building
+  // (never on the poster, never wandering off down the roads).
+  function _npcCanStand(x, z, npc) {
+    const cheb = Math.max(Math.abs(x - npc.homeX), Math.abs(z - npc.homeZ));
+    const inner = WORLD.PLATFORM_W / 2 + 0.3;                        // just outside the poster
+    const outer = (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2 - 0.2; // just inside the apron edge
+    if (cheb < inner || cheb > outer) return false;
+    return _isInWalkable(x, z);
+  }
+
+  function _tickNpcs(dt, now) {
+    if (!_npcs.length) return;
+    for (const npc of _npcs) {
+      const bones = npc.rig.userData.bones;
+      const dampIdle = () => {
+        if (!bones) return;
+        const k = Math.min(1, dt * 8);
+        bones.leftLeg.rotation.x  *= 1 - k;
+        bones.rightLeg.rotation.x *= 1 - k;
+        bones.leftArm.rotation.x  *= 1 - k;
+        bones.rightArm.rotation.x *= 1 - k;
+        bones.body.position.y *= 1 - k;
+      };
+
+      // Paused — stand still, relax limbs to idle.
+      if (now < npc.pauseUntil) { npc.walking = false; dampIdle(); continue; }
+
+      // Walk forward; if the next step would leave the apron ring, steer a
+      // consistent way and retry so the hero hugs the ring edge. Rig forward is
+      // (sin yaw, cos yaw) — matches the engine's atan2(dirX,dirZ) yaw.
+      const stepLen = NPC_SPEED * dt;
+      let moved = false;
+      for (let tries = 0; tries < 7; tries++) {
+        const nx = npc.x + Math.sin(npc.heading) * stepLen;
+        const nz = npc.z + Math.cos(npc.heading) * stepLen;
+        if (_npcCanStand(nx, nz, npc)) {
+          npc.x = nx; npc.z = nz;
+          npc.heading += (Math.random() - 0.5) * 0.15;   // gentle organic wander
+          moved = true;
+          break;
+        }
+        npc.heading += NPC_TURN * npc.dir;               // turn to follow the boundary
+      }
+
+      if (!moved) {
+        // Boxed in (shouldn't happen on a continuous ring) — reverse + pause.
+        npc.dir = -npc.dir;
+        npc.walking = false;
+        npc.pauseUntil = now + 500 + Math.random() * 800;
+        dampIdle();
+        continue;
+      }
+
+      // Occasional idle pause so they don't pace forever.
+      if (Math.random() < 0.0015) { npc.pauseUntil = now + 1500 + Math.random() * 2500; }
+
+      npc.walking = true;
+      npc.yaw = npc.heading;
+      npc.rig.position.set(npc.x, 0, npc.z);
+      npc.rig.rotation.y = npc.yaw;
+
+      // Walk-cycle swing — identical formula to the player / remote players.
+      npc.stepClock += dt;
+      const phase = (npc.stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
+      const swing = Math.sin(phase) * 0.6;
+      if (bones) {
+        bones.leftLeg.rotation.x = swing;
+        bones.rightLeg.rotation.x = -swing;
+        bones.leftArm.rotation.x = -swing * 0.7;
+        bones.rightArm.rotation.x = swing * 0.7;
+        bones.body.position.y = Math.abs(Math.sin(phase)) * 0.04;
+      }
+    }
+  }
+
+  function _clearNpcs() {
+    for (const npc of _npcs) {
+      if (npc.rig && npc.rig.parent) npc.rig.parent.remove(npc.rig);
+      if (npc.rig) _disposeRig(npc.rig);
+      if (npc.nameEl && npc.nameEl.parentNode) npc.nameEl.parentNode.removeChild(npc.nameEl);
+    }
+    _npcs.length = 0;
   }
 
   // ── remote player API ──
@@ -2779,6 +3085,8 @@ const Playground3D = (() => {
     addRemotePlayer, updateRemotePlayer, removeRemotePlayer,
     showRemoteChat, playRemoteEmote, playLocalEmote,
     getLocalState, getActiveNode, setProjectClickHandler,
+    // Local NPC surface — Avenger wanderers in /world.
+    setWorldNpcs,
     // Voice-chat surface — distance attenuation + speaking indicator.
     getRemotePlayers, setRemotePlayerSpeaking
   };

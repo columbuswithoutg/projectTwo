@@ -77,6 +77,18 @@ const WorldView = (() => {
     if (!character) character = Playground3D.defaultCharacter();
     Playground3D.initWorld(_stage, character);
 
+    // Avenger NPCs — each preset model roams the apron around its debut node.
+    // Map preset → roster character (via charId) to resolve the debut project;
+    // Playground3D spawns each hero once its debut node is unlocked.
+    if (Playground3D.setWorldNpcs && typeof Playground !== 'undefined' && Array.isArray(Playground.CHARACTER_PRESETS)) {
+      const roster = (typeof window.characters !== 'undefined' && window.characters) || [];
+      const npcSpecs = Playground.CHARACTER_PRESETS.map(p => {
+        const c = roster.find(x => x.id === p.charId);
+        return (c && c.debut) ? { id: 'npc_' + p.id, name: p.name, character: p.char, debut: c.debut } : null;
+      }).filter(Boolean);
+      Playground3D.setWorldNpcs(npcSpecs);
+    }
+
     // Clicking a node prompt opens the same popup the watch order uses.
     Playground3D.setProjectClickHandler((project) => {
       if (typeof showPopup === 'function') showPopup(project);

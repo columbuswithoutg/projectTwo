@@ -14,12 +14,62 @@ const Playground = (() => {
   // Option palettes — these are the source of truth for what the
   // character builder offers. Server-side validation in routes/profile.js
   // mirrors the count of each (max = length-1). Keep in sync.
-  const SKIN_TONES   = ['#f5d4a8', '#e8b48a', '#c98c5d', '#8b5a3c', '#5d3a24', '#fce4d0', '#d6a878', '#3a2418', '#fbe7d7', '#c79a6b', '#7a5230', '#2a160a'];
+  // Index 12 (#5aa64a) is a non-human Hulk green — added for the Avengers
+  // presets. Bumping this length requires bumping the `skin` max in BOTH
+  // routes/profile.js (HOME_CHARACTER_RANGES) and models/user.js.
+  const SKIN_TONES   = ['#f5d4a8', '#e8b48a', '#c98c5d', '#8b5a3c', '#5d3a24', '#fce4d0', '#d6a878', '#3a2418', '#fbe7d7', '#c79a6b', '#7a5230', '#2a160a', '#5aa64a'];
   const HAIR_COLORS  = ['#1a1a1a', '#5a3a22', '#a06030', '#dca960', '#cccccc', '#9b59b6', '#e74c3c', '#3498db', '#1abc9c', '#ff69b4', '#f5f0e6', '#9c4a2b', '#3a1d5a', '#8eead0'];
   const SHIRT_COLORS = ['#e23636', '#3a85f0', '#39b54a', '#f0c040', '#9b59b6', '#ff7eb6', '#444444', '#f08020', '#ffffff', '#2c3e50', '#a52a2a', '#16a085', '#1f8a8a', '#c8b4ff', '#d8a93a', '#f5e6c8'];
   const PANTS_COLORS = ['#1f3a68', '#444444', '#222222', '#5a3a22', '#7a6a3a', '#7d4a3a', '#0e3a2e', '#3a3a3a', '#888888', '#5a2a8a', '#003366', '#8b4513', '#a89058', '#6a1a2a', '#7ab8e8', '#1a4a2a'];
   const EYE_COLORS   = ['#5a3a22', '#3a85f0', '#2c8a3a', '#a06030', '#7a7a7a', '#d6a040', '#1a1a1a', '#7a3aa6'];
   const SHOE_COLORS  = ['#1a1a1a', '#5a3a22', '#ffffff', '#8b4513', '#a02828', '#3a85f0', '#f0c040', '#7a7a7a'];
+
+  // Body build — overall size + bulk multipliers applied by the 3D rig
+  // (js/playground3d.js _buildPlayer). `scale` grows the whole figure from
+  // the feet; `bulk` widens the torso/arms/legs. Index 1 (Normal, 1×/1×) is
+  // the default so pre-existing saved characters render identically.
+  // Server validation: max index lives in routes/profile.js + models/user.js.
+  const BUILDS = [
+    { name: 'Slim',   scale: 0.92, bulk: 0.90 },
+    { name: 'Normal', scale: 1.00, bulk: 1.00 },
+    { name: 'Large',  scale: 1.12, bulk: 1.15 },
+    { name: 'Huge',   scale: 1.40, bulk: 1.55 }
+  ];
+
+  // Hero gear — index into the per-hero 3D mesh sets built in
+  // js/playground3d.js (_buildGear). Index 0 (None) adds nothing.
+  const GEAR_LABELS = ['None', 'Iron Man', 'Captain America', 'Thor', 'Hulk', 'Black Widow', 'Hawkeye'];
+
+  // One-click "models" of the original six Avengers. Each `char` is a full
+  // homeCharacter (every slot, including the new `build` + `gear`) expressed
+  // as palette indices above. Applied wholesale by the builder modal; still
+  // fully tweakable afterward. Hulk uses the green skin (skin:12).
+  const CHARACTER_PRESETS = [
+    { id: 'ironman', charId: 'ironman', name: 'Iron Man', char: {
+        skin: 1, hairStyle: 10, hairColor: 0, shirtColor: 0, pantsColor: 12,
+        eyeColor: 0, eyeShape: 0, facialHairStyle: 3, facialHairColor: 0,
+        glasses: 0, hat: 0, shoeColor: 0, build: 1, gear: 1 } },
+    { id: 'cap', charId: 'cap', name: 'Captain America', char: {
+        skin: 0, hairStyle: 11, hairColor: 3, shirtColor: 1, pantsColor: 0,
+        eyeColor: 1, eyeShape: 0, facialHairStyle: 0, facialHairColor: 3,
+        glasses: 0, hat: 0, shoeColor: 0, build: 2, gear: 2 } },
+    { id: 'thor', charId: 'thor', name: 'Thor', char: {
+        skin: 0, hairStyle: 3, hairColor: 3, shirtColor: 10, pantsColor: 2,
+        eyeColor: 1, eyeShape: 0, facialHairStyle: 4, facialHairColor: 3,
+        glasses: 0, hat: 0, shoeColor: 0, build: 2, gear: 3 } },
+    { id: 'hulk', charId: 'hulk', name: 'Hulk', char: {
+        skin: 12, hairStyle: 10, hairColor: 0, shirtColor: 2, pantsColor: 5,
+        eyeColor: 2, eyeShape: 3, facialHairStyle: 0, facialHairColor: 0,
+        glasses: 0, hat: 0, shoeColor: 0, build: 3, gear: 4 } },
+    { id: 'widow', charId: 'blackwidow', name: 'Black Widow', char: {
+        skin: 0, hairStyle: 3, hairColor: 6, shirtColor: 6, pantsColor: 2,
+        eyeColor: 2, eyeShape: 1, facialHairStyle: 0, facialHairColor: 6,
+        glasses: 0, hat: 0, shoeColor: 0, build: 1, gear: 5 } },
+    { id: 'hawkeye', charId: 'hawkeye', name: 'Hawkeye', char: {
+        skin: 1, hairStyle: 10, hairColor: 1, shirtColor: 6, pantsColor: 2,
+        eyeColor: 0, eyeShape: 0, facialHairStyle: 1, facialHairColor: 1,
+        glasses: 0, hat: 0, shoeColor: 0, build: 1, gear: 6 } }
+  ];
 
   // Hair style index → SVG path "d" attribute. Drawn in a 32×48 viewBox
   // sized to the character. The head is a circle at (cx=16, cy=13, r=7),
@@ -436,7 +486,8 @@ const Playground = (() => {
       skin: 0, hairStyle: 0, hairColor: 0, shirtColor: 1, pantsColor: 0,
       eyeColor: 6, eyeShape: 0,
       facialHairStyle: 0, facialHairColor: 0,
-      glasses: 0, hat: 0, shoeColor: 0
+      glasses: 0, hat: 0, shoeColor: 0,
+      build: 1, gear: 0
     };
   }
 
@@ -535,6 +586,7 @@ const Playground = (() => {
   return {
     init, destroy, setCharacter, renderCharacter, defaultCharacter,
     SKIN_TONES, HAIR_COLORS, SHIRT_COLORS, PANTS_COLORS, HAIR_STYLES,
-    EYE_COLORS, EYE_SHAPES, FACIAL_HAIR_STYLES, GLASSES_STYLES, HAT_STYLES, SHOE_COLORS
+    EYE_COLORS, EYE_SHAPES, FACIAL_HAIR_STYLES, GLASSES_STYLES, HAT_STYLES, SHOE_COLORS,
+    BUILDS, GEAR_LABELS, CHARACTER_PRESETS
   };
 })();

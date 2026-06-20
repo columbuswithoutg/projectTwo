@@ -40,8 +40,11 @@ const UserSchema = new mongoose.Schema({
   // visit (the `character.skin == null` check in views/home.js).
   // Slots: skin, hair (style+color), shirt, pants, eyes (color+shape),
   // facial hair (style+color), glasses, hat, shoes.
+  // `build` (body size/bulk) and `gear` (hero gear set) were added for the
+  // Avengers presets; `skin` max bumped 11→12 for the Hulk green tone. Option
+  // counts mirror js/playground.js + routes/profile.js — keep all three in sync.
   homeCharacter: {
-    skin:            { type: Number, default: null, min: 0, max: 11 },
+    skin:            { type: Number, default: null, min: 0, max: 12 },
     hairStyle:       { type: Number, default: null, min: 0, max: 13 },
     hairColor:       { type: Number, default: null, min: 0, max: 13 },
     shirtColor:      { type: Number, default: null, min: 0, max: 15 },
@@ -52,7 +55,9 @@ const UserSchema = new mongoose.Schema({
     facialHairColor: { type: Number, default: null, min: 0, max: 13 },
     glasses:         { type: Number, default: null, min: 0, max: 4 },
     hat:             { type: Number, default: null, min: 0, max: 4 },
-    shoeColor:       { type: Number, default: null, min: 0, max: 7 }
+    shoeColor:       { type: Number, default: null, min: 0, max: 7 },
+    build:           { type: Number, default: null, min: 0, max: 3 },
+    gear:            { type: Number, default: null, min: 0, max: 6 }
   },
   // Project-themed room layout for /home. Each room is a 1×1 grid cell;
   // world-space cell size + wall/doorway geometry are derived at render time

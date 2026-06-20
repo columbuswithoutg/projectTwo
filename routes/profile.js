@@ -70,7 +70,7 @@ router.post('/picture', auth, async (req, res) => {
 // don't 400 just for not knowing about a slot. A key that IS present must
 // validate or the whole request 400s.
 const HOME_CHARACTER_RANGES = {
-  skin:            { max: 11 },
+  skin:            { max: 12 },   // 12 = Hulk green (added for Avengers presets)
   hairStyle:       { max: 13 },
   hairColor:       { max: 13 },
   shirtColor:      { max: 15 },
@@ -81,7 +81,9 @@ const HOME_CHARACTER_RANGES = {
   facialHairColor: { max: 13 },
   glasses:         { max: 4 },
   hat:             { max: 4 },
-  shoeColor:       { max: 7 }
+  shoeColor:       { max: 7 },
+  build:           { max: 3 },    // body size/bulk
+  gear:            { max: 6 }     // hero gear set (0 = none)
 };
 
 function pickInt(value, max) {

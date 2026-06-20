@@ -57,6 +57,7 @@ const HomeBuilder = (() => {
           <button class="pg-modal-close" type="button" aria-label="Close">✕</button>
         </header>
         <div class="pg-modal-body">
+          <div class="pg-presets" id="pg-builder-presets"></div>
           <div class="pg-modal-preview" id="pg-builder-preview"></div>
           <div class="pg-modal-controls two-col">
             <div class="pg-builder-col">
@@ -112,6 +113,14 @@ const HomeBuilder = (() => {
                 <legend>Shoes</legend>
                 <div class="pg-swatches" data-target="shoeColor"></div>
               </fieldset>
+              <fieldset class="pg-builder-group" data-key="build">
+                <legend>Build</legend>
+                <div class="pg-styles" data-target="build"></div>
+              </fieldset>
+              <fieldset class="pg-builder-group" data-key="gear">
+                <legend>Gear</legend>
+                <div class="pg-styles" data-target="gear"></div>
+              </fieldset>
             </div>
           </div>
         </div>
@@ -149,6 +158,26 @@ const HomeBuilder = (() => {
         btn.addEventListener('click', () => {
           current[targetKey] = parseInt(btn.dataset.idx, 10);
           markActive(targetKey);
+          updatePreview();
+        });
+      });
+    }
+
+    // Preset chips — one-click "models" of the OG six Avengers. Clicking one
+    // replaces every slot (filling new fields from defaults), re-marks all
+    // groups, and refreshes the preview. The look stays fully tweakable after.
+    function renderPresets() {
+      const host = overlay.querySelector('#pg-builder-presets');
+      const presets = Playground.CHARACTER_PRESETS || [];
+      if (!host) return;
+      if (!presets.length) { host.style.display = 'none'; return; }
+      host.innerHTML = '<span class="pg-presets-label">Avengers</span>' +
+        presets.map((p, i) => `<button type="button" class="pg-preset" data-preset="${i}">${p.name}</button>`).join('');
+      host.querySelectorAll('.pg-preset').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const p = presets[parseInt(btn.dataset.preset, 10)];
+          current = { ...baseDefault, ...p.char };
+          overlay.querySelectorAll('[data-target]').forEach(h => markActive(h.dataset.target));
           updatePreview();
         });
       });
@@ -195,6 +224,9 @@ const HomeBuilder = (() => {
     renderSwatches('shirtColor',      Playground.SHIRT_COLORS);
     renderSwatches('pantsColor',      Playground.PANTS_COLORS);
     renderSwatches('shoeColor',       Playground.SHOE_COLORS);
+    renderLabels  ('build',           (Playground.BUILDS || []).map(b => b.name));
+    renderLabels  ('gear',            Playground.GEAR_LABELS || []);
+    renderPresets();
     updatePreview();
 
     function close() {
