@@ -89,7 +89,7 @@ const HOME_CHARACTER_RANGES = {
   // Clothing SHAPE slots — maxes mirror the array lengths in js/playground.js
   // (SHIRT_STYLES/PANTS_STYLES/SHOE_STYLES/OUTERWEAR_STYLES/SUIT_STYLES/
   // GLOVES_STYLES/BELT_STYLES/MASK_STYLES) and models/user.js. Keep in sync.
-  shirtStyle:      { max: 7 },    // 0 = plain tee (legacy)
+  shirtStyle:      { max: 8 },    // 0 = plain tee (legacy); 8 = ripped (bare chest)
   pantsStyle:      { max: 6 },    // 0 = plain pants (legacy)
   shoeStyle:       { max: 6 },    // 0 = plain shoe (legacy)
   outerwear:       { max: 6 },    // 0 = none
@@ -108,11 +108,11 @@ const HOME_CHARACTER_RANGES = {
   pantsColor2:     { max: 16 },   // Auto + PANTS_COLORS (16)
   outerwearColor2: { max: 16 },   // Auto + SHIRT_COLORS (16)
   shoeColor2:      { max: 8 },    // Auto + SHOE_COLORS (8)
-  helmet:          { max: 5 },    // HELMET_STYLES (0 = none)
+  helmet:          { max: 6 },    // HELMET_STYLES (0 = none); 6 = Soldier (WWII Cap)
   helmetColor:     { max: 15 },   // SHIRT_COLORS
-  prop:            { max: 5 },    // PROP_STYLES (0 = none)
+  prop:            { max: 6 },    // PROP_STYLES (0 = none); 6 = Bow + quiver
   propColor:       { max: 15 },   // SHIRT_COLORS
-  emblem:          { max: 5 },    // EMBLEM_STYLES (0 = none)
+  emblem:          { max: 7 },    // EMBLEM_STYLES (0 = none); 6 = Soldier flag, 7 = Discs
   emblemColor:     { max: 15 }    // SHIRT_COLORS
 };
 

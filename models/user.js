@@ -61,7 +61,7 @@ const UserSchema = new mongoose.Schema({
     // Clothing SHAPE slots — maxes mirror js/playground.js array lengths +
     // routes/profile.js HOME_CHARACTER_RANGES. Keep all three in sync. 0 =
     // legacy/plain for shirt/pants/shoe, 0 = None for the rest.
-    shirtStyle:      { type: Number, default: null, min: 0, max: 7 },
+    shirtStyle:      { type: Number, default: null, min: 0, max: 8 },
     pantsStyle:      { type: Number, default: null, min: 0, max: 6 },
     shoeStyle:       { type: Number, default: null, min: 0, max: 6 },
     outerwear:       { type: Number, default: null, min: 0, max: 6 },
@@ -79,11 +79,11 @@ const UserSchema = new mongoose.Schema({
     pantsColor2:     { type: Number, default: null, min: 0, max: 16 },
     outerwearColor2: { type: Number, default: null, min: 0, max: 16 },
     shoeColor2:      { type: Number, default: null, min: 0, max: 8 },
-    helmet:          { type: Number, default: null, min: 0, max: 5 },
+    helmet:          { type: Number, default: null, min: 0, max: 6 },
     helmetColor:     { type: Number, default: null, min: 0, max: 15 },
-    prop:            { type: Number, default: null, min: 0, max: 5 },
+    prop:            { type: Number, default: null, min: 0, max: 6 },
     propColor:       { type: Number, default: null, min: 0, max: 15 },
-    emblem:          { type: Number, default: null, min: 0, max: 5 },
+    emblem:          { type: Number, default: null, min: 0, max: 7 },
     emblemColor:     { type: Number, default: null, min: 0, max: 15 }
   },
   // Project-themed room layout for /home. Each room is a 1×1 grid cell;

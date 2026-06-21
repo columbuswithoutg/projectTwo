@@ -621,9 +621,11 @@ const Playground3D = (() => {
     const outerMat = new THREE.MeshLambertMaterial({ color: _palette('SHIRT_COLORS', c.outerwearColor) });
     const suitMat  = new THREE.MeshLambertMaterial({ color: _palette('SUIT_COLORS', c.suitColor) });
     const accMat   = new THREE.MeshLambertMaterial({ color: _palette('ACCESSORY_COLORS', c.accessoryColor) });
-    // Base limb/torso colors honoring the suit override.
+    // Base limb/torso colors honoring the suit override. A "ripped" top (Hulk)
+    // bares the chest, so the torso + sleeves render in skin tone.
+    const rippedTop = !suitActive && topStyle === 8;
     const legMat   = suitActive ? suitMat : pantsMat;
-    const topMat   = suitActive ? suitMat : shirtMat;
+    const topMat   = suitActive ? suitMat : (rippedTop ? skinMat : shirtMat);
     // Hero-piece colors + pants accent (secondary) material (Auto → legMat).
     const helmetMat = new THREE.MeshLambertMaterial({ color: _palette('SHIRT_COLORS', c.helmetColor) });
     const propMat   = new THREE.MeshLambertMaterial({ color: _palette('SHIRT_COLORS', c.propColor) });
@@ -839,7 +841,7 @@ const Playground3D = (() => {
     if (helmetGrp) head.add(helmetGrp);
     const emblemGrp = _buildEmblem(emblemIdx, emblemMat, { TORSO_D });
     if (emblemGrp) torso.add(emblemGrp);
-    _buildProp(propIdx, propMat, { leftArm, rightArm, dims: { ARM_LEN } });
+    _buildProp(propIdx, propMat, { leftArm, rightArm, torso, dims: { ARM_LEN } });
 
     // Accessories (gloves / belt / mask) — mask suppressed when a helmet hides it.
     _buildAccessories({
@@ -1269,6 +1271,24 @@ const Playground3D = (() => {
         visor.position.set(0, 0.05, fz + 0.03); grp.add(visor);
         break;
       }
+      case 6: { // soldier — snug helm showing the face + white "A" + small side wings (WWII Cap)
+        const white = new THREE.MeshLambertMaterial({ color: 0xf0f0f0 });
+        const crown = mkB(headSize * 1.06, headSize * 0.64, headSize * 1.06, mat);
+        crown.position.y = headSize * 0.2; grp.add(crown);
+        [-1, 1].forEach(s => {                    // ear flaps, leaving the face open
+          const side = mkB(headSize * 0.16, headSize * 0.52, headSize * 1.04, mat);
+          side.position.set(s * headSize * 0.47, -headSize * 0.02, 0); grp.add(side);
+        });
+        const aLeft = mkB(0.04, 0.2, 0.02, white);  aLeft.position.set(-0.04, 0.1, fz + 0.02);  aLeft.rotation.z = -0.32; grp.add(aLeft);
+        const aRight = mkB(0.04, 0.2, 0.02, white); aRight.position.set(0.04, 0.1, fz + 0.02);  aRight.rotation.z = 0.32;  grp.add(aRight);
+        const aBar = mkB(0.1, 0.035, 0.02, white);  aBar.position.set(0, 0.06, fz + 0.02);       grp.add(aBar);
+        [-1, 1].forEach(s => {                    // swept-back temple wings
+          const wing = mkB(0.16, 0.1, 0.02, white);
+          wing.position.set(s * headSize * 0.62, headSize * 0.12, 0.06);
+          wing.rotation.z = s * 0.35; grp.add(wing);
+        });
+        break;
+      }
     }
     grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
     return grp;
@@ -1339,6 +1359,32 @@ const Playground3D = (() => {
         grp.rotation.x = -0.12;
         break;
       }
+      case 6: { // bow + quiver — bow in the left hand, a quiver of arrows on the back
+        arm = leftArm;
+        const bow = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.022, 8, 22, Math.PI * 1.5), mat);
+        bow.rotation.z = Math.PI * 0.25; grp.add(bow);
+        const string = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.6, 0.012), new THREE.MeshLambertMaterial({ color: 0xdddddd }));
+        string.position.z = -0.04; grp.add(string);
+        grp.position.set(-0.03, handY, 0.26);
+        // Quiver — parented to the torso/back so it rides the body, not the arm.
+        if (ctx.torso) {
+          const q = new THREE.Group();
+          q.add(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.5, 12), new THREE.MeshLambertMaterial({ color: 0x5a3a22 })));
+          const shaftMat = new THREE.MeshLambertMaterial({ color: 0xcfcfcf });
+          const headMat = new THREE.MeshLambertMaterial({ color: 0xd9a420 });
+          [-0.03, 0.03].forEach(x => {
+            const sh = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.28, 6), shaftMat);
+            sh.position.set(x, 0.34, 0); q.add(sh);
+            const tip = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.06, 8), headMat);
+            tip.position.set(x, 0.5, 0); q.add(tip);
+          });
+          q.position.set(-0.18, 0.1, -0.28);   // upper-left of the back
+          q.rotation.z = 0.35;
+          q.traverse(o => { if (o.isMesh) o.castShadow = true; });
+          ctx.torso.add(q);
+        }
+        break;
+      }
     }
     grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
     arm.add(grp);
@@ -1382,6 +1428,27 @@ const Playground3D = (() => {
         grp.add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.03), mat));
         break;
       }
+      case 6: { // soldier flag — white chest star + red/white abdomen stripes (WWII Cap)
+        const white = new THREE.MeshLambertMaterial({ color: 0xf0f0f0 });
+        const red = new THREE.MeshLambertMaterial({ color: 0xc62a2a });
+        const star = new THREE.Mesh(new THREE.CylinderGeometry(0.135, 0.135, 0.02, 5), white);
+        star.rotation.x = Math.PI / 2; star.position.y = 0.14; grp.add(star);
+        [red, white, red, white, red].forEach((m, i) => {
+          const bar = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.26, 0.02), m);
+          bar.position.set((i - 2) * 0.042, -0.13, 0); grp.add(bar);
+        });
+        break;
+      }
+      case 7: { // discs — Thor's silver chest discs in a 3-2 cluster (hardcoded silver)
+        const silver = new THREE.MeshLambertMaterial({ color: 0xc9ccd4 });
+        const disc = (x, y) => {
+          const d2 = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.025, 16), silver);
+          d2.rotation.x = Math.PI / 2; d2.position.set(x, y, 0); grp.add(d2);
+        };
+        disc(-0.14, 0.07); disc(0, 0.07); disc(0.14, 0.07);
+        disc(-0.07, -0.05); disc(0.07, -0.05);
+        break;
+      }
     }
     grp.position.set(0, 0.06, fz);
     grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
@@ -1400,6 +1467,7 @@ const Playground3D = (() => {
     switch (idx) {
       case -1: return { sleeve: 'long' };   // suit owns the arms
       case 1:  return { sleeve: 'none' };   // tank
+      case 8:  return { sleeve: 'none' };   // ripped — bare arms
       case 2:  return { sleeve: 'long' };   // long sleeve
       case 3:  return { sleeve: 'long' };   // hoodie
       case 6:  return { sleeve: 'long' };   // turtleneck
@@ -1491,6 +1559,28 @@ const Playground3D = (() => {
         const stripe = mkB(TORSO_W * 1.01, TORSO_H * 0.16, 0.02, accMat || new THREE.MeshLambertMaterial({ color: 0xffffff }));
         stripe.position.set(0, 0, fz);
         grp.add(stripe);
+        break;
+      }
+      case 8: { // ripped — tattered cloth remnants clinging to a bare (skin) chest
+        const fzz = TORSO_D / 2 + 0.005;
+        // Torn shoulder flaps — thin, angled panels on the front + back (not
+        // full-depth blocks), so they read as hanging cloth, not pauldrons.
+        [-1, 1].forEach(s => {
+          [fzz, -fzz].forEach(z => {
+            const flap = mkB(TORSO_W * 0.2, TORSO_H * 0.42, 0.04, mat);
+            flap.position.set(s * TORSO_W * 0.26, TORSO_H * 0.1, z);
+            flap.rotation.z = s * 0.4;
+            grp.add(flap);
+          });
+        });
+        // Ragged hem — three uneven tabs hanging off the front waist (a broken
+        // shirt bottom), instead of a solid wrap-around band.
+        [-0.3, 0.0, 0.3].forEach((x, i) => {
+          const h = TORSO_H * (i === 1 ? 0.14 : 0.24);
+          const tab = mkB(TORSO_W * 0.22, h, 0.05, mat);
+          tab.position.set(x * TORSO_W, -TORSO_H * 0.32 - (TORSO_H * 0.24 - h) / 2, fzz);
+          grp.add(tab);
+        });
         break;
       }
       default: return null; // 0 tee, 2 long sleeve — no torso detail

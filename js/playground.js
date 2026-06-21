@@ -55,22 +55,31 @@ const Playground = (() => {
     { id: 'ironman', charId: 'ironman', group: 'Heroes', name: 'Iron Man', char: {
         skin: 1, gender: 1, build: 1, hairStyle: 10, hairColor: 0, facialHairStyle: 3, facialHairColor: 0, eyeColor: 0,
         suit: 4, suitColor: 0, helmet: 1, helmetColor: 0, emblem: 2, gloves: 2, accessoryColor: 3 } },
+    // Captain America — The First Avenger (WWII) look: muted blue, Soldier helm
+    // with the white "A" + wings, star-and-stripes chest flag, brown leather
+    // gloves/boots, round star shield.
     { id: 'cap', charId: 'cap', group: 'Heroes', name: 'Captain America', char: {
         skin: 0, gender: 1, build: 2, hairStyle: 11, hairColor: 3, eyeColor: 1,
-        suit: 1, suitColor: 1, helmet: 2, helmetColor: 1, emblem: 1, emblemColor: 8,
-        prop: 1, propColor: 0, gloves: 2, belt: 1, accessoryColor: 0 } },
+        suit: 1, suitColor: 1, helmet: 6, helmetColor: 1, emblem: 6, emblemColor: 8,
+        prop: 1, propColor: 0, gloves: 2, belt: 1, accessoryColor: 1, shoeStyle: 3, shoeColor: 1 } },
+    // Thor (2011) classic armor: dark sleeved armor, silver chest discs, red
+    // cape, Mjolnir, long blonde hair + short stubble.
     { id: 'thor', charId: 'thor', group: 'Heroes', name: 'Thor', char: {
-        skin: 0, gender: 1, build: 2, hairStyle: 3, hairColor: 3, facialHairStyle: 4, facialHairColor: 3, eyeColor: 1,
-        suit: 4, suitColor: 2, outerwear: 6, outerwearColor: 0, prop: 2, accessoryColor: 4 } },
+        skin: 0, gender: 1, build: 2, hairStyle: 3, hairColor: 3, facialHairStyle: 1, facialHairColor: 3, eyeColor: 1,
+        suit: 4, suitColor: 2, emblem: 7, outerwear: 6, outerwearColor: 0, prop: 2, accessoryColor: 4, shoeStyle: 3, shoeColor: 0 } },
+    // Hulk: bare green chest (Ripped top → torso renders as skin) with torn
+    // purple trousers.
     { id: 'hulk', charId: 'hulk', group: 'Heroes', name: 'Hulk', char: {
         skin: 12, gender: 1, build: 3, hairStyle: 10, hairColor: 0, eyeColor: 2, eyeShape: 3,
-        shirtStyle: 1, shirtColor: 2, pantsStyle: 3, pantsColor: 9, shoeStyle: 0, shoeColor: 0 } },
+        shirtStyle: 8, shirtColor: 4, pantsStyle: 3, pantsColor: 9, shoeStyle: 0, shoeColor: 0 } },
+    // Black Widow — Iron Man 2 catsuit: black bodysuit, wavy red hair, utility belt.
     { id: 'widow', charId: 'blackwidow', group: 'Heroes', name: 'Black Widow', char: {
-        skin: 0, gender: 2, build: 1, hairStyle: 3, hairColor: 6, eyeColor: 2, eyeShape: 1,
+        skin: 0, gender: 2, build: 1, hairStyle: 9, hairColor: 6, eyeColor: 2, eyeShape: 1,
         suit: 1, suitColor: 2, belt: 2, gloves: 2, accessoryColor: 0 } },
+    // Hawkeye — The Avengers (2012): black tactical suit, no mask, bow + back quiver.
     { id: 'hawkeye', charId: 'hawkeye', group: 'Heroes', name: 'Hawkeye', char: {
-        skin: 1, gender: 1, build: 1, hairStyle: 10, hairColor: 1, facialHairStyle: 1, facialHairColor: 1, eyeColor: 0,
-        suit: 1, suitColor: 4, mask: 1, prop: 3, propColor: 6, accessoryColor: 0 } },
+        skin: 1, gender: 1, build: 1, hairStyle: 10, hairColor: 1, facialHairStyle: 1, facialHairColor: 2, eyeColor: 0,
+        suit: 1, suitColor: 2, prop: 6, propColor: 6, belt: 1, gloves: 1, accessoryColor: 0, shoeStyle: 3, shoeColor: 0 } },
 
     // Wardrobe presets — built from the new clothing slots (no hero gear).
     // Spread over defaultCharacter() by the consumer, so omitted slots default.
@@ -234,7 +243,7 @@ const Playground = (() => {
   // shirt/pants/shoe shapes reuse the existing SHIRT/PANTS/SHOE color slots;
   // outerwear uses SHIRT_COLORS, suit uses SUIT_COLORS, and gloves/belt/mask
   // share ACCESSORY_COLORS.
-  const SHIRT_STYLES   = ['Tee', 'Tank', 'Long sleeve', 'Hoodie', 'Polo', 'V-neck', 'Turtleneck', 'Jersey'];
+  const SHIRT_STYLES   = ['Tee', 'Tank', 'Long sleeve', 'Hoodie', 'Polo', 'V-neck', 'Turtleneck', 'Jersey', 'Ripped'];
   const PANTS_STYLES   = ['Pants', 'Slim', 'Cargo', 'Shorts', 'Skirt', 'Joggers', 'Greaves'];
   const SHOE_STYLES    = ['Shoes', 'Sneakers', 'Hi-tops', 'Boots', 'Dress', 'Heels', 'Sandals'];
   // 0 = none for the next five (they add nothing when 0).
@@ -252,9 +261,9 @@ const Playground = (() => {
   // Reusable hero pieces (replaced the old all-in-one `gear` slot). Shape-only
   // label lists; their colors come from the matching helmetColor/propColor/
   // emblemColor fields (reuse SHIRT_COLORS). 0 = None for all three.
-  const HELMET_STYLES = ['None', 'Iron Man', 'Cowl', 'Winged', 'Knight', 'Visor'];
-  const PROP_STYLES   = ['None', 'Shield', 'Hammer', 'Bow', 'Sword', 'Staff'];
-  const EMBLEM_STYLES = ['None', 'Star', 'Arc reactor', 'Lightning', 'Spider', 'Badge'];
+  const HELMET_STYLES = ['None', 'Iron Man', 'Cowl', 'Winged', 'Knight', 'Visor', 'Soldier'];
+  const PROP_STYLES   = ['None', 'Shield', 'Hammer', 'Bow', 'Sword', 'Staff', 'Bow + quiver'];
+  const EMBLEM_STYLES = ['None', 'Star', 'Arc reactor', 'Lightning', 'Spider', 'Badge', 'Soldier flag', 'Discs'];
 
   // ------ engine state ------
   const PHYSICS = {
@@ -672,11 +681,14 @@ const Playground = (() => {
     const emblemCol = SHIRT_COLORS[c.emblemColor ?? 0] || SHIRT_COLORS[0];
 
     const suitActive = suit > 0;
+    // A "ripped" top (Hulk) exposes a bare, skin-colored chest. It is not a
+    // suit, so it leaves the legs on their own pants color.
+    const ripped = !suitActive && shirtStyle === 8;
     // A suit overrides the standalone top + bottom and recolors them.
     const legColor   = suitActive ? suitCol : pants;
-    const torsoColor = suitActive ? suitCol : shirt;
+    const torsoColor = suitActive ? suitCol : (ripped ? skin : shirt);
     // Long-sleeved tops / turtleneck / hoodie / suit cover the arms; otherwise
-    // the arms are bare skin (the legacy short-sleeve look).
+    // the arms are bare skin (the legacy short-sleeve look). Ripped stays bare.
     const longSleeve = suitActive || shirtStyle === 2 || shirtStyle === 3 || shirtStyle === 6;
     const sleeveColor = longSleeve ? torsoColor : skin;
     // Precedence: over a suit, only a cape may layer (other outerwear hidden).
@@ -759,6 +771,11 @@ const Playground = (() => {
         case 7: // jersey — chest stripe (accent)
           torsoOverlay = `<rect x="9" y="25" width="14" height="2" fill="${topAcc('rgba(255,255,255,0.3)')}" />`;
           break;
+        case 8: // ripped — torn cloth remnants clinging over the bare chest
+          torsoOverlay = `<path d="M 9 20 L 13 20 L 11 26 L 9 24 Z" fill="${shirt}" />`
+            + `<path d="M 23 20 L 19 20 L 21 27 L 23 25 Z" fill="${shirt}" />`
+            + `<path d="M 9 31 L 23 31 L 22 34 L 18 32 L 14 34 L 10 33 Z" fill="${shirt}" />`;
+          break;
       }
     }
 
@@ -803,6 +820,14 @@ const Playground = (() => {
       case 3: emblemSvg = `<path d="M 17 23 L 14 27 L 15.8 27 L 15 30 L 18 26 L 16.2 26 Z" fill="${emblemCol}" />`; break;                                                       // lightning
       case 4: emblemSvg = `<circle cx="16" cy="26" r="1.5" fill="${emblemCol}" /><path d="M 16 24.4 L 16 27.6 M 14.4 26 L 17.6 26 M 14.9 24.9 L 17.1 27.1 M 17.1 24.9 L 14.9 27.1" stroke="${emblemCol}" stroke-width="0.4" />`; break; // spider
       case 5: emblemSvg = `<rect x="14.5" y="24.5" width="3" height="3" rx="0.6" fill="${emblemCol}" />`; break;                                                                  // badge
+      case 6: // soldier flag — white chest star + red/white abdomen stripes (WWII Cap)
+        emblemSvg = `<path d="M 16 22 L 16.7 23.7 L 18.5 23.7 L 17 24.8 L 17.6 26.5 L 16 25.4 L 14.4 26.5 L 15 24.8 L 13.5 23.7 L 15.3 23.7 Z" fill="#ffffff" />`
+          + `<rect x="13.2" y="27.5" width="1.3" height="6.4" fill="#c62a2a" /><rect x="14.5" y="27.5" width="1.3" height="6.4" fill="#f0f0f0" /><rect x="15.8" y="27.5" width="1.3" height="6.4" fill="#c62a2a" /><rect x="17.1" y="27.5" width="1.3" height="6.4" fill="#f0f0f0" /><rect x="18.4" y="27.5" width="1.3" height="6.4" fill="#c62a2a" />`;
+        break;
+      case 7: // discs — Thor's row of silver chest discs (hardcoded silver)
+        emblemSvg = `<circle cx="12.5" cy="24" r="1.1" fill="#c9ccd4" /><circle cx="16" cy="24" r="1.1" fill="#c9ccd4" /><circle cx="19.5" cy="24" r="1.1" fill="#c9ccd4" />`
+          + `<circle cx="14.2" cy="27" r="1.1" fill="#c9ccd4" /><circle cx="17.8" cy="27" r="1.1" fill="#c9ccd4" />`;
+        break;
     }
 
     // gloves at the hand ends
@@ -818,6 +843,12 @@ const Playground = (() => {
       case 3: propSvg = `<path d="M 27 22 Q 31 31 27 40" fill="none" stroke="${propCol}" stroke-width="1" /><line x1="27" y1="22" x2="27" y2="40" stroke="#dddddd" stroke-width="0.4" />`; break; // bow
       case 4: propSvg = `<rect x="26.4" y="21" width="1.3" height="14" fill="#c9ccd4" /><rect x="25.4" y="33" width="3.4" height="1.2" fill="${propCol}" />`; break;                     // sword
       case 5: propSvg = `<rect x="26.6" y="20" width="1.2" height="22" fill="${propCol}" /><circle cx="27.2" cy="20" r="1.6" fill="#d9a420" />`; break;                                  // staff
+      case 6: // bow + quiver — bow at the hand, a quiver of arrows over the shoulder
+        propSvg = `<path d="M 27 22 Q 31 31 27 40" fill="none" stroke="${propCol}" stroke-width="1" /><line x1="27" y1="22" x2="27" y2="40" stroke="#dddddd" stroke-width="0.4" />`
+          + `<rect x="22.2" y="18" width="2.8" height="10" rx="1.2" fill="#5a3a22" /><rect x="22.2" y="18" width="2.8" height="1.4" rx="0.6" fill="#3a2616" />`
+          + `<line x1="23" y1="18" x2="23" y2="13.5" stroke="#cfcfcf" stroke-width="0.5" /><line x1="24.2" y1="18" x2="24.2" y2="14" stroke="#cfcfcf" stroke-width="0.5" />`
+          + `<polygon points="23,13.2 22.4,14.2 23.6,14.2" fill="#d9a420" /><polygon points="24.2,13.7 23.6,14.7 24.8,14.7" fill="#d9a420" />`;
+        break;
     }
 
     // turtleneck / suit collar (drawn after the neck to cover it)
@@ -856,6 +887,11 @@ const Playground = (() => {
       case 5: // visor — half helm + visor band
         helmetSvg = `<path d="M 9 12 Q 9 5 16 4.5 Q 23 5 23 12 Q 16 10 9 12 Z" fill="${helmetCol}" />`
           + `<rect x="9.5" y="12" width="13" height="2.2" rx="1" fill="rgba(40,60,90,0.85)" />`;
+        break;
+      case 6: // soldier — snug helm showing the face + white "A" + small side wings (WWII Cap)
+        helmetSvg = `<path d="M 9 13 Q 9 4 16 3.5 Q 23 4 23 13 Q 23 16 21 16.5 L 21 12 Q 16 10 11 12 L 11 16.5 Q 9 16 9 13 Z" fill="${helmetCol}" />`
+          + `<path d="M 14.4 9.8 L 16 5.6 L 17.6 9.8 M 15.1 8.1 L 16.9 8.1" stroke="#f0f0f0" stroke-width="0.7" fill="none" stroke-linecap="round" stroke-linejoin="round" />`
+          + `<path d="M 9 11 L 6.3 9.2 L 9.2 12.8 Z" fill="#f0f0f0" /><path d="M 23 11 L 25.7 9.2 L 22.8 12.8 Z" fill="#f0f0f0" />`;
         break;
     }
 
