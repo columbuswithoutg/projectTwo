@@ -51,15 +51,20 @@ function cacheSet(key, value) {
   validationCache.set(key, { ...value, expires: Date.now() + VALIDATION_TTL_MS });
 }
 
-async function auth(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token' });
+// Core token validation, shared by the HTTP middleware below and the
+// Socket.IO handshake (routes/world-socket.js). Verifies the JWT signature
+// then enforces tokenVersion + banned against Mongo (cached 30s). Returns a
+// plain result object so non-HTTP callers (sockets) can use it too:
+//   { ok:true, payload, username }
+//   { ok:false, status, error, reason? }
+async function validateToken(token) {
+  if (!token) return { ok: false, status: 401, error: 'No token' };
 
   let payload;
   try {
     payload = jwt.verify(token, process.env.JWT_SECRET);
   } catch {
-    return res.status(401).json({ error: 'Invalid token' });
+    return { ok: false, status: 401, error: 'Invalid token' };
   }
 
   // Old tokens (issued before tokenVersion existed) carry no tv claim. Treat
@@ -71,43 +76,51 @@ async function auth(req, res, next) {
 
   if (cached) {
     if (!cached.ok) {
-      return res.status(403).json({ error: 'Account suspended', reason: cached.banReason || '' });
+      return { ok: false, status: 403, error: 'Account suspended', reason: cached.banReason || '' };
     }
-    req.user = payload;
-    // Authed responses are user-specific — don't let browser/proxy caches
-    // serve User A's response to User B sharing the same tab. `private`
-    // forbids shared caches; `no-store` skips the local cache entirely.
-    res.set('Cache-Control', 'private, no-store');
-    touchLastActive(payload.id);
-    return next();
+    return { ok: true, payload, username: cached.username };
   }
 
   // Cache miss — validate against Mongo. We pull only the fields we need to
   // keep the document small.
   let userDoc;
   try {
-    userDoc = await User.findById(payload.id).select('tokenVersion banned banReason').lean();
+    userDoc = await User.findById(payload.id).select('tokenVersion banned banReason username').lean();
   } catch {
-    return res.status(500).json({ error: 'Server error' });
+    return { ok: false, status: 500, error: 'Server error' };
   }
   if (!userDoc) {
-    return res.status(401).json({ error: 'Invalid token' });
+    return { ok: false, status: 401, error: 'Invalid token' };
   }
   const storedTv = userDoc.tokenVersion || 0;
   if (storedTv !== tv) {
     // Token rotation — user was banned/unbanned/forced-logout since this JWT
     // was issued. Force re-login.
-    return res.status(401).json({ error: 'Session expired, please log in again' });
+    return { ok: false, status: 401, error: 'Session expired, please log in again' };
   }
   if (userDoc.banned) {
     cacheSet(cacheKey, { ok: false, banReason: userDoc.banReason });
-    return res.status(403).json({ error: 'Account suspended', reason: userDoc.banReason || '' });
+    return { ok: false, status: 403, error: 'Account suspended', reason: userDoc.banReason || '' };
   }
 
-  cacheSet(cacheKey, { ok: true });
-  req.user = payload;
+  cacheSet(cacheKey, { ok: true, username: userDoc.username });
+  return { ok: true, payload, username: userDoc.username };
+}
+
+async function auth(req, res, next) {
+  const token = req.headers.authorization?.split(' ')[1];
+  const result = await validateToken(token);
+  if (!result.ok) {
+    const body = { error: result.error };
+    if (result.reason !== undefined) body.reason = result.reason;
+    return res.status(result.status).json(body);
+  }
+  req.user = result.payload;
+  // Authed responses are user-specific — don't let browser/proxy caches
+  // serve User A's response to User B sharing the same tab. `private`
+  // forbids shared caches; `no-store` skips the local cache entirely.
   res.set('Cache-Control', 'private, no-store');
-  touchLastActive(payload.id);
+  touchLastActive(result.payload.id);
   next();
 }
 
@@ -118,6 +131,19 @@ auth.invalidateUser = function invalidateUser(userId) {
   for (const key of validationCache.keys()) {
     if (key.startsWith(prefix)) validationCache.delete(key);
   }
+  // Let live realtime sockets (world/home/voice) be torn down on ban/forced
+  // logout — the socket handshake auth only runs at connect, so an active
+  // socket would otherwise keep full access until its JWT expires. The
+  // world-socket module registers this hook at boot.
+  if (typeof auth.onInvalidate === 'function') {
+    try { auth.onInvalidate(String(userId)); } catch (e) { console.error('onInvalidate failed:', e && e.message); }
+  }
 };
+
+// Set by routes/world-socket.js so invalidateUser can disconnect live sockets.
+auth.onInvalidate = null;
+
+// Shared with the Socket.IO handshake — same ban/tokenVersion enforcement.
+auth.validateToken = validateToken;
 
 module.exports = auth;

@@ -15,6 +15,12 @@ const WorldView = (() => {
   let _stage = null;
   let _onKeyDown = null;
   let _mp = null;
+  // Monotonic mount token. Bumped on every mount() and unmount(); the async
+  // bring-up captures its value and bails after each await if it no longer
+  // matches, so navigating away mid-fetch can't init the engine / open a
+  // socket / wire a global keydown handler against a torn-down view.
+  let _mountSeq = 0;
+  let _loadTimer = null;
   let _voice = null;
   let _voiceBtn = null;
   let _voiceBtnHandler = null;
@@ -23,6 +29,7 @@ const WorldView = (() => {
   let _voiceTouchEnd = null;
   let _voiceLongPressTimer = null;
   let _voiceLongPressFired = false;
+  let _peerFailToastAt = 0;        // throttle the "voice trouble" hint toast
 
   function mount(container) {
     if (!Auth.isLoggedIn()) {
@@ -36,7 +43,12 @@ const WorldView = (() => {
         <h1 class="world-title">World</h1>
         <div class="world-header-spacer"></div>
       </header>
-      <div id="pg-stage" class="pg-stage"></div>
+      <div id="pg-stage" class="pg-stage">
+        <div class="world-loading" id="world-loading">
+          <div class="world-loading-spinner" aria-hidden="true"></div>
+          <div class="world-loading-text">Entering the world…</div>
+        </div>
+      </div>
       <div class="world-chat-row">
         <div class="world-chat-log" id="world-chat-log" aria-live="polite"></div>
         <div class="world-chat-inputrow">
@@ -49,12 +61,24 @@ const WorldView = (() => {
     document.getElementById('world-back').addEventListener('click', () => Router.go('/'));
     _stage = document.getElementById('pg-stage');
 
+    // Fallback: if the scene still hasn't rendered its canvas after a while
+    // (slow connection, or the THREE CDN is blocked), the bare loading box
+    // would otherwise sit forever — surface a hint so the user isn't stuck
+    // staring at nothing.
+    const myMount = ++_mountSeq;
+    _loadTimer = setTimeout(() => {
+      if (_mountSeq === myMount && _stage && !_stage.querySelector('.pg3d-canvas')) {
+        if (typeof toast === 'function') toast('Still loading the world — check your connection.', 'warn');
+      }
+    }, 12000);
+
     // Load the player's character; if missing (never built), use default.
-    _loadCharacterThenStart();
+    _loadCharacterThenStart(myMount);
   }
 
-  async function _loadCharacterThenStart() {
+  async function _loadCharacterThenStart(myMount) {
     let character = null;
+    let fetchFailed = false;
     try {
       const res = await fetch(`${API}/profile/home-character`, {
         headers: { Authorization: `Bearer ${Auth.getToken()}` }
@@ -62,19 +86,33 @@ const WorldView = (() => {
       if (res.ok) {
         const data = await res.json();
         if (data.homeCharacter && data.homeCharacter.skin != null) character = data.homeCharacter;
+      } else {
+        fetchFailed = true;
       }
-    } catch (_) { /* offline / network blip — fall through with defaults */ }
+    } catch (_) { fetchFailed = true; /* offline / network blip — fall through with defaults */ }
+
+    // Bail if the view was unmounted (or remounted) while the fetch was in
+    // flight — _stage is gone and initializing now would throw / leak.
+    if (myMount !== _mountSeq) return;
 
     // Make sure WatchState is populated so isUnlocked checks use this
     // user's progress, not stale or empty defaults.
     if (typeof state !== 'undefined' && state.data && state.data.size === 0) {
       try { await state.load(); } catch (_) {}
+      if (myMount !== _mountSeq) return;
     }
     if (typeof projects !== 'undefined' && typeof state !== 'undefined' && state.initProjects) {
       state.initProjects(projects);
     }
 
-    if (!character) character = Playground3D.defaultCharacter();
+    if (!character) {
+      character = Playground3D.defaultCharacter();
+      // Only nag about a real failure — a brand-new user with no saved
+      // character legitimately falls back to the default and shouldn't see an error.
+      if (fetchFailed && typeof toast === 'function') {
+        toast('Couldn’t load your character — using a default look.', 'warn');
+      }
+    }
     Playground3D.initWorld(_stage, character);
 
     // Avenger NPCs — each preset model roams the apron around its debut node.
@@ -82,10 +120,20 @@ const WorldView = (() => {
     // Playground3D spawns each hero once its debut node is unlocked.
     if (Playground3D.setWorldNpcs && typeof Playground !== 'undefined' && Array.isArray(Playground.CHARACTER_PRESETS)) {
       const roster = (typeof window.characters !== 'undefined' && window.characters) || [];
+      const unresolved = [];
       const npcSpecs = Playground.CHARACTER_PRESETS.map(p => {
         const c = roster.find(x => x.id === p.charId);
-        return (c && c.debut) ? { id: 'npc_' + p.id, name: p.name, character: p.char, debut: c.debut } : null;
+        if (!c || !c.debut) { unresolved.push(p.charId); return null; }
+        return { id: 'npc_' + p.id, name: p.name, character: p.char, debut: c.debut };
       }).filter(Boolean);
+      // The Avengers vanishing from /world is a silent, confusing failure. It
+      // happens when the roster (from /api/content/characters) drifts from the
+      // preset list — a renamed charId or a character missing its `debut` node.
+      // Surface it in the console so it's diagnosable rather than mysterious.
+      if (unresolved.length) {
+        console.warn('[World] %d/%d NPC presets unresolved (no roster match or missing debut):',
+          unresolved.length, Playground.CHARACTER_PRESETS.length, unresolved);
+      }
       Playground3D.setWorldNpcs(npcSpecs);
     }
 
@@ -115,6 +163,78 @@ const WorldView = (() => {
     }
 
     _wireVoiceToggle('world');
+    _maybeShowControlsHint();
+  }
+
+  // First-visit controls hint. /world is the marquee feature but nothing
+  // tells a newcomer how to move, so it can read as static/broken. Show a
+  // dismissible overlay once (localStorage-gated), fading on first input.
+  function _maybeShowControlsHint() {
+    if (!_stage) return;
+    let seen = false;
+    try { seen = localStorage.getItem('world_controls_seen') === '1'; } catch (_) {}
+    if (seen) return;
+    try { localStorage.setItem('world_controls_seen', '1'); } catch (_) {}
+
+    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    const hint = document.createElement('div');
+    hint.className = 'world-hint';
+    hint.innerHTML = coarse
+      ? `<span class="world-hint-icon">🕹️</span> Drag the joystick to move · tap a building to open it`
+      : `<span class="world-hint-icon">⌨️</span> <b>WASD</b> to move · drag to look · <b>E</b> or click a building to open it`;
+    _stage.appendChild(hint);
+    requestAnimationFrame(() => hint.classList.add('show'));
+
+    let dismissed = false;
+    const dismiss = () => {
+      if (dismissed) return;
+      dismissed = true;
+      window.removeEventListener('keydown', onInput, true);
+      window.removeEventListener('pointerdown', onInput, true);
+      hint.classList.remove('show');
+      setTimeout(() => { if (hint.parentNode) hint.parentNode.removeChild(hint); }, 400);
+    };
+    const onInput = () => dismiss();
+    window.addEventListener('keydown', onInput, true);
+    window.addEventListener('pointerdown', onInput, true);
+    setTimeout(dismiss, 6000);
+  }
+
+  // Centralized voice-button visual state so "off", "on" (transmitting),
+  // "listen-only" (mic blocked), and "error" are each visually distinct —
+  // previously listen-only/error looked identical to the green transmitting
+  // state, so users thought they were heard when they weren't.
+  function _voiceVisual(stateName, msg) {
+    if (!_voiceBtn) return;
+    _voiceBtn.classList.remove('listen-only', 'voice-error');
+    switch (stateName) {
+      case 'on':
+        _voiceBtn.setAttribute('aria-pressed', 'true');
+        _voiceBtn.setAttribute('aria-label', 'Voice on — others can hear you. Click to mute; right-click or long-press for diagnostics.');
+        _voiceBtn.title = 'Voice on — click to mute · right-click for diagnostics';
+        _voiceBtn.textContent = '🎙️';
+        break;
+      case 'listen-only':
+        _voiceBtn.setAttribute('aria-pressed', 'true');
+        _voiceBtn.classList.add('listen-only');
+        _voiceBtn.setAttribute('aria-label', 'Listen-only — mic blocked, others can’t hear you. Right-click or long-press for diagnostics.');
+        _voiceBtn.title = msg || 'Listen-only — mic blocked · right-click for diagnostics';
+        _voiceBtn.textContent = '🎧';
+        break;
+      case 'error':
+        _voiceBtn.setAttribute('aria-pressed', 'false');
+        _voiceBtn.classList.add('voice-error');
+        _voiceBtn.setAttribute('aria-label', msg || 'Voice chat error');
+        _voiceBtn.title = msg || 'Voice chat error';
+        _voiceBtn.textContent = '🎙️';
+        break;
+      case 'off':
+      default:
+        _voiceBtn.setAttribute('aria-pressed', 'false');
+        _voiceBtn.setAttribute('aria-label', 'Turn on voice chat');
+        _voiceBtn.title = 'Voice chat (off)';
+        _voiceBtn.textContent = '🎙️';
+    }
   }
 
   function _wireVoiceToggle(scope) {
@@ -137,24 +257,32 @@ const WorldView = (() => {
       if (_voice) {
         try { _voice.stop(); } catch (_) {}
         _voice = null;
-        _voiceBtn.setAttribute('aria-pressed', 'false');
-        _voiceBtn.title = 'Voice chat (off)';
+        _voiceVisual('off');
         return;
       }
       if (!_mp || !_mp.getSocket) return;
       const socket = _mp.getSocket();
-      _voice = VoiceManager.start({
+      // Mic acquisition is async; onMicUnavailable/onError may fire before OR
+      // after start() returns. Track which fired so we don't optimistically
+      // paint the "transmitting" (green) state over a mic-denied/error state.
+      let sawError = false, sawListenOnly = false;
+      const handle = VoiceManager.start({
         socket,
         scope,
         getLocalState: () => Playground3D.getLocalState && Playground3D.getLocalState(),
         getRemotePlayers: () => Playground3D.getRemotePlayers && Playground3D.getRemotePlayers(),
         onError: (msg) => {
-          _voiceBtn.setAttribute('aria-pressed', 'false');
-          _voiceBtn.title = msg || 'Voice chat error';
+          sawError = true;
           _voice = null;
+          _voiceVisual('error', msg);
+          if (typeof toast === 'function') toast(msg || 'Voice chat couldn’t start.', 'error');
         },
         onMicUnavailable: (msg) => {
-          _voiceBtn.title = msg || 'Voice chat (listen-only)';
+          sawListenOnly = true;
+          _voiceVisual('listen-only', msg);
+          if (typeof toast === 'function') {
+            toast('Microphone blocked — you’re in listen-only mode (others can’t hear you).', { type: 'warn', duration: 4500 });
+          }
         },
         onPeerStateChange: (peerId, st) => {
           if (Playground3D.setRemotePlayerSpeaking) {
@@ -172,11 +300,26 @@ const WorldView = (() => {
                 'rxBytes=' + peer.bytesReceived,
                 'iceTypes=' + (peer.iceCandidateTypes || []).join(','));
             }
+            // Surface the otherwise-silent failure and point at the diagnostics
+            // panel (right-click / long-press the mic) — throttled so a flapping
+            // peer doesn't spam toasts.
+            const t = Date.now();
+            if (typeof toast === 'function' && t - _peerFailToastAt > 20000) {
+              _peerFailToastAt = t;
+              toast('Voice is having trouble connecting — long-press the mic for diagnostics.', 'warn');
+            }
           }
         }
       });
-      _voiceBtn.setAttribute('aria-pressed', 'true');
-      _voiceBtn.title = 'Voice chat (on) — click to mute, right-click for diagnostics';
+      // Synchronous fatal error (e.g. no WebRTC) already nulled _voice and
+      // painted the error state — don't overwrite it. Otherwise keep the live
+      // handle and show "on", unless the mic was already denied synchronously.
+      if (sawError) {
+        _voice = null;
+      } else {
+        _voice = handle;
+        if (!sawListenOnly) _voiceVisual('on');
+      }
     };
     _voiceBtn.addEventListener('click', _voiceBtnHandler);
 
@@ -217,6 +360,10 @@ const WorldView = (() => {
   }
 
   function unmount() {
+    // Invalidate any in-flight async bring-up (character fetch / state.load)
+    // so it can't init the engine against this torn-down view.
+    _mountSeq++;
+    if (_loadTimer) { clearTimeout(_loadTimer); _loadTimer = null; }
     if (_onKeyDown) { window.removeEventListener('keydown', _onKeyDown); _onKeyDown = null; }
     // Voice must stop BEFORE multiplayer so voice:leave reaches the room
     // while the socket is still open.

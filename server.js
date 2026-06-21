@@ -179,7 +179,12 @@ const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   // Same-origin only; /world is auth-gated and never expected to be
   // embedded by another site. CORS would only matter for cross-origin.
-  cors: { origin: false }
+  cors: { origin: false },
+  // Cap inbound socket frames well below the 1MB default. The only large
+  // legitimate payloads are WebRTC SDP offers (a few KB); position/chat/
+  // character frames are tiny. This blocks a client from parking a huge
+  // "character" blob that the server re-broadcasts to every joiner.
+  maxHttpBufferSize: 32 * 1024
 });
 require('./routes/world-socket')(io);
 

@@ -127,6 +127,8 @@ const Playground3D = (() => {
   let _orbit = null;             // { azimuth, elevation, distance }
   let _resizeObs = null;
   let _rafId = null;
+  let _onVisibility = null;       // pause the render loop while the tab is hidden
+  let _threeReadyHandler = null;  // pending 'three-ready' listener (CDN still loading)
   let _lastTime = 0;
   let _running = false;
   let _stepClock = 0;             // animation phase accumulator
@@ -145,6 +147,7 @@ const Playground3D = (() => {
   let _activeNode = null;          // project currently within PROXIMITY
   let _activePromptEl = null;
   let _localEmoteUntil = 0;        // ms timestamp; while > now, override right-arm pose
+  let _localBubbleEls = [];        // chat bubbles floating over the LOCAL player
   let _projectClickHandler = null; // set by view to handle prompt clicks
   let _localWalking = false;       // set each tick; read by getLocalState() for MP broadcast
   let _walkableRoads = [];         // [{ cx, cz, cos, sin, halfW, halfL }] for point-in-rotated-rect tests
@@ -161,6 +164,7 @@ const Playground3D = (() => {
   let _sceneAlive = false;
   // Reused per-frame for HUD anchor projection — set() instead of new each tick.
   let _hudAnchor = null;
+  let _hudProjScratch = null;     // reused by _placeHudEl so HUD projection allocates nothing per frame
 
   // Cached TextureLoader. Returns the cached Texture synchronously when hit;
   // otherwise loads once and stores. The onReady callback only fires while
@@ -206,9 +210,13 @@ const Playground3D = (() => {
     } else {
       const onReady = () => {
         window.removeEventListener('three-ready', onReady);
+        _threeReadyHandler = null;
         // Container may have been swapped out before THREE arrived.
         if (_container === container) _initInternal();
       };
+      // Track it so destroy() can remove it if the view is left before THREE
+      // finishes loading from the CDN — otherwise the closure leaks per mount.
+      _threeReadyHandler = onReady;
       window.addEventListener('three-ready', onReady);
     }
   }
@@ -218,11 +226,18 @@ const Playground3D = (() => {
     _sceneAlive = false;
     if (_rafId) cancelAnimationFrame(_rafId);
     _rafId = null;
+    if (_onVisibility) { document.removeEventListener('visibilitychange', _onVisibility); _onVisibility = null; }
+    if (_threeReadyHandler) { window.removeEventListener('three-ready', _threeReadyHandler); _threeReadyHandler = null; }
     if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
     if (_input) { _input.detach(); _input = null; }
     if (_worldStateUnsub) { try { _worldStateUnsub(); } catch (_) {} _worldStateUnsub = null; }
     if (_renderer) {
-      _renderer.dispose();
+      try { _renderer.dispose(); } catch (_) {}
+      // dispose() alone doesn't release the WebGL context — only GC or an
+      // explicit forceContextLoss does. Without this, repeated /home↔/world
+      // transitions mint new contexts against the browser's ~8-16 cap and can
+      // eventually black-screen the canvas on low-end devices.
+      try { if (_renderer.forceContextLoss) _renderer.forceContextLoss(); } catch (_) {}
       if (_renderer.domElement && _renderer.domElement.parentNode) {
         _renderer.domElement.parentNode.removeChild(_renderer.domElement);
       }
@@ -233,12 +248,19 @@ const Playground3D = (() => {
     _npcSpecs = [];
     _worldNodes.clear();
     _worldRoads.clear();
+    // Per-build shared materials were disposed by the _disposeRig sweep above;
+    // drop the stale refs so the next mount recreates them. (_wallTex/_lampTex
+    // are textures, not disposed by _disposeRig, and persist across mounts.)
+    _matPlatformSide = null;
+    _matApron = null;
+    _ceilMatByPhase = null;
     _walkableRoads = [];
     _remotePlayers.clear();
     _activeNode = null;
     _activePromptEl = null;
     _hudLayer = null;
     _localEmoteUntil = 0;
+    _localBubbleEls = [];
     _projectClickHandler = null;
     _localWalking = false;
     _velY = 0;
@@ -280,10 +302,15 @@ const Playground3D = (() => {
   // ── init ──
 
   function _initInternal() {
+    // Double-entry guard — a second 'three-ready' or a re-entrant call must not
+    // build a second scene/renderer over the first (which would orphan a WebGL
+    // context + RAF loop).
+    if (_renderer) return;
     const THREE = window.THREE;
     _running = true;
     _sceneAlive = true;
     _hudAnchor = _hudAnchor || new THREE.Vector3();
+    _hudProjScratch = _hudProjScratch || new THREE.Vector3();
 
     _container.innerHTML = '';
     _viewport = document.createElement('div');
@@ -372,6 +399,22 @@ const Playground3D = (() => {
 
     _lastTime = performance.now();
     _rafId = requestAnimationFrame(_tick);
+
+    // Stop rendering entirely while the tab is hidden — saves GPU/battery
+    // beyond the browser's own RAF throttling. On return, reset the clock so
+    // the first frame doesn't apply one huge dt of movement/animation.
+    // NOTE: we intentionally do NOT freeze the shadow map (sun.shadow.autoUpdate
+    // = false): player/NPC rigs cast shadows (see _buildPlayer), so freezing
+    // would leave their shadows detached as they walk.
+    _onVisibility = () => {
+      if (document.hidden) {
+        if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
+      } else if (_running && !_rafId) {
+        _lastTime = performance.now();
+        _rafId = requestAnimationFrame(_tick);
+      }
+    };
+    document.addEventListener('visibilitychange', _onVisibility);
   }
 
   function _resizeRenderer() {
@@ -2320,8 +2363,9 @@ const Playground3D = (() => {
       const x = p.gridX * WORLD.SCALE;
       const z = p.gridY * WORLD.SCALE;
       const geom = new THREE.BoxGeometry(WORLD.PLATFORM_W, WORLD.PLATFORM_H, WORLD.PLATFORM_D);
-      // Per-face materials so only the top face shows the poster.
-      const side = new THREE.MeshLambertMaterial({ color: 0x8a7f68 });
+      // Per-face materials so only the top face shows the poster. `side` is a
+      // shared town-wide material; `top` stays unique (it carries the poster).
+      const side = _platformSideMat();
       const top  = new THREE.MeshLambertMaterial({ color: 0xffffff });
       const url = (typeof CONFIG !== 'undefined' && CONFIG.IMAGE_BASE && p.image)
         ? `${CONFIG.IMAGE_BASE}${p.image}` : '';
@@ -2352,7 +2396,7 @@ const Playground3D = (() => {
       // is what caused the z-fighting shimmer along the roof edges. Tinted by the
       // project's phase so the town reads as colored districts. Not collidable.
       const ROOF_T = 0.2;
-      const ceilMat = new THREE.MeshLambertMaterial({ color: _phaseRoofColor(p.phase) });
+      const ceilMat = _ceilingMat(p.phase);
       const ceiling = new THREE.Mesh(new THREE.BoxGeometry(WORLD.PLATFORM_W, ROOF_T, WORLD.PLATFORM_D), ceilMat);
       // Slab bottom rests at this house's wall tops with a tiny downward overlap
       // (-0.02) so there's no seam between roof and walls; platform top is y=0.
@@ -2378,13 +2422,9 @@ const Playground3D = (() => {
       apronHole.lineTo(apInner, -apInner);
       apronHole.lineTo(-apInner, -apInner);
       apronShape.holes.push(apronHole);
-      const apron = new THREE.Mesh(new THREE.ShapeGeometry(apronShape), new THREE.MeshLambertMaterial({
-        color: WORLD.APRON_COLOR,
-        side: THREE.DoubleSide,
-        // Decal-style offset so the ring reliably renders over the ground and the
-        // roads beneath it without z-fighting (it never overlaps the poster).
-        polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
-      }));
+      // Shared apron material (decal-style polygon offset so the ring renders
+      // over the ground/roads beneath it without z-fighting).
+      const apron = new THREE.Mesh(new THREE.ShapeGeometry(apronShape), _apronMat());
       apron.rotation.x = -Math.PI / 2;
       // Sit just above the road tops (-0.02) so the ring covers the road strips
       // around the building; the platform poster (y=0) shows through the hole.
@@ -2860,6 +2900,64 @@ const Playground3D = (() => {
     return tex;
   }
 
+  // ── per-build shared world materials ──
+  // Hoisted out of the per-node loop so a fully-unlocked town allocates ONE
+  // platform-side and ONE apron material, plus one ceiling material per phase,
+  // instead of ~3 fresh materials per house. The platform TOP stays unique (it
+  // carries each project's poster). Platform/apron/ceiling are never torn down
+  // individually (only walls/decor are), so cross-node sharing is safe. They're
+  // owned by the scene and disposed by destroy()'s _disposeRig sweep, so destroy
+  // resets these refs to null and they're lazily recreated on the next mount.
+  let _matPlatformSide = null;
+  let _matApron = null;
+  let _ceilMatByPhase = null;        // Map<colorInt, MeshLambertMaterial>
+
+  function _platformSideMat() {
+    const THREE = window.THREE;
+    if (!_matPlatformSide) _matPlatformSide = new THREE.MeshLambertMaterial({ color: 0x8a7f68 });
+    return _matPlatformSide;
+  }
+  function _apronMat() {
+    const THREE = window.THREE;
+    if (!_matApron) {
+      _matApron = new THREE.MeshLambertMaterial({
+        color: WORLD.APRON_COLOR,
+        side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
+      });
+    }
+    return _matApron;
+  }
+  function _ceilingMat(phase) {
+    const THREE = window.THREE;
+    if (!_ceilMatByPhase) _ceilMatByPhase = new Map();
+    const color = _phaseRoofColor(phase);
+    let m = _ceilMatByPhase.get(color);
+    if (!m) { m = new THREE.MeshLambertMaterial({ color }); _ceilMatByPhase.set(color, m); }
+    return m;
+  }
+
+  // One shared lamp-glow texture for the whole town (like _wallTex). Each lamp
+  // keeps its own cheap SpriteMaterial pointing at it; _disposeDecor skips this
+  // map on teardown so it survives wall rebuilds.
+  let _lampTex = null;
+  function _lampTexture() {
+    const THREE = window.THREE;
+    if (!THREE || !THREE.CanvasTexture) return null;
+    if (_lampTex) return _lampTex;
+    const S = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = S; canvas.height = S;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    grad.addColorStop(0, 'rgba(255,217,138,0.9)');
+    grad.addColorStop(1, 'rgba(255,217,138,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, S, S);
+    _lampTex = new THREE.CanvasTexture(canvas);
+    return _lampTex;
+  }
+
   // A translucent glass pane for a carved window opening. The panes are mostly
   // clear (low-alpha tint) so you can see the interior through the wall hole,
   // with an opaque frame + mullion cross so it still reads as a window. Caller
@@ -2913,18 +3011,10 @@ const Playground3D = (() => {
     );
     head.position.set(x, postH + 0.12, z);
     group.add(head);
-    if (THREE.CanvasTexture && THREE.Sprite) {
-      const S = 64;
-      const canvas = document.createElement('canvas');
-      canvas.width = S; canvas.height = S;
-      const ctx = canvas.getContext('2d');
-      const grad = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
-      grad.addColorStop(0, 'rgba(255,217,138,0.9)');
-      grad.addColorStop(1, 'rgba(255,217,138,0)');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, S, S);
+    const lampTex = _lampTexture();
+    if (lampTex && THREE.Sprite) {
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: new THREE.CanvasTexture(canvas),
+        map: lampTex,
         blending: THREE.AdditiveBlending, depthWrite: false, transparent: true
       }));
       sprite.scale.set(1.6, 1.6, 1);
@@ -2941,7 +3031,7 @@ const Playground3D = (() => {
       if (o.geometry) o.geometry.dispose();
       const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
       for (const m of mats) {
-        if (m.map && m.map !== _wallTex) m.map.dispose();
+        if (m.map && m.map !== _wallTex && m.map !== _lampTex) m.map.dispose();
         m.dispose();
       }
     });
@@ -3014,9 +3104,12 @@ const Playground3D = (() => {
 
   // ── HUD projection (call each tick) ──
 
-  function _projectAnchor(anchor) {
+  // Projects `v` to screen space, MUTATING it in place (v.project). Sole caller
+  // is _placeHudEl, which passes a reusable scratch vector — so HUD projection
+  // allocates nothing per frame (was two Vector3 clones per element per tick).
+  function _projectAnchor(v) {
     if (!_camera || !_viewport) return null;
-    const v = anchor.clone().project(_camera);
+    v.project(_camera);
     if (v.z > 1) return null;            // behind camera
     return {
       x: (v.x * 0.5 + 0.5) * _viewport.clientWidth,
@@ -3026,9 +3119,9 @@ const Playground3D = (() => {
   }
 
   function _placeHudEl(el, anchor, yOffset) {
-    const a = anchor.clone();
-    if (typeof yOffset === 'number') a.y += yOffset;
-    const p = _projectAnchor(a);
+    _hudProjScratch.copy(anchor);
+    if (typeof yOffset === 'number') _hudProjScratch.y += yOffset;
+    const p = _projectAnchor(_hudProjScratch);
     if (!p) { el.style.display = 'none'; return; }
     el.style.display = '';
     el.style.transform = `translate(-50%, -100%) translate(${Math.round(p.x)}px, ${Math.round(p.y)}px)`;
@@ -3055,7 +3148,10 @@ const Playground3D = (() => {
           _activePromptEl.addEventListener('click', _openActiveNode);
           _hudLayer.appendChild(_activePromptEl);
         }
-        _activePromptEl.innerHTML = `📺 Click to view <em></em>`;
+        // "Tap" on touch, "Click" on desktop — this prompt is the only
+        // interaction cue on mobile (there's no 'E' key there).
+        const verb = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 'Tap' : 'Click';
+        _activePromptEl.innerHTML = `📺 ${verb} to view <em></em>`;
         _activePromptEl.querySelector('em').textContent = nearest.project.title || nearest.project.id;
       }
       _placeHudEl(_activePromptEl, nearest.anchor, 0.6);
@@ -3081,6 +3177,16 @@ const Playground3D = (() => {
     for (const npc of _npcs) {
       _hudAnchor.set(npc.x, npc.headY, npc.z);
       if (npc.nameEl) _placeHudEl(npc.nameEl, _hudAnchor, 0);
+    }
+
+    // Local player's own chat bubbles, over the head.
+    if (_localBubbleEls.length && _player) {
+      _hudAnchor.set(_player.position.x, 2.0, _player.position.z);
+      let stack = 0.4;
+      for (const b of _localBubbleEls) {
+        stack += 0.5;
+        _placeHudEl(b, _hudAnchor, stack);
+      }
     }
   }
 
@@ -3320,6 +3426,15 @@ const Playground3D = (() => {
     _remotePlayers.delete(id);
   }
 
+  // Drop ALL remote players (rigs + HUD). Used by the multiplayer client on a
+  // socket reconnect: Socket.IO assigns a fresh socket.id on reconnect, so the
+  // server resends a full snapshot; without clearing first, addRemotePlayer
+  // early-returns on the now-stale ids and peers freeze at their drop-time
+  // position. Iterating over a copy of the keys since removeRemotePlayer mutates.
+  function clearRemotePlayers() {
+    for (const id of [..._remotePlayers.keys()]) removeRemotePlayer(id);
+  }
+
   function showRemoteChat(id, username, text) {
     const rp = _remotePlayers.get(id);
     if (!rp || !_hudLayer) return;
@@ -3330,9 +3445,10 @@ const Playground3D = (() => {
     _hudLayer.appendChild(el);
     rp.bubbleEls.push(el);
     setTimeout(() => {
-      if (!el.parentNode) return;
+      if (!_sceneAlive || !el.parentNode) return;
       el.classList.add('fading');
       setTimeout(() => {
+        if (!_sceneAlive) return;
         if (el.parentNode) el.parentNode.removeChild(el);
         rp.bubbleEls = rp.bubbleEls.filter(b => b !== el);
       }, 600);
@@ -3348,6 +3464,26 @@ const Playground3D = (() => {
   function playLocalEmote(kind) {
     if (kind !== 'wave') return;
     _localEmoteUntil = performance.now() + WORLD.EMOTE_DURATION_MS;
+  }
+
+  // Float a chat bubble over the LOCAL player's own head. Mirrors showRemoteChat
+  // (which only handles remote ids) so the sender sees the same bubble peers do.
+  function showLocalChat(text) {
+    if (!_hudLayer || !_player) return;
+    const el = document.createElement('div');
+    el.className = 'pg3d-bubble';
+    el.textContent = text;
+    _hudLayer.appendChild(el);
+    _localBubbleEls.push(el);
+    setTimeout(() => {
+      if (!_sceneAlive || !el.parentNode) return;
+      el.classList.add('fading');
+      setTimeout(() => {
+        if (!_sceneAlive) return;
+        if (el.parentNode) el.parentNode.removeChild(el);
+        _localBubbleEls = _localBubbleEls.filter(b => b !== el);
+      }, 600);
+    }, 3500);
   }
 
   // Push a remote player's current fade level onto its rig materials and HUD.
@@ -3578,7 +3714,10 @@ const Playground3D = (() => {
       if (rig && rotGroup) { rotGroup.remove(rig); _disposeRig(rig); }
       if (scene) _disposeRig(scene);
       if (renderer) {
-        renderer.dispose();
+        try { renderer.dispose(); } catch (_) {}
+        // Release the WebGL context (the customize preview is opened/closed
+        // repeatedly; dispose() alone leaves the context for GC).
+        try { if (renderer.forceContextLoss) renderer.forceContextLoss(); } catch (_) {}
         if (renderer.domElement && renderer.domElement.parentNode) {
           renderer.domElement.parentNode.removeChild(renderer.domElement);
         }
@@ -3604,8 +3743,8 @@ const Playground3D = (() => {
   return {
     init, initWorld, destroy, setCharacter, defaultCharacter, createPreview,
     // World/multiplayer surface — no-ops in home mode.
-    addRemotePlayer, updateRemotePlayer, removeRemotePlayer,
-    showRemoteChat, playRemoteEmote, playLocalEmote,
+    addRemotePlayer, updateRemotePlayer, removeRemotePlayer, clearRemotePlayers,
+    showRemoteChat, showLocalChat, playRemoteEmote, playLocalEmote,
     getLocalState, getActiveNode, setProjectClickHandler,
     // Local NPC surface — Avenger wanderers in /world.
     setWorldNpcs,

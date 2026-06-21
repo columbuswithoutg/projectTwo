@@ -622,6 +622,32 @@ const VoiceManager = (() => {
       }
     }
 
+    // iOS/Safari can re-suspend the AudioContext after a tab switch or audio
+    // interruption — which silently mutes every remote peer while the UI still
+    // shows voice "on" (remote audio is routed through the context, not the
+    // muted <audio> element). Re-resume when the tab returns and on the next
+    // user gesture; if it stubbornly stays suspended with peers present, hint
+    // the user to tap. (Resume requires a user gesture on iOS, hence the
+    // pointerdown handler.) Declared BEFORE boot() so stop() — which boot's
+    // catch may call synchronously — can always remove them.
+    function resumeAudio() {
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+    }
+    const onVisible = () => {
+      if (document.hidden) return;
+      resumeAudio();
+      setTimeout(() => {
+        if (!stopped && audioCtx && audioCtx.state === 'suspended' && peers.size && typeof toast === 'function') {
+          toast('Tap anywhere to re-enable voice audio.', 'warn');
+        }
+      }, 350);
+    };
+    const onGesture = () => resumeAudio();
+    document.addEventListener('visibilitychange', onVisible);
+    document.addEventListener('pointerdown', onGesture, true);
+
     (async function boot() {
       try {
         ensureAudioCtx();
@@ -651,6 +677,8 @@ const VoiceManager = (() => {
       if (updateTimer) { clearInterval(updateTimer); updateTimer = null; }
       if (statsTimer)  { clearInterval(statsTimer);  statsTimer = null; }
       if (announceTimer) { clearTimeout(announceTimer); announceTimer = null; }
+      document.removeEventListener('visibilitychange', onVisible);
+      document.removeEventListener('pointerdown', onGesture, true);
       try { socket.emit('voice:leave'); } catch (_) {}
       socket.off('voice:peers', onVoicePeers);
       socket.off('voice:peer-joined', onPeerJoined);
@@ -717,6 +745,7 @@ const VoiceManager = (() => {
       return {
         scope,
         micState,
+        audioState: audioCtx ? audioCtx.state : 'none',
         localLevel,
         iceServerCount: servers.length,
         turnConfigured,
@@ -793,12 +822,16 @@ const VoiceManager = (() => {
       const rows = [];
       const turnCls = d.turnConfigured ? 'ok' : 'warn';
       const turnLabel = d.turnConfigured ? 'TURN configured' : 'STUN only';
+      // Audio output state — 'suspended' (iOS autoplay) means peers are
+      // inaudible even when connected, so flag it.
+      const audioCls = (d.audioState === 'running') ? 'ok' : (d.audioState === 'suspended' ? 'bad' : 'warn');
       rows.push(`
         <div class="pg3d-voice-debug-row mic">
           <div class="pg3d-voice-debug-name">🎙 You <span class="pg3d-voice-badge ${micCls}">${escapeHtml(d.micState)}</span></div>
           ${bar(d.localLevel)}
           <div class="pg3d-voice-debug-meta">
-            ICE: ${d.iceServerCount} server(s) · <span class="pg3d-voice-badge ${turnCls}">${escapeHtml(turnLabel)}</span>
+            audio: <span class="pg3d-voice-badge ${audioCls}">${escapeHtml(d.audioState || '?')}</span>
+            · ICE: ${d.iceServerCount} server(s) · <span class="pg3d-voice-badge ${turnCls}">${escapeHtml(turnLabel)}</span>
           </div>
         </div>
       `);

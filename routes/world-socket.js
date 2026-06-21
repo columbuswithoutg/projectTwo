@@ -12,8 +12,36 @@
  * everyone in the room (including sender, so the local UI can confirm
  * the message went through).
  ************************************************/
-const jwt = require('jsonwebtoken');
+const auth = require('../middleware/auth');
 const User = require('../models/user');
+
+// Whitelisted homeCharacter slots (mirrors models/user.js homeCharacter). The
+// client sends its character on join and the server re-broadcasts it verbatim
+// to every other joiner, so we coerce it to this set of small integers — both
+// to stop a hostile client parking a large blob that gets fanned to everyone,
+// and so a junk payload can't reach other clients' rig builder.
+const CHARACTER_KEYS = new Set([
+  'skin', 'hairStyle', 'hairColor', 'shirtColor', 'pantsColor', 'eyeColor', 'eyeShape',
+  'facialHairStyle', 'facialHairColor', 'glasses', 'hat', 'shoeColor', 'build', 'gear',
+  'shirtStyle', 'pantsStyle', 'shoeStyle', 'outerwear', 'outerwearColor', 'suit', 'suitColor',
+  'gloves', 'belt', 'mask', 'accessoryColor', 'gender', 'shirtColor2', 'pantsColor2',
+  'outerwearColor2', 'shoeColor2', 'helmet', 'helmetColor', 'prop', 'propColor', 'emblem', 'emblemColor'
+]);
+
+function sanitizeCharacter(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = {};
+  for (const k of CHARACTER_KEYS) {
+    const v = raw[k];
+    // Only finite numbers; clamp to a generous index range. The renderers
+    // default/ignore unknown indices, so this can't break rendering — it just
+    // bounds size and type.
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      out[k] = Math.max(0, Math.min(99, Math.floor(v)));
+    }
+  }
+  return out;
+}
 
 // socketId → { socketId, userId, username, character, x, z, yaw, walking, lastChat }
 const worldPlayers = new Map();
@@ -35,6 +63,12 @@ const MAX_USERNAME = 40;
 const MAX_CHAT_LEN = 200;
 const CHAT_INTERVAL_MS = 1000;
 const POSITION_BOUND = 1000;          // sanity clamp; world is < 300u square in practice
+// Per-socket floor between accepted position updates. The client broadcasts at
+// ~100ms (POS_INTERVAL_MS), so legitimate traffic never trips this — it only
+// caps a hostile/scripted client that would otherwise fan thousands of pos
+// packets/sec to the whole room (CPU + every peer's downlink). pos was the only
+// hot fan-out path without a server-side guard (chat/voice already have one).
+const POS_MIN_INTERVAL_MS = 40;       // ~25 updates/sec ceiling per socket
 // NOTE: no per-pair rate cap — pooled ICE candidates fire back-to-back in
 // the same millisecond, and a dropped trickle candidate is never
 // retransmitted, so any per-pair interval breaks handshakes. The
@@ -44,25 +78,44 @@ const VOICE_SIGNAL_BUDGET_WINDOW_MS = 1000;
 const VOICE_SIGNAL_MAX_BYTES = 8192;  // SDP fragments + ICE candidates are tiny
 
 module.exports = (io) => {
-  // Handshake auth — reject connections without a valid JWT.
-  io.use((socket, next) => {
+  // Handshake auth — verify the JWT AND enforce the same ban / tokenVersion
+  // checks the HTTP layer does (validateToken). Without this, a banned or
+  // force-logged-out user keeps full realtime chat/voice/presence until their
+  // JWT expires. Also resolves the authoritative username so the client can't
+  // spoof a display name.
+  io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth && socket.handshake.auth.token;
-      if (!token) return next(new Error('No token'));
-      const payload = jwt.verify(token, process.env.JWT_SECRET);
-      if (!payload || !payload.id) return next(new Error('Invalid token payload'));
-      socket.data.userId = payload.id;
+      const result = await auth.validateToken(token);
+      if (!result.ok) return next(new Error(result.error || 'Unauthorized'));
+      socket.data.userId = String(result.payload.id);
+      socket.data.username = result.username || null;
       next();
     } catch (e) {
       next(new Error('Invalid token'));
     }
   });
 
+  // When a user is banned / force-logged-out, the auth cache is invalidated;
+  // hook that to also drop their LIVE sockets (the handshake only runs at
+  // connect, so an active socket would otherwise survive until JWT expiry).
+  // The client then auto-reconnects, the handshake rejects, and it surfaces
+  // the suspension toast.
+  auth.onInvalidate = (userId) => {
+    for (const [, s] of io.sockets.sockets) {
+      if (s.data && String(s.data.userId) === String(userId)) {
+        try { s.disconnect(true); } catch (_) {}
+      }
+    }
+  };
+
   io.on('connection', (socket) => {
     // Client must emit 'world:join' before broadcasting anything else.
     socket.on('world:join', (raw) => {
-      const username  = String((raw && raw.username) || 'Anon').slice(0, MAX_USERNAME);
-      const character = (raw && raw.character) || null;
+      // Username comes from the verified token, NOT the client payload, so a
+      // user can't join as someone else in chat/nametag.
+      const username  = String(socket.data.username || 'Anon').slice(0, MAX_USERNAME);
+      const character = sanitizeCharacter(raw && raw.character);
 
       socket.join('world');
       const player = {
@@ -76,6 +129,18 @@ module.exports = (io) => {
       };
       worldPlayers.set(socket.id, player);
 
+      // Single live presence per user. A refresh or a second tab opens a new
+      // socket; without this the same user lingers as duplicate/ghost avatars
+      // for everyone else. Drop any OLDER socket belonging to this user (we
+      // don't disconnect it — that would ping-pong two real tabs — we just
+      // retire its avatar from the room).
+      for (const [sid, other] of worldPlayers) {
+        if (sid !== socket.id && other.userId === socket.data.userId) {
+          worldPlayers.delete(sid);
+          io.to('world').emit('world:left', { id: sid });
+        }
+      }
+
       // Bootstrap the new client with everyone else's current state.
       const others = [...worldPlayers.values()].filter(p => p.socketId !== socket.id);
       socket.emit('world:snapshot', { players: others });
@@ -87,6 +152,9 @@ module.exports = (io) => {
     socket.on('world:pos', (raw) => {
       const p = worldPlayers.get(socket.id);
       if (!p) return;
+      const nowPos = Date.now();
+      if (nowPos - (socket.data.lastPos || 0) < POS_MIN_INTERVAL_MS) return;
+      socket.data.lastPos = nowPos;
       if (!raw || typeof raw.x !== 'number' || typeof raw.z !== 'number') return;
       if (!Number.isFinite(raw.x) || !Number.isFinite(raw.z)) return;
       if (Math.abs(raw.x) > POSITION_BOUND || Math.abs(raw.z) > POSITION_BOUND) return;
@@ -144,8 +212,8 @@ module.exports = (io) => {
       if (!owner) return;
 
       const ownerId  = String(owner._id);
-      const username = String((raw && raw.username) || 'Anon').slice(0, MAX_USERNAME);
-      const character = (raw && raw.character) || null;
+      const username = String(socket.data.username || 'Anon').slice(0, MAX_USERNAME);
+      const character = sanitizeCharacter(raw && raw.character);
 
       // Idempotent — if this socket already joined the same home, just
       // re-send the snapshot. If it joined a different home, leave the
@@ -170,6 +238,15 @@ module.exports = (io) => {
       };
       homePlayers.set(socket.id, player);
 
+      // Single live presence per user within this home room (refresh / second
+      // tab). Retire any older socket of the same user in the same room.
+      for (const [sid, other] of homePlayers) {
+        if (sid !== socket.id && other.userId === socket.data.userId && other.ownerId === ownerId) {
+          homePlayers.delete(sid);
+          io.to('home:' + ownerId).emit('home:left', { id: sid });
+        }
+      }
+
       const others = [...homePlayers.values()]
         .filter(p => p.ownerId === ownerId && p.socketId !== socket.id);
       socket.emit('home:snapshot', { players: others });
@@ -179,6 +256,9 @@ module.exports = (io) => {
     socket.on('home:pos', (raw) => {
       const p = homePlayers.get(socket.id);
       if (!p) return;
+      const nowPos = Date.now();
+      if (nowPos - (socket.data.lastPos || 0) < POS_MIN_INTERVAL_MS) return;
+      socket.data.lastPos = nowPos;
       if (!raw || typeof raw.x !== 'number' || typeof raw.z !== 'number') return;
       if (!Number.isFinite(raw.x) || !Number.isFinite(raw.z)) return;
       if (Math.abs(raw.x) > POSITION_BOUND || Math.abs(raw.z) > POSITION_BOUND) return;

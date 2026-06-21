@@ -17,6 +17,53 @@ function esc(str) {
 }
 
 /************************************************
+ * GLOBAL TOAST — branded, SPA-wide ephemeral status
+ *
+ * The admin surface had its own AdminView.toast; the main SPA had nothing,
+ * so failures (socket drops, mic-denied, chat-send-while-offline) surfaced
+ * only as console.warn or inline red text. This is the shared, branded
+ * notifier every view can call: `toast('Reconnecting…', 'warn')`.
+ *
+ * Toasts stack in a top-centre region (out of the way of /world's bottom
+ * chat row and the nav), auto-dismiss, and are tap-to-dismiss. The second
+ * arg may be a kind string ('info' | 'success' | 'warn' | 'error') or an
+ * options object { type, duration }. Returns a dismiss() function so a
+ * persistent toast (e.g. "Offline") can be cleared when the condition ends.
+ ************************************************/
+function toast(message, opts = {}) {
+  if (typeof opts === 'string') opts = { type: opts };
+  const { type = 'info', duration = 3200 } = opts;
+
+  let region = document.getElementById('app-toast-region');
+  if (!region) {
+    region = document.createElement('div');
+    region.id = 'app-toast-region';
+    region.setAttribute('aria-live', 'polite');
+    document.body.appendChild(region);
+  }
+
+  const el = document.createElement('div');
+  el.className = 'app-toast app-toast-' + type;
+  el.setAttribute('role', 'status');
+  el.textContent = message == null ? '' : String(message);
+  region.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+
+  let removed = false;
+  const remove = () => {
+    if (removed) return;
+    removed = true;
+    clearTimeout(timer);
+    el.classList.remove('show');
+    setTimeout(() => { if (el.parentNode) el.remove(); }, 250);
+  };
+  // duration <= 0 means "sticky" — caller dismisses it explicitly.
+  const timer = duration > 0 ? setTimeout(remove, duration) : null;
+  el.addEventListener('click', remove);
+  return remove;
+}
+
+/************************************************
  * MODAL HELPERS — dismissal, focus, confirm dialog
  *
  * Shared by the project popup, memory modals/lightbox, and the branded

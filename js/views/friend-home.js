@@ -112,23 +112,33 @@ const FriendHomeView = (() => {
       if (_voice) {
         try { _voice.stop(); } catch (_) {}
         _voice = null;
+        _voiceBtn.classList.remove('listen-only', 'voice-error');
         _voiceBtn.setAttribute('aria-pressed', 'false');
         _voiceBtn.title = 'Voice chat (off)';
         return;
       }
       if (!_mp || !_mp.getSocket) return;
+      _voiceBtn.classList.remove('listen-only', 'voice-error');
       _voice = VoiceManager.start({
         socket: _mp.getSocket(),
         scope: 'home',
         getLocalState: () => Playground3D.getLocalState && Playground3D.getLocalState(),
         getRemotePlayers: () => Playground3D.getRemotePlayers && Playground3D.getRemotePlayers(),
         onError: (msg) => {
+          _voiceBtn.classList.remove('listen-only');
+          _voiceBtn.classList.add('voice-error');
           _voiceBtn.setAttribute('aria-pressed', 'false');
           _voiceBtn.title = msg || 'Voice chat error';
           _voice = null;
+          if (typeof toast === 'function') toast(msg || 'Voice chat couldn’t start.', 'error');
         },
         onMicUnavailable: (msg) => {
-          _voiceBtn.title = msg || 'Voice chat (listen-only)';
+          _voiceBtn.classList.add('listen-only');
+          _voiceBtn.setAttribute('aria-label', 'Listen-only — mic blocked, others can’t hear you.');
+          _voiceBtn.title = msg || 'Listen-only — mic blocked';
+          if (typeof toast === 'function') {
+            toast('Microphone blocked — you’re in listen-only mode (others can’t hear you).', { type: 'warn', duration: 4500 });
+          }
         },
         onPeerStateChange: (peerId, st) => {
           if (Playground3D.setRemotePlayerSpeaking) {

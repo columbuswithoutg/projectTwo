@@ -83,7 +83,19 @@ const Multiplayer = (() => {
       el.scrollTop = el.scrollHeight;
     }
 
+    // `joined` distinguishes the FIRST connect from automatic reconnects.
+    // Socket.IO assigns a fresh socket.id on reconnect and the server resends
+    // a full snapshot, so we drop the stale remote rigs first — otherwise
+    // addRemotePlayer early-returns on the old ids and peers freeze in place.
+    let joined = false;
+    let errToasted = false;       // throttle connect_error toasts to once per outage
     socket.on('connect', () => {
+      if (joined) {
+        if (Playground3D.clearRemotePlayers) Playground3D.clearRemotePlayers();
+        if (typeof toast === 'function') toast('Reconnected', 'success');
+      }
+      joined = true;
+      errToasted = false;
       socket.emit(events.join, {
         username: Auth.getUsername() || 'Anon',
         character,
@@ -113,8 +125,28 @@ const Multiplayer = (() => {
       Playground3D.playRemoteEmote(id, kind);
     });
 
+    // Surface a lost connection so the world doesn't silently look empty /
+    // single-player. 'io client disconnect' is our own stop()/navigation —
+    // not an error, so stay quiet for it.
+    socket.on('disconnect', (reason) => {
+      if (reason === 'io client disconnect') return;
+      if (typeof toast === 'function') toast('Connection lost — reconnecting…', 'warn');
+    });
+
     socket.on('connect_error', (err) => {
       console.warn('[Multiplayer] connect_error', err && err.message);
+      // Toast once per outage. A handshake rejection ('Invalid token',
+      // 'Account suspended') won't auto-recover, so the user needs to know.
+      if (!errToasted && typeof toast === 'function') {
+        errToasted = true;
+        const m = err && err.message;
+        toast(
+          (m === 'Account suspended') ? 'Your account has been suspended.'
+          : (m === 'Invalid token') ? 'Session expired — please log in again.'
+          : 'Can’t reach the world server.',
+          'error'
+        );
+      }
     });
 
     // Chat input — same DOM ids as /world's HTML (.world-chat-row).
@@ -123,8 +155,20 @@ const Multiplayer = (() => {
       if (e.key === 'Enter') {
         e.preventDefault();
         const text = input.value.trim();
-        input.value = '';
-        if (text && socket.connected) socket.emit(events.chat, { text });
+        if (!text) { input.value = ''; return; }
+        // Only clear the input once the message is actually on its way —
+        // clearing before the connected check silently ate text typed while
+        // disconnected.
+        if (socket.connected) {
+          socket.emit(events.chat, { text });
+          input.value = '';
+          // Mirror our own message as an in-world bubble over the local rig —
+          // the server echo only renders bubbles for REMOTE ids, so without
+          // this the sender never sees the bubble everyone else sees.
+          if (Playground3D.showLocalChat) Playground3D.showLocalChat(text);
+        } else if (typeof toast === 'function') {
+          toast('Not connected — message not sent.', 'warn');
+        }
       } else if (e.key === 'Escape') {
         input.value = '';
         input.blur();
