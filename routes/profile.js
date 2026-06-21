@@ -83,7 +83,37 @@ const HOME_CHARACTER_RANGES = {
   hat:             { max: 4 },
   shoeColor:       { max: 7 },
   build:           { max: 3 },    // body size/bulk
-  gear:            { max: 6 }     // hero gear set (0 = none)
+  gear:            { max: 6 },    // DEPRECATED (round 2): hero `gear` slot removed
+                                  // from UI/render; kept so old docs/clients
+                                  // that still PUT it don't 400. Ignored.
+  // Clothing SHAPE slots — maxes mirror the array lengths in js/playground.js
+  // (SHIRT_STYLES/PANTS_STYLES/SHOE_STYLES/OUTERWEAR_STYLES/SUIT_STYLES/
+  // GLOVES_STYLES/BELT_STYLES/MASK_STYLES) and models/user.js. Keep in sync.
+  shirtStyle:      { max: 7 },    // 0 = plain tee (legacy)
+  pantsStyle:      { max: 6 },    // 0 = plain pants (legacy)
+  shoeStyle:       { max: 6 },    // 0 = plain shoe (legacy)
+  outerwear:       { max: 6 },    // 0 = none
+  outerwearColor:  { max: 15 },   // reuses SHIRT_COLORS
+  suit:            { max: 5 },    // 0 = none (overrides top+bottom)
+  suitColor:       { max: 7 },    // SUIT_COLORS
+  gloves:          { max: 3 },    // 0 = none
+  belt:            { max: 3 },    // 0 = none
+  mask:            { max: 4 },    // 0 = none
+  accessoryColor:  { max: 5 },    // ACCESSORY_COLORS (gloves/belt/mask trim)
+  // Round 2: gender, accent/secondary colors, reusable hero slots + colors.
+  // NOTE: the four accent (*Color2) maxes are palette.length, NOT length-1 —
+  // index 0 is the "Auto" sentinel and 1..N map to palette[0..N-1].
+  gender:          { max: 2 },    // 0 = Neutral (back-compat)
+  shirtColor2:     { max: 16 },   // Auto + SHIRT_COLORS (16)
+  pantsColor2:     { max: 16 },   // Auto + PANTS_COLORS (16)
+  outerwearColor2: { max: 16 },   // Auto + SHIRT_COLORS (16)
+  shoeColor2:      { max: 8 },    // Auto + SHOE_COLORS (8)
+  helmet:          { max: 5 },    // HELMET_STYLES (0 = none)
+  helmetColor:     { max: 15 },   // SHIRT_COLORS
+  prop:            { max: 5 },    // PROP_STYLES (0 = none)
+  propColor:       { max: 15 },   // SHIRT_COLORS
+  emblem:          { max: 5 },    // EMBLEM_STYLES (0 = none)
+  emblemColor:     { max: 15 }    // SHIRT_COLORS
 };
 
 function pickInt(value, max) {

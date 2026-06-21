@@ -160,8 +160,8 @@ const AppView = {
 
     $("#friends-btn")?.addEventListener("click", () => showFriendsPanel());
     $("#walkers-btn")?.addEventListener("click", () => Walkers.showWalkerPicker());
-    // Character editor — same modal as /home; HomeBuilder fetches the saved
-    // character itself when `initial` is omitted.
+    // Character editor — HomeBuilder.open() now routes to the /customize page
+    // (stashing this route to return to). The page fetches the saved character.
     $("#nav-character-btn")?.addEventListener("click", () => HomeBuilder.open({}));
 
     // Fight toggle — flips the persistent setting and updates the label.

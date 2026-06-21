@@ -56,7 +56,7 @@ app.use(express.json({ limit: '64kb' }));
 
 // SPA routes — BEFORE static middleware so they take priority over index.html
 const spaFile = path.join(__dirname, 'spa.html');
-['/', '/map', '/login', '/profile', '/characters', '/home', '/admin', '/world'].forEach(route => {
+['/', '/map', '/login', '/profile', '/characters', '/home', '/customize', '/admin', '/world'].forEach(route => {
   app.get(route, (req, res) => res.sendFile(spaFile));
 });
 // Parameterized SPA routes — `/friend/:username` and its sub-tabs all

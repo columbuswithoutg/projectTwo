@@ -121,7 +121,12 @@ const HomeView = {
       HomeView._renderEmptyHome();
       // Open the character builder on the first visit so users still get
       // the "make your character" moment even when there are no rooms yet.
-      if (isFresh) HomeView._openBuilder({ firstTime: true });
+      // Builder is now the /customize page; guard so cancelling there (which
+      // returns here still "fresh") doesn't bounce the user back in a loop.
+      if (isFresh && !HomeView._firstVisitPrompted) {
+        HomeView._firstVisitPrompted = true;
+        HomeView._openBuilder({ firstTime: true });
+      }
       return;
     }
 
@@ -157,7 +162,8 @@ const HomeView = {
 
     HomeView._wireVoiceToggle();
 
-    if (isFresh) {
+    if (isFresh && !HomeView._firstVisitPrompted) {
+      HomeView._firstVisitPrompted = true;
       HomeView._openBuilder({ firstTime: true });
     }
   },

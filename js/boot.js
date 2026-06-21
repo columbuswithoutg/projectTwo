@@ -36,6 +36,7 @@ bootContent().catch(() => { /* fallbacks already in place */ }).finally(() => {
   Router.register('/characters', CharactersView);
   Router.register('/home', HomeView);
   Router.register('/home/edit', HomeEditView);
+  Router.register('/customize', CustomizeView);
   Router.register('/world', WorldView);
   Router.register('/admin', AdminView);
   Router.register('/friend/:username',         FriendWatchView);

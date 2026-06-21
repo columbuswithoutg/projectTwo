@@ -540,10 +540,29 @@ const Playground3D = (() => {
     const beardIdx = c.facialHairStyle ?? 0;
     const glassesIdx = c.glasses ?? 0;
     const hatIdx = c.hat ?? 0;
-    // Build (size/bulk) + hero gear. `?? 1`/`?? 0` keep pre-existing saved
-    // characters (which have neither field) at Normal build / no gear.
+    // Body build (size/bulk). `?? 1` keeps pre-existing saved characters
+    // (which have no `build` field) at Normal.
     const buildIdx = c.build ?? 1;
-    const gearIdx = c.gear ?? 0;
+    // ── clothing-shape slots ──
+    // A full-body suit (suit > 0) recolors and owns the torso + legs + arms and
+    // suppresses the standalone top/bottom styles; only a cape may layer over it
+    // (handled below). All slots default 0 → legacy/None, so pre-upgrade saved
+    // characters render identically.
+    const suitIdx = c.suit ?? 0;
+    const suitActive = suitIdx > 0;
+    const topStyle = c.shirtStyle ?? 0;
+    const bottomStyle = c.pantsStyle ?? 0;
+    const footStyle = c.shoeStyle ?? 0;
+    let outerIdx = c.outerwear ?? 0;
+    if (suitActive && outerIdx !== 6) outerIdx = 0;     // suit allows only a cape
+    const topSpec = _topSpec(suitActive ? -1 : topStyle);
+    const bottomSpec = _bottomSpec(suitActive ? -1 : bottomStyle);
+    // Round 2: gender silhouette, reusable hero pieces, and the shared
+    // hidden-slot map (so the rig never builds a part the UI greys out).
+    const g = _genderSpec(c.gender ?? 0);
+    const helmetIdx = c.helmet ?? 0, propIdx = c.prop ?? 0, emblemIdx = c.emblem ?? 0;
+    const hidden = (typeof Playground !== 'undefined' && Playground.characterHidden)
+      ? Playground.characterHidden(c) : {};
     const buildDef = (typeof Playground !== 'undefined' && Playground.BUILDS && Playground.BUILDS[buildIdx])
       || { scale: 1, bulk: 1 };
     const bulk = buildDef.bulk;
@@ -555,6 +574,19 @@ const Playground3D = (() => {
     const shoeMat  = new THREE.MeshLambertMaterial({ color: shoeHex });
     const eyeMat   = new THREE.MeshLambertMaterial({ color: eyeHex });
     const beardMat = new THREE.MeshLambertMaterial({ color: beardHex });
+    // New clothing-shape materials.
+    const outerMat = new THREE.MeshLambertMaterial({ color: _palette('SHIRT_COLORS', c.outerwearColor) });
+    const suitMat  = new THREE.MeshLambertMaterial({ color: _palette('SUIT_COLORS', c.suitColor) });
+    const accMat   = new THREE.MeshLambertMaterial({ color: _palette('ACCESSORY_COLORS', c.accessoryColor) });
+    // Base limb/torso colors honoring the suit override.
+    const legMat   = suitActive ? suitMat : pantsMat;
+    const topMat   = suitActive ? suitMat : shirtMat;
+    // Hero-piece colors + pants accent (secondary) material (Auto → legMat).
+    const helmetMat = new THREE.MeshLambertMaterial({ color: _palette('SHIRT_COLORS', c.helmetColor) });
+    const propMat   = new THREE.MeshLambertMaterial({ color: _palette('SHIRT_COLORS', c.propColor) });
+    const emblemMat = new THREE.MeshLambertMaterial({ color: _palette('SHIRT_COLORS', c.emblemColor) });
+    const pantsAccInt = ((c.pantsColor2 ?? 0) > 0) ? _palette('PANTS_COLORS', (c.pantsColor2) - 1) : null;
+    const pantsAccMat = (pantsAccInt != null) ? new THREE.MeshLambertMaterial({ color: pantsAccInt }) : legMat;
 
     const mkBox = (w, h, d, mat, cast = true) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -579,29 +611,69 @@ const Playground3D = (() => {
     const mkLeg = (xOffset) => {
       const pivot = new THREE.Group();
       pivot.position.set(xOffset, HIP_Y, 0);
-      const leg = mkBox(LEG_W, LEG_LEN, LEG_D, pantsMat);
+      const shape = bottomSpec.legShape;
+      // Shorts/skirt expose a bare (skin) lower leg; everything else is a
+      // single pant/suit-colored limb. Slim narrows the limb. Index 0/legacy
+      // and the suit case both fall through to a plain full-length leg, so the
+      // base geometry is unchanged from before.
+      const bare = (shape === 'shorts' || shape === 'skirt');
+      const limbMat = bare ? skinMat : legMat;
+      const wScale = (shape === 'slim') ? 0.85 : 1;
+      const leg = mkBox(LEG_W * wScale, LEG_LEN, LEG_D * wScale, limbMat);
       leg.position.y = -LEG_LEN / 2;
       pivot.add(leg);
-      const foot = mkBox(LEG_W * 1.6, FOOT_H, LEG_D * 1.4, shoeMat);
-      // Foot center sits half its own height above the leg's bottom, so
-      // the foot's bottom face is flush with the leg bottom (y=0 in the
-      // root's frame). Previously it hung 0.16u below the leg bottom and
-      // visibly clipped into the floor.
-      foot.position.set(0, -LEG_LEN + FOOT_H / 2, 0.05);
-      pivot.add(foot);
+      if (shape === 'shorts') {
+        const sh = mkBox(LEG_W * 1.06, LEG_LEN * 0.5, LEG_D * 1.06, legMat);
+        sh.position.y = -LEG_LEN * 0.25;
+        pivot.add(sh);
+      } else if (shape === 'cargo') {
+        [-1, 1].forEach(s => {
+          const pk = mkBox(0.06, LEG_LEN * 0.22, LEG_D * 0.7, pantsAccMat);
+          pk.position.set(s * (LEG_W / 2 + 0.02), -LEG_LEN * 0.45, 0);
+          pivot.add(pk);
+        });
+      } else if (shape === 'joggers') {
+        const cuff = mkBox(LEG_W * 1.1, 0.12, LEG_D * 1.1, pantsAccMat);
+        cuff.position.y = -LEG_LEN + 0.06;
+        pivot.add(cuff);
+      } else if (shape === 'greaves') {
+        const plate = mkBox(LEG_W * 1.12, LEG_LEN * 0.55, LEG_D * 1.12, pantsAccInt != null ? pantsAccMat : accMat);
+        plate.position.set(0, -LEG_LEN * 0.6, 0.02);
+        pivot.add(plate);
+      }
+      // Footwear (index 0 reproduces the legacy foot box exactly).
+      const fw = _buildFootwear(footStyle, shoeMat, { LEG_W, LEG_D, LEG_LEN, FOOT_H }, c.shoeColor2 ?? 0);
+      if (fw) pivot.add(fw);
       return pivot;
     };
     const leftLeg = mkLeg(-0.18 * bulk);
     const rightLeg = mkLeg(0.18 * bulk);
     body.add(leftLeg);
     body.add(rightLeg);
+    // Skirt — a single flared piece around the hips (the legs underneath stay
+    // bare skin). Only for the standalone skirt bottom, not a suit.
+    if (!suitActive && bottomSpec.legShape === 'skirt') {
+      const skirt = new THREE.Mesh(
+        new THREE.CylinderGeometry(LEG_W * 2.2, LEG_W * 3.4, 0.55, 16),
+        pantsMat
+      );
+      skirt.position.y = HIP_Y - 0.18;
+      skirt.castShadow = true;
+      body.add(skirt);
+    }
 
     // Torso. Width/depth widen with `bulk` so a Huge build reads as broad,
     // not just a bigger copy; height stays fixed (overall scale handles tall).
-    const TORSO_W = 0.85 * bulk, TORSO_H = 0.75, TORSO_D = 0.45 * bulk;
-    const torso = mkBox(TORSO_W, TORSO_H, TORSO_D, shirtMat);
+    const TORSO_W = 0.85 * bulk * g.torsoWMul, TORSO_H = 0.75, TORSO_D = 0.45 * bulk;
+    const torso = mkBox(TORSO_W, TORSO_H, TORSO_D, topMat);
     torso.position.y = HIP_Y + TORSO_H / 2;
     body.add(torso);
+    // Top-style detail (collar / hood / pocket / stripe) — torso-local.
+    // Suppressed for a suit (the suit builder owns torso detailing).
+    if (!suitActive) {
+      const topDetail = _buildTopDetail(topStyle, shirtMat, skinMat, { TORSO_W, TORSO_H, TORSO_D }, c.shirtColor2 ?? 0);
+      if (topDetail) torso.add(topDetail);
+    }
 
     // Arms (pivot at the shoulder, hangs down).
     const SHOULDER_Y = HIP_Y + TORSO_H - 0.05;
@@ -613,17 +685,43 @@ const Playground3D = (() => {
       pivot.position.set(xSign * (TORSO_W / 2 + ARM_W / 2 - 0.02), SHOULDER_Y, 0);
       const arm = mkBox(ARM_W, ARM_LEN, ARM_D, skinMat);
       arm.position.y = -ARM_LEN / 2;
-      // Sleeve (top portion shirt-colored).
-      const sleeve = mkBox(ARM_W * 1.02, ARM_LEN * 0.4, ARM_D * 1.02, shirtMat);
-      sleeve.position.y = -ARM_LEN * 0.2;
       pivot.add(arm);
-      pivot.add(sleeve);
+      // Sleeve length depends on the top style: 'short' (legacy tee, 0.4),
+      // 'long' (long-sleeve/hoodie/turtleneck/suit, 0.95), or 'none' (tank).
+      if (topSpec.sleeve !== 'none') {
+        const frac = topSpec.sleeve === 'long' ? 0.95 : 0.4;
+        const sleeve = mkBox(ARM_W * 1.02, ARM_LEN * frac, ARM_D * 1.02, topMat);
+        sleeve.position.y = -ARM_LEN * (frac / 2);
+        pivot.add(sleeve);
+      }
       return pivot;
     };
     const leftArm = mkArm(-1);
     const rightArm = mkArm(1);
     body.add(leftArm);
     body.add(rightArm);
+
+    // Gender shaping — parented to bones so it animates. Neutral (g.* all 0)
+    // adds nothing → identical to pre-round-2 output.
+    if (g.shoulderPad > 0) {
+      const pad = mkBox(TORSO_W * 1.18, 0.12, TORSO_D * 1.05, topMat);
+      pad.position.y = TORSO_H / 2 - 0.02;
+      torso.add(pad);
+    }
+    if (g.chest > 0) {
+      [-1, 1].forEach(s => {
+        const b = new THREE.Mesh(new THREE.SphereGeometry(g.chest * bulk, 10, 8), topMat);
+        b.position.set(s * TORSO_W * 0.22, TORSO_H * 0.08, TORSO_D / 2);
+        b.castShadow = true;
+        torso.add(b);
+      });
+    }
+    if (g.hip > 0) {
+      const hipPiece = new THREE.Mesh(new THREE.CylinderGeometry(TORSO_W * 0.42, TORSO_W * 0.52, 0.35, 14), legMat);
+      hipPiece.position.y = HIP_Y;
+      hipPiece.castShadow = true;
+      body.add(hipPiece);
+    }
 
     // Head + face.
     const HEAD_SZ = 0.55;
@@ -654,30 +752,58 @@ const Playground3D = (() => {
     mouth.position.set(0, -0.12, HEAD_SZ / 2 + 0.001);
     head.add(mouth);
 
-    // Facial hair — sits on the front of the head; built per-style.
-    const beard = _buildFacialHair(beardIdx, beardMat, HEAD_SZ);
-    if (beard) head.add(beard);
+    // Facial hair — skipped when hidden (a full mask covers the face).
+    if (!hidden.facialHairStyle) {
+      const beard = _buildFacialHair(beardIdx, beardMat, HEAD_SZ);
+      if (beard) head.add(beard);
+    }
 
-    // Hair — per-style box arrangement on top of head.
-    const hair = _buildHair(styleIdx, hairMat, HEAD_SZ);
-    if (hair) head.add(hair);
+    // Hair — skipped when hidden (helmet / hood).
+    if (!hidden.hairStyle) {
+      const hair = _buildHair(styleIdx, hairMat, HEAD_SZ);
+      if (hair) head.add(hair);
+    }
 
-    // Glasses — sit just in front of the eye plane.
-    const glasses = _buildGlasses(glassesIdx, HEAD_SZ);
-    if (glasses) head.add(glasses);
+    // Glasses — skipped when hidden (full mask).
+    if (!hidden.glasses) {
+      const glasses = _buildGlasses(glassesIdx, HEAD_SZ);
+      if (glasses) head.add(glasses);
+    }
 
-    // Hat — sits above the hair on top of the head. Cap variant borrows
-    // the shirt color so it can match the outfit.
-    const hat = _buildHat(hatIdx, HEAD_SZ, shirtHex);
-    if (hat) head.add(hat);
+    // Hat — skipped when hidden (helmet). Cap variant borrows the shirt color.
+    if (!hidden.hat) {
+      const hat = _buildHat(hatIdx, HEAD_SZ, shirtHex);
+      if (hat) head.add(hat);
+    }
 
     body.add(head);
 
-    // Hero gear (helmet / shield / cape / weapons) — attaches extra meshes to
-    // the head/torso/arm groups built above. No-op when gearIdx is 0.
-    _buildGear(gearIdx, {
-      head, torso, body, leftArm, rightArm,
-      dims: { HEAD_SZ, TORSO_W, TORSO_H, TORSO_D, HIP_Y, ARM_LEN }
+    // Outerwear layer (jacket / coat / vest / cape) — body-local, over the
+    // torso. No-op when outerIdx is 0.
+    const outerwearGrp = _buildOuterwear(outerIdx, outerMat, { TORSO_W, TORSO_H, TORSO_D, HIP_Y }, c.outerwearColor2 ?? 0);
+    if (outerwearGrp) body.add(outerwearGrp);
+
+    // Full-body suit detailing (the base torso/legs/arms are already recolored
+    // to the suit color above). No-op when suit is 0.
+    if (suitActive) {
+      const suitExtra = _buildSuit(suitIdx, suitMat, accMat, { TORSO_W, TORSO_H, TORSO_D, HIP_Y });
+      if (suitExtra) body.add(suitExtra);
+    }
+
+    // Reusable hero pieces (replaced the old `gear` slot). Helmet → head,
+    // emblem → torso (proud of any chest layer), prop → a hand (swings w/ arm).
+    const helmetGrp = _buildHelmet(helmetIdx, helmetMat, HEAD_SZ);
+    if (helmetGrp) head.add(helmetGrp);
+    const emblemGrp = _buildEmblem(emblemIdx, emblemMat, { TORSO_D });
+    if (emblemGrp) torso.add(emblemGrp);
+    _buildProp(propIdx, propMat, { leftArm, rightArm, dims: { ARM_LEN } });
+
+    // Accessories (gloves / belt / mask) — mask suppressed when a helmet hides it.
+    _buildAccessories({
+      head, torso, leftArm, rightArm,
+      dims: { HEAD_SZ, TORSO_W, TORSO_H, TORSO_D, ARM_LEN, ARM_W, ARM_D },
+      styles: { gloves: c.gloves ?? 0, belt: c.belt ?? 0, mask: hidden.mask ? 0 : (c.mask ?? 0) },
+      mat: accMat
     });
 
     // Build scale — grows the whole figure from the feet (root origin is at
@@ -1035,124 +1161,520 @@ const Playground3D = (() => {
     return grp;
   }
 
-  // Hero gear — per-Avenger mesh sets (gear index from js/playground.js
-  // GEAR_LABELS / CHARACTER_PRESETS). Index 0 (None) adds nothing. Pieces are
-  // attached directly to the rig's head/torso/arm groups so they move with the
-  // body, swing with the arms, and get disposed with the rest of the rig.
-  function _buildGear(gearIdx, ctx) {
-    if (!gearIdx) return;
-    const THREE = window.THREE;
-    const { head, torso, leftArm, rightArm, dims } = ctx;
-    const { HEAD_SZ, TORSO_W, TORSO_H, TORSO_D, ARM_LEN } = dims;
-    const mk = (w, h, d, color, emissive) => new THREE.Mesh(
-      new THREE.BoxGeometry(w, h, d),
-      new THREE.MeshLambertMaterial({ color, emissive: emissive || 0x000000 })
-    );
-    const cyl = (rt, rb, h, color, emissive) => new THREE.Mesh(
-      new THREE.CylinderGeometry(rt, rb, h, 20),
-      new THREE.MeshLambertMaterial({ color, emissive: emissive || 0x000000 })
-    );
-    const added = [];
-    const add = (parent, mesh) => { parent.add(mesh); added.push(mesh); return mesh; };
+  // ── Gender + reusable hero pieces (replaced the old all-in-one `gear`) ──
 
-    switch (gearIdx) {
-      case 1: { // Iron Man — red/gold helmet, arc reactor, gold forearm cuffs
-        const RED = 0xb1232b, GOLD = 0xd9a420, ARC = 0x9fe6ff;
-        add(head, mk(HEAD_SZ * 1.07, HEAD_SZ * 1.07, HEAD_SZ * 1.07, RED)); // shell over the face
-        const face = add(head, mk(HEAD_SZ * 0.82, HEAD_SZ * 0.7, 0.06, GOLD));
-        face.position.set(0, -0.02, HEAD_SZ / 2 + 0.02);
+  // Gender silhouette spec. Index 0 (Neutral) is unchanged so pre-round-2
+  // characters render identically. Applied as a torso-width multiplier plus
+  // extra meshes parented to the torso/body bones (so they animate).
+  function _genderSpec(idx) {
+    switch (idx) {
+      case 1: return { torsoWMul: 1.10, shoulderPad: 0.16, chest: 0,    hip: 0    }; // masculine
+      case 2: return { torsoWMul: 0.92, shoulderPad: 0,    chest: 0.07, hip: 0.55 }; // feminine
+      case 0:
+      default: return { torsoWMul: 1.00, shoulderPad: 0,   chest: 0,    hip: 0    }; // neutral
+    }
+  }
+
+  // Helmet → Group parented to head, or null. Covers hair/hat (enforced by the
+  // hide rules upstream). `mat` is the helmet color material.
+  function _buildHelmet(idx, mat, headSize) {
+    if (!idx) return null;
+    const THREE = window.THREE;
+    const grp = new THREE.Group();
+    const fz = headSize / 2;
+    const mkB = (w, h, d, m) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+    switch (idx) {
+      case 1: { // Iron Man — shell + gold faceplate + cyan eye slits
+        grp.add(mkB(headSize * 1.08, headSize * 1.08, headSize * 1.08, mat));
+        const face = mkB(headSize * 0.82, headSize * 0.7, 0.06, new THREE.MeshLambertMaterial({ color: 0xd9a420 }));
+        face.position.set(0, -0.02, fz + 0.03); grp.add(face);
         [-0.12, 0.12].forEach(x => {
-          const eye = add(head, mk(0.13, 0.045, 0.02, ARC, ARC));
-          eye.position.set(x, 0.06, HEAD_SZ / 2 + 0.06);
-        });
-        const arc = add(torso, cyl(0.09, 0.09, 0.04, ARC, ARC));
-        arc.rotation.x = Math.PI / 2;
-        arc.position.set(0, 0.08, TORSO_D / 2 + 0.02);
-        [leftArm, rightArm].forEach(a => {
-          const cuff = add(a, mk(0.27, 0.18, 0.27, GOLD));
-          cuff.position.y = -ARM_LEN * 0.86;
+          const eye = mkB(0.13, 0.045, 0.02, new THREE.MeshLambertMaterial({ color: 0x9fe6ff, emissive: 0x9fe6ff }));
+          eye.position.set(x, 0.05, fz + 0.06); grp.add(eye);
         });
         break;
       }
-      case 2: { // Captain America — back shield, blue cowl, chest star
-        const BLUE = 0x2a4a9a, RED = 0xb1232b, WHITE = 0xf0f0f0;
-        const cowl = add(head, mk(HEAD_SZ * 1.06, HEAD_SZ * 0.62, HEAD_SZ * 1.06, BLUE));
-        cowl.position.set(0, HEAD_SZ * 0.2, -0.02);
-        const aMark = add(head, mk(0.1, 0.12, 0.02, WHITE));
-        aMark.position.set(0, HEAD_SZ * 0.24, HEAD_SZ / 2 + 0.02);
-        const shield = new THREE.Group();
-        shield.add(cyl(0.42, 0.42, 0.05, RED));
-        shield.add(cyl(0.31, 0.31, 0.06, WHITE));
-        shield.add(cyl(0.21, 0.21, 0.07, RED));
-        shield.add(cyl(0.12, 0.12, 0.08, BLUE));
-        shield.add(mk(0.12, 0.12, 0.1, WHITE));
-        shield.rotation.x = Math.PI / 2;
-        shield.position.set(0, 0.05, -TORSO_D / 2 - 0.08);
-        add(torso, shield);
-        const cStar = add(torso, mk(0.14, 0.14, 0.02, WHITE));
-        cStar.position.set(0, 0.12, TORSO_D / 2 + 0.01);
-        break;
-      }
-      case 3: { // Thor — red cape, Mjölnir, silver helmet band + wings
-        const CAPE = 0x8a1f24, METAL = 0xb8bcc4, SILVER = 0xd8dce4;
-        const cape = add(torso, mk(TORSO_W * 1.08, TORSO_H + 0.55, 0.05, CAPE));
-        cape.position.set(0, -0.18, -TORSO_D / 2 - 0.03);
-        const hammer = new THREE.Group();
-        const handle = mk(0.06, 0.5, 0.06, 0x5a3a22); handle.position.y = -0.18; hammer.add(handle);
-        const headBlk = mk(0.24, 0.2, 0.2, METAL); headBlk.position.y = 0.1; hammer.add(headBlk);
-        hammer.position.set(0, -ARM_LEN - 0.02, 0.08);
-        add(rightArm, hammer);
-        const band = add(head, cyl(HEAD_SZ * 0.56, HEAD_SZ * 0.56, 0.1, SILVER));
-        band.position.y = HEAD_SZ * 0.42;
+      case 2: { // cowl — crown + sides, open face
+        const cowl = mkB(headSize * 1.06, headSize * 0.66, headSize * 1.06, mat);
+        cowl.position.set(0, headSize * 0.2, -0.02); grp.add(cowl);
         [-1, 1].forEach(s => {
-          const wing = add(head, mk(0.04, 0.22, 0.12, SILVER));
-          wing.position.set(s * (HEAD_SZ * 0.55), HEAD_SZ * 0.5, 0);
-          wing.rotation.z = s * 0.5;
+          const side = mkB(headSize * 0.18, headSize * 0.7, headSize * 1.04, mat);
+          side.position.set(s * headSize * 0.46, -headSize * 0.05, 0); grp.add(side);
         });
         break;
       }
-      case 4: // Hulk — no gear; his identity is the green skin + Huge build.
-        break;
-      case 5: { // Black Widow — utility belt, hip batons, hourglass emblem
-        const BLACK = 0x161616, GOLD = 0xd9a420, RED = 0xb1232b;
-        const belt = add(torso, mk(TORSO_W * 1.04, 0.12, TORSO_D * 1.04, BLACK));
-        belt.position.set(0, -TORSO_H / 2 + 0.02, 0);
-        const buckle = add(torso, mk(0.12, 0.1, 0.03, GOLD));
-        buckle.position.set(0, -TORSO_H / 2 + 0.02, TORSO_D / 2 + 0.01);
+      case 3: { // winged — skullcap + side wings
+        const cap = mkB(headSize * 1.06, headSize * 0.5, headSize * 1.06, mat);
+        cap.position.y = headSize * 0.3; grp.add(cap);
         [-1, 1].forEach(s => {
-          const baton = add(torso, mk(0.06, 0.26, 0.06, BLACK));
-          baton.position.set(s * (TORSO_W / 2 + 0.02), -TORSO_H / 2 - 0.05, 0.02);
+          const wing = mkB(0.04, 0.22, 0.12, new THREE.MeshLambertMaterial({ color: 0xd8dce4 }));
+          wing.position.set(s * headSize * 0.6, headSize * 0.42, 0);
+          wing.rotation.z = s * 0.5; grp.add(wing);
         });
-        const hourglass = add(torso, mk(0.1, 0.16, 0.02, RED));
-        hourglass.position.set(0, 0.12, TORSO_D / 2 + 0.01);
         break;
       }
-      case 6: { // Hawkeye — bow in hand, back quiver, tactical eye strap
-        const DARK = 0x3a2d5a, TIP = 0xcfd4dc, STRAP = 0x1a1a1a;
-        const bowGrp = new THREE.Group();
-        const bow = new THREE.Mesh(
-          new THREE.TorusGeometry(0.4, 0.025, 8, 20, Math.PI * 1.25),
-          new THREE.MeshLambertMaterial({ color: DARK })
-        );
-        bow.rotation.y = Math.PI / 2;
-        bow.rotation.z = Math.PI * 0.375;
-        bowGrp.add(bow);
-        const string = mk(0.012, 0.76, 0.012, 0xdddddd); bowGrp.add(string);
-        bowGrp.position.set(0, -ARM_LEN, 0.12);
-        add(leftArm, bowGrp);
-        const quiver = add(torso, cyl(0.07, 0.07, 0.5, STRAP));
-        quiver.position.set(-0.18, 0.05, -TORSO_D / 2 - 0.06);
-        quiver.rotation.x = 0.3; quiver.rotation.z = 0.4;
-        [-0.04, 0, 0.04].forEach(o => {
-          const tip = add(torso, mk(0.015, 0.18, 0.015, TIP));
-          tip.position.set(-0.18 + o, 0.34, -TORSO_D / 2 - 0.02);
-          tip.rotation.z = 0.4;
-        });
-        const strap = add(head, mk(HEAD_SZ * 0.92, 0.1, 0.02, STRAP));
-        strap.position.set(0, 0.05, HEAD_SZ / 2 + 0.01);
+      case 4: { // knight — full helm + dark visor slit
+        grp.add(mkB(headSize * 1.08, headSize * 1.08, headSize * 1.08, mat));
+        const visor = mkB(headSize * 0.8, 0.06, 0.03, new THREE.MeshLambertMaterial({ color: 0x111111 }));
+        visor.position.set(0, 0.04, fz + 0.04); grp.add(visor);
+        break;
+      }
+      case 5: { // visor — skullcap + tinted band over the eyes
+        const cap = mkB(headSize * 1.06, headSize * 0.5, headSize * 1.06, mat);
+        cap.position.y = headSize * 0.3; grp.add(cap);
+        const visor = mkB(headSize * 1.02, 0.16, 0.05, new THREE.MeshLambertMaterial({ color: 0x28435a }));
+        visor.position.set(0, 0.05, fz + 0.03); grp.add(visor);
         break;
       }
     }
+    grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    return grp;
+  }
+
+  // Held prop — attached to a HAND (the end of an arm pivot) so it swings with
+  // the walk cycle. No-op for index 0. `mat` is the prop color material.
+  // The hand hangs at local y = -ARM_LEN; each prop is gripped there and given
+  // a natural orientation (the bow lies in the FRONTAL plane facing forward,
+  // not wrapped around the body; blades/handles tilt slightly forward so they
+  // read as wielded rather than dangling at the side).
+  function _buildProp(idx, mat, ctx) {
+    if (!idx) return;
+    const THREE = window.THREE;
+    const { leftArm, rightArm, dims } = ctx;
+    const { ARM_LEN } = dims;
+    const handY = -ARM_LEN;
+    const metal = () => new THREE.MeshLambertMaterial({ color: 0xc9ccd4 });
+    const grp = new THREE.Group();
+    let arm = rightArm;
+    switch (idx) {
+      case 1: { // shield — strapped to the left forearm, facing forward
+        arm = leftArm;
+        const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.05, 20), mat);
+        disc.rotation.x = Math.PI / 2; grp.add(disc);
+        const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.06, 20), new THREE.MeshLambertMaterial({ color: 0xf0f0f0 }));
+        ring.rotation.x = Math.PI / 2; grp.add(ring);
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.07, 16), mat);
+        hub.rotation.x = Math.PI / 2; grp.add(hub);
+        grp.position.set(0, handY + 0.12, 0.2);
+        break;
+      }
+      case 2: { // hammer — gripped at the side, heavy head down, tilted forward
+        const handle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.42, 0.07), new THREE.MeshLambertMaterial({ color: 0x5a3a22 }));
+        handle.position.y = -0.1; grp.add(handle);
+        const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.24, 0.24), metal());
+        head.position.y = -0.38; grp.add(head);
+        grp.position.set(0.02, handY + 0.06, 0.14);
+        grp.rotation.x = -0.3;
+        break;
+      }
+      case 3: { // bow — held vertically in the left hand, FACING FORWARD
+        arm = leftArm;
+        const bow = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.022, 8, 22, Math.PI * 1.5), mat);
+        bow.rotation.z = Math.PI * 0.25; grp.add(bow);
+        const string = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.6, 0.012), new THREE.MeshLambertMaterial({ color: 0xdddddd }));
+        string.position.z = -0.04; grp.add(string);
+        grp.position.set(-0.03, handY, 0.26);
+        break;
+      }
+      case 4: { // sword — blade up, gripped, tilted forward
+        const blade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.55, 0.03), metal());
+        blade.position.y = 0.3; grp.add(blade);
+        const guard = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.06), mat);
+        guard.position.y = 0.02; grp.add(guard);
+        const grip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.05), new THREE.MeshLambertMaterial({ color: 0x3a2a1a }));
+        grip.position.y = -0.06; grp.add(grip);
+        grp.position.set(0, handY + 0.04, 0.12);
+        grp.rotation.x = -0.25;
+        break;
+      }
+      case 5: { // staff — vertical, gripped at the side, slight forward tilt
+        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.0, 10), mat);
+        grp.add(shaft);
+        const orb = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 10), new THREE.MeshLambertMaterial({ color: 0xd9a420 }));
+        orb.position.y = 0.55; grp.add(orb);
+        grp.position.set(0, handY + 0.2, 0.12);
+        grp.rotation.x = -0.12;
+        break;
+      }
+    }
+    grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    arm.add(grp);
+  }
+
+  // Chest emblem → Group parented to torso, drawn proud of any jacket / suit
+  // chest layer so it stays visible. No-op for index 0.
+  function _buildEmblem(idx, mat, d) {
+    if (!idx) return null;
+    const THREE = window.THREE;
+    const { TORSO_D } = d;
+    const fz = TORSO_D / 2 + 0.14;       // proud of jacket/armor chest layers
+    const grp = new THREE.Group();
+    switch (idx) {
+      case 1: { // star
+        const star = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.02, 5), mat);
+        star.rotation.x = Math.PI / 2; grp.add(star);
+        break;
+      }
+      case 2: { // arc reactor — emissive ring + core
+        const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.03, 18), new THREE.MeshLambertMaterial({ color: 0x9fe6ff, emissive: 0x6fd0e6 }));
+        ring.rotation.x = Math.PI / 2; grp.add(ring);
+        const core = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.04, 14), new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffffff }));
+        core.rotation.x = Math.PI / 2; grp.add(core);
+        break;
+      }
+      case 3: { // lightning bolt
+        const b1 = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.16, 0.02), mat); b1.position.set(0.02, 0.06, 0); b1.rotation.z = 0.5; grp.add(b1);
+        const b2 = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.16, 0.02), mat); b2.position.set(-0.02, -0.06, 0); b2.rotation.z = 0.5; grp.add(b2);
+        break;
+      }
+      case 4: { // spider — body + radiating legs
+        grp.add(new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), mat));
+        for (let i = 0; i < 4; i++) {
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.16, 0.02), mat);
+          leg.rotation.z = (i - 1.5) * 0.45; grp.add(leg);
+        }
+        break;
+      }
+      case 5: { // badge — rounded plate
+        grp.add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.03), mat));
+        break;
+      }
+    }
+    grp.position.set(0, 0.06, fz);
+    grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    return grp;
+  }
+
+  // ── clothing-shape builders ───────────────────────────────────────────
+  // Two data-only spec helpers (consulted by the base leg/arm meshes) + five
+  // geometry builders following the established conventions: _buildTopDetail/
+  // _buildFootwear/_buildOuterwear/_buildSuit return a Group-or-null (like
+  // _buildHair/_buildHat); _buildAccessories attaches to multiple anchors
+  // (like _buildGear). idx -1 means "suppressed by a suit".
+
+  // Sleeve length for the arm overlay. Index 0 = legacy short sleeve.
+  function _topSpec(idx) {
+    switch (idx) {
+      case -1: return { sleeve: 'long' };   // suit owns the arms
+      case 1:  return { sleeve: 'none' };   // tank
+      case 2:  return { sleeve: 'long' };   // long sleeve
+      case 3:  return { sleeve: 'long' };   // hoodie
+      case 6:  return { sleeve: 'long' };   // turtleneck
+      case 0:                                // tee (legacy)
+      case 4:                                // polo
+      case 5:                                // v-neck
+      case 7:                                // jersey
+      default: return { sleeve: 'short' };
+    }
+  }
+
+  // Leg silhouette. Index 0 = legacy full-length pants.
+  function _bottomSpec(idx) {
+    switch (idx) {
+      case 1:  return { legShape: 'slim' };
+      case 2:  return { legShape: 'cargo' };
+      case 3:  return { legShape: 'shorts' };
+      case 4:  return { legShape: 'skirt' };
+      case 5:  return { legShape: 'joggers' };
+      case 6:  return { legShape: 'greaves' };
+      case -1:                               // suit (recolored plain legs)
+      case 0:                                // pants (legacy)
+      default: return { legShape: 'pants' };
+    }
+  }
+
+  // Torso-local detail group, or null. `mat` is the shirt material, `skinMat`
+  // exposes cut-outs (tank shoulders / v-neck).
+  function _buildTopDetail(idx, mat, skinMat, d, accentField) {
+    const THREE = window.THREE;
+    const { TORSO_W, TORSO_H, TORSO_D } = d;
+    const fz = TORSO_D / 2 + 0.005;
+    // Accent (secondary) color — Auto (field 0) → each detail's built-in default.
+    const accInt = (accentField > 0) ? _palette('SHIRT_COLORS', accentField - 1) : null;
+    const accMat = (accInt != null) ? new THREE.MeshLambertMaterial({ color: accInt }) : null;
+    const grp = new THREE.Group();
+    const mkB = (w, h, dep, m) => new THREE.Mesh(new THREE.BoxGeometry(w, h, dep), m);
+    switch (idx) {
+      case 1: { // tank — bare (skin) shoulders over the shirt
+        [-1, 1].forEach(s => {
+          const sh = mkB(TORSO_W * 0.28, TORSO_H * 0.42, TORSO_D * 1.02, skinMat);
+          sh.position.set(s * TORSO_W * 0.36, TORSO_H * 0.27, 0);
+          grp.add(sh);
+        });
+        break;
+      }
+      case 3: { // hoodie — front pocket (accent or darker shade) + hood
+        const dark = accMat || new THREE.MeshLambertMaterial({ color: mat.color.clone().multiplyScalar(0.78) });
+        const pocket = mkB(TORSO_W * 0.6, TORSO_H * 0.26, 0.04, dark);
+        pocket.position.set(0, -TORSO_H * 0.18, fz);
+        grp.add(pocket);
+        const hood = mkB(TORSO_W * 0.7, TORSO_H * 0.26, TORSO_D * 0.6, mat);
+        hood.position.set(0, TORSO_H * 0.5, -TORSO_D * 0.35);
+        grp.add(hood);
+        break;
+      }
+      case 4: { // polo — collar wings (accent-tinted) + bow tie when an accent is chosen
+        const cMat = accMat || mat;
+        [-1, 1].forEach(s => {
+          const cw = mkB(TORSO_W * 0.24, TORSO_H * 0.14, 0.04, cMat);
+          cw.position.set(s * TORSO_W * 0.12, TORSO_H * 0.42, fz);
+          cw.rotation.z = s * 0.4;
+          grp.add(cw);
+        });
+        if (accMat) {
+          [-1, 1].forEach(s => {
+            const bt = mkB(0.1, 0.07, 0.04, accMat);
+            bt.position.set(s * 0.05, TORSO_H * 0.3, fz + 0.01);
+            bt.rotation.z = s * 0.6;
+            grp.add(bt);
+          });
+        }
+        break;
+      }
+      case 5: { // v-neck — skin V at the collar
+        const v = mkB(TORSO_W * 0.2, TORSO_H * 0.22, 0.05, skinMat);
+        v.position.set(0, TORSO_H * 0.36, fz);
+        v.rotation.z = Math.PI / 4;
+        grp.add(v);
+        break;
+      }
+      case 6: { // turtleneck — collar ring at the neck
+        const collar = new THREE.Mesh(new THREE.CylinderGeometry(TORSO_W * 0.3, TORSO_W * 0.3, 0.16, 12), mat);
+        collar.position.set(0, TORSO_H * 0.52, 0);
+        grp.add(collar);
+        break;
+      }
+      case 7: { // jersey — chest stripe (accent or white)
+        const stripe = mkB(TORSO_W * 1.01, TORSO_H * 0.16, 0.02, accMat || new THREE.MeshLambertMaterial({ color: 0xffffff }));
+        stripe.position.set(0, 0, fz);
+        grp.add(stripe);
+        break;
+      }
+      default: return null; // 0 tee, 2 long sleeve — no torso detail
+    }
+    grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    return grp;
+  }
+
+  // Footwear group (added to a leg pivot). Index 0 reproduces the legacy foot.
+  function _buildFootwear(idx, mat, d, accentField) {
+    const THREE = window.THREE;
+    const { LEG_W, LEG_D, LEG_LEN, FOOT_H } = d;
+    const baseY = -LEG_LEN + FOOT_H / 2;
+    const accInt = (accentField > 0) ? _palette('SHOE_COLORS', accentField - 1) : null;
+    const grp = new THREE.Group();
+    const mkB = (w, h, dep, m) => new THREE.Mesh(new THREE.BoxGeometry(w, h, dep), m);
+    switch (idx) {
+      case 1: { // sneakers — foot + sole (accent or white)
+        const foot = mkB(LEG_W * 1.7, FOOT_H, LEG_D * 1.6, mat);
+        foot.position.set(0, baseY, 0.06); grp.add(foot);
+        const sole = mkB(LEG_W * 1.75, FOOT_H * 0.4, LEG_D * 1.65, new THREE.MeshLambertMaterial({ color: accInt != null ? accInt : 0xf0f0f0 }));
+        sole.position.set(0, -LEG_LEN + FOOT_H * 0.2, 0.06); grp.add(sole);
+        break;
+      }
+      case 2: { // hi-tops — foot + ankle collar
+        const foot = mkB(LEG_W * 1.6, FOOT_H, LEG_D * 1.5, mat);
+        foot.position.set(0, baseY, 0.05); grp.add(foot);
+        const collar = mkB(LEG_W * 1.2, 0.18, LEG_D * 1.2, mat);
+        collar.position.set(0, -LEG_LEN + 0.22, 0); grp.add(collar);
+        break;
+      }
+      case 3: { // boots — foot + tall shaft (+ accent cuff when chosen)
+        const foot = mkB(LEG_W * 1.6, FOOT_H, LEG_D * 1.55, mat);
+        foot.position.set(0, baseY, 0.06); grp.add(foot);
+        const shaft = mkB(LEG_W * 1.25, 0.4, LEG_D * 1.25, mat);
+        shaft.position.set(0, -LEG_LEN + 0.3, 0); grp.add(shaft);
+        if (accInt != null) {
+          const cuff = mkB(LEG_W * 1.3, 0.1, LEG_D * 1.3, new THREE.MeshLambertMaterial({ color: accInt }));
+          cuff.position.set(0, -LEG_LEN + 0.48, 0); grp.add(cuff);
+        }
+        break;
+      }
+      case 4: { // dress — slim, longer toe
+        const foot = mkB(LEG_W * 1.5, FOOT_H * 0.85, LEG_D * 1.85, mat);
+        foot.position.set(0, baseY, 0.1); grp.add(foot);
+        break;
+      }
+      case 5: { // heels — slim foot + heel nub
+        const foot = mkB(LEG_W * 1.4, FOOT_H * 0.7, LEG_D * 1.7, mat);
+        foot.position.set(0, baseY, 0.07); grp.add(foot);
+        const heel = mkB(LEG_W * 0.4, FOOT_H * 1.3, LEG_D * 0.4, mat);
+        heel.position.set(0, -LEG_LEN - FOOT_H * 0.35, -LEG_D * 0.55); grp.add(heel);
+        break;
+      }
+      case 6: { // sandals — flat sole + strap
+        const sole = mkB(LEG_W * 1.6, FOOT_H * 0.5, LEG_D * 1.6, mat);
+        sole.position.set(0, -LEG_LEN + FOOT_H * 0.25, 0.06); grp.add(sole);
+        const strap = mkB(LEG_W * 1.3, 0.05, LEG_D * 0.4, mat);
+        strap.position.set(0, baseY + 0.02, 0.1); grp.add(strap);
+        break;
+      }
+      default: { // 0 — legacy foot box (LEG_W*1.6 × FOOT_H × LEG_D*1.4 @ +0.05z)
+        const foot = mkB(LEG_W * 1.6, FOOT_H, LEG_D * 1.4, mat);
+        foot.position.set(0, baseY, 0.05); grp.add(foot);
+      }
+    }
+    grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    return grp;
+  }
+
+  // Outerwear layer (body-local), or null for index 0.
+  function _buildOuterwear(idx, mat, d, accentField) {
+    if (!idx) return null;
+    const THREE = window.THREE;
+    const { TORSO_W, TORSO_H, TORSO_D, HIP_Y } = d;
+    const cy = HIP_Y + TORSO_H / 2;            // torso center in body space
+    const fz = TORSO_D / 2 + 0.06;
+    const grp = new THREE.Group();
+    const mkB = (w, h, dep, m) => new THREE.Mesh(new THREE.BoxGeometry(w, h, dep), m);
+    // Seam/lining accent — Auto (field 0) → today's near-black seam.
+    const seamInt = (accentField > 0) ? _palette('SHIRT_COLORS', accentField - 1) : 0x111111;
+    const seamMat = new THREE.MeshLambertMaterial({ color: seamInt });
+    switch (idx) {
+      case 1: case 2: { // jacket / bomber — shell + open-front seam
+        const shell = mkB(TORSO_W * 1.12, TORSO_H * 1.04, TORSO_D * 1.12, mat);
+        shell.position.y = cy; grp.add(shell);
+        const seam = mkB(0.05, TORSO_H * 1.0, 0.02, seamMat);
+        seam.position.set(0, cy, fz); grp.add(seam);
+        if (idx === 2) { // bomber — ribbed hem
+          const hem = mkB(TORSO_W * 1.14, 0.1, TORSO_D * 1.14, mat);
+          hem.position.y = cy - TORSO_H * 0.52; grp.add(hem);
+        }
+        break;
+      }
+      case 3: { // trench coat — shell + long skirt below the torso
+        const shell = mkB(TORSO_W * 1.12, TORSO_H * 1.04, TORSO_D * 1.12, mat);
+        shell.position.y = cy; grp.add(shell);
+        const skirt = mkB(TORSO_W * 1.12, TORSO_H * 0.95, TORSO_D * 1.12, mat);
+        skirt.position.y = HIP_Y - TORSO_H * 0.38; grp.add(skirt);
+        const seam = mkB(0.05, TORSO_H * 1.9, 0.02, seamMat);
+        seam.position.set(0, cy - TORSO_H * 0.4, fz); grp.add(seam);
+        break;
+      }
+      case 4: { // hooded jacket — shell + hood behind the head
+        const shell = mkB(TORSO_W * 1.12, TORSO_H * 1.02, TORSO_D * 1.12, mat);
+        shell.position.y = cy; grp.add(shell);
+        const hood = mkB(TORSO_W * 0.82, TORSO_H * 0.42, TORSO_D * 0.72, mat);
+        hood.position.set(0, HIP_Y + TORSO_H + 0.06, -TORSO_D * 0.4); grp.add(hood);
+        break;
+      }
+      case 5: { // vest — shorter sleeveless shell + seam
+        const shell = mkB(TORSO_W * 1.1, TORSO_H * 0.95, TORSO_D * 1.1, mat);
+        shell.position.y = cy; grp.add(shell);
+        const seam = mkB(0.05, TORSO_H * 0.9, 0.02, seamMat);
+        seam.position.set(0, cy, fz); grp.add(seam);
+        break;
+      }
+      case 6: { // cape — flat plane behind, hanging to the legs
+        const cape = mkB(TORSO_W * 1.15, TORSO_H + 0.7, 0.04, mat);
+        cape.position.set(0, cy - 0.25, -TORSO_D / 2 - 0.05); grp.add(cape);
+        break;
+      }
+    }
+    grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    return grp;
+  }
+
+  // Full-body suit detailing (body-local), or null for index 0. The base
+  // torso/legs/arms are already recolored to the suit color by _buildPlayer.
+  function _buildSuit(idx, mat, accMat, d) {
+    if (!idx) return null;
+    const THREE = window.THREE;
+    const { TORSO_W, TORSO_H, TORSO_D, HIP_Y } = d;
+    const cy = HIP_Y + TORSO_H / 2;
+    const fz = TORSO_D / 2 + 0.01;
+    const grp = new THREE.Group();
+    const mkB = (w, h, dep, m) => new THREE.Mesh(new THREE.BoxGeometry(w, h, dep), m);
+    switch (idx) {
+      case 1: { // bodysuit — accent chest seam + waist belt
+        const seam = mkB(0.05, TORSO_H * 0.9, 0.02, accMat);
+        seam.position.set(0, cy, fz); grp.add(seam);
+        const belt = mkB(TORSO_W * 1.04, 0.1, TORSO_D * 1.04, accMat);
+        belt.position.y = HIP_Y + 0.02; grp.add(belt);
+        break;
+      }
+      case 2: { // dress — flared skirt from the waist
+        const skirt = new THREE.Mesh(new THREE.CylinderGeometry(TORSO_W * 0.5, TORSO_W * 0.95, 0.7, 16), mat);
+        skirt.position.y = HIP_Y - 0.15; grp.add(skirt);
+        break;
+      }
+      case 3: { // robe — long front panel + skirt
+        const panel = mkB(TORSO_W * 0.4, TORSO_H + 0.7, 0.04, accMat);
+        panel.position.set(0, cy - 0.3, fz); grp.add(panel);
+        const skirt = new THREE.Mesh(new THREE.CylinderGeometry(TORSO_W * 0.55, TORSO_W * 0.82, 0.8, 14), mat);
+        skirt.position.y = HIP_Y - 0.2; grp.add(skirt);
+        break;
+      }
+      case 4: { // armor — chest plate + shoulder pads
+        const plate = mkB(TORSO_W * 1.05, TORSO_H * 0.7, TORSO_D * 1.08, accMat);
+        plate.position.set(0, cy + TORSO_H * 0.05, 0); grp.add(plate);
+        [-1, 1].forEach(s => {
+          const pad = new THREE.Mesh(new THREE.SphereGeometry(TORSO_W * 0.28, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), accMat);
+          pad.position.set(s * TORSO_W * 0.5, cy + TORSO_H * 0.42, 0); grp.add(pad);
+        });
+        break;
+      }
+      case 5: { // jumpsuit — collar + waist accent
+        const collar = new THREE.Mesh(new THREE.CylinderGeometry(TORSO_W * 0.3, TORSO_W * 0.32, 0.12, 12), accMat);
+        collar.position.y = cy + TORSO_H * 0.5; grp.add(collar);
+        const belt = mkB(TORSO_W * 1.04, 0.08, TORSO_D * 1.04, accMat);
+        belt.position.y = HIP_Y + 0.02; grp.add(belt);
+        break;
+      }
+    }
+    grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    return grp;
+  }
+
+  // Accessories — attach gloves to arms, belt to torso, mask to head. Mirrors
+  // the _buildGear attach-and-track pattern. No-op when all styles are 0.
+  function _buildAccessories(ctx) {
+    const THREE = window.THREE;
+    const { head, torso, leftArm, rightArm, dims, styles, mat } = ctx;
+    const { HEAD_SZ, TORSO_W, TORSO_H, TORSO_D, ARM_LEN, ARM_W, ARM_D } = dims;
+    const { gloves, belt, mask } = styles;
+    if (!gloves && !belt && !mask) return;
+    const added = [];
+    const mkB = (w, h, d, m) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+    const add = (parent, mesh) => { parent.add(mesh); added.push(mesh); return mesh; };
+
+    if (gloves) {
+      const len = gloves === 3 ? 0.32 : (gloves === 2 ? 0.22 : 0.12); // gauntlet / full / fingerless
+      [leftArm, rightArm].forEach(a => {
+        const g = mkB(ARM_W * 1.08, len, ARM_D * 1.08, mat);
+        g.position.y = -ARM_LEN + len / 2;
+        add(a, g);
+      });
+    }
+
+    if (belt) {
+      if (belt === 3) { // sash — diagonal across the chest
+        const sash = mkB(TORSO_W * 1.4, 0.12, 0.04, mat);
+        sash.position.set(0, 0, TORSO_D / 2 + 0.01);
+        sash.rotation.z = 0.5;
+        add(torso, sash);
+      } else {          // belt / utility
+        const b = mkB(TORSO_W * 1.04, 0.12, TORSO_D * 1.04, mat);
+        b.position.y = -TORSO_H / 2 + 0.04;
+        add(torso, b);
+        if (belt === 2) { // utility — gold buckle
+          const buckle = mkB(0.14, 0.1, 0.03, new THREE.MeshLambertMaterial({ color: 0xd9a420 }));
+          buckle.position.set(0, -TORSO_H / 2 + 0.04, TORSO_D / 2 + 0.02);
+          add(torso, buckle);
+        }
+      }
+    }
+
+    if (mask) {
+      const fz = HEAD_SZ / 2 + 0.012;
+      switch (mask) {
+        case 1: { const band = mkB(HEAD_SZ * 0.96, 0.14, 0.04, mat); band.position.set(0, 0.06, fz); add(head, band); break; }       // domino
+        case 2: { const full = mkB(HEAD_SZ * 1.02, HEAD_SZ * 0.72, 0.05, mat); full.position.set(0, 0, fz); add(head, full); break; } // full mask
+        case 3: { const visor = mkB(HEAD_SZ * 1.0, 0.1, 0.06, new THREE.MeshLambertMaterial({ color: mat.color, emissive: 0x113344 })); visor.position.set(0, 0.06, fz); add(head, visor); break; } // visor
+        case 4: { const band = mkB(HEAD_SZ * 1.0, HEAD_SZ * 0.34, 0.04, mat); band.position.set(0, -0.14, fz); add(head, band); break; } // bandana
+      }
+    }
+
     added.forEach(p => p.traverse(o => { if (o.isMesh) o.castShadow = true; }));
   }
 

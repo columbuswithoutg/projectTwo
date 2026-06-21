@@ -134,9 +134,9 @@ const WatchOrderView = {
 
     $("#friends-btn")?.addEventListener("click", () => showFriendsPanel());
     $("#walkers-btn")?.addEventListener("click", () => Walkers.showWalkerPicker());
-    // Character editor — opens the same builder modal as /home. No live
-    // Playground3D scene to hot-swap here, so onSave is a no-op; the next
-    // /home visit picks up the fresh character on its own fetch.
+    // Character editor — HomeBuilder.open() now routes to the /customize page
+    // (stashing this route to return to). The next /home visit (or the page's
+    // own fetch) picks up the freshly saved character.
     $("#nav-character-btn")?.addEventListener("click", () => HomeBuilder.open({}));
 
     // Fight toggle — flips the persistent setting and updates the label.
