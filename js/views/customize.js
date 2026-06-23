@@ -2,11 +2,14 @@
  * CHARACTER CUSTOMIZER — /customize
  *
  * Full-page replacement for the old builder modal. A big rotatable 3D preview
- * (Playground3D.createPreview, with a 2D fallback) beside categorized option
- * sections generated from CHARACTER_SCHEMA. Randomize / Reset / Save in the
- * toolbar; Save PUTs to /api/profile/home-character then navigates back to the
- * route the user came from (default /home), which re-fetches and re-renders
- * the character.
+ * (Playground3D.createPreview, with a 2D fallback) beside a single-slot editor:
+ * category tabs (Body / Face / Hair / …) → a slot selector within the active
+ * category → that one slot's options. Shape/style ("label") slots render every
+ * option as a live mini-avatar tile (the current character with just that slot
+ * swapped); color ("swatch"/"accent") slots stay as fast-to-scan colour dots.
+ * Randomize / Reset / Save in the toolbar; Save PUTs to
+ * /api/profile/home-character then navigates back to the route the user came
+ * from (default /home), which re-fetches and re-renders the character.
  *
  * Entry: HomeBuilder.open() (the legacy modal entry point) now stashes the
  * caller's route on window.__czReturn and routes here — so the ✎ button,
@@ -34,19 +37,20 @@ const CustomizeView = {
         <div class="cz-preview" id="cz-preview"></div>
         <div class="cz-panel">
           <div class="cz-toolbar">
-            <div class="pg-presets" id="cz-presets"></div>
             <div class="cz-tools">
               <button class="pg-btn" type="button" id="cz-random">🎲 Randomize</button>
               <button class="pg-btn" type="button" id="cz-reset">↺ Reset</button>
             </div>
           </div>
-          <div class="cz-sections" id="cz-sections"></div>
+          <div class="cz-tabs" id="cz-tabs"></div>
+          <div class="cz-slot-pills" id="cz-slot-pills"></div>
+          <div class="cz-options" id="cz-options"></div>
           <p class="pg-builder-error" id="cz-error" hidden></p>
         </div>
       </div>
     `;
 
-    document.getElementById('cz-back').addEventListener('click', () => CustomizeView._leave());
+    document.getElementById('cz-back').addEventListener('click', () => CustomizeView._back());
     document.getElementById('cz-save').addEventListener('click', () => CustomizeView._save());
     document.getElementById('cz-random').addEventListener('click', () => CustomizeView._randomize());
     document.getElementById('cz-reset').addEventListener('click', () => CustomizeView._reset());
@@ -75,48 +79,126 @@ const CustomizeView = {
 
     CustomizeView._initial = { ...base, ...(saved || {}) };
     CustomizeView._current = { ...CustomizeView._initial };
-    CustomizeView._renderSections();
-    CustomizeView._renderPresets();
+
+    // Which tab/slot is open. Start on the first section's first slot.
+    CustomizeView._sections = CustomizeView._computeSections();
+    const presets = (typeof Playground !== 'undefined' && Playground.CHARACTER_PRESETS) || [];
+    CustomizeView._hasPresets = presets.length > 0;
+    CustomizeView._activeSection = CustomizeView._sections[0] || null;
+    const firstSlots = CustomizeView._slotsIn(CustomizeView._activeSection);
+    CustomizeView._activeSlot = firstSlots.length ? firstSlots[0].key : null;
+
+    CustomizeView._renderPanel();
     CustomizeView._updatePreview();
   },
 
-  // ── option controls ──
-  _renderSections() {
-    const host = document.getElementById('cz-sections');
-    if (!host) return;
+  // ── schema helpers ──
+  // Sections in CHARACTER_SECTION_ORDER, then any extras in first-seen order.
+  _computeSections() {
     const order = (typeof CHARACTER_SECTION_ORDER !== 'undefined') ? CHARACTER_SECTION_ORDER : [];
     const sections = [];
-    (CHARACTER_SCHEMA || []).forEach(e => {
-      if (!sections.includes(e.section)) sections.push(e.section);
-    });
-    // Order: declared order first, then any extras in first-seen order.
+    (CHARACTER_SCHEMA || []).forEach(e => { if (!sections.includes(e.section)) sections.push(e.section); });
     sections.sort((a, b) => {
       const ia = order.indexOf(a), ib = order.indexOf(b);
       return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
     });
+    return sections;
+  },
 
-    host.innerHTML = sections.map(sec => {
-      const fields = CHARACTER_SCHEMA.filter(e => e.section === sec);
-      const groups = fields.map(e => `
-        <fieldset class="pg-builder-group" data-key="${e.key}">
-          <legend>${e.label}</legend>
-          <div class="${(e.control === 'swatch' || e.control === 'accent') ? 'pg-swatches' : 'pg-styles'}" data-target="${e.key}"></div>
-        </fieldset>
-      `).join('');
-      return `
-        <section class="cz-section">
-          <h3 class="cz-section-title">${sec}</h3>
-          ${groups}
-        </section>
-      `;
-    }).join('');
+  _slotsIn(section) {
+    return (CHARACTER_SCHEMA || []).filter(e => e.section === section);
+  },
 
-    CHARACTER_SCHEMA.forEach(e => {
-      if (e.control === 'swatch') CustomizeView._renderSwatches(e.key, Playground[e.palette] || []);
-      else if (e.control === 'accent') CustomizeView._renderAccent(e.key, Playground[e.palette] || []);
-      else CustomizeView._renderLabels(e.key, characterSchemaOptions(e), e.lean);
+  // Schema sections, plus a trailing "Presets" pseudo-tab (it has no slots —
+  // its tab shows the full-look preset buttons instead of a slot editor).
+  _tabList() {
+    const base = CustomizeView._sections || [];
+    return CustomizeView._hasPresets ? base.concat(['Presets']) : base.slice();
+  },
+
+  // ── panel: tabs → slot pills → options ──
+  _renderPanel() {
+    CustomizeView._renderTabs();
+    CustomizeView._renderSlotPills();
+    CustomizeView._renderOptions();
+  },
+
+  _renderTabs() {
+    const host = document.getElementById('cz-tabs');
+    if (!host) return;
+    host.innerHTML = CustomizeView._tabList().map(sec =>
+      `<button type="button" class="cz-tab${sec === CustomizeView._activeSection ? ' active' : ''}" data-section="${sec}">${sec}</button>`
+    ).join('');
+    host.querySelectorAll('.cz-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        CustomizeView._activeSection = btn.dataset.section;
+        if (CustomizeView._activeSection === 'Presets') {
+          CustomizeView._activeSlot = null;
+        } else {
+          const slots = CustomizeView._slotsIn(CustomizeView._activeSection);
+          CustomizeView._activeSlot = slots.length ? slots[0].key : null;
+        }
+        CustomizeView._renderTabs();
+        CustomizeView._renderSlotPills();
+        CustomizeView._renderOptions();
+      });
     });
-    CustomizeView._applyHidden();
+  },
+
+  // Slots of the active section. Slots whose output is fully hidden by another
+  // choice are dimmed with a "· hidden by …" hint (still selectable).
+  _renderSlotPills() {
+    const host = document.getElementById('cz-slot-pills');
+    if (!host) return;
+    // The Presets tab has no slots — hide the pill row entirely.
+    if (CustomizeView._activeSection === 'Presets') {
+      host.innerHTML = '';
+      host.style.display = 'none';
+      return;
+    }
+    host.style.display = '';
+    const hidden = (typeof Playground !== 'undefined' && Playground.characterHidden)
+      ? Playground.characterHidden(CustomizeView._current) : {};
+    const slots = CustomizeView._slotsIn(CustomizeView._activeSection);
+    host.innerHTML = slots.map(e => {
+      const reason = hidden[e.key];
+      return `<button type="button" class="cz-slot-pill${e.key === CustomizeView._activeSlot ? ' active' : ''}${reason ? ' cz-pill-hidden' : ''}" data-slot="${e.key}">${e.label}${reason ? ` <span class="cz-hint">· ${reason}</span>` : ''}</button>`;
+    }).join('');
+    host.querySelectorAll('.cz-slot-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        CustomizeView._activeSlot = btn.dataset.slot;
+        CustomizeView._renderSlotPills();
+        CustomizeView._renderOptions();
+      });
+    });
+  },
+
+  // The active slot's options: colour dots for swatch/accent, mini-avatar tiles
+  // for label (shape/style) slots.
+  _renderOptions() {
+    const host = document.getElementById('cz-options');
+    if (!host) return;
+    // Bump the thumbnail generation so any in-flight 3D-thumbnail run from a
+    // previously open slot abandons itself instead of writing into stale tiles.
+    CustomizeView._thumbGen = (CustomizeView._thumbGen || 0) + 1;
+    // The Presets tab shows the full-look buttons instead of a slot editor.
+    if (CustomizeView._activeSection === 'Presets') { CustomizeView._renderPresetPanel(); return; }
+    const e = (CHARACTER_SCHEMA || []).find(x => x.key === CustomizeView._activeSlot);
+    if (!e) { host.innerHTML = ''; return; }
+    const hidden = (typeof Playground !== 'undefined' && Playground.characterHidden)
+      ? Playground.characterHidden(CustomizeView._current) : {};
+    const reason = hidden[e.key];
+    const isColor = (e.control === 'swatch' || e.control === 'accent');
+    host.innerHTML = `
+      <div class="cz-option-head">
+        <h3>${e.label}</h3>
+        ${reason ? `<span class="cz-hint">· hidden by ${reason}</span>` : ''}
+      </div>
+      <div class="${isColor ? 'pg-swatches' : 'cz-tiles'}${reason ? ' cz-dim' : ''}" data-target="${e.key}"></div>
+    `;
+    if (e.control === 'swatch') CustomizeView._renderSwatches(e.key, Playground[e.palette] || []);
+    else if (e.control === 'accent') CustomizeView._renderAccent(e.key, Playground[e.palette] || []);
+    else CustomizeView._renderTiles(e.key, e);
   },
 
   _renderSwatches(key, palette) {
@@ -145,59 +227,88 @@ const CustomizeView = {
     });
   },
 
-  _renderLabels(key, labels, lean) {
+  // Mini-avatar preview tiles: each option = the current character with just
+  // this one slot swapped, captioned with the option name. Gender-leaning
+  // options are surfaced first (still all selectable) when a gender is set.
+  //
+  // Each tile shows a real 3D thumbnail (so it matches the big rotatable
+  // preview) rendered off-screen by Playground3D and filled in a few per frame
+  // so the grid paints instantly. Falls back to the 2D SVG sprite when Three.js
+  // isn't available.
+  _renderTiles(key, entry) {
     const host = document.querySelector(`[data-target="${key}"]`);
     if (!host) return;
-    // Surface gender-leaning options first (still all selectable) when a lean
-    // map is defined and a gender is selected. Stable sort preserves order.
+    const labels = characterSchemaOptions(entry);
     let order = labels.map((label, idx) => ({ idx, label }));
     const gender = CustomizeView._current ? (CustomizeView._current.gender ?? 0) : 0;
-    if (lean && gender > 0) {
+    if (entry.lean && gender > 0) {
       const want = gender === 2 ? 'f' : 'm';
       const rank = (l) => (l === want ? 0 : (l ? 2 : 1));   // current gender · neutral · other
-      order = order.slice().sort((a, b) => rank(lean[a.idx]) - rank(lean[b.idx]));
+      order = order.slice().sort((a, b) => rank(entry.lean[a.idx]) - rank(entry.lean[b.idx]));
     }
-    host.innerHTML = order.map(({ idx, label }) =>
-      `<button type="button" class="pg-style" data-idx="${idx}">${label}</button>`
-    ).join('');
-    CustomizeView._markActive(key);
-    host.querySelectorAll('.pg-style').forEach(btn => {
-      btn.addEventListener('click', () => CustomizeView._choose(key, parseInt(btn.dataset.idx, 10)));
+
+    const use3D = (typeof Playground3D !== 'undefined'
+      && typeof Playground3D.renderThumbnail === 'function'
+      && typeof window !== 'undefined' && window.THREE);
+
+    host.innerHTML = '';
+    const jobs = [];
+    order.forEach(({ idx, label }) => {
+      const tile = document.createElement('button');
+      tile.type = 'button';
+      tile.className = 'cz-tile';
+      tile.dataset.idx = idx;
+      let av;
+      if (use3D) {
+        av = document.createElement('img');
+        av.className = 'cz-tile-av';
+        av.alt = label;
+        av.draggable = false;
+        jobs.push({ idx, img: av });
+      } else {
+        av = Playground.renderCharacter({ ...CustomizeView._current, [key]: idx });
+        av.classList.add('cz-tile-av');
+      }
+      const cap = document.createElement('span');
+      cap.className = 'cz-tile-cap';
+      cap.textContent = label;
+      tile.appendChild(av);
+      tile.appendChild(cap);
+      tile.addEventListener('click', () => CustomizeView._choose(key, idx));
+      host.appendChild(tile);
     });
+    CustomizeView._markActive(key);
+
+    if (use3D && jobs.length) {
+      const gen = CustomizeView._thumbGen;
+      const base = { ...CustomizeView._current };
+      let i = 0;
+      // A few per tick so the grid paints instantly. setTimeout (not rAF) so the
+      // run still completes if the tab is backgrounded mid-render.
+      const step = () => {
+        if (gen !== CustomizeView._thumbGen) return;   // navigated away — abandon
+        const end = Math.min(i + 4, jobs.length);
+        for (; i < end; i++) {
+          const j = jobs[i];
+          try {
+            const url = Playground3D.renderThumbnail({ ...base, [key]: j.idx });
+            if (url) j.img.src = url;
+          } catch (_) { /* skip a bad tile */ }
+        }
+        if (i < jobs.length) setTimeout(step, 0);
+      };
+      setTimeout(step, 0);
+    }
   },
 
   _choose(key, idx) {
     CustomizeView._current[key] = idx;
     CustomizeView._markActive(key);
-    // Changing gender re-orders the leaning style lists.
-    if (key === 'gender') {
-      (CHARACTER_SCHEMA || []).forEach(e => {
-        if (e.control === 'label' && e.lean) CustomizeView._renderLabels(e.key, characterSchemaOptions(e), e.lean);
-      });
-    }
-    CustomizeView._applyHidden();
     CustomizeView._updatePreview();
-  },
-
-  // Grey out + disable slots whose output is fully hidden by the current
-  // choice, with a "hidden by …" hint. Values are preserved.
-  _applyHidden() {
-    const hidden = (typeof Playground !== 'undefined' && Playground.characterHidden)
-      ? Playground.characterHidden(CustomizeView._current) : {};
-    (CHARACTER_SCHEMA || []).forEach(e => {
-      const host = document.querySelector(`[data-target="${e.key}"]`);
-      const fs = host && host.closest('.pg-builder-group');
-      if (!fs) return;
-      const reason = hidden[e.key];
-      fs.classList.toggle('cz-hidden', !!reason);
-      const legend = fs.querySelector('legend');
-      if (legend) {
-        if (!legend.dataset.base) legend.dataset.base = legend.textContent;
-        legend.innerHTML = reason
-          ? `${legend.dataset.base} <span class="cz-hint">· hidden by ${reason}</span>`
-          : legend.dataset.base;
-      }
-    });
+    // The choice may hide/un-hide sibling slots → refresh their pills. Tiles for
+    // the active slot each override `key`, so they don't change on their own
+    // selection; lean reordering for other slots happens when navigated to.
+    CustomizeView._renderSlotPills();
   },
 
   _markActive(key) {
@@ -208,16 +319,13 @@ const CustomizeView = {
     });
   },
 
-  _markAll() {
-    (CHARACTER_SCHEMA || []).forEach(e => CustomizeView._markActive(e.key));
-  },
-
-  // ── presets (grouped) ──
-  _renderPresets() {
-    const host = document.getElementById('cz-presets');
+  // ── presets (grouped) — rendered into the options area under the Presets tab ──
+  // Each preset is a full-look 3D thumbnail tile (same renderer as the per-slot
+  // tiles), captioned with the preset name and grouped by category.
+  _renderPresetPanel() {
+    const host = document.getElementById('cz-options');
     if (!host) return;
     const presets = (typeof Playground !== 'undefined' && Playground.CHARACTER_PRESETS) || [];
-    if (!presets.length) { host.style.display = 'none'; return; }
     const base = Playground.defaultCharacter();
     // Group in first-seen order.
     const groups = [];
@@ -227,21 +335,79 @@ const CustomizeView = {
       if (!bucket) { bucket = { name: g, items: [] }; groups.push(bucket); }
       bucket.items.push({ p, i });
     });
-    host.innerHTML = groups.map(g => `
-      <div class="cz-preset-group">
-        <span class="pg-presets-label">${g.name}</span>
-        ${g.items.map(({ p, i }) => `<button type="button" class="pg-preset" data-preset="${i}">${p.name}</button>`).join('')}
+
+    const use3D = (typeof Playground3D !== 'undefined'
+      && typeof Playground3D.renderThumbnail === 'function'
+      && typeof window !== 'undefined' && window.THREE);
+
+    host.innerHTML = `
+      <div class="cz-option-head">
+        <h3>Presets</h3>
+        <span class="cz-hint">· apply a full look, then tweak any tab</span>
       </div>
-    `).join('');
-    host.querySelectorAll('.pg-preset').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const p = presets[parseInt(btn.dataset.preset, 10)];
-        if (!p) return;
-        CustomizeView._current = { ...base, ...p.char };
-        CustomizeView._renderSections();
-        CustomizeView._updatePreview();
+      <div class="cz-presets-panel">
+        ${groups.map((g, gi) => `
+          <div class="cz-preset-group">
+            <span class="pg-presets-label">${g.name}</span>
+            <div class="cz-tiles" data-preset-grid="${gi}"></div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    const jobs = [];
+    groups.forEach((g, gi) => {
+      const grid = host.querySelector(`[data-preset-grid="${gi}"]`);
+      if (!grid) return;
+      g.items.forEach(({ p }) => {
+        const char = { ...base, ...p.char };
+        const tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = 'cz-tile';
+        let av;
+        if (use3D) {
+          av = document.createElement('img');
+          av.className = 'cz-tile-av';
+          av.alt = p.name;
+          av.draggable = false;
+          jobs.push({ img: av, char });
+        } else {
+          av = Playground.renderCharacter(char);
+          av.classList.add('cz-tile-av');
+        }
+        const cap = document.createElement('span');
+        cap.className = 'cz-tile-cap';
+        cap.textContent = p.name;
+        tile.appendChild(av);
+        tile.appendChild(cap);
+        tile.addEventListener('click', () => {
+          CustomizeView._current = { ...base, ...p.char };
+          // Flash the chosen preset as active for immediate feedback, then
+          // update the big preview. Other tabs reflect the look when opened.
+          host.querySelectorAll('.cz-tile.active').forEach(b => b.classList.remove('active'));
+          tile.classList.add('active');
+          CustomizeView._updatePreview();
+        });
+        grid.appendChild(tile);
       });
     });
+
+    if (use3D && jobs.length) {
+      const gen = CustomizeView._thumbGen;
+      let i = 0;
+      const step = () => {
+        if (gen !== CustomizeView._thumbGen) return;   // navigated away — abandon
+        const end = Math.min(i + 4, jobs.length);
+        for (; i < end; i++) {
+          try {
+            const url = Playground3D.renderThumbnail(jobs[i].char);
+            if (url) jobs[i].img.src = url;
+          } catch (_) { /* skip a bad tile */ }
+        }
+        if (i < jobs.length) setTimeout(step, 0);
+      };
+      setTimeout(step, 0);
+    }
   },
 
   // ── toolbar actions ──
@@ -250,13 +416,13 @@ const CustomizeView = {
       const n = characterSchemaCount(e);
       if (n > 0) CustomizeView._current[e.key] = Math.floor(Math.random() * n);
     });
-    CustomizeView._renderSections();
+    CustomizeView._renderPanel();
     CustomizeView._updatePreview();
   },
 
   _reset() {
     CustomizeView._current = { ...CustomizeView._initial };
-    CustomizeView._renderSections();
+    CustomizeView._renderPanel();
     CustomizeView._updatePreview();
   },
 
@@ -302,6 +468,35 @@ const CustomizeView = {
     }
   },
 
+  // True if the editing copy differs from the last saved state.
+  _isDirty() {
+    const a = CustomizeView._current, b = CustomizeView._initial;
+    if (!a || !b) return false;
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    for (const k of keys) { if ((a[k] ?? null) !== (b[k] ?? null)) return true; }
+    return false;
+  },
+
+  // Back button — warn before discarding unsaved changes.
+  async _back() {
+    if (CustomizeView._isDirty()) {
+      let ok;
+      if (typeof confirmDialog === 'function') {
+        ok = await confirmDialog({
+          title: 'Leave without saving?',
+          message: "You've changed your character but haven't saved yet. Your changes will be lost if you leave now.",
+          confirmLabel: 'Leave',
+          cancelLabel: 'Keep editing',
+          danger: true
+        });
+      } else {
+        ok = window.confirm('You have unsaved changes. Leave without saving?');
+      }
+      if (!ok) return;
+    }
+    CustomizeView._leave();
+  },
+
   _leave() {
     Router.go(CustomizeView._return || '/home');
   },
@@ -310,6 +505,10 @@ const CustomizeView = {
     if (CustomizeView._previewHandle) {
       try { CustomizeView._previewHandle.destroy(); } catch (_) {}
       CustomizeView._previewHandle = null;
+    }
+    // Release the shared off-screen thumbnail WebGL context.
+    if (typeof Playground3D !== 'undefined' && Playground3D.disposeThumbnails) {
+      try { Playground3D.disposeThumbnails(); } catch (_) {}
     }
     CustomizeView._overlayRoot = null;
     CustomizeView._current = null;

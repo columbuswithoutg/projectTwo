@@ -3830,8 +3830,71 @@ const Playground3D = (() => {
     return { setCharacter, destroy };
   }
 
+  // ── shared offscreen thumbnail renderer ──
+  //
+  // The /customize option tiles want a real 3D preview of every choice, but one
+  // live WebGL context per tile would blow past the browser's ~16-context cap.
+  // Instead a SINGLE hidden renderer is reused: for each character we build the
+  // same rig _buildPlayer() makes, render one frame at a fixed 3/4 yaw, and read
+  // it back as a PNG data URL for an <img>. Camera + lighting mirror
+  // createPreview() so a tile matches the big rotatable preview.
+  let _thumbR = null, _thumbScene = null, _thumbCam = null, _thumbGroup = null;
+
+  function _ensureThumb(w, h) {
+    const THREE = window.THREE;
+    if (!THREE) return false;
+    if (!_thumbR) {
+      // preserveDrawingBuffer so toDataURL() reliably reads back the frame.
+      _thumbR = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+      _thumbR.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      _thumbScene = new THREE.Scene();
+      _thumbScene.add(new THREE.AmbientLight(0xffffff, 0.6));
+      const key = new THREE.DirectionalLight(0xffffff, 0.85);
+      key.position.set(2, 4, 3);
+      _thumbScene.add(key);
+      _thumbCam = new THREE.PerspectiveCamera(32, w / h, 0.1, 50);
+      _thumbCam.position.set(0, 1.4, 5.8);
+      _thumbCam.lookAt(0, 1.0, 0);
+      _thumbGroup = new THREE.Group();
+      _thumbScene.add(_thumbGroup);
+    }
+    _thumbR.setSize(w, h, false);
+    _thumbCam.aspect = w / h;
+    _thumbCam.updateProjectionMatrix();
+    return true;
+  }
+
+  // Render one character to a PNG data URL (null if THREE/WebGL unavailable).
+  // opts: { w, h, yaw }. Synchronous; callers spread batches across frames.
+  function renderThumbnail(character, opts) {
+    opts = opts || {};
+    const w = opts.w || 132, h = opts.h || 176;
+    if (!_ensureThumb(w, h)) return null;
+    const rig = _buildPlayer(character);
+    _thumbGroup.rotation.y = (opts.yaw != null) ? opts.yaw : 0.42;  // gentle 3/4 view
+    _thumbGroup.add(rig);
+    let url = null;
+    try {
+      _thumbR.render(_thumbScene, _thumbCam);
+      url = _thumbR.domElement.toDataURL('image/png');
+    } catch (_) { url = null; }
+    _thumbGroup.remove(rig);
+    _disposeRig(rig);
+    return url;
+  }
+
+  // Release the shared thumbnail context (call when leaving /customize).
+  function disposeThumbnails() {
+    if (_thumbR) {
+      try { _thumbR.dispose(); } catch (_) {}
+      try { if (_thumbR.forceContextLoss) _thumbR.forceContextLoss(); } catch (_) {}
+    }
+    _thumbR = _thumbScene = _thumbCam = _thumbGroup = null;
+  }
+
   return {
     init, initWorld, destroy, setCharacter, defaultCharacter, createPreview,
+    renderThumbnail, disposeThumbnails,
     // World/multiplayer surface — no-ops in home mode.
     addRemotePlayer, updateRemotePlayer, removeRemotePlayer, clearRemotePlayers,
     showRemoteChat, showLocalChat, playRemoteEmote, playLocalEmote,
