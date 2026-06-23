@@ -34,6 +34,10 @@ const Playground3D = (() => {
     STEP_PERIOD: 0.45             // seconds per full leg-swing cycle
   };
 
+  // Collision footprint of OTHER actors (remote players + NPCs) when the local
+  // player bumps them. Combined with PLAYER_RADIUS this is the min separation.
+  const BUMP_RADIUS = 0.40;
+
   const CAMERA = {
     DEFAULT_DIST: 6.5,
     MIN_DIST: 3.0,
@@ -113,6 +117,11 @@ const Playground3D = (() => {
     GRAVITY: 22,                  // world units / s²
     INITIAL_V: 7.5                // initial upward velocity on spacebar
   };
+
+  // Head-top of the rig at build-scale 1 (feet at y=0): HIP_Y 0.7 + TORSO_H 0.75
+  // + HEAD_SZ 0.55 + hair margin. Scaled by the player's build scale at runtime.
+  // Used to cap jumps under indoor ceilings / doorway lintels.
+  const PLAYER_HEAD = 2.1;
 
   // ── engine state ──
   let _container = null;
@@ -2235,6 +2244,15 @@ const Playground3D = (() => {
     if (_velY !== 0 || _player.position.y > 0) {
       _velY -= JUMP.GRAVITY * dt;
       _player.position.y += _velY * dt;
+      // Ceiling cap: under a building roof / in a doorway, keep the head below
+      // the lintel so a jump can't punch through. Outdoors cap is null → full hop.
+      if (_mode === 'world') {
+        const cap = _ceilingCap(_player.position.x, _player.position.z);
+        if (cap != null && _player.position.y > cap) {
+          _player.position.y = cap;
+          if (_velY > 0) _velY = 0;          // bonk — stop rising, start falling
+        }
+      }
       if (_player.position.y <= 0) {
         _player.position.y = 0;
         _velY = 0;
@@ -2323,6 +2341,12 @@ const Playground3D = (() => {
         if (Math.abs(penX) < Math.abs(penZ)) x += penX; else z += penZ;
       }
     }
+    // Solid bump against other actors (remote players + NPCs): you can't walk
+    // through them. Resolved per-axis like walls, so you slide along instead of
+    // sticking. Runs before the walkability check so a bump can't shove you off
+    // a road/platform.
+    const a = _collideActors(x, z, dx, dz, r);
+    x = a.x; z = a.z;
     // World-mode walkability: must end up on a node or road. Stepping
     // off into open ground is rejected for whichever axis caused it,
     // giving natural slide-along-edge behavior because outer movement
@@ -2334,6 +2358,52 @@ const Playground3D = (() => {
     }
     _player.position.x = x;
     _player.position.z = z;
+  }
+
+  // Resolve a candidate (x,z) against every other actor (remote players + local
+  // NPCs), treating each as a circle of BUMP_RADIUS. Pushes the moving axis back
+  // to the contact edge — same per-axis pattern as the wall loop — so the player
+  // slides around people instead of phasing through them. The local player is in
+  // neither list, so there's no self-collision; collision is in the XZ plane
+  // regardless of jump height (avatars are taller than the jump apex anyway).
+  function _collideActors(x, z, dx, dz, r) {
+    const sep = r + BUMP_RADIUS;
+    const sep2 = sep * sep;
+    const hit = (ox, oz) => {
+      const ddx = x - ox, ddz = z - oz;
+      if (ddx * ddx + ddz * ddz >= sep2) return;          // no overlap
+      if (dx !== 0 && dz === 0) {
+        const reach = Math.sqrt(Math.max(0, sep2 - ddz * ddz));
+        x = dx > 0 ? ox - reach - 0.001 : ox + reach + 0.001;
+      } else if (dz !== 0 && dx === 0) {
+        const reach = Math.sqrt(Math.max(0, sep2 - ddx * ddx));
+        z = dz > 0 ? oz - reach - 0.001 : oz + reach + 0.001;
+      }
+    };
+    for (const rp of _remotePlayers.values()) hit(rp.current.x, rp.current.z);
+    for (const npc of _npcs) hit(npc.x, npc.z);
+    return { x, z };
+  }
+
+  // Max feet-Y the player may reach at (x,z) before the head hits a building
+  // ceiling, or null when not under any roof (open sky → unrestricted jump).
+  // The doorway lintel underside (H - 0.45) is the lowest indoor ceiling, so
+  // capping to it also clears the flat roof. Footprint is expanded by M so the
+  // doorway threshold (right on the platform edge) is covered too.
+  function _ceilingCap(x, z) {
+    if (!_worldNodes.size) return null;
+    const halfP = WORLD.PLATFORM_W / 2;
+    const M = 0.5;
+    const headTop = PLAYER_HEAD * ((_player && _player.scale && _player.scale.y) || 1);
+    let cap = null;
+    for (const node of _worldNodes.values()) {
+      if (Math.abs(x - node.mesh.position.x) > halfP + M) continue;
+      if (Math.abs(z - node.mesh.position.z) > halfP + M) continue;
+      const H = node.wallHeight || WORLD.WALL_HEIGHT;
+      const c = Math.max(0, (H - 0.45) - headTop);   // feet-Y so head stays below lintel
+      cap = (cap == null) ? c : Math.min(cap, c);
+    }
+    return cap;
   }
 
   // Minimum camera elevation — higher in /world so you can't tilt under the
@@ -3293,6 +3363,7 @@ const Playground3D = (() => {
 
   const NPC_SPEED = 1.5;     // world units / sec — a leisurely stroll
   const NPC_TURN  = 0.5;     // radians to steer per blocked sub-step (hug the ring)
+  const NPC_RADIUS = 0.40;   // NPC body footprint for wall / player avoidance
 
   // Public: declare which heroes should roam. Each spec is
   // { id, name, character, debut }. Stored so a hero can pop in the moment its
@@ -3351,16 +3422,39 @@ const Playground3D = (() => {
     return ((Math.abs(h) % 360) / 360) * Math.PI * 2;
   }
 
+  // Does a circle of `radius` centered at (x,z) overlap any wall AABB?
+  // Closest-point-on-box test — used to keep NPC bodies off the wall plane.
+  function _circleHitsWall(x, z, radius) {
+    const r2 = radius * radius;
+    for (const w of _walls) {
+      const nx = Math.max(w.minX, Math.min(x, w.maxX));
+      const nz = Math.max(w.minZ, Math.min(z, w.maxZ));
+      const dx = x - nx, dz = z - nz;
+      if (dx * dx + dz * dz < r2) return true;
+    }
+    return false;
+  }
+
   // Can an NPC stand at (x,z)? It must be on legal ground (_isInWalkable),
   // OUTSIDE its home node's poster footprint, and still within that node's
   // apron band — this confines each hero to a ring around its own building
-  // (never on the poster, never wandering off down the roads).
+  // (never on the poster, never wandering off down the roads). It must also keep
+  // its BODY clear of the building walls (the inner ring is widened by NPC_RADIUS
+  // so it never brushes the wall plane, with a circle test as a safety net) and
+  // give the local player a wide berth so it routes around you instead of through.
   function _npcCanStand(x, z, npc) {
     const cheb = Math.max(Math.abs(x - npc.homeX), Math.abs(z - npc.homeZ));
-    const inner = WORLD.PLATFORM_W / 2 + 0.3;                        // just outside the poster
+    const inner = WORLD.PLATFORM_W / 2 + NPC_RADIUS + 0.15;          // clear the wall plane + body
     const outer = (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2 - 0.2; // just inside the apron edge
     if (cheb < inner || cheb > outer) return false;
-    return _isInWalkable(x, z);
+    if (!_isInWalkable(x, z)) return false;
+    if (_circleHitsWall(x, z, NPC_RADIUS)) return false;            // never overlap a wall
+    if (_player) {                                                  // steer around the player
+      const pdx = x - _player.position.x, pdz = z - _player.position.z;
+      const psep = NPC_RADIUS + PHYSICS.PLAYER_RADIUS;
+      if (pdx * pdx + pdz * pdz < psep * psep) return false;
+    }
+    return true;
   }
 
   function _tickNpcs(dt, now) {
