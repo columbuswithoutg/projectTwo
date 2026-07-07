@@ -16,7 +16,7 @@ const Walkers = (() => {
   // explicit. Hot loops read these directly (e.g. PHYSICS.WALKER.speed at
   // frame time), so a merge takes effect on the very next tick.
   const PHYSICS = {
-    WALKER:     { size: 24, r: 12, speed: 40, pauseMin: 800, pauseMax: 2500 },
+    WALKER:     { size: 28, r: 14, speed: 40, pauseMin: 800, pauseMax: 2500 },
     ROAD:       { halfW: 13, damping: 0.998, bounce: 0.85 },
     ENCOUNTER:  { dist: 26, cooldown: 30000, lineDuration: 2500 },
     WEAPON:     { radius: 18, size: 14, baseSpeed: 3.5, hitCooldown: 300 },
@@ -240,15 +240,10 @@ const Walkers = (() => {
     wrap.style.pointerEvents = 'none';
     wrap.style.transition = 'none';
 
+    // Visual styling (ring, glow, background) lives in styles.css under
+    // .map-walker img so it stays consistent with the theme system.
     const img = document.createElement('img');
     img.src = charImg;
-    img.style.width = '100%';
-    img.style.height = '100%';
-    img.style.borderRadius = '50%';
-    img.style.objectFit = 'cover';
-    img.style.border = '1.5px solid rgba(201,162,39,0.9)';
-    img.style.boxShadow = '0 0 6px rgba(201,162,39,0.4)';
-    img.style.background = 'rgba(7,8,15,0.85)';
     wrap.appendChild(img);
 
     return wrap;
@@ -486,6 +481,17 @@ const Walkers = (() => {
     if (!w.el) return;
     w.el.style.left = (w._cx - PHYSICS.WALKER.r) + 'px';
     w.el.style.top = (w._cy - PHYSICS.WALKER.r) + 'px';
+    // A little life while moving: bob on a fast sine + lean into the walk
+    // direction. Applied to the wrapper (not the img) so .hit-flash and
+    // .fainted, which target the img, keep working untouched.
+    const speed = Math.hypot(w.vx || 0, w.vy || 0);
+    if (speed > 5 && w.state !== W_STATE.FIGHTING) {
+      const bob = Math.sin(performance.now() / 140) * 1.5;
+      const lean = Math.max(-6, Math.min(6, (w.vx || 0) * 0.15));
+      w.el.style.transform = `translateY(${bob.toFixed(1)}px) rotate(${lean.toFixed(1)}deg)`;
+    } else if (w.el.style.transform) {
+      w.el.style.transform = '';
+    }
   }
 
   // Walker physics consumes the same road geometry the renderer draws. The

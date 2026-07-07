@@ -337,9 +337,13 @@ const HomeEditView = (() => {
       </div>
     `;
     document.body.appendChild(overlay);
-    const close = () => overlay.parentNode && overlay.parentNode.removeChild(overlay);
+    // Esc + backdrop dismiss + focus restore via the shared helper.
+    const close = wireModalDismiss(
+      overlay,
+      () => overlay.parentNode && overlay.parentNode.removeChild(overlay),
+      { initialFocus: overlay.querySelector('.pg-modal-close') }
+    );
     overlay.querySelector('.pg-modal-close').addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
     overlay.querySelectorAll('.pg-picker-item').forEach(el => {
       el.addEventListener('click', () => {
         const id = el.dataset.id;
@@ -374,9 +378,13 @@ const HomeEditView = (() => {
       </div>
     `;
     document.body.appendChild(overlay);
-    const close = () => overlay.parentNode && overlay.parentNode.removeChild(overlay);
+    // Esc + backdrop dismiss + focus restore via the shared helper.
+    const close = wireModalDismiss(
+      overlay,
+      () => overlay.parentNode && overlay.parentNode.removeChild(overlay),
+      { initialFocus: overlay.querySelector('.pg-modal-close') }
+    );
     overlay.querySelector('.pg-modal-close').addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
     if (removable) {
       overlay.querySelector('#pg-room-remove').addEventListener('click', () => {
         _layout.splice(idx, 1);

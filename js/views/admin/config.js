@@ -163,7 +163,12 @@
     },
 
     async reset() {
-      if (!window.confirm('Reset all eight values to factory defaults? This is logged in the audit trail.')) return;
+      const ok = await confirmDialog({
+        title: 'Reset to factory defaults?',
+        message: 'All eight values will be reset. This is logged in the audit trail.',
+        confirmLabel: 'Reset'
+      });
+      if (!ok) return;
       try {
         const updated = await AdminView.api('/config/reset', { method: 'POST' });
         Config._state.current = JSON.parse(JSON.stringify(updated));

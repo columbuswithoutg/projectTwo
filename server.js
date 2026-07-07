@@ -8,6 +8,13 @@ require('dotenv').config();
     process.exit(1);
   }
 });
+// A guessable JWT_SECRET lets anyone mint valid session tokens. Require
+// real entropy. Generate one with:
+//   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+if (process.env.JWT_SECRET.length < 32) {
+  console.error('FATAL: JWT_SECRET must be at least 32 characters. Aborting.');
+  process.exit(1);
+}
 
 // Force Google DNS for local dev — fixes SRV lookup issues on some networks
 const dns = require('dns');
@@ -28,13 +35,32 @@ const app = express();
 // Already-compressed binaries in /assets are skipped automatically by content-type.
 app.use(compression());
 
-// Baseline security headers. CSP is disabled for now because the SPA uses an
-// inline importmap, a CDN script (unpkg.com for Three.js), Cloudinary images,
-// and Google Fonts — a strict default-src 'self' would brick first paint.
+// Baseline security headers. CSP is ENFORCED: the allowlist below covers
+// everything the SPA loads (inline importmap + module shim, unpkg.com for
+// Three.js, Cloudinary memories, Google Fonts, websockets, canvas data-URL
+// thumbnails). Verified violation-free across login/map/watch-order/world/
+// home/customize before enforcement (2026-07-07). If a new external source
+// is ever added, extend the allowlist FIRST or first paint will brick.
 // COEP is disabled and CORP set to cross-origin so Cloudinary memories and
 // /assets still load in friend-views.
 app.use(helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    useDefaults: true,
+    reportOnly: false,
+    directives: {
+      'default-src': ["'self'"],
+      // 'unsafe-inline' covers the importmap + inline module shim in
+      // spa.html. Tightening to a hash/nonce is the batch-2 follow-up.
+      'script-src': ["'self'", "'unsafe-inline'", 'https://unpkg.com'],
+      'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      'font-src': ["'self'", 'https://fonts.gstatic.com'],
+      'img-src': ["'self'", 'data:', 'blob:', 'https://res.cloudinary.com'],
+      'media-src': ["'self'", 'blob:', 'https://res.cloudinary.com'],
+      'connect-src': ["'self'", 'ws:', 'wss:', 'https://unpkg.com'],
+      'worker-src': ["'self'"],
+      'upgrade-insecure-requests': null
+    }
+  },
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: 'cross-origin' }
 }));
@@ -69,13 +95,17 @@ app.get('/home/edit', (req, res) => res.sendFile(spaFile));
 // server.js, routes/, models/, middleware/, .env, package.json, etc. over HTTP.
 // Now each public directory/file is mounted explicitly so backend source never
 // leaves the server.
-app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: '30d' }));
+// Long-lived caching only in production (Render sets NODE_ENV=production).
+// In dev, everything revalidates (no-cache) so edits show up on plain reload
+// instead of hiding behind the browser HTTP cache for a day.
+const IS_PROD = process.env.NODE_ENV === 'production';
+app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: IS_PROD ? '30d' : 0 }));
 // /js is the biggest chunk of per-request bytes and the content is static
 // between deploys — cache it for a day. Browsers still revalidate via ETag
 // when the file changes, and a hard refresh bypasses this entirely, so a
 // stale bundle after deploy resolves itself within one day without manual
 // intervention. For shorter invalidation, adopt hashed filenames.
-app.use('/js', express.static(path.join(__dirname, 'js'), { maxAge: '1d', etag: true }));
+app.use('/js', express.static(path.join(__dirname, 'js'), { maxAge: IS_PROD ? '1d' : 0, etag: true }));
 // Root-level client files (HTML + top-level scripts + stylesheet) are served
 // from an explicit allowlist. The pre-SPA orphan pages (app.html,
 // characters.html, profile.html) and their scripts are deliberately omitted
@@ -91,7 +121,7 @@ const HTML_FILES = new Set(['index.html', 'spa.html']);
 const NO_CACHE_FILES = new Set(['sw.js']);
 ROOT_FILES.forEach(name => {
   app.get('/' + name, (req, res) => {
-    if (HTML_FILES.has(name) || NO_CACHE_FILES.has(name)) {
+    if (HTML_FILES.has(name) || NO_CACHE_FILES.has(name) || !IS_PROD) {
       res.set('Cache-Control', 'no-cache');
     } else {
       res.set('Cache-Control', 'public, max-age=86400');

@@ -8,7 +8,25 @@
   <link rel="icon" type="image/jpeg" href="/assets/favicon.jpg" />
   <link rel="apple-touch-icon" href="/assets/favicon.jpg" />
   <link rel="manifest" href="/manifest.json" />
-  <meta name="theme-color" content="#daa520" />
+  <meta name="theme-color" content="#ffffff" />
+  <!--
+    Anti-flash theme boot: every app script is deferred (runs after first
+    paint), so a saved dark preference would flash white without this.
+    Sets data-theme before the stylesheet applies. Kept in sync with
+    js/theme.js (the runtime toggle API).
+  -->
+  <script>
+    (function () {
+      var t;
+      try { t = localStorage.getItem('mcu-theme'); } catch (e) {}
+      if (t !== 'light' && t !== 'dark') {
+        t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', t);
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.setAttribute('content', t === 'dark' ? '#07080f' : '#ffffff');
+    })();
+  </script>
   <link rel="stylesheet" href="styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -28,12 +46,29 @@
   </script>
   <script type="module">
     import * as THREE from 'three';
-    window.THREE = THREE;
+    // RoundedBoxGeometry lives in examples/jsm; its internal `import 'three'`
+    // resolves through the importmap above. Attached onto the THREE namespace
+    // copy we expose so the classic-script engine can use it like core geometry.
+    import { RoundedBoxGeometry } from 'https://unpkg.com/three@0.160.0/examples/jsm/geometries/RoundedBoxGeometry.js';
+    const ns = { ...THREE, RoundedBoxGeometry };
+    window.THREE = ns;
     window.dispatchEvent(new Event('three-ready'));
   </script>
 </head>
 
 <body>
+  <!--
+    Boot splash — pure HTML/CSS so it paints on first render, before any
+    deferred script runs. boot.js fades it out right after Router.init
+    mounts the first view. aria-hidden keeps it out of the a11y tree; the
+    visible loading state is announced via the role="status" text.
+  -->
+  <div id="boot-splash" aria-hidden="true">
+    <img class="boot-splash-logo" src="assets/avengers-logo.svg" alt="" />
+    <div class="boot-splash-bar"><span></span></div>
+  </div>
+  <span class="visually-hidden" role="status" id="boot-splash-status">Loading MCU Tracker…</span>
+
   <!-- SPA root — views mount here -->
   <div id="app"></div>
 
@@ -61,6 +96,7 @@
 
   <!-- Core modules (order matters — these create globals) -->
   <script defer src="js/config.js"></script>
+  <script defer src="js/theme.js"></script>
   <script defer src="js/auth.js"></script>
   <script defer src="js/state.js"></script>
   <script defer src="js/layout.js"></script>
@@ -78,6 +114,9 @@
   <script defer src="js/playground.js"></script>
   <script defer src="js/character-schema.js"></script>
   <script defer src="js/theme-color.js"></script>
+  <!-- Pure physics helpers (also unit-tested via node --test) — must load
+       before playground3d.js which calls PG3DPhysics from its tick. -->
+  <script defer src="js/playground3d-physics.js"></script>
   <script defer src="js/playground3d.js"></script>
 
   <!-- Router + Views -->

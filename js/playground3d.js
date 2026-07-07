@@ -118,6 +118,32 @@ const Playground3D = (() => {
     INITIAL_V: 7.5                // initial upward velocity on spacebar
   };
 
+  // Gap-jumping + fall/respawn (world mode). While airborne the walkability
+  // check is skipped, so a jump can carry across the 2.0u (orthogonal) /
+  // 2.8u (diagonal) gaps between islands: SPEED 4.0 × AIR_SPEED_MUL 1.25 ×
+  // 0.68s airtime ≈ 3.4u of carry. Land on nothing → fall below the world
+  // and respawn at the last safe spot. Distant islands (20u+) stay out of
+  // reach by design.
+  const FALL = {
+    AIR_SPEED_MUL: 1.25,
+    RESPAWN_DEPTH: -8,            // give up and respawn below this y
+    RESPAWN_DELAY_MS: 1000,
+    BROADCAST_Y_FLOOR: -2         // mirror the server's y clamp in getLocalState
+  };
+
+  // Punch + knockdown. F / the 👊 touch button throws a quick right-arm jab;
+  // an actor (remote player or NPC) within RANGE gets knocked down — falls
+  // backward, lies DOWN_MS with input dead (for the local victim), then gets
+  // up over GETUP_MS. Networked via world:punch (see js/home-socket.js).
+  const PUNCH = {
+    RANGE: 1.4,
+    ANIM_MS: 300,
+    COOLDOWN_MS: 600,
+    DOWN_MS: 1800,
+    GETUP_MS: 400,
+    DOWN_ANGLE: -1.35             // root rotation.x while flat on the back
+  };
+
   // Head-top of the rig at build-scale 1 (feet at y=0): HIP_Y 0.7 + TORSO_H 0.75
   // + HEAD_SZ 0.55 + hair margin. Scaled by the player's build scale at runtime.
   // Used to cap jumps under indoor ceilings / doorway lintels.
@@ -153,14 +179,22 @@ const Playground3D = (() => {
   let _npcs = [];                 // local Avenger NPCs patrolling their debut nodes (NOT network/voice peers)
   let _npcSpecs = [];             // declared specs [{ id, name, character, debut }] — materialized as their debut nodes unlock
   let _worldStateUnsub = null;
-  let _activeNode = null;          // project currently within PROXIMITY
-  let _activePromptEl = null;
   let _localEmoteUntil = 0;        // ms timestamp; while > now, override right-arm pose
   let _localBubbleEls = [];        // chat bubbles floating over the LOCAL player
-  let _projectClickHandler = null; // set by view to handle prompt clicks
   let _localWalking = false;       // set each tick; read by getLocalState() for MP broadcast
   let _walkableRoads = [];         // [{ cx, cz, cos, sin, halfW, halfL }] for point-in-rotated-rect tests
   let _velY = 0;                   // vertical velocity for jump physics
+  // ── gap-jump / fall state ──
+  let _airborne = false;           // mid-jump or falling — frees XZ movement from walkability
+  let _falling = false;            // landed on nothing; sinking toward respawn
+  let _fallStart = 0;              // ms timestamp the fall began
+  let _landAt = 0;                 // ms timestamp of the last landing (squash anim)
+  const _lastSafe = { x: 0, z: 0 };// last grounded, walkable position (respawn target)
+  // ── punch / knockdown state ──
+  let _localPunchUntil = 0;        // jab animation window on the local rig
+  let _lastPunchAt = 0;            // cooldown anchor
+  let _localDownUntil = 0;         // local player knocked down — input dead
+  let _onPunch = null;             // view/socket callback: ({ target }) on every local punch
 
   // ── shared, mount-persistent resources ──
   // Project poster textures are shared across mount cycles — switching between
@@ -233,6 +267,11 @@ const Playground3D = (() => {
   function destroy() {
     _running = false;
     _sceneAlive = false;
+    clearStones();
+    _onStonePickup = null;
+    _onPunch = null;
+    _localPunchUntil = 0;
+    _localDownUntil = 0;
     if (_rafId) cancelAnimationFrame(_rafId);
     _rafId = null;
     if (_onVisibility) { document.removeEventListener('visibilitychange', _onVisibility); _onVisibility = null; }
@@ -265,12 +304,9 @@ const Playground3D = (() => {
     _ceilMatByPhase = null;
     _walkableRoads = [];
     _remotePlayers.clear();
-    _activeNode = null;
-    _activePromptEl = null;
     _hudLayer = null;
     _localEmoteUntil = 0;
     _localBubbleEls = [];
-    _projectClickHandler = null;
     _localWalking = false;
     _velY = 0;
     _mode = 'home';
@@ -318,6 +354,17 @@ const Playground3D = (() => {
     const THREE = window.THREE;
     _running = true;
     _sceneAlive = true;
+    // Reset jump/fall/punch state — none of it may survive a remount
+    // (leaving /world mid-fall or mid-knockdown and entering /home would
+    // otherwise keep input dead or the rig tipped over).
+    _velY = 0;
+    _falling = false;
+    _airborne = false;
+    _lastSafe.x = 0;
+    _lastSafe.z = 0;
+    _localPunchUntil = 0;
+    _lastPunchAt = 0;
+    _localDownUntil = 0;
     _hudAnchor = _hudAnchor || new THREE.Vector3();
     _hudProjScratch = _hudProjScratch || new THREE.Vector3();
 
@@ -568,9 +615,29 @@ const Playground3D = (() => {
   // both by the engine's destroy() (on the whole scene) and by createPreview's
   // rig swap (on a single rig group). Textures are owned by _textureCache and
   // are intentionally not disposed here.
+  // ── shared geometry cache ──
+  // Capsules / rounded boxes cost more to build than BoxGeometry and are
+  // identical across avatars (dims depend only on build/bulk/style), so they
+  // are cached for the page lifetime and shared between rigs — including the
+  // thumbnail batches on /customize. Shared geometries are marked and MUST
+  // be skipped by every rig-dispose site (double-dispose = invisible avatars).
+  const _geomCache = new Map();
+  function _sharedGeom(key, make) {
+    let g = _geomCache.get(key);
+    if (!g) {
+      g = make();
+      g.userData.shared = true;
+      _geomCache.set(key, g);
+    }
+    return g;
+  }
+
   function _disposeRig(obj) {
     obj.traverse(o => {
-      if (o.geometry) o.geometry.dispose();
+      // Cache-owned geometries survive across rigs — never dispose them here.
+      if (o.geometry && !(o.geometry.userData && o.geometry.userData.shared)) {
+        o.geometry.dispose();
+      }
       if (o.material) {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         mats.forEach(m => m.dispose());
@@ -647,6 +714,36 @@ const Playground3D = (() => {
       m.castShadow = cast;
       return m;
     };
+    // Rounded/organic primitives for the core body — shared via the geometry
+    // cache (dims repeat across avatars). Both fall back to plain boxes if a
+    // stale module shim hasn't exposed the examples/jsm geometry yet.
+    const rnd = (n) => Math.round(n * 1000) / 1000;
+    const mkRounded = (w, h, d, r, mat, cast = true) => {
+      const geo = _sharedGeom(`rb:${rnd(w)}:${rnd(h)}:${rnd(d)}:${rnd(r)}`, () =>
+        THREE.RoundedBoxGeometry
+          ? new THREE.RoundedBoxGeometry(w, h, d, 3, r)
+          : new THREE.BoxGeometry(w, h, d));
+      const m = new THREE.Mesh(geo, mat);
+      m.castShadow = cast;
+      return m;
+    };
+    // Capsule: `len` is the TOTAL height (cylinder + both caps).
+    const mkCapsule = (radius, len, mat, cast = true) => {
+      const cyl = Math.max(0.01, len - radius * 2);
+      const geo = _sharedGeom(`cap:${rnd(radius)}:${rnd(len)}`, () =>
+        THREE.CapsuleGeometry
+          ? new THREE.CapsuleGeometry(radius, cyl, 3, 8)
+          : new THREE.BoxGeometry(radius * 2, len, radius * 2));
+      const m = new THREE.Mesh(geo, mat);
+      m.castShadow = cast;
+      return m;
+    };
+    const mkSphere = (radius, mat, cast = true) => {
+      const geo = _sharedGeom(`sph:${rnd(radius)}`, () => new THREE.SphereGeometry(radius, 8, 6));
+      const m = new THREE.Mesh(geo, mat);
+      m.castShadow = cast;
+      return m;
+    };
 
     // Root — moved/yawed by the engine. Origin at feet center.
     const root = new THREE.Group();
@@ -662,20 +759,40 @@ const Playground3D = (() => {
     const LEG_D = 0.32 * bulk;
     const FOOT_H = 0.18;
 
+    // Two-segment legs: hip pivot (keeps the legacy `leftLeg`/`rightLeg` bone
+    // names the animation code swings) + a child knee pivot at mid-leg so the
+    // walk cycle can bend. Segments are capsules for the rounded look; the
+    // lower segment carries footwear/cuffs via an attach group that restores
+    // the legacy hip-local coordinate space, so the sub-builders are untouched.
     const mkLeg = (xOffset) => {
       const pivot = new THREE.Group();
       pivot.position.set(xOffset, HIP_Y, 0);
       const shape = bottomSpec.legShape;
       // Shorts/skirt expose a bare (skin) lower leg; everything else is a
       // single pant/suit-colored limb. Slim narrows the limb. Index 0/legacy
-      // and the suit case both fall through to a plain full-length leg, so the
-      // base geometry is unchanged from before.
+      // and the suit case both fall through to a plain full-length leg.
       const bare = (shape === 'shorts' || shape === 'skirt');
       const limbMat = bare ? skinMat : legMat;
       const wScale = (shape === 'slim') ? 0.85 : 1;
-      const leg = mkBox(LEG_W * wScale, LEG_LEN, LEG_D * wScale, limbMat);
-      leg.position.y = -LEG_LEN / 2;
-      pivot.add(leg);
+      const SEG = LEG_LEN / 2;
+      const legR = (LEG_W * wScale) / 2;
+
+      const upper = mkCapsule(legR, SEG + legR, limbMat);
+      upper.position.y = -SEG / 2;
+      pivot.add(upper);
+
+      const knee = new THREE.Group();
+      knee.position.y = -SEG;
+      pivot.add(knee);
+      const lower = mkCapsule(legR, SEG + legR * 0.6, limbMat);
+      lower.position.y = -SEG / 2;
+      knee.add(lower);
+      // Attach group: children positioned in the OLD hip-local space keep
+      // working (offset undoes the knee pivot's translation).
+      const kneeAttach = new THREE.Group();
+      kneeAttach.position.y = SEG;
+      knee.add(kneeAttach);
+
       if (shape === 'shorts') {
         const sh = mkBox(LEG_W * 1.06, LEG_LEN * 0.5, LEG_D * 1.06, legMat);
         sh.position.y = -LEG_LEN * 0.25;
@@ -689,15 +806,17 @@ const Playground3D = (() => {
       } else if (shape === 'joggers') {
         const cuff = mkBox(LEG_W * 1.1, 0.12, LEG_D * 1.1, pantsAccMat);
         cuff.position.y = -LEG_LEN + 0.06;
-        pivot.add(cuff);
+        kneeAttach.add(cuff);                    // below the knee — rides the shin
       } else if (shape === 'greaves') {
         const plate = mkBox(LEG_W * 1.12, LEG_LEN * 0.55, LEG_D * 1.12, pantsAccInt != null ? pantsAccMat : accMat);
         plate.position.set(0, -LEG_LEN * 0.6, 0.02);
-        pivot.add(plate);
+        kneeAttach.add(plate);                   // shin armor rides the lower leg
       }
-      // Footwear (index 0 reproduces the legacy foot box exactly).
+      // Footwear (index 0 reproduces the legacy foot box exactly) — parented
+      // to the shin so feet follow the knee bend.
       const fw = _buildFootwear(footStyle, shoeMat, { LEG_W, LEG_D, LEG_LEN, FOOT_H }, c.shoeColor2 ?? 0);
-      if (fw) pivot.add(fw);
+      if (fw) kneeAttach.add(fw);
+      pivot.userData.lower = knee;
       return pivot;
     };
     const leftLeg = mkLeg(-0.18 * bulk);
@@ -719,9 +838,35 @@ const Playground3D = (() => {
     // Torso. Width/depth widen with `bulk` so a Huge build reads as broad,
     // not just a bigger copy; height stays fixed (overall scale handles tall).
     const TORSO_W = 0.85 * bulk * g.torsoWMul, TORSO_H = 0.75, TORSO_D = 0.45 * bulk;
-    const torso = mkBox(TORSO_W, TORSO_H, TORSO_D, topMat);
+    // Tapered rounded torso — vertices narrow from 1.0 at the hips to 0.93 at
+    // the shoulders. Done once inside the cache factory (shared across rigs).
+    const torsoGeo = _sharedGeom(
+      `rbTaper:${rnd(TORSO_W)}:${rnd(TORSO_H)}:${rnd(TORSO_D)}:0.1`,
+      () => {
+        const geo = THREE.RoundedBoxGeometry
+          ? new THREE.RoundedBoxGeometry(TORSO_W, TORSO_H, TORSO_D, 3, 0.1)
+          : new THREE.BoxGeometry(TORSO_W, TORSO_H, TORSO_D);
+        const pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          const t = (pos.getY(i) / TORSO_H) + 0.5;          // 0 bottom → 1 top
+          pos.setX(i, pos.getX(i) * (1 - 0.07 * t));
+        }
+        pos.needsUpdate = true;
+        geo.computeVertexNormals();
+        return geo;
+      });
+    const torso = new THREE.Mesh(torsoGeo, topMat);
+    torso.castShadow = true;
     torso.position.y = HIP_Y + TORSO_H / 2;
     body.add(torso);
+    // Neck — bridges the small gap between torso top and head bottom.
+    const neck = new THREE.Mesh(
+      _sharedGeom('neck', () => new THREE.CylinderGeometry(0.10, 0.13, 0.14, 8)),
+      skinMat
+    );
+    neck.position.y = HIP_Y + TORSO_H + 0.02;
+    neck.castShadow = true;
+    body.add(neck);
     // Top-style detail (collar / hood / pocket / stripe) — torso-local.
     // Suppressed for a suit (the suit builder owns torso detailing).
     if (!suitActive) {
@@ -734,20 +879,52 @@ const Playground3D = (() => {
     const ARM_LEN = 0.7;
     const ARM_W = 0.22 * bulk, ARM_D = 0.22 * bulk;
 
+    // Two-segment arms mirroring the legs: shoulder pivot (legacy bone name)
+    // + child elbow pivot at mid-arm, capsule segments, sphere hand on the
+    // forearm. An attach group on the elbow restores the legacy shoulder-
+    // local space for props/gloves so those sub-builders swing with the
+    // forearm without coordinate changes.
     const mkArm = (xSign) => {
       const pivot = new THREE.Group();
       pivot.position.set(xSign * (TORSO_W / 2 + ARM_W / 2 - 0.02), SHOULDER_Y, 0);
-      const arm = mkBox(ARM_W, ARM_LEN, ARM_D, skinMat);
-      arm.position.y = -ARM_LEN / 2;
-      pivot.add(arm);
+      const SEG = ARM_LEN / 2;
+      const armR = ARM_W / 2;
+
+      const upper = mkCapsule(armR, SEG + armR, skinMat);
+      upper.position.y = -SEG / 2;
+      pivot.add(upper);
+
+      const elbow = new THREE.Group();
+      elbow.position.y = -SEG;
+      pivot.add(elbow);
+      const fore = mkCapsule(armR, SEG + armR * 0.6, skinMat);
+      fore.position.y = -SEG / 2;
+      elbow.add(fore);
+      const hand = mkSphere(armR * 1.05, skinMat);
+      hand.position.y = -SEG;
+      elbow.add(hand);
+      const elbowAttach = new THREE.Group();
+      elbowAttach.position.y = SEG;
+      elbow.add(elbowAttach);
+
       // Sleeve length depends on the top style: 'short' (legacy tee, 0.4),
       // 'long' (long-sleeve/hoodie/turtleneck/suit, 0.95), or 'none' (tank).
+      // Short sleeves cover the upper segment only; long sleeves add a
+      // forearm capsule that bends with the elbow.
       if (topSpec.sleeve !== 'none') {
-        const frac = topSpec.sleeve === 'long' ? 0.95 : 0.4;
-        const sleeve = mkBox(ARM_W * 1.02, ARM_LEN * frac, ARM_D * 1.02, topMat);
-        sleeve.position.y = -ARM_LEN * (frac / 2);
-        pivot.add(sleeve);
+        const long = topSpec.sleeve === 'long';
+        const upFrac = long ? 1 : 0.8;
+        const upSleeve = mkCapsule(armR * 1.12, SEG * upFrac + armR, topMat);
+        upSleeve.position.y = -SEG * (upFrac / 2);
+        pivot.add(upSleeve);
+        if (long) {
+          const loSleeve = mkCapsule(armR * 1.12, SEG * 0.9 + armR * 0.5, topMat);
+          loSleeve.position.y = -SEG * 0.45;
+          elbow.add(loSleeve);
+        }
       }
+      pivot.userData.lower = elbow;
+      pivot.userData.attach = elbowAttach;
       return pivot;
     };
     const leftArm = mkArm(-1);
@@ -781,7 +958,7 @@ const Playground3D = (() => {
     const HEAD_SZ = 0.55;
     const head = new THREE.Group();
     head.position.y = HIP_Y + TORSO_H + HEAD_SZ / 2 + 0.02;
-    const headBox = mkBox(HEAD_SZ, HEAD_SZ, HEAD_SZ, skinMat);
+    const headBox = mkRounded(HEAD_SZ, HEAD_SZ, HEAD_SZ, 0.13, skinMat);
     head.add(headBox);
     // Eyes — shape varies by eyeShape index. Positive Z is "front".
     const eyeFrontZ = HEAD_SZ / 2 + 0.001;
@@ -850,11 +1027,17 @@ const Playground3D = (() => {
     if (helmetGrp) head.add(helmetGrp);
     const emblemGrp = _buildEmblem(emblemIdx, emblemMat, { TORSO_D });
     if (emblemGrp) torso.add(emblemGrp);
-    _buildProp(propIdx, propMat, { leftArm, rightArm, torso, dims: { ARM_LEN } });
+    // Props/gloves mount on the elbow attach groups (legacy shoulder-local
+    // coordinates preserved) so they swing with the forearm.
+    _buildProp(propIdx, propMat, {
+      leftArm: leftArm.userData.attach, rightArm: rightArm.userData.attach,
+      torso, dims: { ARM_LEN }
+    });
 
     // Accessories (gloves / belt / mask) — mask suppressed when a helmet hides it.
     _buildAccessories({
-      head, torso, leftArm, rightArm,
+      head, torso,
+      leftArm: leftArm.userData.attach, rightArm: rightArm.userData.attach,
       dims: { HEAD_SZ, TORSO_W, TORSO_H, TORSO_D, ARM_LEN, ARM_W, ARM_D },
       styles: { gloves: c.gloves ?? 0, belt: c.belt ?? 0, mask: hidden.mask ? 0 : (c.mask ?? 0) },
       mat: accMat
@@ -871,7 +1054,12 @@ const Playground3D = (() => {
     // level _rig set by the local-only call sites) and by
     // _tickRemotePlayers() (via the remote rig stored in _remotePlayers).
     root.userData.bones = {
-      body, head, torso, leftArm, rightArm, leftLeg, rightLeg
+      body, head, torso, leftArm, rightArm, leftLeg, rightLeg,
+      // Second limb segments (elbow/knee pivots) for the bending walk cycle.
+      leftArmLower: leftArm.userData.lower,
+      rightArmLower: rightArm.userData.lower,
+      leftLegLower: leftLeg.userData.lower,
+      rightLegLower: rightLeg.userData.lower
     };
     return root;
   }
@@ -1838,6 +2026,7 @@ const Playground3D = (() => {
     // consumes it (and resets) when applying the impulse. This stops
     // hold-space from auto-bouncing.
     let jumpRequested = false;
+    let punchRequested = false;   // same one-shot edge-trigger pattern as jump
 
     function isTextField(el) {
       if (!el) return false;
@@ -1857,6 +2046,9 @@ const Playground3D = (() => {
           // Suppress the browser's default (page scroll) regardless of
           // direction; only the keydown sets the one-shot request flag.
           if (down) jumpRequested = true;
+          break;
+        case 'f': case 'F':
+          if (down) punchRequested = true;
           break;
         default: handled = false;
       }
@@ -1923,6 +2115,33 @@ const Playground3D = (() => {
     // .world-chat-row (z-index: 6) would paint over the joystick even
     // though the joystick has z-index: 50 inside .pg-stage's context.
     document.body.appendChild(joyEl);
+
+    // Touch jump button — bottom-right mirror of the joystick, same
+    // body-append + CSS-gated (coarse pointer) visibility pattern.
+    const jumpEl = document.createElement('button');
+    jumpEl.type = 'button';
+    jumpEl.className = 'pg-jump';
+    jumpEl.setAttribute('aria-label', 'Jump');
+    jumpEl.textContent = '⤒';
+    jumpEl.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      jumpRequested = true;
+    });
+    document.body.appendChild(jumpEl);
+
+    // Touch punch button — stacked above the jump button.
+    const punchEl = document.createElement('button');
+    punchEl.type = 'button';
+    punchEl.className = 'pg-punch';
+    punchEl.setAttribute('aria-label', 'Punch');
+    punchEl.textContent = '👊';
+    punchEl.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      punchRequested = true;
+    });
+    document.body.appendChild(punchEl);
 
     // Joystick activation — three redundant entry points (pointer, mouse,
     // document-level pointer) all funnel through engageJoystick().
@@ -2170,6 +2389,12 @@ const Playground3D = (() => {
       return true;
     }
 
+    function consumePunch() {
+      if (!punchRequested) return false;
+      punchRequested = false;
+      return true;
+    }
+
     function detach() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
@@ -2190,16 +2415,77 @@ const Playground3D = (() => {
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('touchend', onTouchEnd);
       window.removeEventListener('touchcancel', onTouchEnd);
-      // joyEl is appended to <body>, not viewport — won't get cleaned up
-      // by Playground3D's container.innerHTML='' on init/destroy. Pull it
-      // out explicitly so re-init doesn't leak nodes.
+      // joyEl / jumpEl / punchEl are appended to <body>, not viewport — won't
+      // get cleaned up by Playground3D's container.innerHTML='' on init/destroy.
+      // Pull them out explicitly so re-init doesn't leak nodes.
       if (joyEl && joyEl.parentNode) joyEl.parentNode.removeChild(joyEl);
+      if (jumpEl && jumpEl.parentNode) jumpEl.parentNode.removeChild(jumpEl);
+      if (punchEl && punchEl.parentNode) punchEl.parentNode.removeChild(punchEl);
     }
 
-    return { getAxis, isOrbiting, consumeJump, detach };
+    return { getAxis, isOrbiting, consumeJump, consumePunch, detach };
   }
 
   // ── tick / animation ──
+
+  // Shared walk pose — one implementation for the local player, remote
+  // players, and NPCs (was three duplicated blocks). Swings the hip/shoulder
+  // pivots exactly as before and adds knee/elbow bend on the second limb
+  // segments (guarded, so a rig without lowers still animates).
+  // Character faces -Z; rotation.x > 0 moves a hanging limb toward +Z (back).
+  function _walkPose(bones, phase) {
+    const swing = Math.sin(phase) * 0.6;        // ~34° peak
+    bones.leftLeg.rotation.x = swing;
+    bones.rightLeg.rotation.x = -swing;
+    bones.leftArm.rotation.x = -swing * 0.7;
+    bones.rightArm.rotation.x = swing * 0.7;
+    // Knee bends while its leg swings back (push-off), never forward.
+    if (bones.leftLegLower)  bones.leftLegLower.rotation.x  = Math.max(0, Math.sin(phase)) * 0.9;
+    if (bones.rightLegLower) bones.rightLegLower.rotation.x = Math.max(0, -Math.sin(phase)) * 0.9;
+    // Elbows keep a slight ready-bend that deepens with the swing.
+    const elbow = -(0.25 + Math.abs(swing) * 0.3);
+    if (bones.leftArmLower)  bones.leftArmLower.rotation.x  = elbow;
+    if (bones.rightArmLower) bones.rightArmLower.rotation.x = elbow;
+    bones.body.position.y = Math.abs(Math.sin(phase)) * 0.04;
+    bones.body.rotation.z = 0;   // cancel any idle sway while walking
+  }
+
+  // Punch jab — right arm thrusts forward and snaps back over ANIM_MS.
+  // Character faces -Z, so "forward" is negative rotation.x on a hanging arm.
+  function _applyJabPose(bones, punchUntil, now) {
+    const t = Math.max(0, Math.min(1, 1 - (punchUntil - now) / PUNCH.ANIM_MS));
+    const extend = Math.sin(t * Math.PI);            // 0 → out → back
+    bones.rightArm.rotation.x = -(0.3 + 1.25 * extend);
+    bones.rightArm.rotation.z = 0;
+    if (bones.rightArmLower) bones.rightArmLower.rotation.x = 0;  // straight jab
+  }
+
+  // Knockdown — tip the whole rig backward while downUntil is in the future,
+  // ease back upright once it passes. Frame-eased so both directions read as
+  // motion rather than snaps; local player, remote players, and NPCs all
+  // route through here.
+  function _applyDownPose(rootObj, downUntil, now) {
+    if (!rootObj) return;
+    const target = downUntil > now ? PUNCH.DOWN_ANGLE : 0;
+    const cur = rootObj.rotation.x;
+    if (cur === target) return;
+    const next = cur + (target - cur) * 0.22;
+    rootObj.rotation.x = (target === 0 && Math.abs(next) < 0.01) ? 0 : next;
+  }
+
+  // Damp all animated joints back toward rest. k ∈ [0,1] per frame.
+  function _dampPose(bones, k) {
+    const d = 1 - k;
+    bones.leftLeg.rotation.x  *= d;
+    bones.rightLeg.rotation.x *= d;
+    bones.leftArm.rotation.x  *= d;
+    bones.rightArm.rotation.x *= d;
+    if (bones.leftLegLower)  bones.leftLegLower.rotation.x  *= d;
+    if (bones.rightLegLower) bones.rightLegLower.rotation.x *= d;
+    if (bones.leftArmLower)  bones.leftArmLower.rotation.x  *= d;
+    if (bones.rightArmLower) bones.rightArmLower.rotation.x *= d;
+    bones.body.position.y *= d;
+  }
 
   function _tick(now) {
     if (!_running) return;
@@ -2221,10 +2507,17 @@ const Playground3D = (() => {
     const moveX = forward.x * (-ny) + right.x * nx;
     const moveZ = forward.z * (-ny) + right.z * nx;
 
+    // Airborne (mid-jump or falling) frees XZ movement from the walkability
+    // check — the landing branch below decides what happens on touchdown.
+    _airborne = _falling || _player.position.y > 0.01;
+    // Knocked down = input dead until you get back up.
+    const _down = _localDownUntil > now;
+
     let moved = false;
-    if (len > 0.05) {
+    if (len > 0.05 && !_falling && !_down) {   // input is dead while falling or down
       moved = true;
-      const step = PHYSICS.SPEED * len * dt;
+      // Slight air-speed boost so a running jump clears the island gaps.
+      const step = PHYSICS.SPEED * (_airborne ? FALL.AIR_SPEED_MUL : 1) * len * dt;
       // Move on each axis separately so collision response can slide along walls.
       _moveWithCollision(moveX * step, 0);
       _moveWithCollision(0, moveZ * step);
@@ -2235,27 +2528,77 @@ const Playground3D = (() => {
     }
     _localWalking = moved;
 
+    // Remember the last grounded, walkable spot — the fall-respawn target.
+    if (!_falling && _player.position.y <= 0.01 &&
+        (_mode !== 'world' || _isInWalkable(_player.position.x, _player.position.z))) {
+      _lastSafe.x = _player.position.x;
+      _lastSafe.z = _player.position.z;
+    }
+
     // Jump physics — applies in both /home and /world. Space (or the
     // input adapter's consumeJump()) sets initial upward velocity if
     // grounded; gravity decelerates each frame until we hit y=0 again.
     if (_input && _input.consumeJump && _input.consumeJump()) {
-      if (_player.position.y <= 0.01) _velY = JUMP.INITIAL_V;
+      if (_player.position.y <= 0.01 && !_falling && !_down) _velY = JUMP.INITIAL_V;
     }
-    if (_velY !== 0 || _player.position.y > 0) {
-      _velY -= JUMP.GRAVITY * dt;
-      _player.position.y += _velY * dt;
+
+    // Punch — quick jab; a remote player or NPC within reach gets knocked
+    // down. Fires the _onPunch callback on EVERY punch (target or whiff) so
+    // peers see the swing; the socket layer relays it (world mode only).
+    if (_input && _input.consumePunch && _input.consumePunch()) {
+      if (!_falling && !_down && now - _lastPunchAt >= PUNCH.COOLDOWN_MS) {
+        _lastPunchAt = now;
+        _localPunchUntil = now + PUNCH.ANIM_MS;
+        const actors = [];
+        if (_mode === 'world') {
+          for (const [id, rp] of _remotePlayers) {
+            actors.push({ id: 'rp:' + id, x: rp.current.x, z: rp.current.z, y: rp.current.y || 0 });
+          }
+          for (let i = 0; i < _npcs.length; i++) {
+            actors.push({ id: 'npc:' + i, x: _npcs[i].x, z: _npcs[i].z, y: 0 });
+          }
+        }
+        const hit = PG3DPhysics.pickPunchTarget(
+          _player.position.x, _player.position.z, _player.position.y, actors, PUNCH.RANGE);
+        let targetSocket = null;
+        if (hit && hit.startsWith('npc:')) {
+          const n = _npcs[+hit.slice(4)];
+          if (n) {
+            n.downUntil = now + PUNCH.DOWN_MS;
+            n.pauseUntil = Math.max(n.pauseUntil || 0, n.downUntil + PUNCH.GETUP_MS);
+            n.walking = false;
+          }
+        } else if (hit) {
+          targetSocket = hit.slice(3);
+          const rp = _remotePlayers.get(targetSocket);
+          if (rp) rp.downUntil = now + PUNCH.DOWN_MS;   // optimistic — relay confirms
+        }
+        if (_onPunch) { try { _onPunch({ target: targetSocket }); } catch (_) {} }
+      }
+    }
+    if (_falling || _velY !== 0 || _player.position.y > 0) {
       // Ceiling cap: under a building roof / in a doorway, keep the head below
       // the lintel so a jump can't punch through. Outdoors cap is null → full hop.
-      if (_mode === 'world') {
-        const cap = _ceilingCap(_player.position.x, _player.position.z);
-        if (cap != null && _player.position.y > cap) {
-          _player.position.y = cap;
-          if (_velY > 0) _velY = 0;          // bonk — stop rising, start falling
+      const cap = (_mode === 'world' && !_falling)
+        ? _ceilingCap(_player.position.x, _player.position.z)
+        : null;
+      const s = PG3DPhysics.stepVertical(_player.position.y, _velY, dt, JUMP.GRAVITY, cap);
+      _player.position.y = s.y;
+      _velY = s.velY;
+
+      if (_falling) {
+        // Sinking below the world — fade out and respawn at the last safe spot.
+        if (PG3DPhysics.shouldRespawn(now, _fallStart, _player.position.y, FALL)) _respawn();
+      } else if (s.landed) {
+        if (_mode !== 'world' || _isInWalkable(_player.position.x, _player.position.z)) {
+          _player.position.y = 0;
+          _velY = 0;
+          _landAt = now;           // trigger the landing-squash animation
+        } else {
+          // Landed on nothing — the gap won. Keep integrating below y=0.
+          _falling = true;
+          _fallStart = now;
         }
-      }
-      if (_player.position.y <= 0) {
-        _player.position.y = 0;
-        _velY = 0;
       }
     }
 
@@ -2272,40 +2615,50 @@ const Playground3D = (() => {
       _stepClock += dt;
       _idleClock = 0;
       const phase = (_stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
-      const swing = Math.sin(phase) * 0.6;        // ~34° peak
-      _rig.leftLeg.rotation.x = swing;
-      _rig.rightLeg.rotation.x = -swing;
-      _rig.leftArm.rotation.x = -swing * 0.7;
-      _rig.rightArm.rotation.x = swing * 0.7;
-      _rig.body.position.y = Math.abs(Math.sin(phase)) * 0.04;
+      _walkPose(_rig, phase);
     } else if (_rig) {
       _idleClock += dt;
-      // Damp limbs back to zero.
-      const k = Math.min(1, dt * 8);
-      _rig.leftLeg.rotation.x  *= 1 - k;
-      _rig.rightLeg.rotation.x *= 1 - k;
-      _rig.leftArm.rotation.x  *= 1 - k;
-      _rig.rightArm.rotation.x *= 1 - k;
-      _rig.body.position.y *= 1 - k;
-      // Subtle breathing.
+      _dampPose(_rig, Math.min(1, dt * 8));
+      // Subtle breathing + a faint weight-shift sway.
       const breath = Math.sin(_idleClock * 1.6) * 0.012 + 1;
       _rig.body.scale.y = breath;
+      _rig.body.rotation.z = Math.sin(_idleClock * 0.8) * 0.02;
     }
 
-    // Local wave emote — overrides right-arm pose while active. Doesn't
-    // interrupt walking; it just replaces the right arm's animation pose.
-    if (_rig && _rig.rightArm && _localEmoteUntil > now) {
+    // Landing squash — a brief compress-and-recover after touching down
+    // from a jump. Overrides the breathing scale for ~180ms (imperceptible)
+    // and composes with everything else via body scale only.
+    if (_rig && now - _landAt < 180) {
+      const t = (now - _landAt) / 180;
+      _rig.body.scale.y = 0.85 + 0.15 * t;
+      const xz = 1.08 - 0.08 * t;
+      _rig.body.scale.x = xz;
+      _rig.body.scale.z = xz;
+    } else if (_rig && _rig.body.scale.x !== 1) {
+      _rig.body.scale.x = 1;
+      _rig.body.scale.z = 1;
+    }
+
+    // Right-arm overrides: punch jab (highest priority), then wave emote.
+    if (_rig && _rig.rightArm && _localPunchUntil > now) {
+      _applyJabPose(_rig, _localPunchUntil, now);
+    } else if (_rig && _rig.rightArm && _localEmoteUntil > now) {
       const phase = (now - (_localEmoteUntil - WORLD.EMOTE_DURATION_MS)) / 200;
       _rig.rightArm.rotation.x = -Math.PI * 0.9;
       _rig.rightArm.rotation.z = Math.sin(phase) * 0.4;
+      if (_rig.rightArmLower) _rig.rightArmLower.rotation.x = 0;   // straight arm overhead
     } else if (_rig && _rig.rightArm) {
       _rig.rightArm.rotation.z = 0;
     }
+
+    // Knockdown pose — falls backward while down, eases upright after.
+    _applyDownPose(_player, _localDownUntil, now);
 
     // World-mode-only ticks (no-ops in home mode).
     if (_mode === 'world') {
       _tickRemotePlayers(dt, now);
       _tickNpcs(dt, now);
+      _tickStones(dt, now);
       _tickRoomCeilings();
       _tickHUD(now);
     }
@@ -2350,8 +2703,9 @@ const Playground3D = (() => {
     // World-mode walkability: must end up on a node or road. Stepping
     // off into open ground is rejected for whichever axis caused it,
     // giving natural slide-along-edge behavior because outer movement
-    // already comes in per-axis.
-    if (_mode === 'world' && !_isInWalkable(x, z)) {
+    // already comes in per-axis. Skipped while airborne — a jump may
+    // carry across a gap; the landing branch in _tick judges touchdown.
+    if (_mode === 'world' && !_airborne && !_isInWalkable(x, z)) {
       if (dx !== 0 && dz === 0) x = startX;
       else if (dz !== 0 && dx === 0) z = startZ;
       else { x = startX; z = startZ; }
@@ -2383,6 +2737,127 @@ const Playground3D = (() => {
     for (const rp of _remotePlayers.values()) hit(rp.current.x, rp.current.z);
     for (const npc of _npcs) hit(npc.x, npc.z);
     return { x, z };
+  }
+
+  // ── Daily Infinity Stones (world mode) ──
+  // Per-player collectibles. Spots come from the view (seeded placement in
+  // PG3DPhysics.pickStoneSpots); the engine only renders, animates, and
+  // detects pickup. Managed independently of node.decor so a wall rebuild
+  // can't orphan the tracking array.
+  let _stones = [];               // [{ id, mesh, baseY, spin }]
+  let _onStonePickup = null;
+
+  function setStoneHandler(fn) { _onStonePickup = fn; }
+
+  // ── punch / knockdown public surface (wired by js/home-socket.js) ──
+
+  function setPunchHandler(fn) { _onPunch = fn; }
+
+  // A peer threw a punch — play their jab.
+  function playRemotePunch(id) {
+    const rp = _remotePlayers.get(id);
+    if (rp) rp.punchUntil = performance.now() + PUNCH.ANIM_MS;
+  }
+
+  // A peer (not us) got hit — topple their rig.
+  function knockdownRemote(id) {
+    const rp = _remotePlayers.get(id);
+    if (rp) rp.downUntil = performance.now() + PUNCH.DOWN_MS;
+  }
+
+  // WE got hit — fall over, input dead until back up.
+  function knockdownLocal() {
+    _localDownUntil = performance.now() + PUNCH.DOWN_MS;
+    _localWalking = false;
+  }
+
+  // Placement inputs for the seeded daily spots: unlocked node centers
+  // (ids included for seed stability), walkable road rects (already the
+  // exact shape PG3DPhysics.isWalkable expects), and apron half-extent.
+  // Empty nodes ⇒ the scene isn't built yet (THREE still loading) — the
+  // view retries.
+  function getStoneWorld() {
+    const nodes = [];
+    for (const node of _worldNodes.values()) {
+      nodes.push({ id: node.project.id, x: node.mesh.position.x, z: node.mesh.position.z });
+    }
+    nodes.sort((a, b) => (a.id < b.id ? -1 : 1));
+    return {
+      nodes,
+      roads: _walkableRoads,
+      halfA: (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2
+    };
+  }
+
+  function clearStones() {
+    for (const s of _stones) {
+      if (s.mesh.parent) s.mesh.parent.remove(s.mesh);
+      if (s.mesh.material) s.mesh.material.dispose();   // geometry is shared
+    }
+    _stones = [];
+  }
+
+  // spots: [{ id, color, x, z, y }] — y 0 = ground (hovers at 0.55, walk
+  // over it), y 1.1 = jump height (leap to touch). collected: Set<id> of
+  // stones already picked up today (not spawned).
+  function spawnStones(spots, collected) {
+    clearStones();
+    if (!_scene || _mode !== 'world') return;
+    const THREE = window.THREE;
+    const geo = _sharedGeom('stoneOcta', () => new THREE.OctahedronGeometry(0.28, 0));
+    for (const spot of spots) {
+      if (collected && collected.has(spot.id)) continue;
+      const mat = new THREE.MeshLambertMaterial({ color: spot.color });
+      // Self-lit so stones read as magical pickups in any lighting.
+      mat.emissive = new THREE.Color(spot.color);
+      mat.emissiveIntensity = 0.55;
+      const mesh = new THREE.Mesh(geo, mat);
+      const baseY = spot.y === 0 ? 0.55 : spot.y;
+      mesh.position.set(spot.x, baseY, spot.z);
+      mesh.castShadow = true;
+      _scene.add(mesh);
+      _stones.push({ id: spot.id, mesh, baseY, spin: Math.random() * Math.PI * 2 });
+    }
+  }
+
+  function _tickStones(dt, now) {
+    if (!_stones.length || !_player) return;
+    const px = _player.position.x, py = _player.position.y, pz = _player.position.z;
+    for (let i = _stones.length - 1; i >= 0; i--) {
+      const s = _stones[i];
+      s.spin += dt * 2.2;
+      s.mesh.rotation.y = s.spin;
+      s.mesh.position.y = s.baseY + Math.sin(now / 400 + s.spin) * 0.08;
+      // Pickup: 3D distance from the player's feet — ground stones collect
+      // on walk-over, elevated ones only near a jump's apex.
+      const dx = px - s.mesh.position.x;
+      const dy = py - s.baseY;
+      const dz = pz - s.mesh.position.z;
+      if (dx * dx + dy * dy + dz * dz < 0.81 && !_falling) {
+        if (s.mesh.parent) s.mesh.parent.remove(s.mesh);
+        s.mesh.material.dispose();
+        _stones.splice(i, 1);
+        if (_onStonePickup) { try { _onStonePickup(s.id); } catch (_) {} }
+      }
+    }
+  }
+
+  // Teleport back to the last safe (grounded + walkable) position after a
+  // fall, with a quick fade so the snap reads as a respawn, not a glitch.
+  function _respawn() {
+    _falling = false;
+    _velY = 0;
+    _player.position.set(_lastSafe.x, 0, _lastSafe.z);
+    if (_viewport) {
+      let fade = _viewport.querySelector('.pg3d-fade');
+      if (!fade) {
+        fade = document.createElement('div');
+        fade.className = 'pg3d-fade';
+        _viewport.appendChild(fade);
+      }
+      fade.classList.add('show');
+      setTimeout(() => fade.classList.remove('show'), 280);
+    }
   }
 
   // Max feet-Y the player may reach at (x,z) before the head hits a building
@@ -3241,6 +3716,9 @@ const Playground3D = (() => {
   // Point-in-region test: world position (x, z) is walkable iff it's
   // inside ANY unlocked node's AABB OR ANY road's rotated rectangle.
   // The ground outside nodes/roads is not walkable in /world.
+  // Kept as a hand-rolled loop (no per-call allocation — runs twice per
+  // input frame); the same math lives in PG3DPhysics.isWalkable where the
+  // unit tests exercise it (js/playground3d-physics.js).
   function _isInWalkable(x, z) {
     // Node platforms + their walkable stone apron (axis-aligned).
     const halfA = (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2;
@@ -3290,36 +3768,6 @@ const Playground3D = (() => {
   function _tickHUD(now) {
     if (_mode !== 'world' || !_hudLayer) return;
 
-    // Active-node "click to view" prompt — re-evaluate nearest node.
-    let nearest = null, nearestDist = Infinity;
-    const px = _player.position.x, pz = _player.position.z;
-    for (const node of _worldNodes.values()) {
-      const dx = node.mesh.position.x - px;
-      const dz = node.mesh.position.z - pz;
-      const d = Math.hypot(dx, dz);
-      if (d < nearestDist) { nearest = node; nearestDist = d; }
-    }
-    if (nearest && nearestDist <= WORLD.PROXIMITY) {
-      if (_activeNode !== nearest.project) {
-        _activeNode = nearest.project;
-        if (!_activePromptEl) {
-          _activePromptEl = document.createElement('div');
-          _activePromptEl.className = 'pg3d-prompt';
-          _activePromptEl.addEventListener('click', _openActiveNode);
-          _hudLayer.appendChild(_activePromptEl);
-        }
-        // "Tap" on touch, "Click" on desktop — this prompt is the only
-        // interaction cue on mobile (there's no 'E' key there).
-        const verb = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 'Tap' : 'Click';
-        _activePromptEl.innerHTML = `📺 ${verb} to view <em></em>`;
-        _activePromptEl.querySelector('em').textContent = nearest.project.title || nearest.project.id;
-      }
-      _placeHudEl(_activePromptEl, nearest.anchor, 0.6);
-    } else {
-      _activeNode = null;
-      if (_activePromptEl) _activePromptEl.style.display = 'none';
-    }
-
     // Remote-player tags + bubbles. _hudAnchor is module-scoped and reused
     // each frame to avoid per-tick GC churn — set() instead of new.
     for (const rp of _remotePlayers.values()) {
@@ -3348,12 +3796,6 @@ const Playground3D = (() => {
         _placeHudEl(b, _hudAnchor, stack);
       }
     }
-  }
-
-  function _openActiveNode() {
-    if (!_activeNode) return;
-    if (_projectClickHandler) _projectClickHandler(_activeNode);
-    else if (typeof showPopup === 'function') showPopup(_activeNode);
   }
 
   // ── local NPCs (Avengers patrolling their debut nodes) ──
@@ -3463,13 +3905,14 @@ const Playground3D = (() => {
       const bones = npc.rig.userData.bones;
       const dampIdle = () => {
         if (!bones) return;
-        const k = Math.min(1, dt * 8);
-        bones.leftLeg.rotation.x  *= 1 - k;
-        bones.rightLeg.rotation.x *= 1 - k;
-        bones.leftArm.rotation.x  *= 1 - k;
-        bones.rightArm.rotation.x *= 1 - k;
-        bones.body.position.y *= 1 - k;
+        _dampPose(bones, Math.min(1, dt * 8));
+        if (npc.swayPhase === undefined) npc.swayPhase = Math.random() * Math.PI * 2;
+        bones.body.rotation.z = Math.sin(now * 0.0008 + npc.swayPhase) * 0.02;
       };
+
+      // Knockdown pose runs in every branch (falling over, lying, getting up).
+      _applyDownPose(npc.rig, npc.downUntil || 0, now);
+      if (npc.downUntil > now) { npc.walking = false; dampIdle(); continue; }
 
       // Paused — stand still, relax limbs to idle.
       if (now < npc.pauseUntil) { npc.walking = false; dampIdle(); continue; }
@@ -3508,17 +3951,10 @@ const Playground3D = (() => {
       npc.rig.position.set(npc.x, 0, npc.z);
       npc.rig.rotation.y = npc.yaw;
 
-      // Walk-cycle swing — identical formula to the player / remote players.
+      // Walk-cycle swing — shared pose with the player / remote players.
       npc.stepClock += dt;
       const phase = (npc.stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
-      const swing = Math.sin(phase) * 0.6;
-      if (bones) {
-        bones.leftLeg.rotation.x = swing;
-        bones.rightLeg.rotation.x = -swing;
-        bones.leftArm.rotation.x = -swing * 0.7;
-        bones.rightArm.rotation.x = swing * 0.7;
-        bones.body.position.y = Math.abs(Math.sin(phase)) * 0.04;
-      }
+      if (bones) _walkPose(bones, phase);
     }
   }
 
@@ -3599,7 +4035,10 @@ const Playground3D = (() => {
     if (!rp) return;
     if (rp.rig.parent) rp.rig.parent.remove(rp.rig);
     rp.rig.traverse(o => {
-      if (o.geometry) o.geometry.dispose();
+      // Cache-owned (shared) geometries must survive this rig — see _sharedGeom.
+      if (o.geometry && !(o.geometry.userData && o.geometry.userData.shared)) {
+        o.geometry.dispose();
+      }
       if (o.material) {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         mats.forEach(m => { if (m.map) m.map.dispose(); m.dispose(); });
@@ -3716,29 +4155,27 @@ const Playground3D = (() => {
       if (rp.target.walking) {
         rp.stepClock += dt;
         const phase = (rp.stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
-        const swing = Math.sin(phase) * 0.6;
-        bones.leftLeg.rotation.x = swing;
-        bones.rightLeg.rotation.x = -swing;
-        bones.leftArm.rotation.x = -swing * 0.7;
-        bones.rightArm.rotation.x = swing * 0.7;
-        bones.body.position.y = Math.abs(Math.sin(phase)) * 0.04;
+        _walkPose(bones, phase);
       } else {
         rp.stepClock = 0;
-        const damp = Math.min(1, dt * 8);
-        bones.leftLeg.rotation.x  *= 1 - damp;
-        bones.rightLeg.rotation.x *= 1 - damp;
-        bones.leftArm.rotation.x  *= 1 - damp;
-        bones.rightArm.rotation.x *= 1 - damp;
-        bones.body.position.y *= 1 - damp;
+        _dampPose(bones, Math.min(1, dt * 8));
+        // Stateless idle sway, phase-offset per peer so a crowd doesn't sync.
+        if (rp.swayPhase === undefined) rp.swayPhase = Math.random() * Math.PI * 2;
+        bones.body.rotation.z = Math.sin(now * 0.0008 + rp.swayPhase) * 0.02;
       }
-      // Wave emote — overrides right arm pose while active.
-      if (rp.emoteUntil > now && bones.rightArm) {
+      // Right-arm overrides: punch jab first, then the wave emote.
+      if (rp.punchUntil > now && bones.rightArm) {
+        _applyJabPose(bones, rp.punchUntil, now);
+      } else if (rp.emoteUntil > now && bones.rightArm) {
         const t = (now - (rp.emoteUntil - WORLD.EMOTE_DURATION_MS)) / 200;
         bones.rightArm.rotation.x = -Math.PI * 0.9;
         bones.rightArm.rotation.z = Math.sin(t) * 0.4;
+        if (bones.rightArmLower) bones.rightArmLower.rotation.x = 0;
       } else if (bones.rightArm) {
         bones.rightArm.rotation.z = 0;
       }
+      // Knockdown pose (set by a relayed world:punch or a local hit).
+      _applyDownPose(rp.rig, rp.downUntil || 0, now);
     }
   }
 
@@ -3748,7 +4185,10 @@ const Playground3D = (() => {
     if (!_player) return null;
     return {
       x: _player.position.x,
-      y: _player.position.y,
+      // Floored during falls to mirror the server's clamp; peers see the
+      // avatar sink to the floor value while the unwalkable-ground fade
+      // dissolves it, then it reappears at the respawn point.
+      y: Math.max(FALL.BROADCAST_Y_FLOOR, _player.position.y),
       z: _player.position.z,
       yaw: _player.rotation.y,
       // Walking = local stepClock advanced recently (set in the main tick).
@@ -3756,8 +4196,6 @@ const Playground3D = (() => {
     };
   }
 
-  function getActiveNode() { return _activeNode; }
-  function setProjectClickHandler(fn) { _projectClickHandler = fn; }
 
   // ── standalone 3D preview ──
   //
@@ -3992,7 +4430,11 @@ const Playground3D = (() => {
     // World/multiplayer surface — no-ops in home mode.
     addRemotePlayer, updateRemotePlayer, removeRemotePlayer, clearRemotePlayers,
     showRemoteChat, showLocalChat, playRemoteEmote, playLocalEmote,
-    getLocalState, getActiveNode, setProjectClickHandler,
+    getLocalState,
+    // Daily Infinity Stone hunt — per-player collectibles.
+    spawnStones, clearStones, setStoneHandler, getStoneWorld,
+    // Punch + knockdown — relayed via world:punch (js/home-socket.js).
+    setPunchHandler, playRemotePunch, knockdownRemote, knockdownLocal,
     // Local NPC surface — Avenger wanderers in /world.
     setWorldNpcs,
     // Voice-chat surface — distance attenuation + speaking indicator.

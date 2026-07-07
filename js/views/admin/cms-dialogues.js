@@ -108,9 +108,14 @@
           });
         });
         list.querySelectorAll('.admin-dialog-pair-del').forEach(btn => {
-          btn.addEventListener('click', (e) => {
+          btn.addEventListener('click', async (e) => {
             const key = e.target.closest('.admin-row').dataset.key;
-            if (!window.confirm(`Delete all exchanges for "${key}"?`)) return;
+            const ok = await confirmDialog({
+              title: `Delete all exchanges for "${key}"?`,
+              confirmLabel: 'Delete',
+              danger: true
+            });
+            if (!ok) return;
             delete Editor._data.pairs[key];
             keys.splice(keys.indexOf(key), 1);
             renderList();
@@ -291,9 +296,14 @@
           });
         });
         list.querySelectorAll('.admin-villain-del').forEach(btn => {
-          btn.addEventListener('click', () => {
+          btn.addEventListener('click', async () => {
             const id = btn.dataset.id;
-            if (!window.confirm(`Delete all ${field === 'villainDefeatLines' ? 'defeat' : 'victory'} lines for "${id}"?`)) return;
+            const ok = await confirmDialog({
+              title: `Delete all ${field === 'villainDefeatLines' ? 'defeat' : 'victory'} lines for "${id}"?`,
+              confirmLabel: 'Delete',
+              danger: true
+            });
+            if (!ok) return;
             delete data[id];
             villainIds.splice(villainIds.indexOf(id), 1);
             renderList();

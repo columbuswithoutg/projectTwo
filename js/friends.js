@@ -116,8 +116,6 @@ function showFriendsPanel() {
     </div>
   `;
 
-  panel.querySelector('#close-friends').onclick = () => panel.remove();
-
   const addBtn = panel.querySelector('#friend-search-btn');
 
   const doAdd = async () => {
@@ -127,7 +125,16 @@ function showFriendsPanel() {
     addBtn.disabled = true;
     addBtn.textContent = '...';
 
-    const results = await Friends.search(query);
+    // A network failure used to leave the button stuck on '...' forever.
+    let results;
+    try {
+      results = await Friends.search(query);
+    } catch (_) {
+      toast("Couldn't search — check your connection", 'error');
+      addBtn.textContent = 'Add';
+      addBtn.disabled = false;
+      return;
+    }
 
     if (!results.length) {
       addBtn.textContent = 'Not Found';
@@ -143,7 +150,12 @@ function showFriendsPanel() {
     }
 
     const user = results.find(u => u.username.toLowerCase() === query.toLowerCase()) || results[0];
-    const data = await Friends.sendRequest(user._id);
+    let data;
+    try {
+      data = await Friends.sendRequest(user._id);
+    } catch (_) {
+      data = { error: 'Network error' };
+    }
 
     if (data.error) {
       addBtn.textContent = data.error === 'Request already exists' ? 'Already Added' : data.error;
@@ -170,9 +182,13 @@ function showFriendsPanel() {
     if (e.key === 'Enter') doAdd();
   });
 
-  // Load pending requests
-  Friends.getPending().then(requests => {
+  // Load pending requests. Named + retryable — this fetch used to have no
+  // .catch, so a network failure left the section on "Loading..." forever.
+  const loadPendingList = () => {
     const container = panel.querySelector('#friend-pending-list');
+    container.textContent = 'Loading...';
+    Friends.getPending().then(requests => {
+    if (!Array.isArray(requests)) throw new Error(requests?.error || 'Bad response');
     if (!requests.length) {
       container.innerHTML = '<p class="friends-empty">No pending requests</p>';
       return;
@@ -228,20 +244,44 @@ function showFriendsPanel() {
         btn.closest('.friend-row').remove();
       };
     });
-  });
+    }).catch(() => {
+      container.innerHTML = `
+        <p class="friends-empty">Couldn't load requests.</p>
+        <button type="button" class="friends-retry-btn">Retry</button>
+      `;
+      container.querySelector('.friends-retry-btn').onclick = loadPendingList;
+      toast("Couldn't load friend requests", 'error');
+    });
+  };
+  loadPendingList();
 
   loadFriendList(panel);
 
   document.body.appendChild(panel);
+
+  // Esc + backdrop dismiss + focus restore via the shared helper — wired
+  // after append so focus can actually move into the panel. Stored on the
+  // element so row handlers that tear the panel down (View Progress) can
+  // reuse the same cleanup path.
+  panel._close = wireModalDismiss(panel, () => panel.remove(), {
+    initialFocus: panel.querySelector('#close-friends')
+  });
+  panel.querySelector('#close-friends').onclick = panel._close;
 }
 
 function loadFriendList(panel) {
+  const container = panel.querySelector('#friend-list');
+  const fail = () => {
+    container.innerHTML = `
+      <p class="friends-empty">Couldn't load friends.</p>
+      <button type="button" class="friends-retry-btn">Retry</button>
+    `;
+    container.querySelector('.friends-retry-btn').onclick = () => loadFriendList(panel);
+    toast("Couldn't load friends", 'error');
+  };
+  container.textContent = 'Loading...';
   Friends.getList().then(friends => {
-    const container = panel.querySelector('#friend-list');
-    if (!friends || friends.error || !Array.isArray(friends)) {
-      container.innerHTML = '<p class="friends-empty">Failed to load</p>';
-      return;
-    }
+    if (!friends || friends.error || !Array.isArray(friends)) { fail(); return; }
     if (!friends.length) {
       container.innerHTML = '<p class="friends-empty">No friends yet</p>';
       return;
@@ -258,7 +298,8 @@ function loadFriendList(panel) {
 
     container.querySelectorAll('.friend-view-btn').forEach(btn => {
       btn.onclick = () => {
-        panel.remove();
+        // Go through the shared close so the Esc listener is detached.
+        (panel._close || (() => panel.remove()))();
         // Dedicated route — username goes in the URL, FriendView.enter
         // does the fetch/swap/walker work inside the friend view's mount.
         Router.go('/friend/' + encodeURIComponent(btn.dataset.name));
@@ -269,10 +310,7 @@ function loadFriendList(panel) {
       btn.onclick = () => showRemoveConfirm(btn.dataset.id, btn.dataset.name, panel);
     });
 
-  }).catch(() => {
-    panel.querySelector('#friend-list').innerHTML =
-      '<p class="friends-empty">Failed to load friends</p>';
-  });
+  }).catch(fail);
 }
 
 

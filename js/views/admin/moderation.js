@@ -92,7 +92,13 @@
     },
 
     async deleteMemory(userId, projectId, url) {
-      if (!window.confirm('Permanently delete this memory? It will also be removed from Cloudinary.')) return;
+      const ok = await confirmDialog({
+        title: 'Permanently delete this memory?',
+        message: 'It will also be removed from Cloudinary.',
+        confirmLabel: 'Delete',
+        danger: true
+      });
+      if (!ok) return;
       try {
         await AdminView.api('/memories', {
           method: 'DELETE',
@@ -141,7 +147,12 @@
     },
 
     async deleteFriend(id) {
-      if (!window.confirm('Delete this friend/watch request?')) return;
+      const ok = await confirmDialog({
+        title: 'Delete this friend/watch request?',
+        confirmLabel: 'Delete',
+        danger: true
+      });
+      if (!ok) return;
       try {
         await AdminView.api('/friends/' + id, { method: 'DELETE' });
         AdminView.toast('Request deleted', 'success');

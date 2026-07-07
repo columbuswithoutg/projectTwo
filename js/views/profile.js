@@ -54,6 +54,15 @@ const ProfileView = {
           <p id="cowatcher-name"></p>
         </div>
 
+        <div id="profile-appearance">
+          <p class="profile-section-label">Appearance</p>
+          <div id="theme-toggle" role="radiogroup" aria-label="Theme">
+            <button type="button" class="theme-option" data-mode="light">☀️ Light</button>
+            <button type="button" class="theme-option" data-mode="dark">🌙 Dark</button>
+            <button type="button" class="theme-option" data-mode="system">🖥️ System</button>
+          </div>
+        </div>
+
         <div id="avatar-picker" hidden>
           <p class="profile-section-label">Choose your hero</p>
           <p id="avatar-picker-empty" style="display:none">Watch more movies to unlock heroes!</p>
@@ -65,6 +74,26 @@ const ProfileView = {
     document.getElementById('back-btn').addEventListener('click', () => Router.go('/'));
     const adminLinkBtn = document.getElementById('admin-link-btn');
     if (adminLinkBtn) adminLinkBtn.addEventListener('click', () => Router.go('/admin'));
+
+    // Appearance toggle — drives js/theme.js; active state mirrors the
+    // SAVED mode ('system' when no explicit choice), not the resolved theme.
+    const themeToggle = document.getElementById('theme-toggle');
+    const syncThemeButtons = () => {
+      const mode = Theme.get();
+      themeToggle.querySelectorAll('.theme-option').forEach(b => {
+        const on = b.dataset.mode === mode;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', String(on));
+        b.setAttribute('role', 'radio');
+      });
+    };
+    themeToggle.addEventListener('click', (e) => {
+      const btn = e.target.closest('.theme-option');
+      if (!btn) return;
+      Theme.set(btn.dataset.mode);
+      syncThemeButtons();
+    });
+    syncThemeButtons();
 
     // DOM refs scoped to this mount
     const avatarImg      = document.getElementById('profile-avatar-img');

@@ -187,7 +187,11 @@
     },
 
     async unban(user) {
-      if (!window.confirm(`Unban "${user.username}"?`)) return;
+      const ok = await confirmDialog({
+        title: `Unban "${user.username}"?`,
+        confirmLabel: 'Unban'
+      });
+      if (!ok) return;
       try {
         await AdminView.api(`/users/${user._id}/unban`, { method: 'POST' });
         AdminView.toast('User unbanned', 'success');
@@ -213,7 +217,12 @@
     },
 
     async deletePrompt(user) {
-      const ok = window.confirm(`PERMANENTLY DELETE "${user.username}"?\n\nThis removes the user, all watch progress, all memory metadata, and all friend records. The Cloudinary uploads themselves remain (delete them via the Moderation tab first).\n\nThis cannot be undone.`);
+      const ok = await confirmDialog({
+        title: `Permanently delete "${user.username}"?`,
+        message: 'This removes the user, all watch progress, all memory metadata, and all friend records. The Cloudinary uploads themselves remain (delete them via the Moderation tab first). This cannot be undone.',
+        confirmLabel: 'Delete forever',
+        danger: true
+      });
       if (!ok) return;
       try {
         await AdminView.api(`/users/${user._id}`, { method: 'DELETE' });

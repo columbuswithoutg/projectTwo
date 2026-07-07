@@ -153,4 +153,83 @@ router.post('/walkers', auth, async (req, res) => {
   res.json({ message: 'Saved' });
 });
 
+/* ---- Daily Infinity Stone hunt ---- */
+
+const STONE_IDS = new Set(['space', 'mind', 'reality', 'power', 'time', 'soul']);
+const STONE_DAYS_KEPT = 30;
+
+// The SERVER's date is the source of truth for the daily key — the client
+// uses it both as the placement seed and the persistence bucket, so a
+// spoofed client clock can't farm tomorrow's stones early.
+function stoneDayKey(d = new Date()) {
+  return d.toISOString().slice(0, 10);           // YYYY-MM-DD (UTC)
+}
+
+function normalizeStoneHunt(raw) {
+  const sh = (raw && typeof raw === 'object') ? raw : {};
+  if (!sh.days || typeof sh.days !== 'object') sh.days = {};
+  sh.streak = Number.isFinite(sh.streak) ? sh.streak : 0;
+  sh.bestStreak = Number.isFinite(sh.bestStreak) ? sh.bestStreak : 0;
+  return sh;
+}
+
+// Load today's hunt state (also tells the client which day it is).
+router.get('/stones', auth, async (req, res) => {
+  const user = await User.findById(req.user.id).select('stoneHunt');
+  const sh = normalizeStoneHunt(user && user.stoneHunt);
+  const today = stoneDayKey();
+  const day = sh.days[today] || { collected: [], completedAt: null };
+  res.json({
+    date: today,
+    collected: day.collected,
+    completed: !!day.completedAt,
+    streak: sh.streak,
+    bestStreak: sh.bestStreak
+  });
+});
+
+// Record one stone pickup. Completion of all 6 advances the daily streak
+// (yesterday completed → streak + 1, else reset to 1).
+router.post('/stones', auth, async (req, res) => {
+  const { stone } = req.body || {};
+  if (typeof stone !== 'string' || !STONE_IDS.has(stone)) {
+    return res.status(400).json({ error: 'Unknown stone' });
+  }
+  const user = await User.findById(req.user.id).select('stoneHunt');
+  if (!user) return res.status(404).json({ error: 'Not found' });
+  const sh = normalizeStoneHunt(user.stoneHunt);
+  const today = stoneDayKey();
+  const day = sh.days[today] || (sh.days[today] = { collected: [], completedAt: null });
+
+  if (!day.collected.includes(stone)) day.collected.push(stone);
+  // Cap defensively (6 known ids, but Mixed fields deserve belts + braces).
+  day.collected = day.collected.filter(s => STONE_IDS.has(s)).slice(0, 6);
+
+  let completedNow = false;
+  if (!day.completedAt && day.collected.length >= STONE_IDS.size) {
+    day.completedAt = new Date();
+    completedNow = true;
+    const yesterday = stoneDayKey(new Date(Date.now() - 86400000));
+    const yd = sh.days[yesterday];
+    sh.streak = (yd && yd.completedAt) ? sh.streak + 1 : 1;
+    if (sh.streak > sh.bestStreak) sh.bestStreak = sh.streak;
+  }
+
+  // Prune old days so the Mixed blob can't grow unbounded.
+  const keys = Object.keys(sh.days).sort();
+  while (keys.length > STONE_DAYS_KEPT) delete sh.days[keys.shift()];
+
+  user.stoneHunt = sh;
+  user.markModified('stoneHunt');                // Mixed — mongoose can't see deep changes
+  await user.save();
+  res.json({
+    date: today,
+    collected: day.collected,
+    completed: !!day.completedAt,
+    completedNow,
+    streak: sh.streak,
+    bestStreak: sh.bestStreak
+  });
+});
+
 module.exports = router;

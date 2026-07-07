@@ -18,6 +18,11 @@ const UserSchema = new mongoose.Schema({
   watchedProjects: { type: [WatchEntrySchema], default: [] },
   profilePicture: { type: String, default: '' },
   walkers: { type: mongoose.Schema.Types.Mixed, default: [] },
+  // Daily Infinity Stone hunt (/world). Shape:
+  //   { days: { 'YYYY-MM-DD': { collected: ['space',...], completedAt: Date|null } },
+  //     streak: Number, bestStreak: Number }
+  // Days older than 30 days are pruned on write (routes/progress.js).
+  stoneHunt: { type: mongoose.Schema.Types.Mixed, default: {} },
   // Admin-panel fields. isAdmin is set manually in MongoDB (no public path
   // to admin promotion). banned/bannedAt/banReason gate the user out of the
   // app; tokenVersion is bumped on ban so existing JWTs invalidate without

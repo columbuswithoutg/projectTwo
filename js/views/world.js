@@ -13,7 +13,6 @@
 const WorldView = (() => {
 
   let _stage = null;
-  let _onKeyDown = null;
   let _mp = null;
   // Monotonic mount token. Bumped on every mount() and unmount(); the async
   // bring-up captures its value and bails after each await if it no longer
@@ -30,6 +29,9 @@ const WorldView = (() => {
   let _voiceLongPressTimer = null;
   let _voiceLongPressFired = false;
   let _peerFailToastAt = 0;        // throttle the "voice trouble" hint toast
+  // Daily Infinity Stone hunt state.
+  let _stones = null;              // { date, total, collected:Set, streak, completed }
+  let _stoneTimer = null;          // scene-ready retry timer
 
   function mount(container) {
     if (!Auth.isLoggedIn()) {
@@ -41,7 +43,10 @@ const WorldView = (() => {
       <header class="world-header">
         <button id="world-back" type="button" title="Back">← Back</button>
         <h1 class="world-title">World</h1>
-        <div class="world-header-spacer"></div>
+        <div class="world-header-spacer">
+          <button class="world-stone-chip" id="world-stone-chip" type="button" hidden
+                  title="Daily Infinity Stone hunt — tap for the leaderboard">💎 0/6</button>
+        </div>
       </header>
       <div id="pg-stage" class="pg-stage">
         <div class="world-loading" id="world-loading">
@@ -137,23 +142,6 @@ const WorldView = (() => {
       Playground3D.setWorldNpcs(npcSpecs);
     }
 
-    // Clicking a node prompt opens the same popup the watch order uses.
-    Playground3D.setProjectClickHandler((project) => {
-      if (typeof showPopup === 'function') showPopup(project);
-    });
-
-    // Keyboard: E activates the nearest node's prompt.
-    _onKeyDown = (e) => {
-      if (_isTextField(document.activeElement)) return;
-      if (e.key === 'e' || e.key === 'E') {
-        const node = Playground3D.getActiveNode && Playground3D.getActiveNode();
-        if (node && typeof showPopup === 'function') {
-          showPopup(node);
-        }
-      }
-    };
-    window.addEventListener('keydown', _onKeyDown);
-
     if (typeof Multiplayer !== 'undefined' && Multiplayer.start) {
       _mp = Multiplayer.start({
         events: Multiplayer.WORLD_EVENTS,
@@ -164,6 +152,155 @@ const WorldView = (() => {
 
     _wireVoiceToggle('world');
     _maybeShowControlsHint();
+    _initStones(myMount);
+  }
+
+  /* ── Daily Infinity Stone hunt ── */
+
+  async function _initStones(myMount) {
+    if (typeof PG3DPhysics === 'undefined' || !Playground3D.spawnStones) return;
+    let data = null;
+    try {
+      const res = await fetch(`${API}/progress/stones`, {
+        headers: { Authorization: `Bearer ${Auth.getToken()}` }
+      });
+      if (res.ok) data = await res.json();
+    } catch (_) { /* offline — hunt just doesn't appear today */ }
+    if (!data || myMount !== _mountSeq) return;
+
+    // The scene builds asynchronously (THREE loads from CDN) — poll until
+    // the world nodes exist, then place today's stones.
+    const tryPlace = () => {
+      if (myMount !== _mountSeq) return;
+      const world = Playground3D.getStoneWorld();
+      if (!world.nodes.length) {
+        _stoneTimer = setTimeout(tryPlace, 500);
+        return;
+      }
+      const seed = PG3DPhysics.hashString(data.date + '|' + world.nodes.map(n => n.id).join(','));
+      const spots = PG3DPhysics.pickStoneSpots({
+        nodes: world.nodes, roads: world.roads, halfA: world.halfA, seed
+      });
+      if (!spots.length) return;
+      const spotIds = new Set(spots.map(s => s.id));
+      _stones = {
+        date: data.date,
+        total: spots.length,
+        collected: new Set((data.collected || []).filter(id => spotIds.has(id))),
+        streak: data.streak || 0,
+        completed: !!data.completed
+      };
+      Playground3D.setStoneHandler(_onStonePickup);
+      Playground3D.spawnStones(spots, _stones.collected);
+      _updateStoneChip();
+      const chip = document.getElementById('world-stone-chip');
+      if (chip) {
+        chip.hidden = false;
+        chip.addEventListener('click', _openStoneLeaderboard);
+      }
+    };
+    tryPlace();
+  }
+
+  function _updateStoneChip() {
+    const chip = document.getElementById('world-stone-chip');
+    if (!chip || !_stones) return;
+    chip.textContent = `💎 ${_stones.collected.size}/${_stones.total}`;
+    chip.classList.toggle('complete', _stones.collected.size >= _stones.total);
+  }
+
+  const STONE_NAMES = {
+    space: 'Space Stone', mind: 'Mind Stone', reality: 'Reality Stone',
+    power: 'Power Stone', time: 'Time Stone', soul: 'Soul Stone'
+  };
+
+  async function _onStonePickup(id) {
+    if (!_stones) return;
+    _stones.collected.add(id);
+    _updateStoneChip();
+    const allFound = _stones.collected.size >= _stones.total;
+    if (typeof toast === 'function' && !allFound) {
+      toast(`💎 ${STONE_NAMES[id] || 'Stone'} — ${_stones.collected.size}/${_stones.total}`, 'success');
+    }
+    if (allFound) _snapEffect();
+
+    try {
+      const res = await fetch(`${API}/progress/stones`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${Auth.getToken()}`
+        },
+        body: JSON.stringify({ stone: id })
+      });
+      if (res.ok) {
+        const out = await res.json();
+        _stones.streak = out.streak || _stones.streak;
+        if (out.completedNow && typeof toast === 'function') {
+          toast(`✨ All six Infinity Stones! Daily streak: ${out.streak}`, { type: 'success', duration: 5000 });
+        }
+      }
+    } catch (_) { /* picked up locally; server catches up next session */ }
+  }
+
+  // Brief white "snap" flash when today's set is complete.
+  function _snapEffect() {
+    if (!_stage) return;
+    const flash = document.createElement('div');
+    flash.className = 'world-snap-flash';
+    _stage.appendChild(flash);
+    requestAnimationFrame(() => flash.classList.add('show'));
+    setTimeout(() => flash.classList.remove('show'), 450);
+    setTimeout(() => { if (flash.parentNode) flash.parentNode.removeChild(flash); }, 1000);
+    if (typeof toast === 'function' && _stones && _stones.total < 6) {
+      toast(`✨ Every stone found! Unlock more islands for the full six.`, { type: 'success', duration: 5000 });
+    }
+  }
+
+  async function _openStoneLeaderboard() {
+    document.querySelector('.world-lb')?.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'world-lb';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Infinity Stone leaderboard');
+    overlay.innerHTML = `
+      <div class="world-lb-panel">
+        <button class="popup-close" aria-label="Close">✕</button>
+        <h3>💎 Stone Hunt</h3>
+        <p class="world-lb-sub">Six stones hide in new spots every day — some need a jump.</p>
+        <div class="world-lb-rows">Loading…</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = wireModalDismiss(overlay, () => overlay.remove(), {
+      initialFocus: overlay.querySelector('.popup-close')
+    });
+    overlay.querySelector('.popup-close').addEventListener('click', close);
+
+    try {
+      const res = await fetch(`${API}/friends/stones`, {
+        headers: { Authorization: `Bearer ${Auth.getToken()}` }
+      });
+      const rows = res.ok ? await res.json() : null;
+      const host = overlay.querySelector('.world-lb-rows');
+      if (!host) return;
+      if (!Array.isArray(rows) || !rows.length) {
+        host.innerHTML = '<p class="friends-empty">Couldn’t load the leaderboard.</p>';
+        return;
+      }
+      host.innerHTML = rows.map((r, i) => `
+        <div class="world-lb-row${r.you ? ' you' : ''}">
+          <span class="world-lb-rank">${i + 1}</span>
+          <span class="world-lb-name">${esc(r.username)}${r.you ? ' (you)' : ''}</span>
+          <span class="world-lb-score">${r.completedToday ? '✨' : ''} ${r.todayCount}/6</span>
+          <span class="world-lb-streak" title="Daily streak">🔥 ${r.streak}</span>
+        </div>
+      `).join('');
+    } catch (_) {
+      const host = overlay.querySelector('.world-lb-rows');
+      if (host) host.innerHTML = '<p class="friends-empty">Couldn’t load the leaderboard.</p>';
+    }
   }
 
   // First-visit controls hint. /world is the marquee feature but nothing
@@ -180,8 +317,8 @@ const WorldView = (() => {
     const hint = document.createElement('div');
     hint.className = 'world-hint';
     hint.innerHTML = coarse
-      ? `<span class="world-hint-icon">🕹️</span> Drag the joystick to move · tap a building to open it`
-      : `<span class="world-hint-icon">⌨️</span> <b>WASD</b> to move · drag to look · <b>E</b> or click a building to open it`;
+      ? `<span class="world-hint-icon">🕹️</span> Drag the joystick to move · ⤒ to jump · 👊 to punch`
+      : `<span class="world-hint-icon">⌨️</span> <b>WASD</b> to move · <b>Space</b> to jump · <b>F</b> to punch · drag to look`;
     _stage.appendChild(hint);
     requestAnimationFrame(() => hint.classList.add('show'));
 
@@ -353,18 +490,11 @@ const WorldView = (() => {
     _voiceBtn.addEventListener('touchcancel', _voiceTouchEnd);
   }
 
-  function _isTextField(el) {
-    if (!el) return false;
-    const t = el.tagName;
-    return t === 'INPUT' || t === 'TEXTAREA' || el.isContentEditable;
-  }
-
   function unmount() {
     // Invalidate any in-flight async bring-up (character fetch / state.load)
     // so it can't init the engine against this torn-down view.
     _mountSeq++;
     if (_loadTimer) { clearTimeout(_loadTimer); _loadTimer = null; }
-    if (_onKeyDown) { window.removeEventListener('keydown', _onKeyDown); _onKeyDown = null; }
     // Voice must stop BEFORE multiplayer so voice:leave reaches the room
     // while the socket is still open.
     if (_voice) { try { _voice.stop(); } catch (_) {} _voice = null; }
@@ -381,6 +511,11 @@ const WorldView = (() => {
     if (_voiceLongPressTimer) { clearTimeout(_voiceLongPressTimer); _voiceLongPressTimer = null; }
     _voiceBtn = null; _voiceBtnHandler = null; _voiceCtxHandler = null;
     _voiceTouchStart = null; _voiceTouchEnd = null;
+    // Stone hunt teardown — engine stones die in Playground3D.destroy();
+    // the chip/flash live inside the container and vanish with it.
+    if (_stoneTimer) { clearTimeout(_stoneTimer); _stoneTimer = null; }
+    document.querySelector('.world-lb')?.remove();
+    _stones = null;
     if (_mp) { try { _mp.stop(); } catch (_) {} _mp = null; }
     Playground3D.destroy();
     _stage = null;

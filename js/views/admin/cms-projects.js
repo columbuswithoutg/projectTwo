@@ -143,7 +143,13 @@
     },
 
     async deleteItem(item) {
-      if (!window.confirm(`Permanently delete project "${item.id}"? Anything that lists it as a prerequisite will silently lose that link.`)) return;
+      const ok = await confirmDialog({
+        title: `Permanently delete project "${item.id}"?`,
+        message: 'Anything that lists it as a prerequisite will silently lose that link.',
+        confirmLabel: 'Delete',
+        danger: true
+      });
+      if (!ok) return;
       try {
         await AdminView.api('/content/projects/' + encodeURIComponent(item.id), { method: 'DELETE' });
         AdminView.toast('Project deleted', 'success');

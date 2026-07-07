@@ -24,6 +24,7 @@ const Multiplayer = (() => {
     pos:      'world:pos',
     chat:     'world:chat',
     emote:    'world:emote',
+    punch:    'world:punch',
     snapshot: 'world:snapshot',
     joined:   'world:joined',
     left:     'world:left',
@@ -34,6 +35,7 @@ const Multiplayer = (() => {
     pos:      'home:pos',
     chat:     'home:chat',
     emote:    'home:emote',
+    punch:    null,             // punching stays local in homes (no relay)
     snapshot: 'home:snapshot',
     joined:   'home:joined',
     left:     'home:left',
@@ -125,6 +127,26 @@ const Multiplayer = (() => {
       Playground3D.playRemoteEmote(id, kind);
     });
 
+    // Punch relay (world only — events.punch is null for homes). Every
+    // local punch is broadcast so peers see the swing; a hit also carries
+    // the victim's socket id.
+    if (events.punch) {
+      if (Playground3D.setPunchHandler) {
+        Playground3D.setPunchHandler(({ target }) => {
+          if (socket.connected) socket.emit(events.punch, { target: target || null });
+        });
+      }
+      socket.on(events.punch, ({ id, target }) => {
+        if (Playground3D.playRemotePunch) Playground3D.playRemotePunch(id);
+        if (!target) return;
+        if (target === socket.id) {
+          if (Playground3D.knockdownLocal) Playground3D.knockdownLocal();
+        } else if (Playground3D.knockdownRemote) {
+          Playground3D.knockdownRemote(target);
+        }
+      });
+    }
+
     // Surface a lost connection so the world doesn't silently look empty /
     // single-player. 'io client disconnect' is our own stop()/navigation —
     // not an error, so stay quiet for it.
@@ -202,6 +224,9 @@ const Multiplayer = (() => {
       if (posTimer) { clearInterval(posTimer); posTimer = null; }
       if (input) input.removeEventListener('keydown', onChatKey);
       if (emoteBtn) emoteBtn.removeEventListener('click', onEmoteClick);
+      // Detach the punch → socket bridge so a stale closure can't emit on
+      // a dead socket after unmount.
+      if (events.punch && Playground3D.setPunchHandler) Playground3D.setPunchHandler(null);
       if (socket) {
         if (events.leave && socket.connected) {
           try { socket.emit(events.leave); } catch (_) {}

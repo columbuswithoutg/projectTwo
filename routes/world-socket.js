@@ -62,6 +62,7 @@ const voiceHomes = new Map();
 const MAX_USERNAME = 40;
 const MAX_CHAT_LEN = 200;
 const CHAT_INTERVAL_MS = 1000;
+const PUNCH_INTERVAL_MS = 500;        // floor between relayed punches per socket
 const POSITION_BOUND = 1000;          // sanity clamp; world is < 300u square in practice
 // Per-socket floor between accepted position updates. The client broadcasts at
 // ~100ms (POS_INTERVAL_MS), so legitimate traffic never trips this — it only
@@ -192,6 +193,21 @@ module.exports = (io) => {
       const kind = raw && raw.kind;
       if (kind !== 'wave') return;
       socket.to('world').emit('world:emote', { id: socket.id, kind });
+    });
+
+    // Punch relay. Same per-user cooldown pattern as chat. `target` must be
+    // null (a whiffed swing everyone still sees) or a current world player's
+    // socket id — the victim's client knocks itself down on receipt; the
+    // sender already animated the hit optimistically.
+    socket.on('world:punch', (raw) => {
+      const p = worldPlayers.get(socket.id);
+      if (!p) return;
+      const now = Date.now();
+      if (now - (p.lastPunch || 0) < PUNCH_INTERVAL_MS) return;
+      p.lastPunch = now;
+      let target = raw && raw.target;
+      if (target != null && (typeof target !== 'string' || !worldPlayers.has(target))) return;
+      socket.to('world').emit('world:punch', { id: socket.id, target: target || null });
     });
 
     // ── home:* events ──

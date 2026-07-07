@@ -71,12 +71,23 @@ projectOne/
 │                              used as the Mongo-down fallback for /api/content/*
 │
 ├── scripts/
-│   └── seed-content.js        Idempotent seed: JS files → Mongo (run once)
+│   ├── seed-content.js        Idempotent seed: JS files → Mongo (run once)
+│   └── export-content.js      Inverse: Mongo → static fallback files (--dry-run)
+│
+├── test/
+│   └── physics.test.js        node --test unit tests for the 3D physics helpers
+│
+├── docs/
+│   └── VOICE-TURN-SETUP.md    5-minute TURN relay setup for cross-NAT voice
+│
+├── .github/workflows/ci.yml   CI: node --check sweep + npm test
 │
 └── js/
-    ├── boot.js                Router.register + boot-time content fetch
+    ├── boot.js                Instant mount from fallbacks + background content refresh
     ├── router.js              Hash-free SPA router
     ├── auth.js                Auth helper (token, isAdmin via JWT decode)
+    ├── theme.js               Light/Dark/System theme manager (see profile toggle)
+    ├── playground3d-physics.js Pure jump/fall/walkability math (unit-tested)
     ├── config.js              Frontend-only app config (CONFIG)
     ├── world-config.js        CONFIG_WORLD — display geometry (NOT content)
     ├── state.js               Watch-progress in-memory store + persist
@@ -241,15 +252,17 @@ node scripts/seed-content.js --wipe   # drop collections then re-seed
 - **MongoDB SRV lookup fails on default Windows DNS.** Both `server.js` and `scripts/seed-content.js` force Google DNS (`8.8.8.8`) at startup to work around this.
 - **`isAdmin` is set manually in MongoDB.** No promote-from-UI flow exists by design — there's no public path to admin.
 - **Service worker cache invalidation.** `sw.js` precaches the SPA shell + static fallback data and serves stale-while-revalidate for `/js/*` and `/assets/*`. `/api/*` and `/socket.io/*` are never cached. When a deploy must invalidate the precache (precache list changed, shell shape changed), bump `CACHE_VERSION` in `sw.js`; the `activate` handler deletes old caches.
-- **Helmet CSP is currently disabled.** The inline importmap, unpkg.com (Three.js), Cloudinary images, and Google Fonts would all be blocked by helmet's default `contentSecurityPolicy`. Other security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS, COOP, CORP=cross-origin) are on.
+- **Helmet CSP is ENFORCED** (since 2026-07-07) with an allowlist covering the inline importmap, unpkg.com (Three.js), Cloudinary, Google Fonts, websockets, and data:/blob: images. **Adding any new external source requires extending the allowlist in server.js first** or first paint will brick. Other security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS, COOP, CORP=cross-origin) are on.
 
 ---
 
 ## Pending / not built
 
-- `scripts/export-content.js` to snapshot CMS edits back into the static JS files (for version-controlled disaster recovery of content). Mentioned in the original plan, deferred.
-- An automated test suite. Currently `npm test` is a stub.
-- A CI pipeline.
+- TURN credentials for cross-NAT voice: the code is fully wired; create a
+  provider account and set `TURN_URLS`/`TURN_USERNAME`/`TURN_CREDENTIAL`
+  (see `docs/VOICE-TURN-SETUP.md`).
+- Broader test coverage — `test/physics.test.js` covers the 3D physics
+  helpers; auth middleware and home-layout validation are good next targets.
 
 ---
 
@@ -265,7 +278,65 @@ Brief summary of what changed and why.
 
 ---
 
-### 2026-05-16 — Proximity voice chat (/home + /world)
+### 2026-07-07 — Batch 4: punch + knockdown; node "click to view" prompt removed
+
+**Removed:** the /world proximity prompt ("📺 Click to view [movie]") and its E-key shortcut — feature deleted end-to-end (engine state/tick block/`getActiveNode`/`setProjectClickHandler`, view wiring, `.pg3d-prompt` CSS, `WORLD.PROXIMITY`). Projects are watched from `/` and `/map`; /world is now purely the playground. First-visit controls hint updated (WASD · Space jump · F punch).
+
+**Punch + knockdown.** **F** (desktop) or the **👊 touch button** (stacked above jump) throws a 300ms right-arm jab. The nearest remote player or NPC within 1.4u (and 1.5u vertically) gets knocked down: tips backward to flat, lies 1.8s — with input dead if it's YOU — then eases back up. 600ms punch cooldown.
+- Networked like emotes: engine `_onPunch` callback → `js/home-socket.js` emits `world:punch { target }` (every swing broadcasts, hits carry the victim's socket id; homes stay local) → `routes/world-socket.js` validates (world membership, 500ms per-socket floor, target must be null or a live world player) and relays → receivers play the attacker's jab and the victim client calls `knockdownLocal()`.
+- Engine: `PUNCH` consts, `consumePunch` input (F + `.pg-punch` button with the joystick's lifecycle/visibility gates), `_applyJabPose` (priority over the wave emote), `_applyDownPose` shared by local/remote/NPC rigs, `PG3DPhysics.pickPunchTarget` (pure, unit-tested), public `setPunchHandler`/`playRemotePunch`/`knockdownRemote`/`knockdownLocal`, state reset on init/destroy so a knockdown can't survive a remount.
+- Verified live with two real socket connections: punch relayed with the correct target id, victim input dead while down, knocked-down rig visibly tipped in-scene. `sw.js` → `mcu-v6`.
+
+### 2026-07-07 — Batch 3: Daily Infinity Stone hunt, walker polish, avatar taper/sway
+
+**Daily Infinity Stone hunt (/world retention loop).** Six stones (Space/Mind/Reality/Power/Time/Soul) hide in new deterministic spots every day — seeded by the SERVER's date + the player's unlocked-island set, so friends with the same islands hunt the same spots. Ground stones collect on walk-over; ~⅓ float at jump height and require a leap (3D pickup radius 0.9 from the feet). Collect all six → white "snap" flash + daily streak. HUD chip (`💎 n/6`) in the world header doubles as the friends-leaderboard button (rank, today's count, ✨ completion, 🔥 streak). Small worlds (<3 islands) spawn `islands×2` stones.
+- `js/playground3d-physics.js` — `mulberry32`, `hashString`, `STONES`, `pickStoneSpots` (pure, unit-tested: determinism, walkability, separation, jump-reachability math).
+- `js/playground3d.js` — `spawnStones`/`clearStones`/`setStoneHandler`/`getStoneWorld` public API; emissive octahedron meshes (shared geometry), spin+bob, pickup in the world tick; stones cleared in `destroy()`. **Bug fix:** `WORLD.PROXIMITY` was referenced but never defined, so the "enter project" node prompt could never appear — now `PROXIMITY: 9`.
+- `routes/progress.js` — `GET/POST /api/progress/stones`: server date is the daily key (client clocks can't farm ahead), stone-id whitelist, streak computed on completion (yesterday-completed chains it), 30-day pruning of the Mixed blob, `markModified` on save.
+- `routes/friends.js` — `GET /api/friends/stones` leaderboard (self + accepted friends, sorted by today's count then streak).
+- `models/user.js` — `stoneHunt` Mixed field. `js/views/world.js` — chip, pickup toasts, snap effect, leaderboard modal (Esc/backdrop via `wireModalDismiss`), scene-ready retry, unmount cleanup. `styles.css` — chip/panel/flash (scene-dark in both themes). `sw.js` → `mcu-v5`.
+
+**2D map walker polish.** Walker chips (the circular character portraits roaming /map) grew 24→28px, moved their visual styling from JS inline styles into CSS (`.map-walker img`) — which also killed the last pre-retheme GOLD ring literals — and gained life while moving: a fast bob + a lean into the walk direction (applied to the wrapper so `.hit-flash`/`.fainted` on the img are untouched). `js/walkers.js` `createWalkerElement` + `applyWalkerPosition`.
+
+**Avatar extras.** Torso now tapers (hips 1.0 → shoulders 0.93, one-time vertex pass inside the shared-geometry cache) and idle avatars sway subtly (local via `_idleClock`; remotes/NPCs stateless phase-offset so crowds don't sync). Verified: 340/340 customization thumbnails render clean.
+
+### 2026-07-07 — Batch 2: light-first theme system, /world gap-jumping, rounded avatars, tests + CI, CSP enforced
+
+The big one. Five workstreams shipped together:
+
+**Light-first theme system.** White "Marvel comics print" light theme (white surfaces, near-black text, #ED1D24 accents) is now the DEFAULT; the original dark palette survives as an opt-in dark theme. The animated map and 3D world are *scenes* and stay dark in both themes (poster art needs a dark canvas — same reason Netflix is dark). Semantic tokens (`--surface-*`, `--text-*`, `--border-*`, `--scrim*`, `--shadow-*`, `--ink` channel triple) + one `[data-theme="dark"]` override block in `styles.css`; fixed `--scene-*` tokens for the map/3D surfaces. Anti-flash inline script in both HTML heads resolves saved preference / `prefers-color-scheme` before first paint; new `js/theme.js` is the runtime API; Light/Dark/System toggle lives in `/profile` → Appearance. `manifest.json` theme/background → light values; `CACHE_VERSION` → `mcu-v4`.
+
+**/world gap-jumping + fall/respawn.** While airborne, the walkability check no longer pins you to platforms — a running jump (air-speed ×1.25 → ~3.4u carry) clears the 2.0u/2.8u gaps between adjacent islands; distant islands (20u) stay unreachable. Land on nothing and you fall below the world, fade out, and respawn at your last safe spot (1s or −8u, whichever first). Peers see the fall via the existing y-sync + unwalkable-ground fade; y broadcast floors at −2 to mirror the server clamp (zero server changes). Mobile gets a bottom-right jump button (`.pg-jump`) with the same visibility gates as the joystick. Pure physics extracted to `js/playground3d-physics.js` (UMD) and unit-tested.
+
+**Rounded "polished stylized" avatars.** All 35 customization slots preserved. Head/torso → `RoundedBoxGeometry` (shimmed from examples/jsm in spa.html's module script), limbs → two-segment capsules with knee/elbow bend in the walk cycle (elbow/knee pivots exposed as `*Lower` bones), sphere hands, neck cylinder, landing-squash after jumps. Walk animation unified into `_walkPose`/`_dampPose` (was three duplicated blocks: local/remote/NPC — NPCs and peers get the bend for free). Geometries shared via a module cache keyed on shape+dims (both rig-dispose sites skip `userData.shared` — critical). Verified: 340/340 slot-option thumbnail renders clean, /customize open→close→reopen twice with no WebGL errors.
+
+**Instant boot.** `js/boot.js` now mounts the SPA immediately against the bundled fallback data; the `/api/content/*` fetch runs in the background and remounts `/`, `/map`, or `/characters` only if the DB copy meaningfully differs (bookkeeping fields ignored). The 3D views never remount. Cold-server boots no longer stare at the splash.
+
+**Security & infra.** CSP flipped from Report-Only to **enforced** after a violation-free sweep of login/map/watch-order/world/home/customize. Dev mode (`NODE_ENV` ≠ production) now serves all static files `no-cache` so edits show on plain reload (production keeps the 1-day cache). First test suite: `test/physics.test.js` (9 tests, `npm test` → `node --test`); GitHub Actions CI (`.github/workflows/ci.yml`) runs a full `node --check` syntax pass + tests. `scripts/export-content.js` snapshots CMS-edited Mongo content back into the static fallback files (`--dry-run` supported); dialogues export to `data/dialogues-export.json`. Voice TURN setup guide at `docs/VOICE-TURN-SETUP.md` (client + server were already wired; set `TURN_URLS`/`TURN_USERNAME`/`TURN_CREDENTIAL` to activate). Dead pre-SPA files deleted: `app.html`, `characters.html`, `profile.html`, `characters-page.js`, `testing.js`, `js/main.js`, plus `showAuthModal`/`updateAuthUI` in `js/popup.js`.
+
+### 2026-07-07 — Marvel red retheme
+
+Replaced the gold accent theme with Marvel brand red (#ED1D24) — the gold never matched the Marvel identity. The palette flows through CSS variables, so the swap is centralized; the legacy `--gold-*` variable names are kept (values now red) to avoid a mass rename across ~5,500 lines. Text on the accent gradient flipped from black to white (black-on-gold worked; black-on-red didn't). The danger confirm button deepened to crimson so destructive actions stay visually distinct now that the brand accent is also red.
+
+- `styles.css` — `--color-primary` → `#ED1D24`, `--color-primary-light` → `#ff4b51`; all `rgba(201, 162, 39, …)` literals → `rgba(237, 29, 36, …)`; new `--gold: var(--color-primary)` (a few rules referenced `var(--gold)` which was previously **undefined** — silent inherit bug, now fixed); all `color: #000` on the accent gradient → `#fff`; `.confirm-btn.confirm-ok.danger` → deep crimson gradient; boot-splash logo filter retuned from gold to red tint.
+- `spa.html`, `index.html`, `manifest.json` — `theme-color`/`theme_color` `#daa520` → `#ED1D24`.
+- `sw.js` — `CACHE_VERSION` → `mcu-v3`.
+
+### 2026-07-07 — UX batch 1 + security quick wins
+
+Shipped the first batch of the improvement roadmap: killed the blank screen during boot with a themed splash, replaced every remaining native `window.confirm` on the admin surface with the branded `confirmDialog`, gave the friends panel real error/retry states (a failed pending-requests fetch used to hang on "Loading…" forever), wired Esc/backdrop dismissal into the home-edit modals and the friends panel, and landed three security quick wins (JWT_SECRET strength guard, `.env.example`, CSP in Report-Only mode). Secrets from the original leaked `.env` (first commit) still need rotating in Cloudinary + Render — the local `.env` JWT_SECRET has been regenerated.
+
+- `spa.html` — static `#boot-splash` (gold-tinted logo + sweep bar, painted before any JS runs) + `#boot-splash-status` a11y announcement.
+- `styles.css` — splash styles (reduced-motion aware), `.friends-retry-btn`.
+- `js/boot.js` — removes splash + status after `Router.init`; content fetches capped at 4s via `AbortSignal.timeout` (feature-checked) so a cold server can't hold boot hostage.
+- `sw.js` — `CACHE_VERSION` → `mcu-v2`; `avengers-logo.svg` precached.
+- `js/views/admin/{users,moderation,config,cms-projects,cms-characters,cms-locations,cms-dialogues}.js` — all 10 `window.confirm` calls → `await confirmDialog({...})`, destructive ones styled `danger`.
+- `js/friends.js` — pending list now has a `.catch` with error + Retry (was an infinite "Loading…"); friends list failure gets the same Retry; Add-friend search/request wrapped in try/catch (button no longer sticks on '…'); panel wired to `wireModalDismiss` (Esc/backdrop/focus-restore).
+- `js/views/home-edit.js` — project-picker and room-menu modals wired to `wireModalDismiss` (Esc was previously not handled).
+- `server.js` — refuses to boot if `JWT_SECRET` < 32 chars; helmet CSP enabled in **Report-Only** mode with an allowlist (self, unpkg, Cloudinary, Google Fonts, ws/wss, data:/blob:). Flip `reportOnly: false` after a bake-in period with no console violations.
+- `.env.example` (new) — documents all env vars incl. optional TURN.
+
+
 
 Added opt-in WebRTC proximity voice chat to `/world`, `/home`, and `/friend/:user/home`. A 🎙️ toggle in the chat row asks for mic permission, then opens a P2P mesh with every other voice-enabled peer in the same room. Audio is direct peer-to-peer (no server bandwidth, no SFU); the existing Socket.IO connection only relays SDP / ICE. A 100 ms loop reads each remote's lerped position from `Playground3D.getRemotePlayers()` and ramps per-peer `GainNode`s on a linear falloff (full at 0u → silent at 25u), so voices fade as players walk apart. Speaking peers get a green glow on their nametag via RMS-based voice activity detection. STUN-only (Google public STUN) — strict-NAT users will silently fail to connect, no TURN fallback yet.
 

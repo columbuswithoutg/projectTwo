@@ -107,7 +107,13 @@
     },
 
     async deleteItem(item) {
-      if (!window.confirm(`Permanently delete location "${item.id}"? Projects placed here will lose their map placement.`)) return;
+      const ok = await confirmDialog({
+        title: `Permanently delete location "${item.id}"?`,
+        message: 'Projects placed here will lose their map placement.',
+        confirmLabel: 'Delete',
+        danger: true
+      });
+      if (!ok) return;
       try {
         await AdminView.api('/content/locations/' + encodeURIComponent(item.id), { method: 'DELETE' });
         AdminView.toast('Location deleted', 'success');

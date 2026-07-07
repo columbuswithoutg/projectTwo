@@ -169,7 +169,13 @@
     },
 
     async deleteItem(item) {
-      if (!window.confirm(`Permanently delete character "${item.id}"? Walker selections referencing this id will silently fail.`)) return;
+      const ok = await confirmDialog({
+        title: `Permanently delete character "${item.id}"?`,
+        message: 'Walker selections referencing this id will silently fail.',
+        confirmLabel: 'Delete',
+        danger: true
+      });
+      if (!ok) return;
       try {
         await AdminView.api('/content/characters/' + encodeURIComponent(item.id), { method: 'DELETE' });
         AdminView.toast('Character deleted', 'success');
