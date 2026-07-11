@@ -278,6 +278,15 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-07-07 — Batch 5: Infinity Stones reworked into shared PvP + Snap
+
+Replaced the per-player daily stone hunt (batch 3) with the real MCU dynamic: **one shared set of six stones** in the /world room, server-authoritative.
+- **Grab / steal / snap:** the six stones spawn free in a ring around the Iron Man 1 island (the universal spawn — identical coords for everyone regardless of which other islands they've unlocked). Walk onto a free stone to claim it; **punch someone holding stones to steal one** (the batch-4 punch now also transfers a stone). Hold all six → a pulsing **SNAP** button (also `G`) dusts a random ~50% of the *other* players — they fade and respawn at spawn — then all six scatter free for a fresh round. Held stones orbit their holder so everyone can see who's carrying what (the punch-target cue).
+- **Server authority** (`routes/world-socket.js`): in-memory `worldStones` (holder per stone), `world:stones`/`world:stone-update`/`world:stone-grab`/`world:snap`/`world:snapped` events; steal-one on `world:punch`; snap verifies all-six + 500ms floor, picks victims via partial Fisher–Yates, `$inc`s `User.stoneSnaps`; `freeStonesOf` drops stones on disconnect AND on the duplicate-socket eviction so a rejoin can't strand one.
+- **Client:** `playground3d.js` renders the ring/orbit stones + optimistic grab + `applySnap`/`snapRespawnLocal` (reuses the `.pg3d-fade` + remote-opacity systems); `home-socket.js` relays the events + `setLocalId` on connect; `world.js` held-count chip, SNAP button, `world:snapped` flash/toasts, and the leaderboard now ranks lifetime snaps.
+- **Persistence:** `models/user.js` `stoneHunt` → `stoneSnaps` (Number); removed `GET/POST /api/progress/stones` (daily); `/api/friends/stones` now ranks by lifetime snaps. Removed the seeded-placement helpers (`pickStoneSpots`/`mulberry32`/`hashString`) + their tests from the physics module. `sw.js` → `mcu-v7`.
+- **Verified** with two live sockets: grab → contested-grab rejected → steal exactly one on punch → assemble six → snap dusts ~50% and `stoneSnaps` 0→1 in the DB → stones reset free → holder's stones drop on disconnect. Client held-count + snap-respawn verified via the engine API (the in-browser walk-to-grab uses the same proven batch-3 pickup but couldn't be driven live under the known /world preview movement throttle).
+
 ### 2026-07-07 — Batch 4: punch + knockdown; node "click to view" prompt removed
 
 **Removed:** the /world proximity prompt ("📺 Click to view [movie]") and its E-key shortcut — feature deleted end-to-end (engine state/tick block/`getActiveNode`/`setProjectClickHandler`, view wiring, `.pg3d-prompt` CSS, `WORLD.PROXIMITY`). Projects are watched from `/` and `/map`; /world is now purely the playground. First-visit controls hint updated (WASD · Space jump · F punch).

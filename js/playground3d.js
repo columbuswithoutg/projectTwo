@@ -144,6 +144,20 @@ const Playground3D = (() => {
     DOWN_ANGLE: -1.35             // root rotation.x while flat on the back
   };
 
+  // The six shared Infinity Stones (id + glow color). Free stones sit in a
+  // ring around the spawn island; held stones orbit their holder. Ownership
+  // is server-authoritative (routes/world-socket.js) — the engine renders.
+  const STONE_DEFS = [
+    { id: 'space',   color: 0x3a85f0 },
+    { id: 'mind',    color: 0xf5d020 },
+    { id: 'reality', color: 0xed1d24 },
+    { id: 'power',   color: 0x9b59b6 },
+    { id: 'time',    color: 0x39b54a },
+    { id: 'soul',    color: 0xff8020 }
+  ];
+  const STONE_RING_R = 4;          // ring radius around spawn (within Iron Man's floor)
+  const STONE_PICKUP_D2 = 0.81;    // grab within 0.9u (feet, 3D) — same as batch 3
+
   // Head-top of the rig at build-scale 1 (feet at y=0): HIP_Y 0.7 + TORSO_H 0.75
   // + HEAD_SZ 0.55 + hair margin. Scaled by the player's build scale at runtime.
   // Used to cap jumps under indoor ceilings / doorway lintels.
@@ -195,6 +209,9 @@ const Playground3D = (() => {
   let _lastPunchAt = 0;            // cooldown anchor
   let _localDownUntil = 0;         // local player knocked down — input dead
   let _onPunch = null;             // view/socket callback: ({ target }) on every local punch
+  // ── shared Infinity Stones (server-authoritative PvP; see routes/world-socket.js) ──
+  const _spawnPoint = { x: 0, z: 0 }; // /world start position (Iron Man 1) — snap-respawn target
+  let _initialSpawnId = null;         // island/node the player picked to spawn on (spawn picker), or null
 
   // ── shared, mount-persistent resources ──
   // Project poster textures are shared across mount cycles — switching between
@@ -239,11 +256,16 @@ const Playground3D = (() => {
   // + input + animation as home mode. The caller (WorldView) wires the
   // multiplayer socket separately and uses the addRemotePlayer / chat /
   // emote APIs to render others.
-  function initWorld(container, character) {
+  function initWorld(container, character, spawnProjectId) {
     _mode = 'world';
     _container = container;
     _currentChar = character || defaultCharacter();
     _layout = null;
+    // Optional: the id of the island/node the player picked to spawn on (the
+    // /world spawn picker). null → default to _worldSpawn() (Iron Man). Note
+    // this only moves the PLAYER's start; _spawnPoint (stone-ring center +
+    // snap-respawn target) stays canonical so it's identical for every client.
+    _initialSpawnId = spawnProjectId || null;
     _waitForThree(container);
   }
 
@@ -268,7 +290,8 @@ const Playground3D = (() => {
     _running = false;
     _sceneAlive = false;
     clearStones();
-    _onStonePickup = null;
+    _onStoneGrab = null;
+    _localId = null;
     _onPunch = null;
     _localPunchUntil = 0;
     _localDownUntil = 0;
@@ -365,6 +388,10 @@ const Playground3D = (() => {
     _localPunchUntil = 0;
     _lastPunchAt = 0;
     _localDownUntil = 0;
+    // Shared-stone state must not survive a remount (a stale holder map or an
+    // orphaned mesh from a prior /world session would render wrong).
+    clearStones();
+    _spawnPoint.x = 0; _spawnPoint.z = 0;
     _hudAnchor = _hudAnchor || new THREE.Vector3();
     _hudProjScratch = _hudProjScratch || new THREE.Vector3();
 
@@ -422,7 +449,11 @@ const Playground3D = (() => {
     let spawn;
     if (_mode === 'world') {
       _buildWorldScene();
-      spawn = _worldSpawn();
+      const worldSpawn = _worldSpawn();
+      _spawnPoint.x = worldSpawn.x; _spawnPoint.z = worldSpawn.z;   // snap-respawn + stone-ring center (canonical)
+      // The player's START position may differ from _spawnPoint when they picked
+      // an island in the spawn picker — resolve it, else fall back to Iron Man.
+      spawn = (_initialSpawnId && _projectPos(_initialSpawnId)) || worldSpawn;
     } else {
       _buildLayoutScene();
       spawn = _layoutSpawn();
@@ -432,6 +463,7 @@ const Playground3D = (() => {
     _player = _buildPlayer(_currentChar);
     _rig = _player.userData.bones;        // local rig — animated by _tick
     _player.position.set(spawn.x, 0, spawn.z);
+    _lastSafe.x = spawn.x; _lastSafe.z = spawn.z;   // fall-respawn to where they actually started
     _scene.add(_player);
 
     // Camera.
@@ -2739,15 +2771,20 @@ const Playground3D = (() => {
     return { x, z };
   }
 
-  // ── Daily Infinity Stones (world mode) ──
-  // Per-player collectibles. Spots come from the view (seeded placement in
-  // PG3DPhysics.pickStoneSpots); the engine only renders, animates, and
-  // detects pickup. Managed independently of node.decor so a wall rebuild
-  // can't orphan the tracking array.
-  let _stones = [];               // [{ id, mesh, baseY, spin }]
-  let _onStonePickup = null;
+  // ── Shared Infinity Stones (world mode) ──
+  // Six stones, one of each, shared across the room. Ownership is
+  // server-authoritative (routes/world-socket.js); the engine renders free
+  // stones on their fixed ring slots and held stones orbiting their holder,
+  // and detects the local player reaching a free stone (optimistic grab).
+  let _stones = new Map();         // stoneId → { mesh, holder, ringX, ringZ, spin }
+  let _onStoneGrab = null;         // view→socket bridge: fires when we reach a FREE stone
+  let _heldByLocal = new Set();    // stone ids the LOCAL player currently holds
+  let _localId = null;             // our socket.id (set by home-socket on connect)
+  let _grabbing = new Set();       // stones we optimistically grabbed, awaiting server confirm
 
-  function setStoneHandler(fn) { _onStonePickup = fn; }
+  function setStoneGrabHandler(fn) { _onStoneGrab = fn; }
+  function setLocalId(id) { _localId = id; }
+  function getLocalStoneCount() { return _heldByLocal.size; }
 
   // ── punch / knockdown public surface (wired by js/home-socket.js) ──
 
@@ -2771,74 +2808,132 @@ const Playground3D = (() => {
     _localWalking = false;
   }
 
-  // Placement inputs for the seeded daily spots: unlocked node centers
-  // (ids included for seed stability), walkable road rects (already the
-  // exact shape PG3DPhysics.isWalkable expects), and apron half-extent.
-  // Empty nodes ⇒ the scene isn't built yet (THREE still loading) — the
-  // view retries.
-  function getStoneWorld() {
-    const nodes = [];
-    for (const node of _worldNodes.values()) {
-      nodes.push({ id: node.project.id, x: node.mesh.position.x, z: node.mesh.position.z });
-    }
-    nodes.sort((a, b) => (a.id < b.id ? -1 : 1));
-    return {
-      nodes,
-      roads: _walkableRoads,
-      halfA: (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2
-    };
+  // Build the 6 stone meshes once the world scene exists. Ring positions are
+  // derived from the spawn island (Iron Man 1) — identical for every client,
+  // so free stones sit in the same place for everyone regardless of which
+  // other islands they've unlocked.
+  function _buildStoneMeshes() {
+    if (_stones.size || !_scene || _mode !== 'world') return;
+    const THREE = window.THREE;
+    const geo = _sharedGeom('stoneOcta', () => new THREE.OctahedronGeometry(0.28, 0));
+    STONE_DEFS.forEach((def, i) => {
+      const mat = new THREE.MeshLambertMaterial({ color: def.color });
+      mat.emissive = new THREE.Color(def.color);   // self-lit — reads as magical
+      mat.emissiveIntensity = 0.55;
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      _scene.add(mesh);
+      const ang = (i / STONE_DEFS.length) * Math.PI * 2;
+      _stones.set(def.id, {
+        mesh, holder: null,
+        ringX: _spawnPoint.x + Math.cos(ang) * STONE_RING_R,
+        ringZ: _spawnPoint.z + Math.sin(ang) * STONE_RING_R,
+        spin: Math.random() * Math.PI * 2
+      });
+    });
   }
 
   function clearStones() {
-    for (const s of _stones) {
+    for (const s of _stones.values()) {
       if (s.mesh.parent) s.mesh.parent.remove(s.mesh);
       if (s.mesh.material) s.mesh.material.dispose();   // geometry is shared
     }
-    _stones = [];
+    _stones.clear();
+    _heldByLocal.clear();
+    _grabbing.clear();
   }
 
-  // spots: [{ id, color, x, z, y }] — y 0 = ground (hovers at 0.55, walk
-  // over it), y 1.1 = jump height (leap to touch). collected: Set<id> of
-  // stones already picked up today (not spawned).
-  function spawnStones(spots, collected) {
-    clearStones();
-    if (!_scene || _mode !== 'world') return;
-    const THREE = window.THREE;
-    const geo = _sharedGeom('stoneOcta', () => new THREE.OctahedronGeometry(0.28, 0));
-    for (const spot of spots) {
-      if (collected && collected.has(spot.id)) continue;
-      const mat = new THREE.MeshLambertMaterial({ color: spot.color });
-      // Self-lit so stones read as magical pickups in any lighting.
-      mat.emissive = new THREE.Color(spot.color);
-      mat.emissiveIntensity = 0.55;
-      const mesh = new THREE.Mesh(geo, mat);
-      const baseY = spot.y === 0 ? 0.55 : spot.y;
-      mesh.position.set(spot.x, baseY, spot.z);
-      mesh.castShadow = true;
-      _scene.add(mesh);
-      _stones.push({ id: spot.id, mesh, baseY, spin: Math.random() * Math.PI * 2 });
+  function _recomputeHeld() {
+    _heldByLocal.clear();
+    for (const [id, s] of _stones) if (s.holder && s.holder === _localId) _heldByLocal.add(id);
+  }
+
+  // Authoritative full state from the server: { stoneId: holderSocketId|null }.
+  function setWorldStones(stateMap) {
+    if (_mode !== 'world') return;
+    _buildStoneMeshes();
+    for (const [id, s] of _stones) {
+      s.holder = (stateMap && Object.prototype.hasOwnProperty.call(stateMap, id)) ? (stateMap[id] || null) : null;
+      _grabbing.delete(id);           // authoritative refresh clears optimism
+    }
+    _recomputeHeld();
+  }
+
+  // Single-stone ownership change (grab / steal / drop).
+  function setStoneHeld(stone, holder) {
+    const s = _stones.get(stone);
+    if (!s) return;
+    s.holder = holder || null;
+    _grabbing.delete(stone);
+    _recomputeHeld();
+  }
+
+  // Per-frame: spin/bob each stone, position free ones on their ring slot and
+  // held ones orbiting their holder, and detect the local player reaching a
+  // free stone (optimistic grab → server confirms via setStoneHeld).
+  function _tickStones(dt, now) {
+    if (!_stones.size || !_player) return;
+    const px = _player.position.x, py = _player.position.y, pz = _player.position.z;
+    for (const [id, s] of _stones) {
+      s.spin += dt * 2.2;
+      const bob = Math.sin(now / 400 + s.spin) * 0.08;
+      s.mesh.rotation.y = s.spin;
+      if (!s.holder) {
+        // Free — sits on its ring slot; walk/jump onto it to claim.
+        s.mesh.visible = !_grabbing.has(id);
+        s.mesh.position.set(s.ringX, 0.55 + bob, s.ringZ);
+        if (!_grabbing.has(id) && !_falling) {
+          const dx = px - s.ringX, dy = py - 0.55, dz = pz - s.ringZ;
+          if (dx * dx + dy * dy + dz * dz < STONE_PICKUP_D2) {
+            _grabbing.add(id);        // optimistic; server reconciles ownership
+            s.mesh.visible = false;
+            if (_onStoneGrab) { try { _onStoneGrab(id); } catch (_) {} }
+          }
+        }
+      } else {
+        // Held — orbit above the holder's head if we render them, else hide
+        // (carried by someone whose island we don't have loaded).
+        let hp = null, headY = 0;
+        if (s.holder === _localId) { hp = _player.position; headY = 2.2; }
+        else { const rp = _remotePlayers.get(s.holder); if (rp) { hp = rp.rig.position; headY = 2.0; } }
+        if (hp) {
+          s.mesh.visible = true;
+          s.mesh.position.set(hp.x + Math.cos(s.spin) * 0.5, hp.y + headY + bob, hp.z + Math.sin(s.spin) * 0.5);
+        } else {
+          s.mesh.visible = false;
+        }
+      }
     }
   }
 
-  function _tickStones(dt, now) {
-    if (!_stones.length || !_player) return;
-    const px = _player.position.x, py = _player.position.y, pz = _player.position.z;
-    for (let i = _stones.length - 1; i >= 0; i--) {
-      const s = _stones[i];
-      s.spin += dt * 2.2;
-      s.mesh.rotation.y = s.spin;
-      s.mesh.position.y = s.baseY + Math.sin(now / 400 + s.spin) * 0.08;
-      // Pickup: 3D distance from the player's feet — ground stones collect
-      // on walk-over, elevated ones only near a jump's apex.
-      const dx = px - s.mesh.position.x;
-      const dy = py - s.baseY;
-      const dz = pz - s.mesh.position.z;
-      if (dx * dx + dy * dy + dz * dz < 0.81 && !_falling) {
-        if (s.mesh.parent) s.mesh.parent.remove(s.mesh);
-        s.mesh.material.dispose();
-        _stones.splice(i, 1);
-        if (_onStonePickup) { try { _onStonePickup(s.id); } catch (_) {} }
-      }
+  // Snap fade: dust a snapped-victim REMOTE by forcing its opacity toward 0
+  // for a beat (reuses the remote fade system); their real position arrives
+  // via world:pos as their own client teleports them to spawn.
+  function _snapFadeRemote(id) {
+    const rp = _remotePlayers.get(id);
+    if (rp) rp.snapFadeUntil = performance.now() + 700;
+  }
+
+  // WE were dusted — fade to black, teleport to spawn (Iron Man 1), fade back.
+  function snapRespawnLocal() {
+    if (!_player) return;
+    _falling = false; _velY = 0; _localDownUntil = 0;
+    _player.position.set(_spawnPoint.x, 0, _spawnPoint.z);
+    _lastSafe.x = _spawnPoint.x; _lastSafe.z = _spawnPoint.z;
+    if (_viewport) {
+      let fade = _viewport.querySelector('.pg3d-fade');
+      if (!fade) { fade = document.createElement('div'); fade.className = 'pg3d-fade'; _viewport.appendChild(fade); }
+      fade.classList.add('show');
+      setTimeout(() => fade.classList.remove('show'), 420);
+    }
+  }
+
+  // A snap happened: dust the listed victims (local → respawn, remotes → fade).
+  function applySnap(payload) {
+    const victims = (payload && Array.isArray(payload.victims)) ? payload.victims : [];
+    for (const vid of victims) {
+      if (vid === _localId) snapRespawnLocal();
+      else _snapFadeRemote(vid);
     }
   }
 
@@ -2932,6 +3027,35 @@ const Playground3D = (() => {
       if (first) return { x: first.gridX * WORLD.SCALE, z: first.gridY * WORLD.SCALE };
     }
     return { x: 0, z: 0 };
+  }
+
+  // World-space center of a project's platform, or null if the id is unknown
+  // or the project isn't unlocked/positioned. Used to spawn/teleport the player
+  // onto a chosen island.
+  function _projectPos(id) {
+    if (typeof projects === 'undefined' || !Array.isArray(projects)) return null;
+    const p = projects.find(q => q.id === id);
+    if (!p || !_isProjectUnlocked(p)) return null;
+    if (typeof p.gridX !== 'number' || typeof p.gridY !== 'number') return null;
+    return { x: p.gridX * WORLD.SCALE, z: p.gridY * WORLD.SCALE };
+  }
+
+  // Teleport the local player onto a chosen island node, with the same
+  // fade-to-black-and-back used by respawns. Used by the post-snap spawn
+  // picker (WorldView) so a dusted player can pick where to reassemble.
+  function teleportToNode(id) {
+    if (!_player || _mode !== 'world') return;
+    const pos = _projectPos(id);
+    if (!pos) return;
+    _falling = false; _velY = 0; _localDownUntil = 0;
+    _player.position.set(pos.x, 0, pos.z);
+    _lastSafe.x = pos.x; _lastSafe.z = pos.z;
+    if (_viewport) {
+      let fade = _viewport.querySelector('.pg3d-fade');
+      if (!fade) { fade = document.createElement('div'); fade.className = 'pg3d-fade'; _viewport.appendChild(fade); }
+      fade.classList.add('show');
+      setTimeout(() => fade.classList.remove('show'), 420);
+    }
   }
 
   function _buildWorldScene() {
@@ -4144,7 +4268,8 @@ const Playground3D = (() => {
       // Fade the avatar out when it stands on geometry the local viewer can't
       // see (locked nodes/roads aren't built for us), so it doesn't appear to
       // walk through empty space — and fade back in on return. World-mode only.
-      const visTarget = (_mode === 'world' && !_isInWalkable(rp.current.x, rp.current.z)) ? 0 : 1;
+      const dusted = rp.snapFadeUntil && rp.snapFadeUntil > now;
+      const visTarget = (dusted || (_mode === 'world' && !_isInWalkable(rp.current.x, rp.current.z))) ? 0 : 1;
       const fadeK = Math.min(1, dt * WORLD.FADE_RATE);
       rp.opacity += (visTarget - rp.opacity) * fadeK;
       if (Math.abs(rp.opacity - visTarget) < 0.01) rp.opacity = visTarget;
@@ -4431,10 +4556,13 @@ const Playground3D = (() => {
     addRemotePlayer, updateRemotePlayer, removeRemotePlayer, clearRemotePlayers,
     showRemoteChat, showLocalChat, playRemoteEmote, playLocalEmote,
     getLocalState,
-    // Daily Infinity Stone hunt — per-player collectibles.
-    spawnStones, clearStones, setStoneHandler, getStoneWorld,
+    // Shared Infinity Stone PvP — server-authoritative (routes/world-socket.js).
+    setWorldStones, setStoneHeld, setStoneGrabHandler, setLocalId,
+    getLocalStoneCount, applySnap, snapRespawnLocal, clearStones,
     // Punch + knockdown — relayed via world:punch (js/home-socket.js).
     setPunchHandler, playRemotePunch, knockdownRemote, knockdownLocal,
+    // Spawn picker — choose which disconnected island to (re)spawn on.
+    teleportToNode,
     // Local NPC surface — Avenger wanderers in /world.
     setWorldNpcs,
     // Voice-chat surface — distance attenuation + speaking indicator.

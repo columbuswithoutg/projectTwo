@@ -170,8 +170,9 @@ router.get('/list', auth, async (req, res) => {
     res.json(list);
 });
 
-// Daily Infinity Stone leaderboard — self + accepted friends, today's
-// counts and streaks. One Friend query + one User projection query.
+// Infinity Stone SNAP leaderboard — self + accepted friends ranked by
+// lifetime snaps performed in the shared /world contest. One Friend query
+// + one User projection query.
 router.get('/stones', auth, async (req, res) => {
     const friendDocs = await Friend.find({
         $and: [
@@ -188,22 +189,14 @@ router.get('/stones', auth, async (req, res) => {
     }
 
     const users = await User.find({ _id: { $in: [...ids] } })
-        .select('username stoneHunt');
+        .select('username stoneSnaps');
 
-    const today = new Date().toISOString().slice(0, 10);
-    const rows = users.map(u => {
-        const sh = (u.stoneHunt && typeof u.stoneHunt === 'object') ? u.stoneHunt : {};
-        const day = (sh.days && sh.days[today]) || {};
-        return {
-            username: u.username,
-            you: String(u._id) === req.user.id,
-            todayCount: Array.isArray(day.collected) ? day.collected.length : 0,
-            completedToday: !!day.completedAt,
-            streak: Number.isFinite(sh.streak) ? sh.streak : 0
-        };
-    });
-    rows.sort((a, b) => b.todayCount - a.todayCount || b.streak - a.streak
-        || a.username.localeCompare(b.username));
+    const rows = users.map(u => ({
+        username: u.username,
+        you: String(u._id) === req.user.id,
+        snaps: Number.isFinite(u.stoneSnaps) ? u.stoneSnaps : 0
+    }));
+    rows.sort((a, b) => b.snaps - a.snaps || a.username.localeCompare(b.username));
     res.json(rows);
 });
 

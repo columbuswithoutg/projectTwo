@@ -14,6 +14,7 @@
  ************************************************/
 const auth = require('../middleware/auth');
 const User = require('../models/user');
+const AdminConfig = require('../models/AdminConfig');
 
 // Whitelisted homeCharacter slots (mirrors models/user.js homeCharacter). The
 // client sends its character on join and the server re-broadcasts it verbatim
@@ -78,7 +79,55 @@ const VOICE_SIGNAL_BUDGET = 50;          // signals
 const VOICE_SIGNAL_BUDGET_WINDOW_MS = 1000;
 const VOICE_SIGNAL_MAX_BYTES = 8192;  // SDP fragments + ICE candidates are tiny
 
+// ── Shared Infinity Stones (single 'world' room) ──
+// One of each of the six stones. holder = socketId | null (null = free /
+// on the ground). Ephemeral in-memory like worldPlayers — resets on server
+// restart, and a holder's stones drop free when they leave (freeStonesOf).
+// The server is authoritative over ownership; clients render from the
+// broadcasts. It never needs world coordinates — free stones are placed at
+// fixed ring slots client-side, held stones orbit their holder.
+const STONE_IDS = ['space', 'mind', 'reality', 'power', 'time', 'soul'];
+const SNAP_INTERVAL_MS = 3000;          // floor between snaps per socket
+const worldStones = Object.create(null);
+for (const id of STONE_IDS) worldStones[id] = { holder: null };
+
+function stonesSnapshot() {
+  const out = {};
+  for (const id of STONE_IDS) out[id] = worldStones[id].holder;
+  return out;
+}
+
+// Admin on/off switch for the whole Infinity Stone event (flags.worldEventStonesEnabled
+// in AdminConfig). Synchronous cached read — returns the last known value and
+// kicks a background refresh when stale, so the hot socket handlers never await.
+// Defaults off (opt-in event) until the first DB read resolves. Toggling it in
+// the admin panel takes effect within STONES_FLAG_TTL_MS for new grabs/snaps/joins.
+const STONES_FLAG_TTL_MS = 15000;
+let _stonesFlag = AdminConfig.defaults().flags.worldEventStonesEnabled;
+let _stonesFlagAt = 0;
+let _stonesFlagRefreshing = false;
+function stonesEventEnabled() {
+  if (Date.now() - _stonesFlagAt >= STONES_FLAG_TTL_MS && !_stonesFlagRefreshing) {
+    _stonesFlagRefreshing = true;
+    AdminConfig.findOne({}).select('flags.worldEventStonesEnabled').lean()
+      .then((doc) => {
+        const def = AdminConfig.defaults().flags.worldEventStonesEnabled;
+        _stonesFlag = (doc && doc.flags && typeof doc.flags.worldEventStonesEnabled === 'boolean')
+          ? doc.flags.worldEventStonesEnabled : def;
+        _stonesFlagAt = Date.now();
+      })
+      .catch(() => { /* keep last known value */ })
+      .finally(() => { _stonesFlagRefreshing = false; });
+  }
+  return _stonesFlag;
+}
+function stonesHeldBy(socketId) {
+  return STONE_IDS.filter(id => worldStones[id].holder === socketId);
+}
+
 module.exports = (io) => {
+  stonesEventEnabled();   // prime the cached event flag at startup
+
   // Handshake auth — verify the JWT AND enforce the same ban / tokenVersion
   // checks the HTTP layer does (validateToken). Without this, a banned or
   // force-logged-out user keeps full realtime chat/voice/presence until their
@@ -110,6 +159,17 @@ module.exports = (io) => {
     }
   };
 
+  // Free every stone a leaving/evicted socket was holding, broadcasting each
+  // drop so a rejoin or second tab can't strand a stone on a dead socket.
+  function freeStonesOf(socketId) {
+    for (const id of STONE_IDS) {
+      if (worldStones[id].holder === socketId) {
+        worldStones[id].holder = null;
+        io.to('world').emit('world:stone-update', { stone: id, holder: null });
+      }
+    }
+  }
+
   io.on('connection', (socket) => {
     // Client must emit 'world:join' before broadcasting anything else.
     socket.on('world:join', (raw) => {
@@ -139,12 +199,17 @@ module.exports = (io) => {
         if (sid !== socket.id && other.userId === socket.data.userId) {
           worldPlayers.delete(sid);
           io.to('world').emit('world:left', { id: sid });
+          freeStonesOf(sid);   // don't strand this user's stones on the retired socket
         }
       }
 
       // Bootstrap the new client with everyone else's current state.
       const others = [...worldPlayers.values()].filter(p => p.socketId !== socket.id);
       socket.emit('world:snapshot', { players: others });
+      // Current shared-stone ownership so the joiner renders held/free correctly.
+      // Only while the event is on — off, we send nothing so the client never
+      // materializes the stone ring (its HUD is hidden client-side too).
+      if (stonesEventEnabled()) socket.emit('world:stones', { stones: stonesSnapshot() });
 
       // Tell everyone else about the new arrival.
       socket.to('world').emit('world:joined', { ...player });
@@ -208,6 +273,55 @@ module.exports = (io) => {
       let target = raw && raw.target;
       if (target != null && (typeof target !== 'string' || !worldPlayers.has(target))) return;
       socket.to('world').emit('world:punch', { id: socket.id, target: target || null });
+      // Steal ONE stone from the victim if they're carrying any. Punch/knockdown
+      // stays a general mechanic; only the stone theft is gated by the event.
+      if (target && stonesEventEnabled()) {
+        const held = stonesHeldBy(target);
+        if (held.length) {
+          const stone = held[0];
+          worldStones[stone].holder = socket.id;
+          io.to('world').emit('world:stone-update', { stone, holder: socket.id });
+        }
+      }
+    });
+
+    // Claim a FREE stone the client reached on foot. Authoritative: only the
+    // first grab wins; losers reconcile from the world:stone-update broadcast.
+    socket.on('world:stone-grab', (raw) => {
+      if (!stonesEventEnabled()) return;      // event off — no stones to grab
+      if (!worldPlayers.has(socket.id)) return;
+      const stone = raw && raw.stone;
+      if (typeof stone !== 'string' || !STONE_IDS.includes(stone)) return;
+      if (worldStones[stone].holder !== null) return;   // already taken
+      worldStones[stone].holder = socket.id;
+      io.to('world').emit('world:stone-update', { stone, holder: socket.id });
+    });
+
+    // Snap — only valid while holding all six. Dusts a random ~50% of the
+    // OTHER players (they fade + respawn at spawn client-side), then all six
+    // stones scatter free for a fresh round. Lifetime snap count persists.
+    socket.on('world:snap', () => {
+      if (!stonesEventEnabled()) return;      // event off — snapping disabled
+      const p = worldPlayers.get(socket.id);
+      if (!p) return;
+      const now = Date.now();
+      if (now - (p.lastSnap || 0) < SNAP_INTERVAL_MS) return;
+      if (stonesHeldBy(socket.id).length < STONE_IDS.length) return;   // authority
+      p.lastSnap = now;
+
+      const others = [...worldPlayers.keys()].filter(id => id !== socket.id);
+      // Unbiased random half via a partial Fisher–Yates shuffle.
+      for (let i = others.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = others[i]; others[i] = others[j]; others[j] = t;
+      }
+      const victims = others.slice(0, Math.ceil(others.length / 2));
+      io.to('world').emit('world:snapped', { by: socket.id, victims });
+
+      for (const id of STONE_IDS) worldStones[id].holder = null;
+      io.to('world').emit('world:stones', { stones: stonesSnapshot() });
+
+      User.findByIdAndUpdate(socket.data.userId, { $inc: { stoneSnaps: 1 } }).catch(() => {});
     });
 
     // ── home:* events ──
@@ -432,6 +546,7 @@ module.exports = (io) => {
       if (worldPlayers.has(socket.id)) {
         worldPlayers.delete(socket.id);
         socket.to('world').emit('world:left', { id: socket.id });
+        freeStonesOf(socket.id);   // drop any stones this player was carrying
       }
       const home = homePlayers.get(socket.id);
       if (home) {

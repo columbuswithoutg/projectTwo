@@ -16,7 +16,11 @@ const Walkers = (() => {
   // explicit. Hot loops read these directly (e.g. PHYSICS.WALKER.speed at
   // frame time), so a merge takes effect on the very next tick.
   const PHYSICS = {
-    WALKER:     { size: 28, r: 14, speed: 40, pauseMin: 800, pauseMax: 2500 },
+    // `size` is the visual chip diameter (px). `r` is the PHYSICS collision
+    // radius — it must stay ≤ ROAD.halfW or walkers can't fit on a road and
+    // the perpendicular clamp fires every frame (they vibrate). Keep r=12;
+    // DOM centering uses size/2 separately (see applyWalkerPosition).
+    WALKER:     { size: 28, r: 12, speed: 40, pauseMin: 800, pauseMax: 2500 },
     ROAD:       { halfW: 13, damping: 0.998, bounce: 0.85 },
     ENCOUNTER:  { dist: 26, cooldown: 30000, lineDuration: 2500 },
     WEAPON:     { radius: 18, size: 14, baseSpeed: 3.5, hitCooldown: 300 },
@@ -479,8 +483,12 @@ const Walkers = (() => {
   // Apply computed position to DOM
   function applyWalkerPosition(w) {
     if (!w.el) return;
-    w.el.style.left = (w._cx - PHYSICS.WALKER.r) + 'px';
-    w.el.style.top = (w._cy - PHYSICS.WALKER.r) + 'px';
+    // Center the visual chip on the logical position using half the VISUAL
+    // size (not the collision radius r, which is smaller so walkers fit on
+    // roads). Matches how speech bubbles anchor (size/2).
+    const half = PHYSICS.WALKER.size / 2;
+    w.el.style.left = (w._cx - half) + 'px';
+    w.el.style.top = (w._cy - half) + 'px';
     // A little life while moving: bob on a fast sine + lean into the walk
     // direction. Applied to the wrapper (not the img) so .hit-flash and
     // .fainted, which target the img, keep working untouched.

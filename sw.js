@@ -7,7 +7,7 @@
 // - Network-only for /api/* — auth-sensitive responses are never cached.
 // Bump CACHE_VERSION whenever the precache list or strategy changes.
 
-const CACHE_VERSION = 'mcu-v6'; // v6: punch + knockdown, node-prompt feature removed
+const CACHE_VERSION = 'mcu-v7'; // v7: shared Infinity Stone PvP + snap
 const PRECACHE = [
   '/',
   '/spa.html',

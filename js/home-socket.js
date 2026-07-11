@@ -20,26 +20,36 @@ const Multiplayer = (() => {
 
   // Event-name maps. Keep these in sync with routes/world-socket.js.
   const WORLD_EVENTS = {
-    join:     'world:join',
-    pos:      'world:pos',
-    chat:     'world:chat',
-    emote:    'world:emote',
-    punch:    'world:punch',
-    snapshot: 'world:snapshot',
-    joined:   'world:joined',
-    left:     'world:left',
-    leave:    null              // /world auto-cleans on disconnect; no explicit leave
+    join:        'world:join',
+    pos:         'world:pos',
+    chat:        'world:chat',
+    emote:       'world:emote',
+    punch:       'world:punch',
+    stones:      'world:stones',        // full holder snapshot
+    stoneUpdate: 'world:stone-update',  // single stone ownership change
+    stoneGrab:   'world:stone-grab',    // client claims a free stone (→ server)
+    snap:        'world:snap',          // client requests a snap (→ server)
+    snapped:     'world:snapped',       // server: a snap happened
+    snapshot:    'world:snapshot',
+    joined:      'world:joined',
+    left:        'world:left',
+    leave:       null              // /world auto-cleans on disconnect; no explicit leave
   };
   const HOME_EVENTS = {
-    join:     'home:join',
-    pos:      'home:pos',
-    chat:     'home:chat',
-    emote:    'home:emote',
-    punch:    null,             // punching stays local in homes (no relay)
-    snapshot: 'home:snapshot',
-    joined:   'home:joined',
-    left:     'home:left',
-    leave:    'home:leave'      // emitted before disconnect so the room's owner gets prompt notice
+    join:        'home:join',
+    pos:         'home:pos',
+    chat:        'home:chat',
+    emote:       'home:emote',
+    punch:       null,             // punching stays local in homes (no relay)
+    stones:      null,             // stones are a /world-only contest
+    stoneUpdate: null,
+    stoneGrab:   null,
+    snap:        null,
+    snapped:     null,
+    snapshot:    'home:snapshot',
+    joined:      'home:joined',
+    left:        'home:left',
+    leave:       'home:leave'      // emitted before disconnect so the room's owner gets prompt notice
   };
 
   const POS_INTERVAL_MS = 100;
@@ -58,10 +68,10 @@ const Multiplayer = (() => {
   // Returns { stop } — call stop() in the view's unmount(), BEFORE
   // Playground3D.destroy(), so the leave event reaches the room while
   // the socket is still open.
-  function start({ events, joinPayload, character }) {
+  function start({ events, joinPayload, character, onStoneChange, onSnapped }) {
     if (typeof io !== 'function') {
       console.warn('[Multiplayer] socket.io client not loaded');
-      return { stop() {} };
+      return { stop() {}, getSocket: () => null, sendSnap() {} };
     }
 
     const socket = io({ auth: { token: Auth.getToken() } });
@@ -98,6 +108,9 @@ const Multiplayer = (() => {
       }
       joined = true;
       errToasted = false;
+      // Tell the engine our (possibly new-on-reconnect) socket id so it can
+      // tell "held by me" from "held by a remote" for the shared stones.
+      if (events.stones && Playground3D.setLocalId) Playground3D.setLocalId(socket.id);
       socket.emit(events.join, {
         username: Auth.getUsername() || 'Anon',
         character,
@@ -144,6 +157,28 @@ const Multiplayer = (() => {
         } else if (Playground3D.knockdownRemote) {
           Playground3D.knockdownRemote(target);
         }
+      });
+    }
+
+    // Shared Infinity Stone contest (world only — these events are null for
+    // homes). Server is authoritative over ownership; the engine renders.
+    if (events.stones) {
+      if (Playground3D.setStoneGrabHandler) {
+        Playground3D.setStoneGrabHandler((stone) => {
+          if (socket.connected) socket.emit(events.stoneGrab, { stone });
+        });
+      }
+      socket.on(events.stones, ({ stones }) => {
+        if (Playground3D.setWorldStones) Playground3D.setWorldStones(stones || {});
+        if (onStoneChange) { try { onStoneChange(); } catch (_) {} }
+      });
+      socket.on(events.stoneUpdate, ({ stone, holder }) => {
+        if (Playground3D.setStoneHeld) Playground3D.setStoneHeld(stone, holder || null);
+        if (onStoneChange) { try { onStoneChange(); } catch (_) {} }
+      });
+      socket.on(events.snapped, (payload) => {
+        if (Playground3D.applySnap) Playground3D.applySnap(payload || {});
+        if (onSnapped) { try { onSnapped(payload || {}); } catch (_) {} }
       });
     }
 
@@ -224,9 +259,10 @@ const Multiplayer = (() => {
       if (posTimer) { clearInterval(posTimer); posTimer = null; }
       if (input) input.removeEventListener('keydown', onChatKey);
       if (emoteBtn) emoteBtn.removeEventListener('click', onEmoteClick);
-      // Detach the punch → socket bridge so a stale closure can't emit on
-      // a dead socket after unmount.
+      // Detach the punch + stone-grab → socket bridges so a stale closure
+      // can't emit on a dead socket after unmount.
       if (events.punch && Playground3D.setPunchHandler) Playground3D.setPunchHandler(null);
+      if (events.stones && Playground3D.setStoneGrabHandler) Playground3D.setStoneGrabHandler(null);
       if (socket) {
         if (events.leave && socket.connected) {
           try { socket.emit(events.leave); } catch (_) {}
@@ -236,7 +272,12 @@ const Multiplayer = (() => {
       chatLog = [];
     }
 
-    return { stop, getSocket: () => socket };
+    // Request a snap (the view calls this when the local player holds all 6).
+    function sendSnap() {
+      if (events.snap && socket.connected) socket.emit(events.snap);
+    }
+
+    return { stop, getSocket: () => socket, sendSnap };
   }
 
   return { start, WORLD_EVENTS, HOME_EVENTS };

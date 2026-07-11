@@ -65,67 +65,11 @@
     return speed * airSpeedMul * airtime(initialV, gravity);
   }
 
-  // ── Daily Infinity Stone placement ──
-
-  // Deterministic 32-bit string hash (FNV-1a-ish) for date/id seeds.
-  function hashString(s) {
-    let h = 0x811c9dc5;
-    for (let i = 0; i < s.length; i++) {
-      h ^= s.charCodeAt(i);
-      h = Math.imul(h, 0x01000193);
-    }
-    return h >>> 0;
-  }
-
-  // mulberry32 — tiny seeded PRNG, returns () => [0,1).
-  function mulberry32(seed) {
-    let a = seed >>> 0;
-    return function () {
-      a |= 0; a = (a + 0x6D2B79F5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
-  const STONES = [
-    { id: 'space',   color: 0x3a85f0 },
-    { id: 'mind',    color: 0xf5d020 },
-    { id: 'reality', color: 0xed1d24 },
-    { id: 'power',   color: 0x9b59b6 },
-    { id: 'time',    color: 0x39b54a },
-    { id: 'soul',    color: 0xff8020 }
-  ];
-
-  // Pick today's stone spots. Deterministic for a given (seed, node set):
-  // every player with the same unlocked islands sees the same spots.
-  //   nodes: [{x, z}] platform centers · halfA: platform+apron half-extent
-  //   roads: rotated rects (see isWalkable) · seed: hashString(dateStr + ids)
-  // Returns [{ id, color, x, z, y }] — y is 0 (ground, walk over) or
-  // elevated (~1.1, must JUMP to touch: pickup tests 3D distance).
-  function pickStoneSpots({ nodes, roads, halfA, seed, count }) {
-    if (!nodes.length) return [];
-    const n = count != null ? count
-      : (nodes.length < 3 ? Math.min(STONES.length, nodes.length * 2) : STONES.length);
-    const rand = mulberry32(seed);
-    const spots = [];
-    const MIN_SEP = 4;                 // stones never bunch up
-    let guard = 0;
-    while (spots.length < n && guard++ < 400) {
-      const node = nodes[Math.floor(rand() * nodes.length)];
-      // Random point on the node's walkable square (biased off-center so
-      // stones sit on aprons/edges rather than in doorway traffic).
-      const x = node.x + (rand() * 2 - 1) * (halfA - 0.8);
-      const z = node.z + (rand() * 2 - 1) * (halfA - 0.8);
-      if (!isWalkable(x, z, nodes, halfA, roads)) continue;
-      if (spots.some(s => Math.hypot(s.x - x, s.z - z) < MIN_SEP)) continue;
-      const stone = STONES[spots.length];
-      // Roughly a third float at jump height — you have to leap for them.
-      const elevated = rand() < 0.34;
-      spots.push({ id: stone.id, color: stone.color, x, z, y: elevated ? 1.1 : 0 });
-    }
-    return spots;
-  }
+  // (The daily seeded stone-placement helpers — hashString/mulberry32/
+  // pickStoneSpots — were removed with the batch-5 shift to a shared,
+  // server-authoritative Infinity Stone contest. Stone positions are now
+  // fixed ring slots computed in playground3d.js; ownership lives on the
+  // server. See routes/world-socket.js.)
 
   // ── Punch target selection ──
   // actors: [{ id, x, z, y }] (y optional, defaults 0). Returns the id of
@@ -145,8 +89,57 @@
     return best;
   }
 
+  // ── Spawn islands ──
+  // Group the currently-unlocked projects into connected "islands" so the
+  // /world spawn picker can offer one card per island. Two nodes are
+  // connected when one is a prerequisite of the other and BOTH are unlocked
+  // (the same rule that builds roads/doorways in the engine). Edges are
+  // treated as undirected; components are found with union-find.
+  //
+  //   projects:   the global project list (each {id, prerequisites, title, image, phase}).
+  //   isUnlocked: predicate mirroring _isProjectUnlocked (watched OR no prereqs).
+  //
+  // Returns [{ anchor, nodes }] — `nodes` are the island's unlocked members in
+  // `projects` array order (release order); `anchor` is the first of them (the
+  // natural root, e.g. Iron Man / Guardians / Doctor Strange). Islands are
+  // ordered by their anchor's position in `projects`.
+  function spawnIslands(projects, isUnlocked) {
+    const unlocked = [];
+    const index = new Map();               // id → position in `unlocked`
+    for (const p of projects) {
+      if (!isUnlocked(p)) continue;
+      index.set(p.id, unlocked.length);
+      unlocked.push(p);
+    }
+
+    // Union-find over the unlocked set.
+    const parent = unlocked.map((_, i) => i);
+    function find(a) { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; }
+    function union(a, b) { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; }
+
+    for (let i = 0; i < unlocked.length; i++) {
+      const prereqs = Array.isArray(unlocked[i].prerequisites) ? unlocked[i].prerequisites : [];
+      for (const preId of prereqs) {
+        if (index.has(preId)) union(i, index.get(preId));   // both unlocked → connected
+      }
+    }
+
+    // Bucket by root, preserving array order within and across islands.
+    const byRoot = new Map();
+    for (let i = 0; i < unlocked.length; i++) {
+      const r = find(i);
+      if (!byRoot.has(r)) byRoot.set(r, []);
+      const p = unlocked[i];
+      byRoot.get(r).push({ id: p.id, title: p.title, image: p.image, phase: p.phase });
+    }
+
+    const islands = [];
+    for (const nodes of byRoot.values()) islands.push({ anchor: nodes[0], nodes });
+    return islands;
+  }
+
   return {
-    isWalkable, stepVertical, shouldRespawn, airtime, airCarry,
-    hashString, mulberry32, STONES, pickStoneSpots, pickPunchTarget
+    isWalkable, stepVertical, shouldRespawn, airtime, airCarry, pickPunchTarget,
+    spawnIslands
   };
 });

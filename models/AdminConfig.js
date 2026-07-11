@@ -20,7 +20,12 @@ const AdminConfigSchema = new mongoose.Schema({
   },
   flags: {
     fightsEnabled:    { type: Boolean, default: false },
-    dialoguesEnabled: { type: Boolean, default: true }
+    dialoguesEnabled: { type: Boolean, default: true },
+    // Global on/off for the /world Infinity Stone hunt + snap PvP event. Unlike
+    // the two above (per-user defaults), this is an authoritative global switch:
+    // the server refuses stone grabs/snaps and the client hides the HUD when off.
+    // Defaults off — it's an opt-in event the admin turns on.
+    worldEventStonesEnabled: { type: Boolean, default: false }
   },
   // Bumped on every save so the client can detect staleness. Currently
   // unused for cache busting (the boot-time fetch is fresh per page load),
@@ -37,7 +42,7 @@ AdminConfigSchema.statics.defaults = function () {
     walker:    { speed: 40, pauseMin: 800, pauseMax: 2500 },
     encounter: { dist: 26, cooldown: 30000 },
     fight:     { spawnChance: 0.15 },
-    flags:     { fightsEnabled: false, dialoguesEnabled: true }
+    flags:     { fightsEnabled: false, dialoguesEnabled: true, worldEventStonesEnabled: false }
   };
 };
 

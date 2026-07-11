@@ -106,6 +106,10 @@ fetch(`${API}/config/public`)
       Walkers.applyConfig(cfg);
       Walkers.applyFlagDefaults(cfg.flags || {});
     }
+    // Expose global feature flags (e.g. the /world Infinity Stone event) so
+    // views can gate on them. Distinct from Walkers' per-user flag defaults —
+    // these are read as authoritative global switches.
+    if (cfg && cfg.flags) window.APP_FLAGS = cfg.flags;
   })
   .catch(() => { /* offline / blocked — defaults are fine */ });
 

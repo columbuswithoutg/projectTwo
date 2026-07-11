@@ -102,6 +102,15 @@
           </label>
         </div>
 
+        <h3 class="admin-h3">World event</h3>
+        <p class="admin-config-help">Global switch — applies to every player. When on, the /world Infinity Stone hunt and snap are live; when off, the server refuses stone grabs/snaps and the HUD is hidden. Players see the change on their next /world entry (page load).</p>
+        <div class="admin-config-grid">
+          <label class="admin-config-row admin-config-toggle">
+            <span class="admin-config-label">Infinity Stone hunt + snap enabled</span>
+            <input type="checkbox" data-path="flags.worldEventStonesEnabled" ${cfg.flags?.worldEventStonesEnabled ? 'checked' : ''} />
+          </label>
+        </div>
+
         <div class="admin-config-actions">
           <button class="admin-btn" id="admin-config-save" disabled>Save changes</button>
           <button class="admin-btn admin-btn-danger" id="admin-config-reset">Reset to defaults…</button>

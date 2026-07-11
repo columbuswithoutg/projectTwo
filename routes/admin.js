@@ -371,6 +371,7 @@ router.put('/config', async (req, res) => {
   if (body.flags && typeof body.flags === 'object') {
     if ('fightsEnabled' in body.flags) update['flags.fightsEnabled'] = !!body.flags.fightsEnabled;
     if ('dialoguesEnabled' in body.flags) update['flags.dialoguesEnabled'] = !!body.flags.dialoguesEnabled;
+    if ('worldEventStonesEnabled' in body.flags) update['flags.worldEventStonesEnabled'] = !!body.flags.worldEventStonesEnabled;
   }
 
   // pauseMin must be < pauseMax — silently swap if both updated and inverted

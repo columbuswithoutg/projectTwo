@@ -30,8 +30,11 @@ const WorldView = (() => {
   let _voiceLongPressFired = false;
   let _peerFailToastAt = 0;        // throttle the "voice trouble" hint toast
   // Daily Infinity Stone hunt state.
-  let _stones = null;              // { date, total, collected:Set, streak, completed }
-  let _stoneTimer = null;          // scene-ready retry timer
+  let _snapKeyHandler = null;      // 'G' → snap when holding all six
+  // Pending spawn-picker resolver, so unmount() can settle the awaited promise
+  // (resolve null → the bring-up's post-await _mountSeq guard bails cleanly)
+  // if the user navigates away while the picker is open. Null when none open.
+  let _spawnPickerResolve = null;
 
   function mount(container) {
     if (!Auth.isLoggedIn()) {
@@ -44,8 +47,10 @@ const WorldView = (() => {
         <button id="world-back" type="button" title="Back">← Back</button>
         <h1 class="world-title">World</h1>
         <div class="world-header-spacer">
+          <button class="world-snap-btn" id="world-snap-btn" type="button" hidden
+                  title="Snap! (G)">✊ SNAP</button>
           <button class="world-stone-chip" id="world-stone-chip" type="button" hidden
-                  title="Daily Infinity Stone hunt — tap for the leaderboard">💎 0/6</button>
+                  title="Infinity Stones you hold — tap for the snap leaderboard">💎 0/6</button>
         </div>
       </header>
       <div id="pg-stage" class="pg-stage">
@@ -72,7 +77,10 @@ const WorldView = (() => {
     // staring at nothing.
     const myMount = ++_mountSeq;
     _loadTimer = setTimeout(() => {
-      if (_mountSeq === myMount && _stage && !_stage.querySelector('.pg3d-canvas')) {
+      // Don't cry "still loading" while the spawn picker is up — the bring-up is
+      // deliberately paused waiting on the user's island choice.
+      if (_mountSeq === myMount && _stage && !_stage.querySelector('.pg3d-canvas')
+          && !document.querySelector('.world-spawn')) {
         if (typeof toast === 'function') toast('Still loading the world — check your connection.', 'warn');
       }
     }, 12000);
@@ -118,7 +126,17 @@ const WorldView = (() => {
         toast('Couldn’t load your character — using a default look.', 'warn');
       }
     }
-    Playground3D.initWorld(_stage, character);
+    // Spawn picker: when the unlocked nodes form more than one disconnected
+    // island (e.g. a fresh user's Iron Man / Guardians / Doctor Strange all
+    // stand alone), let the player choose which one to start on — otherwise
+    // they'd always land on Iron Man with no way to walk to the others.
+    let chosenSpawnId = null;
+    const islands = _spawnIslands();
+    if (islands.length > 1) {
+      chosenSpawnId = await _openSpawnPicker(islands, 'enter');
+      if (myMount !== _mountSeq) return;   // unmounted while the picker was open
+    }
+    Playground3D.initWorld(_stage, character, chosenSpawnId);
 
     // Avenger NPCs — each preset model roams the apron around its debut node.
     // Map preset → roster character (via charId) to resolve the debut project;
@@ -142,109 +160,116 @@ const WorldView = (() => {
       Playground3D.setWorldNpcs(npcSpecs);
     }
 
+    // Is the Infinity Stone hunt + snap event live? Global admin switch
+    // (flags.worldEventStonesEnabled). When off, the whole feature stays dark:
+    // no HUD, no snap handlers — and the server sends no stones / refuses grabs.
+    const stonesOn = await _stonesEventOn();
+    if (myMount !== _mountSeq) return;
+
     if (typeof Multiplayer !== 'undefined' && Multiplayer.start) {
       _mp = Multiplayer.start({
         events: Multiplayer.WORLD_EVENTS,
         joinPayload: {},
-        character
+        character,
+        onStoneChange: stonesOn ? _refreshStoneHud : undefined,
+        onSnapped: stonesOn ? _onSnapped : undefined
       });
     }
 
     _wireVoiceToggle('world');
     _maybeShowControlsHint();
-    _initStones(myMount);
+    if (stonesOn) _initStones();
   }
 
-  /* ── Daily Infinity Stone hunt ── */
-
-  async function _initStones(myMount) {
-    if (typeof PG3DPhysics === 'undefined' || !Playground3D.spawnStones) return;
-    let data = null;
+  // Resolve the global feature flags. boot.js stashes them on window.APP_FLAGS
+  // after its /config/public fetch; if a deep-link to /world beat that fetch,
+  // fetch once ourselves so the event's on/off state is always correct.
+  async function _ensureFlags() {
+    if (window.APP_FLAGS) return window.APP_FLAGS;
     try {
-      const res = await fetch(`${API}/progress/stones`, {
-        headers: { Authorization: `Bearer ${Auth.getToken()}` }
-      });
-      if (res.ok) data = await res.json();
-    } catch (_) { /* offline — hunt just doesn't appear today */ }
-    if (!data || myMount !== _mountSeq) return;
-
-    // The scene builds asynchronously (THREE loads from CDN) — poll until
-    // the world nodes exist, then place today's stones.
-    const tryPlace = () => {
-      if (myMount !== _mountSeq) return;
-      const world = Playground3D.getStoneWorld();
-      if (!world.nodes.length) {
-        _stoneTimer = setTimeout(tryPlace, 500);
-        return;
-      }
-      const seed = PG3DPhysics.hashString(data.date + '|' + world.nodes.map(n => n.id).join(','));
-      const spots = PG3DPhysics.pickStoneSpots({
-        nodes: world.nodes, roads: world.roads, halfA: world.halfA, seed
-      });
-      if (!spots.length) return;
-      const spotIds = new Set(spots.map(s => s.id));
-      _stones = {
-        date: data.date,
-        total: spots.length,
-        collected: new Set((data.collected || []).filter(id => spotIds.has(id))),
-        streak: data.streak || 0,
-        completed: !!data.completed
-      };
-      Playground3D.setStoneHandler(_onStonePickup);
-      Playground3D.spawnStones(spots, _stones.collected);
-      _updateStoneChip();
-      const chip = document.getElementById('world-stone-chip');
-      if (chip) {
-        chip.hidden = false;
-        chip.addEventListener('click', _openStoneLeaderboard);
-      }
-    };
-    tryPlace();
+      const res = await fetch(`${API}/config/public`);
+      if (res.ok) { const cfg = await res.json(); if (cfg && cfg.flags) window.APP_FLAGS = cfg.flags; }
+    } catch (_) { /* offline — treat as defaults (event off) */ }
+    return window.APP_FLAGS || {};
+  }
+  async function _stonesEventOn() {
+    const flags = await _ensureFlags();
+    return !!flags.worldEventStonesEnabled;
   }
 
-  function _updateStoneChip() {
+  /* ── Shared Infinity Stone PvP ── */
+
+  function _initStones() {
     const chip = document.getElementById('world-stone-chip');
-    if (!chip || !_stones) return;
-    chip.textContent = `💎 ${_stones.collected.size}/${_stones.total}`;
-    chip.classList.toggle('complete', _stones.collected.size >= _stones.total);
+    if (chip) { chip.hidden = false; chip.addEventListener('click', _openStoneLeaderboard); }
+    _refreshStoneHud();
+    const snapBtn = document.getElementById('world-snap-btn');
+    if (snapBtn) snapBtn.addEventListener('click', _doSnap);
+    // Keyboard: G snaps (only fires when you actually hold all six — the
+    // server re-checks anyway). Ignored while typing in the chat box.
+    _snapKeyHandler = (e) => {
+      if (_isTextField(document.activeElement)) return;
+      if (e.key === 'g' || e.key === 'G') _doSnap();
+    };
+    window.addEventListener('keydown', _snapKeyHandler);
   }
 
-  const STONE_NAMES = {
-    space: 'Space Stone', mind: 'Mind Stone', reality: 'Reality Stone',
-    power: 'Power Stone', time: 'Time Stone', soul: 'Soul Stone'
-  };
-
-  async function _onStonePickup(id) {
-    if (!_stones) return;
-    _stones.collected.add(id);
-    _updateStoneChip();
-    const allFound = _stones.collected.size >= _stones.total;
-    if (typeof toast === 'function' && !allFound) {
-      toast(`💎 ${STONE_NAMES[id] || 'Stone'} — ${_stones.collected.size}/${_stones.total}`, 'success');
+  // Reflect the local player's held count in the chip + reveal the SNAP
+  // button at six. Driven by every stone ownership change from the server.
+  function _refreshStoneHud() {
+    const n = Playground3D.getLocalStoneCount ? Playground3D.getLocalStoneCount() : 0;
+    const chip = document.getElementById('world-stone-chip');
+    if (chip) {
+      chip.textContent = `💎 ${n}/6`;
+      chip.classList.toggle('complete', n >= 6);
     }
-    if (allFound) _snapEffect();
-
-    try {
-      const res = await fetch(`${API}/progress/stones`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${Auth.getToken()}`
-        },
-        body: JSON.stringify({ stone: id })
-      });
-      if (res.ok) {
-        const out = await res.json();
-        _stones.streak = out.streak || _stones.streak;
-        if (out.completedNow && typeof toast === 'function') {
-          toast(`✨ All six Infinity Stones! Daily streak: ${out.streak}`, { type: 'success', duration: 5000 });
-        }
-      }
-    } catch (_) { /* picked up locally; server catches up next session */ }
+    const snapBtn = document.getElementById('world-snap-btn');
+    if (snapBtn) snapBtn.hidden = n < 6;
+    if (n >= 6 && !_snapHinted) {
+      _snapHinted = true;
+      if (typeof toast === 'function') toast('You hold all six — press SNAP (G)!', { type: 'success', duration: 5000 });
+    } else if (n < 6) {
+      _snapHinted = false;
+    }
   }
 
-  // Brief white "snap" flash when today's set is complete.
-  function _snapEffect() {
+  function _doSnap() {
+    if (!_mp || !_mp.sendSnap) return;
+    if (Playground3D.getLocalStoneCount && Playground3D.getLocalStoneCount() < 6) return;
+    _mp.sendSnap();     // server verifies + broadcasts world:snapped
+  }
+
+  // A snap happened (could be us or someone else). The engine already dusted
+  // the victims (fade + respawn); here we do the room-wide flash + toast.
+  function _onSnapped(payload) {
+    _snapFlash();
+    const victims = (payload && Array.isArray(payload.victims)) ? payload.victims : [];
+    const socket = _mp && _mp.getSocket && _mp.getSocket();
+    const myId = socket && socket.id;
+    const iSnapped = myId && payload && payload.by === myId;
+    const iDusted = myId && victims.includes(myId);
+    // Dusted back to the start in a disconnected world → offer where to
+    // reassemble (the engine already respawned us at Iron Man; this relocates).
+    if (iDusted) {
+      const islands = _spawnIslands();
+      if (islands.length > 1) _openSpawnPicker(islands, 'respawn');
+    }
+    if (typeof toast !== 'function') return;
+    if (iSnapped) toast('✨ You snapped! Half the world turned to dust.', { type: 'success', duration: 5000 });
+    else if (iDusted) toast('💨 You were dusted — reassembling at the start.', { type: 'warn', duration: 5000 });
+    else toast('✨ Someone snapped. You survived.', { type: 'info', duration: 4000 });
+  }
+
+  let _snapHinted = false;
+
+  function _isTextField(el) {
+    if (!el) return false;
+    const t = el.tagName;
+    return t === 'INPUT' || t === 'TEXTAREA' || el.isContentEditable;
+  }
+
+  // Full-stage white flash for any snap.
+  function _snapFlash() {
     if (!_stage) return;
     const flash = document.createElement('div');
     flash.className = 'world-snap-flash';
@@ -252,9 +277,6 @@ const WorldView = (() => {
     requestAnimationFrame(() => flash.classList.add('show'));
     setTimeout(() => flash.classList.remove('show'), 450);
     setTimeout(() => { if (flash.parentNode) flash.parentNode.removeChild(flash); }, 1000);
-    if (typeof toast === 'function' && _stones && _stones.total < 6) {
-      toast(`✨ Every stone found! Unlock more islands for the full six.`, { type: 'success', duration: 5000 });
-    }
   }
 
   async function _openStoneLeaderboard() {
@@ -267,8 +289,8 @@ const WorldView = (() => {
     overlay.innerHTML = `
       <div class="world-lb-panel">
         <button class="popup-close" aria-label="Close">✕</button>
-        <h3>💎 Stone Hunt</h3>
-        <p class="world-lb-sub">Six stones hide in new spots every day — some need a jump.</p>
+        <h3>✊ Snap Leaderboard</h3>
+        <p class="world-lb-sub">Grab all six stones — punch to steal them — then snap to dust half the room.</p>
         <div class="world-lb-rows">Loading…</div>
       </div>
     `;
@@ -293,14 +315,90 @@ const WorldView = (() => {
         <div class="world-lb-row${r.you ? ' you' : ''}">
           <span class="world-lb-rank">${i + 1}</span>
           <span class="world-lb-name">${esc(r.username)}${r.you ? ' (you)' : ''}</span>
-          <span class="world-lb-score">${r.completedToday ? '✨' : ''} ${r.todayCount}/6</span>
-          <span class="world-lb-streak" title="Daily streak">🔥 ${r.streak}</span>
+          <span class="world-lb-score" title="Lifetime snaps">✊ ${r.snaps}</span>
         </div>
       `).join('');
     } catch (_) {
       const host = overlay.querySelector('.world-lb-rows');
       if (host) host.innerHTML = '<p class="friends-empty">Couldn’t load the leaderboard.</p>';
     }
+  }
+
+  /* ── Spawn picker (disconnected islands) ── */
+
+  // Group the unlocked nodes into disconnected "islands". Mirrors the engine's
+  // _isProjectUnlocked (watched OR a start node with no prerequisites). Returns
+  // [] when the data isn't ready; length > 1 means the world is disconnected.
+  function _spawnIslands() {
+    if (typeof PG3DPhysics === 'undefined' || !PG3DPhysics.spawnIslands) return [];
+    if (typeof projects === 'undefined' || !Array.isArray(projects)) return [];
+    const isUnlocked = (p) =>
+      (typeof state !== 'undefined' && state.isWatched && state.isWatched(p.id)) ||
+      !(p.prerequisites && p.prerequisites.length);
+    return PG3DPhysics.spawnIslands(projects, isUnlocked);
+  }
+
+  // Show the island picker. `mode` is 'enter' (before the world builds — resolves
+  // to the chosen anchor id, or null if dismissed) or 'respawn' (after a snap —
+  // teleports the live player onto the chosen island and resolves).
+  function _openSpawnPicker(islands, mode) {
+    document.querySelector('.world-spawn')?.remove();
+    return new Promise((resolve) => {
+      let settled = false;
+      const settle = (val) => { if (settled) return; settled = true; _spawnPickerResolve = null; resolve(val); };
+      // Let unmount() settle us if the view tears down while we're open.
+      _spawnPickerResolve = () => settle(null);
+
+      const overlay = document.createElement('div');
+      overlay.className = 'world-spawn';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-label', mode === 'respawn' ? 'Choose where to reassemble' : 'Choose where to spawn');
+
+      const heading = mode === 'respawn' ? '💨 Reassemble where?' : '🌍 Where to?';
+      const sub = mode === 'respawn'
+        ? 'Your islands aren’t connected by road — pick where to come back.'
+        : 'Your unlocked locations aren’t all connected by road — pick where to start.';
+
+      const cards = islands.map((isl) => {
+        const a = isl.anchor;
+        const url = (typeof CONFIG !== 'undefined' && CONFIG.IMAGE_BASE && a.image) ? `${CONFIG.IMAGE_BASE}${a.image}` : '';
+        const n = isl.nodes.length;
+        const count = n === 1 ? '1 location' : `${n} locations`;
+        return `
+          <button class="world-spawn-card" type="button" data-id="${esc(a.id)}">
+            <span class="world-spawn-poster"${url ? ` style="background-image:url('${esc(url)}')"` : ''} aria-hidden="true"></span>
+            <span class="world-spawn-name">${esc(a.title)}</span>
+            <span class="world-spawn-count">${count}</span>
+          </button>`;
+      }).join('');
+
+      overlay.innerHTML = `
+        <div class="world-spawn-panel">
+          <button class="popup-close" aria-label="Close">✕</button>
+          <h3>${heading}</h3>
+          <p class="world-spawn-sub">${sub}</p>
+          <div class="world-spawn-grid">${cards}</div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      // Dismissing without a pick resolves null — in 'enter' mode the caller
+      // then uses the default Iron Man spawn; in 'respawn' the engine already
+      // put the player back at the start, so doing nothing is correct.
+      const close = wireModalDismiss(overlay, () => { overlay.remove(); settle(null); }, {
+        initialFocus: overlay.querySelector('.world-spawn-card') || overlay.querySelector('.popup-close')
+      });
+      overlay.querySelector('.popup-close').addEventListener('click', close);
+      overlay.querySelectorAll('.world-spawn-card').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const id = btn.getAttribute('data-id');
+          settle(id);                  // beat the closeFn's settle(null)
+          if (mode === 'respawn' && Playground3D.teleportToNode) Playground3D.teleportToNode(id);
+          close();
+        });
+      });
+    });
   }
 
   // First-visit controls hint. /world is the marquee feature but nothing
@@ -511,11 +609,14 @@ const WorldView = (() => {
     if (_voiceLongPressTimer) { clearTimeout(_voiceLongPressTimer); _voiceLongPressTimer = null; }
     _voiceBtn = null; _voiceBtnHandler = null; _voiceCtxHandler = null;
     _voiceTouchStart = null; _voiceTouchEnd = null;
-    // Stone hunt teardown — engine stones die in Playground3D.destroy();
-    // the chip/flash live inside the container and vanish with it.
-    if (_stoneTimer) { clearTimeout(_stoneTimer); _stoneTimer = null; }
+    // Stone contest teardown — engine stones die in Playground3D.destroy();
+    // the chip/snap button/flash live inside the container and vanish with it.
+    if (_snapKeyHandler) { window.removeEventListener('keydown', _snapKeyHandler); _snapKeyHandler = null; }
+    _snapHinted = false;
     document.querySelector('.world-lb')?.remove();
-    _stones = null;
+    // Settle a still-open spawn picker so its awaited promise doesn't dangle.
+    if (_spawnPickerResolve) { _spawnPickerResolve(); _spawnPickerResolve = null; }
+    document.querySelector('.world-spawn')?.remove();
     if (_mp) { try { _mp.stop(); } catch (_) {} _mp = null; }
     Playground3D.destroy();
     _stage = null;

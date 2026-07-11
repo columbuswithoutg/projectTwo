@@ -106,45 +106,6 @@ test('shouldRespawn: fires on the timer OR the depth, not before', () => {
   assert.equal(P.shouldRespawn(1100, 1000, -8.5, FALL_OPTS), true); // depth reached early
 });
 
-// ── Daily Infinity Stone placement ──
-
-const NODES = [{ x: 0, z: 0 }, { x: 18, z: 0 }, { x: 0, z: 18 }, { x: 18, z: 18 }];
-
-test('pickStoneSpots: deterministic for the same seed, different across days', () => {
-  const seed1 = P.hashString('2026-07-07|a,b,c,d');
-  const seed2 = P.hashString('2026-07-08|a,b,c,d');
-  const a = P.pickStoneSpots({ nodes: NODES, roads: [], halfA: HALF_A, seed: seed1 });
-  const b = P.pickStoneSpots({ nodes: NODES, roads: [], halfA: HALF_A, seed: seed1 });
-  const c = P.pickStoneSpots({ nodes: NODES, roads: [], halfA: HALF_A, seed: seed2 });
-  assert.deepEqual(a, b, 'same seed must produce identical spots');
-  assert.notDeepEqual(a, c, 'different dates must move the stones');
-});
-
-test('pickStoneSpots: 6 stones, all on walkable ground, well separated', () => {
-  const spots = P.pickStoneSpots({ nodes: NODES, roads: [], halfA: HALF_A, seed: 12345 });
-  assert.equal(spots.length, 6);
-  const ids = new Set(spots.map(s => s.id));
-  assert.equal(ids.size, 6, 'each of the 6 stones appears once');
-  for (const s of spots) {
-    assert.ok(P.isWalkable(s.x, s.z, NODES, HALF_A, []), `${s.id} at (${s.x},${s.z}) must be walkable`);
-    assert.ok(s.y === 0 || Math.abs(s.y - 1.1) < 0.001, 'y is ground or jump height');
-  }
-  for (let i = 0; i < spots.length; i++) {
-    for (let j = i + 1; j < spots.length; j++) {
-      const d = Math.hypot(spots[i].x - spots[j].x, spots[i].z - spots[j].z);
-      assert.ok(d >= 4, `stones ${i}/${j} too close (${d})`);
-    }
-  }
-});
-
-test('pickStoneSpots: small worlds spawn fewer stones; empty world spawns none', () => {
-  const one = P.pickStoneSpots({ nodes: [NODES[0]], roads: [], halfA: HALF_A, seed: 7 });
-  assert.equal(one.length, 2, '1 island → 2 stones');
-  const two = P.pickStoneSpots({ nodes: NODES.slice(0, 2), roads: [], halfA: HALF_A, seed: 7 });
-  assert.equal(two.length, 4, '2 islands → 4 stones');
-  assert.deepEqual(P.pickStoneSpots({ nodes: [], roads: [], halfA: HALF_A, seed: 7 }), []);
-});
-
 // ── Punch target selection ──
 
 test('pickPunchTarget: nearest in range wins; out of range → null', () => {
@@ -164,12 +125,60 @@ test('pickPunchTarget: vertical bound — cannot punch someone far above/below',
   assert.equal(P.pickPunchTarget(0, 0, 1.0, actors, 1.4), 'up');   // within 1.5u
 });
 
-test('elevated stones are out of reach on foot but reachable at jump apex', () => {
-  // Pickup rule: 3D distance from the player's FEET position < 0.9.
-  const stoneY = 1.1;
-  const standingDist = Math.hypot(0, stoneY);          // directly underneath, feet on ground
-  assert.ok(standingDist > 0.9, 'walking under an elevated stone must NOT collect it');
-  const apex = (INITIAL_V * INITIAL_V) / (2 * GRAVITY); // ≈1.28
-  const jumpDist = Math.abs(apex - stoneY);
-  assert.ok(jumpDist < 0.9, 'a full jump directly under it must collect it');
+// ── Spawn islands (world spawn-picker grouping) ──
+
+// A small MCU-shaped fixture: three prerequisite branches that only merge at
+// The Avengers, plus two independent start nodes (Guardians, Doctor Strange).
+const PROJECTS = [
+  { id: 'ironman1',    title: 'Iron Man',        image: 'a.png', phase: 'Phase 1', prerequisites: [] },
+  { id: 'ironman2',    title: 'Iron Man 2',      image: 'b.png', phase: 'Phase 1', prerequisites: ['ironman1'] },
+  { id: 'hulk',        title: 'The Hulk',        image: 'c.png', phase: 'Phase 1', prerequisites: ['ironman2'] },
+  { id: 'thor1',       title: 'Thor',            image: 'd.png', phase: 'Phase 1', prerequisites: ['ironman2'] },
+  { id: 'cap1',        title: 'Captain America', image: 'e.png', phase: 'Phase 1', prerequisites: ['ironman2'] },
+  { id: 'avengers1',   title: 'The Avengers',    image: 'f.png', phase: 'Phase 1', prerequisites: ['thor1', 'cap1', 'hulk'] },
+  { id: 'guardians1',  title: 'Guardians',       image: 'g.png', phase: 'Phase 2', prerequisites: [] },
+  { id: 'doctorstrange', title: 'Doctor Strange', image: 'h.png', phase: 'Phase 3', prerequisites: [] }
+];
+// Mirror of _isProjectUnlocked: watched OR a start node (no prerequisites).
+const unlockedBy = (watched) => (p) =>
+  watched.has(p.id) || !(p.prerequisites && p.prerequisites.length);
+
+test('spawnIslands: fresh user (only start nodes) → 3 separate islands', () => {
+  const islands = P.spawnIslands(PROJECTS, unlockedBy(new Set()));
+  assert.equal(islands.length, 3);
+  assert.deepEqual(islands.map(i => i.anchor.id), ['ironman1', 'guardians1', 'doctorstrange']);
+  for (const i of islands) assert.equal(i.nodes.length, 1);   // each start node alone
+});
+
+test('spawnIslands: a branch merges via The Avengers → still 3 islands, one is bigger', () => {
+  const watched = new Set(['ironman2', 'hulk', 'thor1', 'cap1', 'avengers1']);
+  const islands = P.spawnIslands(PROJECTS, unlockedBy(watched));
+  assert.equal(islands.length, 3);   // Iron-Man island + Guardians + Doctor Strange
+  const ironIsland = islands.find(i => i.anchor.id === 'ironman1');
+  assert.ok(ironIsland, 'Iron Man is the anchor of the merged island');
+  assert.deepEqual(
+    ironIsland.nodes.map(n => n.id),
+    ['ironman1', 'ironman2', 'hulk', 'thor1', 'cap1', 'avengers1']   // array order preserved
+  );
+  // The two lone start nodes remain their own single-node islands.
+  assert.ok(islands.some(i => i.anchor.id === 'guardians1' && i.nodes.length === 1));
+  assert.ok(islands.some(i => i.anchor.id === 'doctorstrange' && i.nodes.length === 1));
+});
+
+test('spawnIslands: a locked prerequisite does NOT connect two unlocked nodes', () => {
+  // hulk is watched but its prereq ironman2 is NOT → hulk cannot join Iron Man's
+  // island through a locked link; it stands alone.
+  const islands = P.spawnIslands(PROJECTS, unlockedBy(new Set(['hulk'])));
+  const hulkIsland = islands.find(i => i.nodes.some(n => n.id === 'hulk'));
+  assert.equal(hulkIsland.nodes.length, 1);
+  assert.equal(hulkIsland.anchor.id, 'hulk');
+});
+
+test('spawnIslands: fully-watched fixture collapses toward fewer islands', () => {
+  const watched = new Set(PROJECTS.map(p => p.id));
+  const islands = P.spawnIslands(PROJECTS, unlockedBy(watched));
+  // Guardians & Doctor Strange have no links to anything here, so they stay
+  // separate; the six Iron-Man-branch films form one island.
+  assert.equal(islands.length, 3);
+  assert.equal(islands.find(i => i.anchor.id === 'ironman1').nodes.length, 6);
 });
