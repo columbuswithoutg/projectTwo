@@ -7,7 +7,7 @@
 // - Network-only for /api/* — auth-sensitive responses are never cached.
 // Bump CACHE_VERSION whenever the precache list or strategy changes.
 
-const CACHE_VERSION = 'mcu-v7'; // v7: shared Infinity Stone PvP + snap
+const CACHE_VERSION = 'mcu-v8'; // v8: CMS projects board, dark default, Goals panel, register transition
 const PRECACHE = [
   '/',
   '/spa.html',

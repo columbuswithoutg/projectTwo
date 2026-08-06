@@ -249,6 +249,7 @@ body {
 ====================== */
 .auth-modal,
 .friends-panel,
+.goals-panel,
 .memory-lightbox,
 #walker-picker-overlay {
   position: fixed;
@@ -263,6 +264,7 @@ body {
 ====================== */
 .auth-box,
 .friends-box,
+.goals-box,
 #walker-picker {
   border: 1px solid var(--gold-03);
   border-radius: var(--radius-lg);
@@ -1567,6 +1569,89 @@ body.auth-page {
   background: none;
 }
 
+/* Register -> success -> Login transition. .auth-form-panel and
+   .auth-success-panel occupy the same box in turn (never both visible);
+   .is-fading/.is-entering drive the cross-fade, matching FADE_MS in
+   js/views/login.js. Reduced-motion users skip this entirely — see the
+   prefersReduced branch in playSuccessTransition().
+   IMPORTANT: display must stay conditional on :not([hidden]) — an
+   unconditional `display: flex` here would outrank the browser's default
+   `[hidden] { display: none }` (same specificity, declared later) and the
+   success panel would render on every page load, not just after a real
+   registration. */
+.auth-form-panel:not([hidden]),
+.auth-success-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  opacity: 1;
+  transition: opacity 0.26s ease;
+}
+.auth-form-panel.is-fading,
+.auth-success-panel.is-fading {
+  opacity: 0;
+}
+.auth-success-panel.is-entering {
+  opacity: 0;
+}
+
+.auth-box input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-success-panel {
+  align-items: center;
+  text-align: center;
+  padding: var(--space-4) 0;
+}
+
+.auth-success-check {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--color-health-good);
+  background: rgba(74, 222, 128, 0.15);
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  animation: authCheckIn 0.36s cubic-bezier(0.22, 0.8, 0.32, 1) both;
+}
+
+@keyframes authCheckIn {
+  from { opacity: 0; transform: scale(0.7); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.auth-success-title {
+  margin: 0;
+  color: var(--text-1);
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.auth-success-sub {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 0.9rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-form-panel,
+  .auth-success-panel {
+    transition: none;
+  }
+  .auth-success-check {
+    animation: none;
+  }
+}
+
 /* ======================
    FRIENDS PANEL
 ====================== */
@@ -1671,6 +1756,132 @@ body.auth-page {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ======================
+   GOALS PANEL
+====================== */
+.goals-panel {
+  background: var(--scrim-heavy);
+  z-index: 1000;
+}
+
+.goals-box {
+  background: var(--modal-bg);
+  padding: 24px;
+  width: 420px;
+  max-height: 80vh;
+  gap: 12px;
+}
+
+.goals-box h3 {
+  color: var(--text-1);
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.goals-subtitle {
+  color: var(--text-3);
+  margin: -6px 0 4px;
+  font-size: 0.82rem;
+}
+
+.goals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.goals-empty {
+  color: var(--text-3);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 12px 0;
+}
+
+.goal-card {
+  background: rgba(var(--ink), 0.04);
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.goal-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.goal-card-title {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-1);
+}
+
+.goal-card-progress {
+  font-size: 0.78rem;
+  color: var(--accent-text);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.goal-req-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.goal-req {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-2);
+  padding: 3px 4px;
+  border-radius: 6px;
+}
+
+.goal-req[data-action="goal-req"] {
+  cursor: pointer;
+}
+
+.goal-req[data-action="goal-req"]:hover {
+  background: rgba(226, 54, 54, 0.1);
+}
+
+.goal-req-mark {
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--color-red-light);
+}
+
+.goal-req.is-met .goal-req-mark {
+  color: var(--color-health-good);
+}
+
+.goal-req.is-met .goal-req-title {
+  color: var(--text-3);
+}
+
+/* Brief highlight when a goal's requirement card is scrolled into view. */
+.flow-cell.goal-highlight .node {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 3px;
+  border-radius: 8px;
+  transition: outline-color 0.3s;
 }
 
 .friend-row-actions {
@@ -3014,6 +3225,23 @@ body.auth-page {
     font-size: 1.25rem;
   }
 
+  /* Goals panel — bottom sheet */
+  .goals-panel {
+    align-items: flex-end;
+  }
+
+  .goals-box {
+    width: 100%;
+    max-height: 90vh;
+    border-radius: 24px 24px 0 0;
+    padding: 28px 20px 44px;
+    gap: 14px;
+  }
+
+  .goals-box h3 {
+    font-size: 1.25rem;
+  }
+
   .friends-section h4 {
     font-size: 0.95rem;
     margin-bottom: 12px;
@@ -4173,6 +4401,176 @@ body.fight-active .flow-wrapper {
   .admin-cms-col {
     display: block;
     margin-right: 0;
+  }
+}
+
+/* CMS List/Board mode toggle — mirrors .admin-subtabs styling */
+.admin-cms-modes {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.admin-cms-mode {
+  background: transparent;
+  color: var(--color-text-warm);
+  border: 0;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  border-bottom: 2px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.admin-cms-mode.active {
+  color: var(--accent-text);
+  border-bottom-color: var(--color-primary);
+}
+.admin-board-badge {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-red-light);
+  display: inline-block;
+}
+
+/* CMS projects — drag-to-move board */
+.admin-cms-board {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.admin-board-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.admin-board-status {
+  font-size: 13px;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+.admin-board-zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.8;
+  margin-left: auto;
+}
+.admin-board-zoom .admin-btn {
+  padding: 2px 10px;
+  line-height: 1.4;
+}
+.admin-board-warn {
+  background: rgba(226,54,54,0.12);
+  border: 1px solid rgba(226,54,54,0.4);
+  color: var(--color-red-light);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.admin-board-canvas {
+  overflow: auto;
+  max-height: min(70vh, 720px);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: 8px;
+}
+.admin-board-svg {
+  display: block;
+  user-select: none;
+}
+.admin-board-bg {
+  fill: transparent;
+  cursor: crosshair;
+}
+.admin-board-lines line {
+  stroke: rgba(var(--ink), 0.06);
+  stroke-width: 1;
+}
+
+.admin-board-node {
+  cursor: grab;
+  touch-action: none;
+}
+.admin-board-node:focus-visible .admin-board-node-rect {
+  stroke: var(--color-primary);
+  stroke-width: 2.5;
+}
+.admin-board-node.is-dragging {
+  cursor: grabbing;
+  opacity: 0.9;
+}
+.admin-board-node-rect {
+  fill: var(--color-node-bg);
+  stroke: var(--border-2);
+  stroke-width: 1.5;
+}
+.admin-board-node:hover .admin-board-node-rect {
+  stroke: var(--accent-text);
+}
+.admin-board-node.is-moved .admin-board-node-rect {
+  stroke: var(--color-primary);
+  stroke-width: 2;
+  stroke-dasharray: 5 3;
+}
+.admin-board-node.is-conflict .admin-board-node-rect {
+  stroke: var(--color-red-light);
+  stroke-width: 2.5;
+}
+.admin-board-node-label {
+  fill: var(--color-text-warm);
+  font-size: 11px;
+  font-family: system-ui, sans-serif;
+  pointer-events: none;
+}
+.admin-board-node-sub,
+.admin-board-node-coord {
+  fill: var(--color-text-warm);
+  opacity: 0.55;
+  font-size: 9px;
+  font-family: system-ui, sans-serif;
+  pointer-events: none;
+}
+
+.admin-board-edge {
+  stroke: rgba(var(--ink), 0.28);
+  stroke-width: 1.5;
+  fill: none;
+  pointer-events: none;
+}
+.admin-board-arrow-tip {
+  fill: rgba(var(--ink), 0.4);
+}
+
+.admin-board-drop {
+  fill: rgba(237, 29, 36, 0.08);
+  stroke: var(--color-primary);
+  stroke-width: 2;
+  stroke-dasharray: 6 6;
+  pointer-events: none;
+}
+.admin-board-drop.is-invalid {
+  fill: rgba(226,54,54,0.15);
+  stroke: var(--color-red-light);
+}
+
+@media (max-width: 720px) {
+  .admin-board-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .admin-board-zoom {
+    margin-left: 0;
+    justify-content: center;
+  }
+  .admin-board-canvas {
+    max-height: 60vh;
   }
 }
 

@@ -7,14 +7,16 @@
   <link rel="icon" type="image/jpeg" href="/assets/favicon.jpg" />
   <link rel="apple-touch-icon" href="/assets/favicon.jpg" />
   <link rel="manifest" href="/manifest.json" />
-  <meta name="theme-color" content="#ffffff" />
+  <meta name="theme-color" content="#07080f" />
   <!-- Anti-flash theme boot — same inline snippet as spa.html; see js/theme.js. -->
   <script>
     (function () {
       var t;
       try { t = localStorage.getItem('mcu-theme'); } catch (e) {}
-      if (t !== 'light' && t !== 'dark') {
+      if (t === 'system') {
         t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+      } else if (t !== 'light' && t !== 'dark') {
+        t = 'dark';
       }
       document.documentElement.setAttribute('data-theme', t);
       var m = document.querySelector('meta[name="theme-color"]');

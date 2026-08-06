@@ -469,6 +469,13 @@ function trimStr(v, max = STR_MAX) {
 
 // ---------- Projects ----------
 
+const GRID_MIN = -500, GRID_MAX = 500;
+
+function _gridCoord(v) {
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(GRID_MIN, Math.min(GRID_MAX, Math.trunc(v)));
+}
+
 function sanitizeProject(body, requireId = true) {
   const errors = {};
   const out = {};
@@ -487,8 +494,14 @@ function sanitizeProject(body, requireId = true) {
     out.prerequisites = [];
   }
   out.phase = trimStr(body.phase || '', 40);
-  out.gridX = Number.isFinite(body.gridX) ? body.gridX : 0;
-  out.gridY = Number.isFinite(body.gridY) ? body.gridY : 0;
+  // Board position is owned by the CMS board editor (PUT
+  // /content/projects/bulk/positions). Omit the keys entirely when the
+  // caller doesn't send them so `Project.create` falls back to the schema
+  // default and `findOneAndUpdate`'s $set leaves the stored coords
+  // untouched — otherwise every plain form save (e.g. editing just the
+  // title) would silently reset the project to (0,0).
+  if (body.gridX !== undefined) out.gridX = _gridCoord(body.gridX);
+  if (body.gridY !== undefined) out.gridY = _gridCoord(body.gridY);
   out.location = trimStr(body.location || '', 80);
   out.image = trimStr(body.image || '', 200);
   return { out, errors };
@@ -524,6 +537,98 @@ router.delete('/content/projects/:id', async (req, res) => {
   if (r.deletedCount === 0) return res.status(404).json({ error: 'Not found' });
   logAudit(req, 'contentEdit', { type: 'project', id: req.params.id }, { action: 'delete' });
   res.json({ message: 'Deleted' });
+});
+
+// Bulk position commit for the CMS "board" editor (drag-to-move). One
+// request, one bulkWrite, one audit entry — instead of N separate PUTs each
+// racking up their own audit row and their own round trip.
+//
+// PATH NOTE: the extra `bulk/` segment is deliberate. `PUT
+// /content/projects/:id` is declared above, and "positions" would pass
+// ID_REGEX, so a two-segment `/content/projects/positions` path would be
+// silently swallowed by the :id route instead of reaching this handler.
+const POSITIONS_MAX = 500;
+
+router.put('/content/projects/bulk/positions', async (req, res) => {
+  const body = req.body || {};
+  if (!Array.isArray(body.positions)) {
+    return badRequest(res, 'positions must be an array');
+  }
+  if (body.positions.length > POSITIONS_MAX) {
+    return badRequest(res, `At most ${POSITIONS_MAX} positions per request`);
+  }
+
+  // --- shape validation ---------------------------------------------------
+  const seen = new Set();
+  const wanted = new Map(); // id -> { gridX, gridY }
+  for (const p of body.positions) {
+    if (!p || typeof p !== 'object') return badRequest(res, 'Invalid position entry');
+    if (!ID_REGEX.test(p.id || '')) return badRequest(res, 'Invalid project id', { id: String(p.id) });
+    if (seen.has(p.id)) return badRequest(res, 'Duplicate id in payload', { id: p.id });
+    // Integers only — a fractional coord means a client bug, don't silently truncate it away.
+    if (!Number.isInteger(p.gridX) || !Number.isInteger(p.gridY)) {
+      return badRequest(res, 'gridX/gridY must be integers', { id: p.id });
+    }
+    if (p.gridX < GRID_MIN || p.gridX > GRID_MAX || p.gridY < GRID_MIN || p.gridY > GRID_MAX) {
+      return badRequest(res, `Coordinates must be between ${GRID_MIN} and ${GRID_MAX}`, { id: p.id });
+    }
+    seen.add(p.id);
+    wanted.set(p.id, { gridX: p.gridX, gridY: p.gridY });
+  }
+
+  // --- merge against current DB state -------------------------------------
+  const all = await Project.find({}).select('id gridX gridY').lean();
+  const known = new Set(all.map(p => p.id));
+  const unknown = [...wanted.keys()].filter(id => !known.has(id));
+  if (unknown.length) return badRequest(res, 'Unknown project id(s)', { ids: unknown });
+
+  const cells = new Map(); // "gx,gy" -> [id]
+  const changes = [];
+  for (const p of all) {
+    const next = wanted.get(p.id) || { gridX: p.gridX | 0, gridY: p.gridY | 0 };
+    const key = `${next.gridX},${next.gridY}`;
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(p.id);
+    if (wanted.has(p.id) && (next.gridX !== p.gridX || next.gridY !== p.gridY)) {
+      changes.push({ id: p.id, from: { gridX: p.gridX, gridY: p.gridY }, to: next });
+    }
+  }
+
+  // --- collision check on the MERGED state --------------------------------
+  const conflicts = [...cells.entries()]
+    .filter(([, ids]) => ids.length > 1)
+    .map(([key, ids]) => {
+      const [gridX, gridY] = key.split(',').map(Number);
+      return { gridX, gridY, ids };
+    });
+  if (conflicts.length) {
+    // 409, not 400: the payload itself is well-formed, the resulting state isn't.
+    return res.status(409).json({ error: 'Two or more projects would share a cell', conflicts });
+  }
+
+  if (!changes.length) {
+    const items = await Project.find({}).sort({ release: 1, gridY: 1, gridX: 1 }).lean();
+    return res.json({ updated: 0, items });
+  }
+
+  await Project.bulkWrite(
+    changes.map(c => ({
+      updateOne: { filter: { id: c.id }, update: { $set: { gridX: c.to.gridX, gridY: c.to.gridY } } }
+    })),
+    { ordered: false }
+  );
+
+  logAudit(
+    req,
+    'contentEdit',
+    { type: 'project', scope: 'positions', count: changes.length },
+    { action: 'bulkPositions', changes: changes.slice(0, 200) } // meta is Mixed/unbounded — cap it
+  );
+
+  // Return the authoritative post-write list so the board re-seeds in one
+  // round trip, and any concurrent admin's moves become visible immediately.
+  const items = await Project.find({}).sort({ release: 1, gridY: 1, gridX: 1 }).lean();
+  res.json({ updated: changes.length, items });
 });
 
 // ---------- Characters ----------

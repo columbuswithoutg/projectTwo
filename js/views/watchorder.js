@@ -38,6 +38,7 @@ const WatchOrderView = {
                 <div class="nav-section-title">You</div>
                 <button id="nav-character-btn">Customize character</button>
                 <button id="friends-btn">Friends</button>
+                <button id="goals-btn">Goals</button>
               </div>
               <div class="nav-section">
                 <div class="nav-section-title">Walkers</div>
@@ -133,6 +134,7 @@ const WatchOrderView = {
     });
 
     $("#friends-btn")?.addEventListener("click", () => showFriendsPanel());
+    $("#goals-btn")?.addEventListener("click", () => showGoalsPanel());
     $("#walkers-btn")?.addEventListener("click", () => Walkers.showWalkerPicker());
     // Character editor — HomeBuilder.open() now routes to the /customize page
     // (stashing this route to return to). The next /home visit (or the page's

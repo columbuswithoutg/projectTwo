@@ -253,6 +253,7 @@ node scripts/seed-content.js --wipe   # drop collections then re-seed
 - **`isAdmin` is set manually in MongoDB.** No promote-from-UI flow exists by design — there's no public path to admin.
 - **Service worker cache invalidation.** `sw.js` precaches the SPA shell + static fallback data and serves stale-while-revalidate for `/js/*` and `/assets/*`. `/api/*` and `/socket.io/*` are never cached. When a deploy must invalidate the precache (precache list changed, shell shape changed), bump `CACHE_VERSION` in `sw.js`; the `activate` handler deletes old caches.
 - **Helmet CSP is ENFORCED** (since 2026-07-07) with an allowlist covering the inline importmap, unpkg.com (Three.js), Cloudinary, Google Fonts, websockets, and data:/blob: images. **Adding any new external source requires extending the allowlist in server.js first** or first paint will brick. Other security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS, COOP, CORP=cross-origin) are on.
+- **`index.html` + root `auth.js` are a stale legacy login page** (since 2026-08-06). The in-app router rewrites `/index.html` → `/` and `/login` always serves `spa.html`, so nothing in normal navigation reaches them — but a direct request for `/index.html` still gets served statically (`server.js` `ROOT_FILES`) and runs the old, un-animated register/login script. `js/views/login.js` is the live implementation; keep new auth UX changes there, not in the legacy file.
 
 ---
 
@@ -275,6 +276,21 @@ Append new entries at the **top** of this section. Use the format:
 Brief summary of what changed and why.
 - file/path:line — what changed
 ```
+
+---
+
+### 2026-08-06 — CMS drag-to-move board, dark default, Goals guide, register transition
+
+Four independent UX changes. Full details in each area's plan; summary per file:
+
+- `routes/admin.js` — `sanitizeProject()` now omits `gridX`/`gridY` from the update when the caller doesn't send them (was defaulting to 0 and silently teleporting projects on every plain form save). New `PUT /content/projects/bulk/positions` — validates, merges against DB state, 409s on cell collisions, `bulkWrite`s the diff, one `contentEdit` audit entry.
+- `js/views/admin/cms-projects-board.js` (new) — drag-to-move board for the CMS Projects tab: every project as an SVG node at its `gridX/gridY` with prerequisite arrows, pointer-based drag with a free-cell drop check, click-empty-cell to create, click-node to edit, keyboard arrow-key move, staged moves committed via one "Save layout".
+- `js/views/admin/cms-projects.js` — List/Board mode toggle; the position fields in the per-project form are now a read-only display fed by the board (or by the clicked empty cell for a new project); `adoptItems()` re-seeds both from a save response.
+- `styles.css` — `.admin-cms-modes`/`.admin-cms-board`/`.admin-board-*` rules.
+- `js/theme.js`, `spa.html`, `index.html`, `manifest.json` — dark mode is now the hard default: an unset/invalid `mcu-theme` resolves to dark regardless of OS preference; only an explicit `'system'` choice follows the OS live. `theme-color` meta and PWA manifest colors updated to match.
+- `js/goals.js` (new) — Goals guide panel. `computeGoals()` lists locked projects one step ahead only (every requirement already watched or revealed — never recurses into projects the user can't see yet), reusing `isUnlocked`/`isPhaseUnlocked`/`isRevealed`/`allPrereqs` from `js/utils.js`. `showGoalsPanel()` follows the `showFriendsPanel()` pattern; wired to a new "Goals" nav-drawer button in `js/views/watchorder.js` and `js/views/app.js`.
+- `js/views/login.js` — fixed the bug where the post-register tab switch immediately hid its own success message; register now plays an animated success step (checkmark + toast) before landing on the Login tab with the username prefilled and password focused. Skips the animation under `prefers-reduced-motion`.
+- `sw.js` — `CACHE_VERSION` → `mcu-v8`.
 
 ---
 
