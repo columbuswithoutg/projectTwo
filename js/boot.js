@@ -41,6 +41,16 @@ async function bootContent() {
     window[key] = res.items;
   };
   swap(projRes, 'projects');
+  // The DB copy carries only the authored fields — the derived ones
+  // (phaseNum, unlocks, watched) are stamped on by state.initProjects. Without
+  // re-deriving here, isPhaseUnlocked() reads `undefined` for every project,
+  // isUnlocked() goes false across the board, and the Watch Order flow / map
+  // render zero nodes — which reads to the user as "the posters stopped
+  // loading". The views guard their own initProjects behind a once-only
+  // `_initialized` flag, so a remount alone does NOT re-derive.
+  if (projRes && typeof state !== 'undefined' && state.initProjects) {
+    state.initProjects(window.projects);
+  }
   swap(charRes, 'characters');
   swap(locRes, 'LOCATIONS');
   if (dialRes && dialRes.data && typeof WALKER_DIALOGUES?.applyData === 'function') {

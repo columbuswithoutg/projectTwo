@@ -3315,12 +3315,26 @@ const Playground3D = (() => {
   // WORLD MODE — walkable universe map
   // ────────────────────────────────────────────────────────────────────
 
+  // True when the player has watched nothing at all. Only then does /world
+  // need a synthetic entry point — otherwise the world is built purely from
+  // what they've actually seen.
+  function _nothingWatched() {
+    if (typeof state === 'undefined' || !state.data) return true;
+    return state.data.size === 0;
+  }
+
+  // Which projects exist in /world. Watched ones, and nothing else — the world
+  // is a record of where you've been, so an unwatched island would be a place
+  // you can walk around before you've seen the film. The single exception is a
+  // brand-new account with zero watched projects: without it their world would
+  // be an empty field, so the canonical start node (Iron Man) is materialized
+  // as the lone entry point until they watch something.
   function _isProjectUnlocked(p) {
-    // Strict: only watched projects are visible in /world. Start nodes
-    // (no prereqs — e.g. Iron Man) are always visible so a fresh user
-    // has an entry point; otherwise their world would be empty.
+    if (!p) return false;
     if (typeof state !== 'undefined' && state.isWatched && state.isWatched(p.id)) return true;
-    return !p.prerequisites || p.prerequisites.length === 0;
+    if (!_nothingWatched()) return false;
+    const startId = (typeof CONFIG !== 'undefined' && CONFIG.START_NODE_ID) || 'ironman1';
+    return p.id === startId;
   }
 
   function _worldSpawn() {
@@ -4892,7 +4906,9 @@ const Playground3D = (() => {
     // Punch + knockdown — relayed via world:punch (js/home-socket.js).
     setPunchHandler, playRemotePunch, knockdownRemote, knockdownLocal,
     // Spawn picker — choose which disconnected island to (re)spawn on.
-    teleportToNode,
+    // isProjectUnlocked is exported so WorldView's island grouping uses the
+    // engine's own rule instead of a second, drifting copy of it.
+    teleportToNode, isProjectUnlocked: _isProjectUnlocked,
     // Local NPC surface — Avenger wanderers in /world.
     setWorldNpcs,
     // Voice-chat surface — distance attenuation + speaking indicator.

@@ -3275,15 +3275,12 @@ body.auth-page {
   .friend-header-tab { padding: 5px 9px; font-size: 0.7rem; }
   .friend-header-back { padding: 5px 9px; font-size: 0.7rem; }
 
-  /* World chat row — lift above the joystick on mobile so they don't
-     overlap. The joystick sits ~28px from the bottom; bump the chat
-     row higher and slim the input a touch. */
-  .world-chat-row {
-    bottom: auto;
-    top: calc(var(--header-height) + env(safe-area-inset-top) + 8px);
-    width: calc(100vw - 16px);
-    padding: 0 8px;
-  }
+  /* NOTE: the mobile .world-chat-row position override lives further down,
+     immediately after the base .world-chat-row rule. Media queries add no
+     specificity, so putting it here let the later base rule win on `bottom`
+     while this block's `top` still applied — top AND bottom both set turned
+     the row into a full-screen invisible overlay that swallowed every tap on
+     the 3D canvas. Keep the two rules adjacent so source order can't flip. */
   /* Keep ≥44px touch targets on mobile — these are the primary social
      controls and the voice button also hosts a long-press gesture. */
   .pg3d-chat { height: 44px; font-size: 13px; }
@@ -3545,9 +3542,23 @@ body.auth-page {
   background: var(--gold-04);
 }
 
+/* The SIZER. Its box is content × zoom, which is what gives .flow-wrapper the
+   right scroll extent at every zoom level. It is never transformed. */
 .flow-canvas {
   position: relative;
   /* width and height set inline by orderRenderer */
+}
+
+/* The scaled content layer. Natural (unscaled) content size, set inline by
+   orderRenderer, with transform: scale(zoom) on top. Splitting sizer from
+   scaled content is what lets the scroll area shrink when you zoom out —
+   a transform alone only ever grows scrollable overflow. */
+.flow-zoom {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  /* width/height/transform set inline by orderRenderer */
 }
 
 .flow-arrows {
@@ -3578,10 +3589,83 @@ body.auth-page {
   touch-action: none;
 }
 
-/* The orderRenderer-built canvas uses transform-origin 0 0 so the
-   adapter's translate+scale math composes correctly. */
-.flow-canvas {
-  transform-origin: 0 0;
+/* ==========================================
+   WATCH ORDER ZOOM CONTROLS
+   Floating −/level/+ cluster, built by orderRenderer._buildZoomUi() so
+   every view that mounts the flowchart gets it without duplicating markup.
+========================================== */
+.flow-zoom-ui {
+  position: fixed;
+  right: 16px;
+  bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--radius-full);
+  background: rgba(13, 16, 32, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--gold-025);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  z-index: 50;
+  user-select: none;
+}
+
+.flow-zoom-ui button {
+  background: transparent;
+  border: none;
+  color: var(--color-primary-light);
+  cursor: pointer;
+  border-radius: var(--radius-full);
+  transition: background 0.18s, color 0.18s, opacity 0.18s;
+}
+
+.flow-zoom-btn {
+  width: 40px;
+  height: 40px;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.flow-zoom-level {
+  min-width: 58px;
+  height: 40px;
+  padding: 0 6px;
+  font-family: var(--font-display);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-warm);
+}
+
+.flow-zoom-ui button:hover:not(:disabled) {
+  background: var(--gold-01);
+  color: var(--color-primary-light);
+}
+
+.flow-zoom-ui button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Out of the way while a walker fight owns the camera — the controls would
+   do nothing (zoom input is locked mid-fight) and they sit right over the
+   backdrop. */
+body.fight-active .flow-zoom-ui {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .flow-zoom-ui {
+    right: 10px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  /* Keep ≥44px touch targets. */
+  .flow-zoom-btn { width: 44px; height: 44px; }
+  .flow-zoom-level { min-width: 52px; height: 44px; }
 }
 
 /* ==========================================
@@ -5065,10 +5149,33 @@ body.fight-active .flow-wrapper {
   z-index: 6;
   padding: 0 12px;
   width: min(560px, calc(100vw - 32px));
+  /* The row is a bare flex column with no background of its own, but it still
+     takes pointer events across its whole box — so it must never be taller
+     than its children. */
+  height: auto;
+  /* Let drags through the transparent gaps; the log and the controls below
+     re-enable it for themselves. */
+  pointer-events: none;
+}
+/* Mobile: lift the chat row off the bottom so it doesn't sit on top of the
+   joystick (which lives ~28px from the bottom). Must stay immediately after
+   the base rule — media queries carry no extra specificity, so if the base
+   rule came later it would win on `bottom` and leave `top` and `bottom` both
+   set, stretching this transparent row over the entire screen. */
+@media (max-width: 640px) {
+  .world-chat-row {
+    top: calc(var(--header-height) + env(safe-area-inset-top) + 8px);
+    bottom: auto;
+    width: calc(100vw - 16px);
+    padding: 0 8px;
+  }
 }
 .world-chat-inputrow {
   display: flex;
   gap: 8px;
+  /* Row itself is pointer-events:none so drags pass through to the canvas —
+     the actual controls opt back in. */
+  pointer-events: auto;
 }
 .world-chat-log {
   max-height: 160px;

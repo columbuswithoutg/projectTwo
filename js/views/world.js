@@ -2,8 +2,9 @@
  * WORLD VIEW — /world
  *
  * Walkable 3D recreation of the universe map. Player IS the walker.
- * Locked projects (prereqs not met) aren't rendered. Mounting walks the
- * character at the first unlocked node (Iron Man for fresh accounts).
+ * Only WATCHED projects are rendered — the world is a record of where you've
+ * been, so an unwatched island never appears. A brand-new account with nothing
+ * watched gets the start node (Iron Man) alone as its entry point.
  *
  * Multiplayer: delegates socket lifecycle, chat, emotes, and position
  * broadcast to the shared Multiplayer module (js/home-socket.js).
@@ -126,10 +127,10 @@ const WorldView = (() => {
         toast('Couldn’t load your character — using a default look.', 'warn');
       }
     }
-    // Spawn picker: when the unlocked nodes form more than one disconnected
-    // island (e.g. a fresh user's Iron Man / Guardians / Doctor Strange all
-    // stand alone), let the player choose which one to start on — otherwise
-    // they'd always land on Iron Man with no way to walk to the others.
+    // Spawn picker: when the watched nodes form more than one disconnected
+    // island (e.g. someone who's seen Iron Man and Moon Knight but nothing
+    // joining them), let the player choose which one to start on — otherwise
+    // they'd always land on the first and couldn't walk to the others.
     let chosenSpawnId = null;
     const islands = _spawnIslands();
     if (islands.length > 1) {
@@ -326,15 +327,17 @@ const WorldView = (() => {
 
   /* ── Spawn picker (disconnected islands) ── */
 
-  // Group the unlocked nodes into disconnected "islands". Mirrors the engine's
-  // _isProjectUnlocked (watched OR a start node with no prerequisites). Returns
-  // [] when the data isn't ready; length > 1 means the world is disconnected.
+  // Group the visible nodes into disconnected "islands". Delegates to the
+  // engine's own visibility rule (watched only, plus the start node while
+  // nothing is watched) so the picker can never offer an island the world
+  // doesn't actually build. Returns [] when the data isn't ready; length > 1
+  // means the world is disconnected.
   function _spawnIslands() {
     if (typeof PG3DPhysics === 'undefined' || !PG3DPhysics.spawnIslands) return [];
     if (typeof projects === 'undefined' || !Array.isArray(projects)) return [];
-    const isUnlocked = (p) =>
-      (typeof state !== 'undefined' && state.isWatched && state.isWatched(p.id)) ||
-      !(p.prerequisites && p.prerequisites.length);
+    const isUnlocked = (typeof Playground3D !== 'undefined' && Playground3D.isProjectUnlocked)
+      ? Playground3D.isProjectUnlocked
+      : (p) => typeof state !== 'undefined' && state.isWatched && state.isWatched(p.id);
     return PG3DPhysics.spawnIslands(projects, isUnlocked);
   }
 
@@ -358,7 +361,7 @@ const WorldView = (() => {
       const heading = mode === 'respawn' ? '💨 Reassemble where?' : '🌍 Where to?';
       const sub = mode === 'respawn'
         ? 'Your islands aren’t connected by road — pick where to come back.'
-        : 'Your unlocked locations aren’t all connected by road — pick where to start.';
+        : 'Your watched locations aren’t all connected by road — pick where to start.';
 
       const cards = islands.map((isl) => {
         const a = isl.anchor;

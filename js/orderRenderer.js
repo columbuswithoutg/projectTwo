@@ -1,19 +1,38 @@
 /************************************************
  * ORDER RENDERER — Watch-Order Flowchart View
  * Positions all projects on a 2D grid using their gridX/gridY values
- * and draws SVG arrows between prerequisites. Native browser scroll
- * for navigation (no custom zoom/pan).
+ * and draws SVG arrows between prerequisites.
+ *
+ * Navigation is native browser scroll plus a zoom layer:
+ *
+ *   .flow-wrapper   overflow:auto — owns the scrollbars
+ *     .flow-canvas  the SIZER. width/height = content × zoom, no transform.
+ *       .flow-zoom  the transformed layer. Natural content size, scale(zoom).
+ *         .flow-arrows / .flow-nodes / .flow-walkers
+ *
+ * The split matters: scrollable overflow is the union of an element's own
+ * (transformed) box and its contents, so scaling a single element grows the
+ * scroll area when you zoom IN but refuses to shrink it when you zoom OUT.
+ * Keeping an untransformed sizer next to a transformed content layer makes the
+ * scroll extent exactly content × zoom in both directions.
+ *
+ * Everything below .flow-zoom — node positions, walker physics, road geometry —
+ * stays in UNSCALED canvas units. Zoom is purely a display transform, so
+ * walkerView/walkers need no zoom awareness beyond converting scroll offsets.
  ************************************************/
 class OrderRenderer {
   constructor() {
     this.wrapper = null;        // .flow-wrapper (scrolling container)
-    this.canvas = null;         // .flow-canvas (positioned content)
+    this.canvas = null;         // .flow-canvas (sizer — drives scroll extent)
+    this.zoomLayer = null;      // .flow-zoom (scaled content layer)
     this.svg = null;            // .flow-arrows (SVG layer)
     this.nodesContainer = null; // .flow-nodes
     this.nodeElements = new Map();
+    this.zoom = 1;
     this._unsubscribeState = null;
     this._listeners = [];
     this._didInitialCenter = false;
+    this._zoomUi = null;
   }
 
   init() {
@@ -24,11 +43,32 @@ class OrderRenderer {
     this.nodeElements = new Map();
     this._didInitialCenter = false;
 
+    this._ensureZoomLayer();
+    this.zoom = this._loadZoom();
+
     this.setupEventDelegation();
     this.setupPanControls();
+    this.setupZoomControls();
+    this._buildZoomUi();
 
     if (this._unsubscribeState) this._unsubscribeState();
     this._unsubscribeState = state.subscribe(() => this.render());
+  }
+
+  // Slip a transformed layer between the sizer and the content, moving the
+  // existing children into it. Done in JS rather than in each view's markup so
+  // the watch-order route and /friend/:username both get it from the one module
+  // that owns this geometry. Idempotent — a remount reuses the existing layer.
+  _ensureZoomLayer() {
+    if (!this.canvas) { this.zoomLayer = null; return; }
+    let layer = this.canvas.querySelector(':scope > .flow-zoom');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.className = 'flow-zoom';
+      while (this.canvas.firstChild) layer.appendChild(this.canvas.firstChild);
+      this.canvas.appendChild(layer);
+    }
+    this.zoomLayer = layer;
   }
 
   setupEventDelegation() {
@@ -153,11 +193,201 @@ class OrderRenderer {
     const rows = (b.maxY - b.minY) + 1;
     const w = cols * ORDER_CELL.width;
     const h = rows * ORDER_CELL.height;
-    this.canvas.style.width = `${w}px`;
-    this.canvas.style.height = `${h}px`;
+    // The sizer carries the SCALED size (that's the scroll extent); the zoom
+    // layer and everything under it stay at natural size and get scaled.
+    this.canvas.style.width = `${w * this.zoom}px`;
+    this.canvas.style.height = `${h * this.zoom}px`;
+    if (this.zoomLayer) {
+      this.zoomLayer.style.width = `${w}px`;
+      this.zoomLayer.style.height = `${h}px`;
+    }
     this.svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
     this.svg.setAttribute("width", w);
     this.svg.setAttribute("height", h);
+    this._applyZoom();
+  }
+
+  /* ── Zoom ───────────────────────────────────────────────────────────── */
+
+  _clampZoom(z) {
+    if (!isFinite(z)) return 1;
+    return Math.min(ORDER_ZOOM.max, Math.max(ORDER_ZOOM.min, z));
+  }
+
+  _loadZoom() {
+    try {
+      const v = parseFloat(localStorage.getItem(ORDER_ZOOM.storageKey));
+      return isFinite(v) ? this._clampZoom(v) : 1;
+    } catch (_) { return 1; }
+  }
+
+  _saveZoom() {
+    try { localStorage.setItem(ORDER_ZOOM.storageKey, String(this.zoom)); } catch (_) {}
+  }
+
+  // Push the current zoom onto the transform layer. Skipped while a walker
+  // fight owns the transform — releaseZoom() calls back here once it's done,
+  // so the user's zoom is restored instead of being reset to 1.
+  _applyZoom() {
+    if (!this.zoomLayer) return;
+    if (this.wrapper && this.wrapper.classList.contains('fight-zoom')) return;
+    this.zoomLayer.style.transform = this.zoom === 1 ? '' : `scale(${this.zoom})`;
+  }
+
+  // Zoom to an absolute level, keeping the content point under (ax, ay) fixed
+  // on screen. ax/ay are pixels from the wrapper's top-left; omit them to
+  // anchor on the middle of the viewport (buttons, keyboard).
+  setZoom(next, ax, ay) {
+    const wrapper = this.wrapper;
+    if (!wrapper || !this.zoomLayer) return;
+    // A walker fight owns the transform and the scroll offsets until it
+    // releases. Changing zoom now would desync the sizer from the transform
+    // the fight camera is driving, and releaseZoom() would restore the wrong
+    // level. Every input path checks this too; this is the backstop.
+    if (wrapper.classList.contains('fight-zoom')) return;
+    const z0 = this.zoom;
+    const z1 = this._clampZoom(next);
+    if (Math.abs(z1 - z0) < 0.0005) return;
+
+    if (ax == null) ax = wrapper.clientWidth / 2;
+    if (ay == null) ay = wrapper.clientHeight / 2;
+    // Unscaled canvas coordinates of whatever is under the anchor right now.
+    const cx = (wrapper.scrollLeft + ax) / z0;
+    const cy = (wrapper.scrollTop + ay) / z0;
+
+    this.zoom = z1;
+    this._sizeCanvas();          // resize the sizer + re-apply the transform
+    // Put that same content point back under the anchor. Clamping to >= 0 is
+    // what the browser would do anyway, and keeps the numbers honest.
+    wrapper.scrollLeft = Math.max(0, cx * z1 - ax);
+    wrapper.scrollTop = Math.max(0, cy * z1 - ay);
+
+    this._saveZoom();
+    this._syncZoomUi();
+  }
+
+  zoomBy(factor, ax, ay) {
+    this.setZoom(this.zoom * factor, ax, ay);
+  }
+
+  // Back to 1:1, re-centred on where the user left off. Zooming out far and
+  // then resetting would otherwise leave them staring at a corner.
+  resetZoom() {
+    this.setZoom(1);
+    this.centerOnLastWatched();
+    this._syncZoomUi();
+  }
+
+  setupZoomControls() {
+    const wrapper = this.wrapper;
+    if (!wrapper) return;
+    const on = (target, event, handler, opts) => {
+      target.addEventListener(event, handler, opts);
+      this._listeners.push({ target, event, handler, opts });
+    };
+    const locked = () => wrapper.classList.contains('fight-zoom');
+
+    // Ctrl/⌘ + wheel zooms; a plain wheel keeps scrolling the chart, which is
+    // still the main way around a flowchart this tall. Trackpad pinch arrives
+    // as ctrl+wheel too, so pinching on a laptop lands here for free.
+    on(wrapper, 'wheel', (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      if (locked()) return;
+      // deltaMode 1 = lines, 2 = pages. Normalise to pixels or a line-mode
+      // mouse jumps several zoom steps per notch.
+      let dy = e.deltaY;
+      if (e.deltaMode === 1) dy *= 16;
+      else if (e.deltaMode === 2) dy *= wrapper.clientHeight;
+      const factor = Math.min(2, Math.max(0.5, Math.exp(-dy * 0.0025)));
+      const rect = wrapper.getBoundingClientRect();
+      this.zoomBy(factor, e.clientX - rect.left, e.clientY - rect.top);
+    }, { passive: false });
+
+    // Two-finger pinch. Touch events rather than pointer events: the wrapper
+    // keeps its default touch-action so one-finger scrolling still gets native
+    // momentum, and we only preventDefault once a second finger lands — at
+    // which point the browser hasn't committed to a scroll yet.
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const mid = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+    let pinchDist = null;
+    let pinchZoom = 1;
+
+    on(wrapper, 'touchstart', (e) => {
+      if (e.touches.length !== 2 || locked()) { pinchDist = null; return; }
+      pinchDist = dist(e.touches);
+      pinchZoom = this.zoom;
+      e.preventDefault();
+    }, { passive: false });
+
+    on(wrapper, 'touchmove', (e) => {
+      if (pinchDist == null || e.touches.length !== 2) return;
+      e.preventDefault();
+      const d = dist(e.touches);
+      if (d <= 0) return;
+      const m = mid(e.touches);
+      const rect = wrapper.getBoundingClientRect();
+      this.setZoom(pinchZoom * (d / pinchDist), m.x - rect.left, m.y - rect.top);
+    }, { passive: false });
+
+    const endPinch = (e) => { if (!e.touches || e.touches.length < 2) pinchDist = null; };
+    on(wrapper, 'touchend', endPinch);
+    on(wrapper, 'touchcancel', endPinch);
+
+    // Keyboard: +/- to step, 0 to reset. Matches the map view's bindings.
+    on(window, 'keydown', (e) => {
+      if (e.target.matches && e.target.matches('input, textarea, [contenteditable]')) return;
+      if (locked()) return;
+      // Ctrl/⌘ +/- is the browser's own page zoom — don't steal it.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      switch (e.key) {
+        case '+': case '=':
+          this.zoomBy(ORDER_ZOOM.step); e.preventDefault(); break;
+        case '-': case '_':
+          this.zoomBy(1 / ORDER_ZOOM.step); e.preventDefault(); break;
+        case '0':
+          this.resetZoom(); e.preventDefault(); break;
+      }
+    });
+  }
+
+  // Floating −/100%/+ cluster. Built here (not in the view markup) so every
+  // view that mounts the flowchart gets it, and torn down in destroy().
+  _buildZoomUi() {
+    if (!this.wrapper || !this.wrapper.parentNode) return;
+    this.wrapper.parentNode.querySelectorAll('.flow-zoom-ui').forEach(el => el.remove());
+
+    const ui = document.createElement('div');
+    ui.className = 'flow-zoom-ui';
+    ui.innerHTML = `
+      <button type="button" class="flow-zoom-btn" data-act="out" aria-label="Zoom out">−</button>
+      <button type="button" class="flow-zoom-level" data-act="reset" aria-label="Reset zoom to 100%" title="Reset zoom (0)">100%</button>
+      <button type="button" class="flow-zoom-btn" data-act="in" aria-label="Zoom in">+</button>
+    `;
+    const onClick = (e) => {
+      const btn = e.target.closest('[data-act]');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      if (act === 'in') this.zoomBy(ORDER_ZOOM.step);
+      else if (act === 'out') this.zoomBy(1 / ORDER_ZOOM.step);
+      else this.resetZoom();
+    };
+    ui.addEventListener('click', onClick);
+    this._listeners.push({ target: ui, event: 'click', handler: onClick });
+
+    this.wrapper.parentNode.appendChild(ui);
+    this._zoomUi = ui;
+    this._syncZoomUi();
+  }
+
+  _syncZoomUi() {
+    if (!this._zoomUi) return;
+    const level = this._zoomUi.querySelector('.flow-zoom-level');
+    if (level) level.textContent = `${Math.round(this.zoom * 100)}%`;
+    const out = this._zoomUi.querySelector('[data-act="out"]');
+    const inn = this._zoomUi.querySelector('[data-act="in"]');
+    if (out) out.disabled = this.zoom <= ORDER_ZOOM.min + 0.0005;
+    if (inn) inn.disabled = this.zoom >= ORDER_ZOOM.max - 0.0005;
   }
 
   render() {
@@ -349,10 +579,12 @@ class OrderRenderer {
     const project = state.byId?.get(id);
     if (!project || !this.wrapper) return;
     const pos = this._cellPos(project);
+    const z = this.zoom;
     const w = this.wrapper.clientWidth;
     const h = this.wrapper.clientHeight;
-    this.wrapper.scrollLeft = Math.max(0, pos.x - w / 2);
-    this.wrapper.scrollTop = Math.max(0, pos.y - h / 2);
+    // _cellPos is in unscaled canvas units; scroll is in scaled screen px.
+    this.wrapper.scrollLeft = Math.max(0, pos.x * z - w / 2);
+    this.wrapper.scrollTop = Math.max(0, pos.y * z - h / 2);
   }
 
   destroy() {
@@ -360,10 +592,14 @@ class OrderRenderer {
       this._unsubscribeState();
       this._unsubscribeState = null;
     }
-    this._listeners.forEach(({ target, event, handler }) => {
-      target.removeEventListener(event, handler);
+    this._listeners.forEach(({ target, event, handler, opts }) => {
+      target.removeEventListener(event, handler, opts);
     });
     this._listeners = [];
+    if (this._zoomUi) {
+      this._zoomUi.remove();
+      this._zoomUi = null;
+    }
     this.nodeElements = new Map();
     this._bounds = null;
     this._didInitialCenter = false;
@@ -376,6 +612,15 @@ const ORDER_CELL = {
   nodeWidth: 110,    // visible node width (poster)
   nodeHeight: 150,   // visible node height (poster)
   cellWidth: 130,    // .flow-cell wrapper width (CSS) — wider than node so longer titles wrap nicely
+};
+
+const ORDER_ZOOM = {
+  // Below ~0.4 the posters stop being recognisable and the chart reads as
+  // coloured confetti; above ~2.5 only a couple of cards fit on screen.
+  min: 0.4,
+  max: 2.5,
+  step: 1.2,                        // multiplicative — one button press / key tap
+  storageKey: 'mcu_order_zoom',     // survives navigation and reloads
 };
 
 const orderRenderer = new OrderRenderer();

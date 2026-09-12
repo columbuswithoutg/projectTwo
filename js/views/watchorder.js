@@ -78,15 +78,31 @@ const WatchOrderView = {
   async _setup() {
     if (!this._initialized) {
       await state.load();
-      state.initProjects(projects);
       this._initialized = true;
     }
+    // Re-derive on EVERY mount, not just the first. boot.js swaps `projects`
+    // for the DB copy in the background; that array has no phaseNum/unlocks,
+    // and without them isUnlocked() is false for everything and the flow
+    // renders zero nodes. Cheap and idempotent, so just always run it.
+    state.initProjects(projects);
 
     orderRenderer.init();
 
     // Drawer
     const drawer = document.getElementById('nav-drawer');
-    const openDrawer = () => drawer.classList.add('open');
+    // Re-read the live values every time the drawer opens. The server's flag
+    // defaults (/api/config/public → Walkers.applyFlagDefaults) land AFTER
+    // this view mounts, so a label rendered once at mount can disagree with
+    // the real setting — and then the first tap appears to do nothing because
+    // it flips the value to whatever the label already claimed.
+    const refreshToggleLabels = () => {
+      if (typeof Walkers === 'undefined') return;
+      const f = document.getElementById('fights-toggle-btn');
+      if (f) f.textContent = `Fights: ${Walkers.getFightsEnabled() ? 'On' : 'Off'}`;
+      const d = document.getElementById('dialogues-toggle-btn');
+      if (d) d.textContent = `Dialogues: ${Walkers.getDialoguesEnabled() ? 'On' : 'Off'}`;
+    };
+    const openDrawer = () => { refreshToggleLabels(); drawer.classList.add('open'); };
     const closeDrawer = () => drawer.classList.remove('open');
     document.getElementById('nav-toggle').addEventListener('click', openDrawer);
     document.getElementById('close-drawer').addEventListener('click', closeDrawer);
@@ -107,7 +123,12 @@ const WatchOrderView = {
       });
     });
 
+    // Auto-close on tap — but NOT for the in-place toggles. Fights/Dialogues
+    // flip a setting and rewrite their own label; closing the drawer hid that
+    // label change, so on mobile (where the drawer is the only way in) the
+    // buttons looked like they did nothing at all.
     document.querySelectorAll('#nav-drawer-content nav button').forEach(btn => {
+      if (btn.id === 'fights-toggle-btn' || btn.id === 'dialogues-toggle-btn') return;
       btn.addEventListener('click', closeDrawer);
     });
 

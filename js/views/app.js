@@ -94,16 +94,31 @@ const AppView = {
     // Only load state once across navigations
     if (!this._initialized) {
       await state.load();
-      state.initProjects(projects);
       this._initialized = true;
     }
+    // ...but re-derive the project fields on every mount: boot.js swaps
+    // `projects` for the DB copy in the background and that array carries no
+    // phaseNum/unlocks, which makes isUnlocked() false for everything and
+    // leaves the map with no pins at all.
+    state.initProjects(projects);
 
     // Re-bind renderer to fresh DOM elements
     renderer.init();
 
     // Drawer
     const drawer = document.getElementById('nav-drawer');
-    const openDrawer = () => drawer.classList.add('open');
+    // Re-read the live values every time the drawer opens — the server's flag
+    // defaults (/api/config/public → Walkers.applyFlagDefaults) arrive after
+    // mount, so a label rendered once can disagree with the real setting and
+    // make the first tap look like a no-op.
+    const refreshToggleLabels = () => {
+      if (typeof Walkers === 'undefined') return;
+      const f = document.getElementById('fights-toggle-btn');
+      if (f) f.textContent = `Fights: ${Walkers.getFightsEnabled() ? 'On' : 'Off'}`;
+      const d = document.getElementById('dialogues-toggle-btn');
+      if (d) d.textContent = `Dialogues: ${Walkers.getDialoguesEnabled() ? 'On' : 'Off'}`;
+    };
+    const openDrawer = () => { refreshToggleLabels(); drawer.classList.add('open'); };
     const closeDrawer = () => drawer.classList.remove('open');
 
     document.getElementById('nav-toggle').addEventListener('click', openDrawer);
@@ -127,7 +142,11 @@ const AppView = {
     });
 
     // Close drawer after any nav button
+    // Auto-close on tap — but NOT for the in-place toggles. Fights/Dialogues
+    // flip a setting and rewrite their own label; closing the drawer hid that
+    // label change, so on mobile the buttons looked like they did nothing.
     document.querySelectorAll('#nav-drawer-content nav button').forEach(btn => {
+      if (btn.id === 'fights-toggle-btn' || btn.id === 'dialogues-toggle-btn') return;
       btn.addEventListener('click', closeDrawer);
     });
 

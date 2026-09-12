@@ -163,22 +163,25 @@ const FlowWalkerAdapter = {
     const wrapper = document.querySelector('.flow-wrapper');
     if (!wrapper) return;
     if (wrapper.classList.contains('fight-zoom')) return; // mid-fight, don't fight the zoom transform
+    // x/y arrive in unscaled canvas units; scroll offsets are scaled pixels.
+    const z = (typeof orderRenderer !== 'undefined' && orderRenderer.zoom) || 1;
     wrapper.scrollTo({
-      left: Math.max(0, x - wrapper.clientWidth / 2),
-      top: Math.max(0, y - wrapper.clientHeight / 2),
+      left: Math.max(0, x * z - wrapper.clientWidth / 2),
+      top: Math.max(0, y * z - wrapper.clientHeight / 2),
       behavior: 'smooth',
     });
   },
 
-  // Fight zoom on the flow view = scroll-and-scale the .flow-canvas.
-  // We escape the wrapper's native scroll for the duration of the fight
+  // Fight zoom on the flow view = scroll-and-scale the .flow-zoom layer (the
+  // same layer the user's own zoom drives, so the two can't both be applied at
+  // once). We escape the wrapper's native scroll for the duration of the fight
   // (.fight-zoom class disables overflow), apply a CSS transform that
   // centers the cluster at viewport center, then restore on release.
   _savedScroll: null,
   _releaseTimer: null,
   zoomToCluster(rect, fallbackPos) {
     const wrapper = document.querySelector('.flow-wrapper');
-    const canvas = document.querySelector('.flow-canvas');
+    const canvas = document.querySelector('.flow-zoom') || document.querySelector('.flow-canvas');
     if (!wrapper || !canvas) return;
     // Cancel any pending release cleanup from a previous fight — otherwise
     // its setTimeout fires mid-fight, removes .fight-zoom, and unlocks the
@@ -231,24 +234,33 @@ const FlowWalkerAdapter = {
   },
   releaseZoom() {
     const wrapper = document.querySelector('.flow-wrapper');
-    const canvas = document.querySelector('.flow-canvas');
+    const canvas = document.querySelector('.flow-zoom') || document.querySelector('.flow-canvas');
     if (!canvas) return;
+    // Animate back to the USER's zoom, not to 1 — clearing the transform here
+    // would silently throw away whatever level they'd set before the fight.
+    const userZoom = (typeof orderRenderer !== 'undefined' && orderRenderer.zoom) || 1;
     canvas.style.transition = 'transform 0.5s ease';
-    canvas.style.transform = '';
+    canvas.style.transform = userZoom === 1 ? 'scale(1)' : `scale(${userZoom})`;
     const saved = this._savedScroll;
     this._savedScroll = null;
     if (this._releaseTimer) clearTimeout(this._releaseTimer);
     this._releaseTimer = setTimeout(() => {
       this._releaseTimer = null;
-      if (canvas) {
-        canvas.style.transformOrigin = '';
-        canvas.style.transition = '';
-      }
       if (wrapper) {
         wrapper.classList.remove('fight-zoom');
         if (saved) {
           wrapper.scrollLeft = saved.left;
           wrapper.scrollTop = saved.top;
+        }
+      }
+      if (canvas) {
+        canvas.style.transition = '';
+        // Hand the transform back to the renderer now that .fight-zoom is off
+        // (it deliberately no-ops while the fight camera owns the layer).
+        if (typeof orderRenderer !== 'undefined' && orderRenderer._applyZoom) {
+          orderRenderer._applyZoom();
+        } else {
+          canvas.style.transform = '';
         }
       }
     }, 520);
