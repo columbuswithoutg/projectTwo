@@ -118,7 +118,13 @@ const Multiplayer = (() => {
       });
     });
 
-    socket.on(events.snapshot, ({ players }) => {
+    socket.on(events.snapshot, ({ players, serverTime }) => {
+      // Adopt the server's clock. Local NPCs are simulated from it so every
+      // client puts the same hero in the same place; without this they'd drift
+      // apart by however far the two devices' clocks disagree.
+      if (typeof serverTime === 'number' && Playground3D.setWorldClockOffset) {
+        Playground3D.setWorldClockOffset(serverTime - Date.now());
+      }
       for (const p of (players || [])) {
         Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y);
       }

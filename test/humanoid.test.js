@@ -233,6 +233,68 @@ test('lodTier: every frame near, throttled mid, frozen far or off-screen', () =>
   assert.equal(H.lodTier(25, true, true).interval, 1 / 15, 'mobile tiers are tighter');
 });
 
+// ── Garments (real geometry: shells, skirts, capes) ──
+
+test('garmentsFor: the Skirt trouser style hangs a skirt from the waist', () => {
+  const g = H.garmentsFor({ pantsStyle: 4 });
+  assert.equal(g.skirt.kind, 'skirt');
+  assert.equal(g.skirt.color, 'bottom', 'takes the trouser colour');
+  assert.ok(g.skirt.length > 0.2 && g.skirt.length < 0.45);
+  assert.equal(g.shell, null);
+});
+
+test('garmentsFor: dress and robe are longer than a skirt, in the suit colour', () => {
+  const skirt = H.garmentsFor({ pantsStyle: 4 }).skirt;
+  const dress = H.garmentsFor({ suit: 2 }).skirt;
+  const robe = H.garmentsFor({ suit: 3 }).skirt;
+  assert.ok(skirt.length < dress.length && dress.length < robe.length,
+    `skirt ${skirt.length} < dress ${dress.length} < robe ${robe.length}`);
+  for (const s of [dress, robe]) assert.equal(s.color, 'suit');
+});
+
+test('garmentsFor: Armor is a metal shell over the whole body but the head (Iron Man)', () => {
+  const g = H.garmentsFor({ suit: 4 });
+  assert.equal(g.shell.kind, 'armor');
+  assert.ok(g.shell.metal > 0.5, 'reads as metal, not cloth');
+  assert.ok(g.shell.pauldrons, 'shoulder pads');
+  for (const p of ['torso', 'upperArm', 'forearm', 'thigh', 'shin', 'foot']) {
+    assert.ok(g.shell.parts.includes(p), `armour covers ${p}`);
+  }
+  assert.ok(!g.shell.parts.includes('head') && !g.shell.parts.includes('neck'));
+  assert.ok(g.shell.inflate > H.garmentsFor({ outerwear: 1 }).shell.inflate, 'armour sits proudest');
+});
+
+test('garmentsFor: vest covers only the torso; jacket adds sleeves', () => {
+  assert.deepEqual(H.garmentsFor({ outerwear: 5 }).shell.parts, ['torso']);
+  const jacket = H.garmentsFor({ outerwear: 1 }).shell;
+  assert.deepEqual(jacket.parts, ['torso', 'upperArm', 'forearm']);
+  assert.equal(jacket.metal, 0, 'cloth, not metal');
+  // A bomber's sleeve stops short at the cuff.
+  assert.ok(H.garmentsFor({ outerwear: 2 }).shell.cut.forearm < 1);
+});
+
+test('garmentsFor: trench coat adds coat tails; hoodie flags a hood', () => {
+  const trench = H.garmentsFor({ outerwear: 3 });
+  assert.equal(trench.shell.kind, 'trench');
+  assert.equal(trench.skirt.kind, 'coat');
+  assert.ok(trench.skirt.length > 0.5, 'tails reach the knee');
+  assert.equal(H.garmentsFor({ outerwear: 4 }).hood, true);
+});
+
+test('garmentsFor: a cape hangs and is not a shell (Thor)', () => {
+  const g = H.garmentsFor({ outerwear: 6 });
+  assert.equal(g.shell, null);
+  assert.ok(g.cape.length > 0.8, 'reaches past the knees');
+  assert.equal(g.cape.color, 'outer');
+});
+
+test('garmentsFor: outerwear is worn over a suit; nothing selected → nothing built', () => {
+  const over = H.garmentsFor({ suit: 4, outerwear: 1 });
+  assert.equal(over.shell.kind, 'jacket', 'the jacket is the outer layer');
+  assert.deepEqual(H.garmentsFor({}), { shell: null, skirt: null, cape: null, hood: false });
+  assert.deepEqual(H.garmentsFor(null), { shell: null, skirt: null, cape: null, hood: false });
+});
+
 // ── Slot coverage ──
 
 test('SLOT_MAP covers every stored character key (server whitelist + schema)', () => {
@@ -246,4 +308,23 @@ test('SLOT_MAP covers every stored character key (server whitelist + schema)', (
   for (const k of new Set([...keys, ...schemaKeys])) {
     assert.ok(H.SLOT_MAP[k], `slot '${k}' has no SLOT_MAP entry`);
   }
+});
+
+test('selectAnimState: backpedalling reverses the locomotion clip, not the rest', () => {
+  // Walking backwards plays the same clip with a negative time scale so the
+  // legs cycle backwards — otherwise the character moonwalks.
+  const fwd = H.selectAnimState({ ...base, speed: 1.5 });
+  const back = H.selectAnimState({ ...base, speed: 1.5, backward: true });
+  assert.equal(back.base, 'walk', 'still the walk clip, just reversed');
+  assert.equal(back.timeScale, -fwd.timeScale);
+
+  const runBack = H.selectAnimState({ ...base, speed: 4, backward: true });
+  assert.equal(runBack.base, 'run');
+  assert.ok(runBack.timeScale < 0);
+
+  // Standing still has no direction to reverse.
+  assert.equal(H.selectAnimState({ ...base, speed: 0, backward: true }).timeScale, 1);
+  // Airborne and knocked-down clips read the same whichever way you were going.
+  assert.equal(H.selectAnimState({ ...base, speed: 3, backward: true, airborne: true, velY: 5 }).timeScale, 1);
+  assert.equal(H.selectAnimState({ ...base, speed: 3, backward: true, falling: true }).timeScale, 1);
 });

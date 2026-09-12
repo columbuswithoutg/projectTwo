@@ -205,7 +205,10 @@ module.exports = (io) => {
 
       // Bootstrap the new client with everyone else's current state.
       const others = [...worldPlayers.values()].filter(p => p.socketId !== socket.id);
-      socket.emit('world:snapshot', { players: others });
+      // serverTime lets clients derive a shared clock. The roaming NPCs are
+      // simulated locally on every client from that clock, so without a common
+      // time base each user would see the same hero in a different spot.
+      socket.emit('world:snapshot', { players: others, serverTime: Date.now() });
       // Current shared-stone ownership so the joiner renders held/free correctly.
       // Only while the event is on — off, we send nothing so the client never
       // materializes the stone ring (its HUD is hidden client-side too).

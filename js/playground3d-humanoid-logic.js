@@ -246,6 +246,13 @@
       timeScale = clamp(speed / A.RUN_REF, 0.7, 1.4);
     }
 
+    // Backpedalling plays the same locomotion clip in reverse (negative time
+    // scale), so the legs cycle backwards with the motion. Without it the
+    // character moonwalks — feet striding forward while the body slides back.
+    // Only locomotion reverses; jumps, landings and knockdowns read the same
+    // whichever way you were going.
+    if (inp.backward && (base === 'walk' || base === 'run')) timeScale = -timeScale;
+
     let overlay = null;
     if (inp.punchUntil && now < inp.punchUntil) overlay = 'punch';
     else if (inp.emoteUntil && now < inp.emoteUntil) overlay = 'wave';
@@ -312,9 +319,60 @@
     gear:            { kind: 'deprecated' }
   };
 
+  // ── garments ──
+  // Clothing that needs real geometry on a rigged body, rather than a tint:
+  // "shell" pieces are a second skin layer (jacket, vest, armour) and "skirt"
+  // / "cape" pieces hang from the waist or shoulders. Lengths are in body
+  // units (a body stands ~1.9 tall); the engine resolves the colour slots.
+  const PANTS_SKIRT = 4;                                   // Playground.PANTS_STYLES
+  const SUIT = { BODYSUIT: 1, DRESS: 2, ROBE: 3, ARMOR: 4, JUMPSUIT: 5 };
+  const OUTER = { JACKET: 1, BOMBER: 2, TRENCH: 3, HOODIE: 4, VEST: 5, CAPE: 6 };
+  const SLEEVED = ['torso', 'upperArm', 'forearm'];
+
+  function garmentsFor(c) {
+    c = c || {};
+    const suit = c.suit ?? 0;
+    const outer = c.outerwear ?? 0;
+    const pants = c.pantsStyle ?? 0;
+    const out = { shell: null, skirt: null, cape: null, hood: false };
+
+    // Full-body armour (Iron Man) — a metal shell over everything but the head.
+    if (suit === SUIT.ARMOR) {
+      out.shell = {
+        kind: 'armor', color: 'suit', accent: 'accessory',
+        parts: ['torso', 'upperArm', 'forearm', 'hand', 'pelvis', 'thigh', 'shin', 'foot'],
+        inflate: 0.022, metal: 0.85, rough: 0.28, pauldrons: true
+      };
+    }
+
+    // Skirts: a dress/robe suit, or the Skirt trouser style.
+    if (suit === SUIT.DRESS) out.skirt = { kind: 'dress', color: 'suit', length: 0.5, flare: 1.8 };
+    else if (suit === SUIT.ROBE) out.skirt = { kind: 'robe', color: 'suit', length: 0.85, flare: 1.5 };
+    else if (pants === PANTS_SKIRT) out.skirt = { kind: 'skirt', color: 'bottom', length: 0.32, flare: 1.9 };
+
+    if (outer === OUTER.CAPE) {
+      // Shoulder-width, ankle-length. Wider than this reads as a flag, not a
+      // cape (measured against a 0.45-wide chest in the live preview).
+      out.cape = { color: 'outer', length: 0.95, width: 0.46, sweep: 0.1 };
+    } else if (outer) {
+      const kind = ['', 'jacket', 'bomber', 'trench', 'hoodie', 'vest'][outer];
+      out.shell = {
+        kind, color: 'outer', accent: 'outerAccent',
+        parts: outer === OUTER.VEST ? ['torso'] : SLEEVED,
+        // A bomber's sleeves stop at a ribbed cuff; the rest reach the wrist.
+        cut: outer === OUTER.BOMBER ? { forearm: 0.85 } : null,
+        inflate: outer === OUTER.VEST ? 0.016 : 0.014, metal: 0, rough: 0.8
+      };
+      // Coat tails hang from the waist like a skirt.
+      if (outer === OUTER.TRENCH) out.skirt = { kind: 'coat', color: 'outer', length: 0.62, flare: 1.3 };
+      if (outer === OUTER.HOODIE) out.hood = true;
+    }
+    return out;
+  }
+
   return {
     ASSET_BASE, BODY_FILES, BUILD_SHAPE, ANIM, SLOT_MAP,
     bodyShapeFor, parseBoneName, classifySkeleton, missingParts,
-    downPhase, selectAnimState, lodTier
+    downPhase, selectAnimState, lodTier, garmentsFor
   };
 });

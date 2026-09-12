@@ -7,12 +7,13 @@
 // - Network-only for /api/* — auth-sensitive responses are never cached.
 // Bump CACHE_VERSION whenever the precache list or strategy changes.
 
-// v11: watch-order zoom. v10: project-field re-derive + mobile chat-row/toggle
-// fixes. The bump matters as much as the code: /js/* and /styles.css are
+// v12: deterministic /world NPCs + backpedal. v11: watch-order zoom.
+// v10: project-field re-derive + mobile chat-row/toggle fixes.
+// The bump matters as much as the code: /js/* and /styles.css are
 // stale-while-revalidate, so without a new cache name a returning phone runs
 // the OLD scripts for one more visit — which is precisely how the blank-map
 // bug kept reappearing "when reopened on Chrome".
-const CACHE_VERSION = 'mcu-v11';
+const CACHE_VERSION = 'mcu-v13'; // v13: garments — skirts, coats, Iron Man armour, Thor's cape
 const PRECACHE = [
   '/',
   '/spa.html',

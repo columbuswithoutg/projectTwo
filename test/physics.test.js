@@ -196,3 +196,99 @@ test('spawnIslands: fully-watched fixture collapses toward fewer islands', () =>
   assert.equal(islands.length, 3);
   assert.equal(islands.find(i => i.anchor.id === 'ironman1').nodes.length, 6);
 });
+
+/************************************************
+ * Roaming /world NPCs — the patrol has to be a PURE function of a shared
+ * clock, because every client simulates these heroes locally with no server
+ * broadcast. If it isn't, two users see the same hero in different places
+ * (which is exactly what the old Math.random() wander did).
+ ************************************************/
+const NPC_RING = 7.0;        // Chebyshev half-extent of the patrol loop
+const NPC_SPEED = 1.5;       // base units/sec
+const APRON_HALF = 8;        // walkable half-extent around a node
+const WALL_HALF = 6;         // platform edge — the building's wall plane
+const NPC_RADIUS = 0.40;
+
+test('npcPatrol: same id → identical patrol; different ids → different ones', () => {
+  const a1 = P.npcPatrol('thor', NPC_RING, NPC_SPEED);
+  const a2 = P.npcPatrol('thor', NPC_RING, NPC_SPEED);
+  assert.deepEqual(a1, a2, 'the same hero must always get the same patrol');
+
+  const b = P.npcPatrol('hawkeye', NPC_RING, NPC_SPEED);
+  // Two heroes sharing a debut node must not stand on the same spot.
+  assert.notEqual(a1.phase0, b.phase0);
+});
+
+test('npcPathPoint: two clients at the same instant agree exactly', () => {
+  // Same hero, same shared time, evaluated twice as two independent "clients".
+  const patrol = P.npcPatrol('ironman', NPC_RING, NPC_SPEED);
+  for (const t of [0, 1.37, 12.5, 999.25, 86400.5]) {
+    const clientA = P.npcPathPoint(patrol, 18, -36, NPC_RING, t);
+    const clientB = P.npcPathPoint(P.npcPatrol('ironman', NPC_RING, NPC_SPEED), 18, -36, NPC_RING, t);
+    assert.deepEqual(clientA, clientB, `divergence at t=${t}`);
+  }
+});
+
+test('npcPathPoint: stays on the walkable apron ring, never on the building', () => {
+  const ids = ['thor', 'hawkeye', 'ironman', 'widow', 'strange'];
+  for (const id of ids) {
+    const patrol = P.npcPatrol(id, NPC_RING, NPC_SPEED);
+    for (let t = 0; t < 120; t += 0.25) {
+      const p = P.npcPathPoint(patrol, 100, -50, NPC_RING, t);
+      const cheb = Math.max(Math.abs(p.x - 100), Math.abs(p.z - (-50)));
+      // Body clear of the wall plane, and inside the apron.
+      assert.ok(cheb >= WALL_HALF + NPC_RADIUS, `${id} clipped the wall at t=${t} (cheb ${cheb})`);
+      assert.ok(cheb <= APRON_HALF - NPC_RADIUS, `${id} left the apron at t=${t} (cheb ${cheb})`);
+    }
+  }
+});
+
+test('npcPathPoint: position is continuous — a pause holds, never a teleport', () => {
+  const patrol = P.npcPatrol('hawkeye', NPC_RING, NPC_SPEED);
+  const dt = 1 / 60;
+  const maxStep = patrol.speed * dt * 1.0001;   // a frame can never outrun the walk speed
+  let prev = P.npcPathPoint(patrol, 0, 0, NPC_RING, 0);
+  let sawPause = false;
+  let sawWalk = false;
+  for (let t = dt; t < 60; t += dt) {
+    const p = P.npcPathPoint(patrol, 0, 0, NPC_RING, t);
+    const step = Math.hypot(p.x - prev.x, p.z - prev.z);
+    assert.ok(step <= maxStep, `jumped ${step.toFixed(4)}u in one frame at t=${t.toFixed(2)}`);
+    if (p.walking) sawWalk = true;
+    else {
+      // Standing still means standing still — but allow the single frame that
+      // decelerates INTO the pause (previous frame was still walking).
+      if (!prev.walking) assert.ok(step < 1e-9, `drifted ${step} while paused at t=${t.toFixed(2)}`);
+      sawPause = true;
+    }
+    prev = p;
+  }
+  assert.ok(sawWalk && sawPause, 'expected both strolling and standing within a minute');
+});
+
+test('npcPathPoint: a full lap returns to where it started', () => {
+  const patrol = P.npcPatrol('widow', NPC_RING, NPC_SPEED);
+  const start = P.npcPathPoint(patrol, 0, 0, NPC_RING, 0);
+  // Moving time for one lap, converted to wall-clock by adding back the whole
+  // pauses that fall inside it.
+  const lapMoveSecs = (NPC_RING * 8) / patrol.speed;
+  const t = lapMoveSecs + Math.floor(lapMoveSecs / patrol.moveSecs) * patrol.pauseSecs;
+  const end = P.npcPathPoint(patrol, 0, 0, NPC_RING, t);
+  assert.ok(Math.hypot(end.x - start.x, end.z - start.z) < 0.01, 'lap did not close');
+});
+
+test('npcPathPoint: heroes face the way they are travelling, both directions', () => {
+  const dt = 1 / 60;
+  for (const dir of [1, -1]) {
+    const patrol = { phase0: 3, dir, speed: 1.5, moveSecs: 1e6, pauseSecs: 0 };
+    for (let t = 0; t < 40; t += 0.37) {
+      const a = P.npcPathPoint(patrol, 0, 0, NPC_RING, t);
+      const b = P.npcPathPoint(patrol, 0, 0, NPC_RING, t + dt);
+      const travel = Math.atan2(b.x - a.x, b.z - a.z);
+      // Skip the frame that turns a corner — heading changes mid-step there.
+      if (Math.abs(a.yaw - b.yaw) > 1e-9) continue;
+      const off = Math.abs(((travel - a.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+      assert.ok(off < 1e-6, `dir ${dir} faced ${a.yaw} but moved ${travel} at t=${t.toFixed(2)}`);
+    }
+  }
+});

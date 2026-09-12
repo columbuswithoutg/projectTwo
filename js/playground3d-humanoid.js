@@ -665,9 +665,88 @@
     u.uWaistTopSkin.value = top != null ? 0 : 1;
     u.uWaistBottom.value.set(bottom != null ? bottom : 0xffffff);
     u.uWaistBottomSkin.value = bottom != null ? 0 : 1;
-    put(PART.thigh, bottom, legs === 'short' ? 0.75 : 2);
+    put(PART.thigh, bottom, legs === 'bare' ? 0 : legs === 'short' ? 0.75 : 2);
     put(PART.shin, bottom, legs === 'long' ? 2 : legs === 'torn' ? 0.55 : 0, legs === 'torn' ? 0.09 : 0);
     put(PART.foot, look.shoes, 2);
+  }
+
+  // ── garments ──
+  // Shell: a second skin over the body — the same baked geometry and skeleton,
+  // pushed out along its normals, with fragments discarded wherever the
+  // garment doesn't cover. It deforms with every animation for free and costs
+  // one draw call (jacket, vest, Iron Man armour).
+  const SHELL_FRAG_DECL = [
+    'flat varying int vPart;',
+    'varying float vAlong;',
+    'varying float vHeight;',
+    `uniform float uCover[${PART_COUNT}];`,
+    `uniform float uCoverCut[${PART_COUNT}];`,
+    'uniform float uHemY;'
+  ].join('\n') + '\n';
+
+  function _shellMaterial(hex, spec) {
+    const THREE = T();
+    const mat = new THREE.MeshStandardMaterial({
+      color: hex,
+      metalness: spec.metal || 0,
+      roughness: spec.rough != null ? spec.rough : 0.8,
+      side: THREE.DoubleSide            // thin layer: the inside shows at hems
+    });
+    const u = {
+      uCover: { value: new Array(PART_COUNT).fill(0) },
+      uCoverCut: { value: new Array(PART_COUNT).fill(2) },
+      uHemY: { value: -1e3 },
+      uInflate: { value: spec.inflate != null ? spec.inflate : 0.014 }
+    };
+    mat.userData.shell = u;
+    mat.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, u);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uInflate;\n' + TINT_VERT_DECL)
+        .replace('#include <begin_vertex>',
+          '#include <begin_vertex>\nvPart = int( aPart + 0.5 );\nvAlong = aAlong;\nvHeight = aHeight;\ntransformed += objectNormal * uInflate;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\n' + SHELL_FRAG_DECL)
+        .replace('#include <clipping_planes_fragment>',
+          '#include <clipping_planes_fragment>\n' +
+          'if ( uCover[ vPart ] < 0.5 ) discard;\n' +
+          'if ( vAlong > uCoverCut[ vPart ] ) discard;\n' +
+          'if ( vHeight < uHemY ) discard;');
+    };
+    mat.customProgramCacheKey = () => 'pg3d-humanoid-shell';
+    return mat;
+  }
+
+  // Open cone hanging from the waist: skirt, dress, robe, coat tails.
+  function _skirtGeometry(waistR, hemR, length) {
+    const THREE = T();
+    const pts = [];
+    const N = 7;
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      pts.push(new THREE.Vector2(waistR + (hemR - waistR) * Math.pow(t, 1.4), -length * t));
+    }
+    const g = new THREE.LatheGeometry(pts, 28);
+    g.computeVertexNormals();
+    return g;
+  }
+
+  // Cape: a tapered sheet hanging from the shoulders, swept back and wrapped
+  // slightly around the body. Hangs from y = 0 down to −length.
+  function _capeGeometry(width, length, sweep) {
+    const THREE = T();
+    const g = new THREE.PlaneGeometry(width, length, 8, 14);
+    const pos = g.attributes.position;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      const t = (length / 2 - v.y) / length;            // 0 at the collar, 1 at the hem
+      // Narrow at the collar, gently wider at the hem, and wrapped around the
+      // shoulders at the top so it sits on the back rather than floating.
+      pos.setXYZ(i, v.x * (0.78 + t * 0.42), v.y - length / 2, -sweep * t * t - Math.abs(v.x) * 0.22 * (1 - t));
+    }
+    g.computeVertexNormals();
+    return g;
   }
 
   // ── Instances ──
@@ -726,6 +805,103 @@
       }
     }
 
+    // ── garments: shells (jacket / armour), skirts, capes ──
+    const garments = [];
+    let capeMesh = null;
+    function _clearGarments() {
+      for (const g of garments.splice(0)) {
+        g.removeFromParent();
+        if (g.userData.ownGeometry && g.geometry) g.geometry.dispose();
+        if (!g.userData.sharedMaterial) {
+          const i = mats.indexOf(g.material);
+          if (i >= 0) mats.splice(i, 1);
+          g.material.dispose();
+        }
+      }
+      capeMesh = null;
+    }
+
+    function setGarments(spec) {
+      _clearGarments();
+      if (!spec) return;
+      const box = variant.partBox;
+      // A second skin: jacket, bomber, hoodie, vest, Iron Man armour.
+      if (spec.shell && spec.shell.hex != null) {
+        const sh = spec.shell;
+        const mat = _shellMaterial(sh.hex, sh);
+        const u = mat.userData.shell;
+        for (const p of sh.parts || []) {
+          if (PART[p] == null) continue;
+          u.uCover.value[PART[p]] = 1;
+          u.uCoverCut.value[PART[p]] = (sh.cut && sh.cut[p] != null) ? sh.cut[p] : 2;
+        }
+        const mesh = new THREE.SkinnedMesh(bodyMesh.geometry, mat);
+        mesh.name = 'garment:' + sh.kind;
+        mesh.frustumCulled = false;
+        mesh.castShadow = true;
+        body.add(mesh);
+        mesh.bind(skeleton, new THREE.Matrix4());
+        garments.push(mesh);
+        mats.push(mat);
+        if (sh.pauldrons) {
+          const arm = box[PART.upperArm];
+          const r = (arm ? arm.size[2] : 0.12) * 0.85;
+          for (const side of ['L', 'R']) {
+            const bone = anchors['upperArm.' + side];
+            if (!bone) continue;
+            const pad = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), mat);
+            pad.name = 'garment:pauldron';
+            pad.castShadow = true;
+            pad.userData.ownGeometry = true;
+            pad.userData.sharedMaterial = true;      // shares the shell material
+            bone.add(pad);
+            garments.push(pad);
+          }
+        }
+      }
+      // Hangs from the waist: skirt, dress, robe, coat tails.
+      if (spec.skirt && spec.skirt.hex != null) {
+        const sk = spec.skirt;
+        const slot = attachSlot('pelvis', { center: true, y: 0.055, scale: 1 });
+        if (slot) {
+          const waistR = (box[PART.pelvis] ? box[PART.pelvis].size[0] * 0.5 : 0.16) * 1.02;
+          const mesh = new THREE.Mesh(
+            _skirtGeometry(waistR, waistR * (sk.flare || 1.6), sk.length || 0.35),
+            new THREE.MeshStandardMaterial({ color: sk.hex, roughness: 0.85, side: THREE.DoubleSide })
+          );
+          mesh.name = 'garment:' + sk.kind;
+          mesh.castShadow = true;
+          mesh.frustumCulled = false;
+          mesh.userData.ownGeometry = true;
+          slot.add(mesh);
+          garments.push(mesh);
+          mats.push(mesh.material);
+        }
+      }
+      // Hangs from the upper back (Thor's cape).
+      if (spec.cape && spec.cape.hex != null) {
+        const cp = spec.cape;
+        const slot = attachSlot('chest', { center: true, y: 0.17, scale: 1 });
+        if (slot) {
+          const chest = box[PART.torso];
+          const w = Math.max(cp.width || 0, (chest ? chest.size[0] : 0.42) * 1.02);
+          const mesh = new THREE.Mesh(
+            _capeGeometry(w, cp.length || 1, cp.sweep || 0.12),
+            new THREE.MeshStandardMaterial({ color: cp.hex, roughness: 0.9, side: THREE.DoubleSide })
+          );
+          mesh.name = 'garment:cape';
+          mesh.castShadow = true;
+          mesh.frustumCulled = false;
+          mesh.userData.ownGeometry = true;
+          mesh.position.z = -((chest ? chest.size[2] : 0.24) * 0.5) - 0.02;
+          slot.add(mesh);
+          garments.push(mesh);
+          mats.push(mesh.material);
+          capeMesh = mesh;
+        }
+      }
+    }
+
     const mixer = new THREE.AnimationMixer(body);
     const clips = _clipsFor(look.model);
     let current = null;
@@ -779,6 +955,7 @@
       for (const u of tints.hair) _setAll(u, look.hair != null ? look.hair : 0x3b2a20);
       if (tints.eyes && look.eyes != null) tints.eyes.uEyeColor.value.set(look.eyes);
       setHair([look.hairStyle, look.beard ? 'Hair_Beard' : null]);
+      setGarments(look.garments);
     }
 
     // Curl a hand into a grip so held props read as held rather than floating
@@ -832,6 +1009,7 @@
     }
 
     function dispose() {
+      _clearGarments();
       mixer.stopAllAction();
       mixer.uncacheRoot(body);
       for (const m of mats) m.dispose();
@@ -975,6 +1153,8 @@
         const target = down ? 0 : (mixer.time < softUntil ? 0.35 : 1);
         postureW += (target - postureW) * (1 - Math.exp(-dt * 8));
         if (postureW < 0.001) return;
+        // A cape drifts as the character breathes and walks.
+        if (capeMesh) capeMesh.rotation.x = 0.05 + Math.sin(mixer.time * 1.7) * 0.045;
         for (const p of posture) {
           p.clean.copy(p.bone.quaternion);
           p.bone.quaternion.premultiply(postureQ.identity().slerp(p.q, postureW));

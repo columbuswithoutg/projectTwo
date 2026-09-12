@@ -149,8 +149,70 @@
     return islands;
   }
 
+  // ── Roaming NPC patrol ────────────────────────────────────────────────
+  // /world's Avenger wanderers are simulated on every client independently —
+  // there is no server broadcast for them. So their motion has to be a PURE
+  // function of a shared clock: no randomness, no accumulated state, no
+  // frame-rate dependence. Two browsers that agree on the time then draw the
+  // same hero in the same spot. (They used to random-walk from a local
+  // performance.now(), which is why no two users ever saw them alike.)
+
+  // Deterministic [0, 1) from a string — FNV-1a. The seed behind every
+  // per-hero patrol constant, so a rebuild or another user's browser
+  // reproduces the same patrol exactly.
+  function hash01(s) {
+    let h = 2166136261;
+    for (let i = 0; i < String(s).length; i++) {
+      h ^= String(s).charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return ((h >>> 0) % 100000) / 100000;
+  }
+
+  // Build the fixed patrol parameters for one hero from its id alone.
+  // ring: Chebyshev half-extent of the square loop; speed: base units/sec.
+  function npcPatrol(id, ring, speed) {
+    return {
+      phase0: hash01(id) * ring * 8,                 // where on the lap it starts
+      dir: hash01(id + 'd') < 0.5 ? 1 : -1,          // which way round
+      speed: speed * (0.85 + hash01(id + 's') * 0.3),
+      moveSecs: 9 + hash01(id + 'm') * 6,            // stroll for 9-15s...
+      pauseSecs: 2 + hash01(id + 'p') * 2            // ...then stand for 2-4s
+    };
+  }
+
+  // Where a hero is at shared-clock time `t` (seconds), walking the perimeter
+  // of an axis-aligned square of half-extent `ring` centred on (homeX, homeZ).
+  // Distance only accumulates during the moving part of each cycle, so a pause
+  // holds them still rather than teleporting them forward when it ends.
+  // Returns { x, z, yaw, walking }; yaw matches the engine's atan2(dx, dz).
+  function npcPathPoint(patrol, homeX, homeZ, ring, t) {
+    const cycle = patrol.moveSecs + patrol.pauseSecs;
+    const laps = Math.floor(t / cycle);
+    const rem = t - laps * cycle;
+    const walking = rem < patrol.moveSecs;
+    const travelled = (laps * patrol.moveSecs + Math.min(rem, patrol.moveSecs)) * patrol.speed;
+
+    const perimeter = ring * 8;
+    const side = ring * 2;
+    let s = (patrol.phase0 + patrol.dir * travelled) % perimeter;
+    if (s < 0) s += perimeter;                        // positive modulo: dir -1 runs backwards
+
+    const seg = Math.floor(s / side) % 4;
+    const u = s - seg * side;
+    let x, z, dx, dz;
+    switch (seg) {
+      case 0: x =  ring;     z = -ring + u; dx =  0; dz =  1; break;   // east side,  heading +Z
+      case 1: x =  ring - u; z =  ring;     dx = -1; dz =  0; break;   // north side, heading -X
+      case 2: x = -ring;     z =  ring - u; dx =  0; dz = -1; break;   // west side,  heading -Z
+      default: x = -ring + u; z = -ring;    dx =  1; dz =  0; break;   // south side, heading +X
+    }
+    if (patrol.dir < 0) { dx = -dx; dz = -dz; }
+    return { x: homeX + x, z: homeZ + z, yaw: Math.atan2(dx, dz), walking };
+  }
+
   return {
     isWalkable, stepVertical, shouldRespawn, airtime, airCarry, pickPunchTarget,
-    actorRadius, spawnIslands
+    actorRadius, spawnIslands, hash01, npcPatrol, npcPathPoint
   };
 });

@@ -31,7 +31,8 @@ const Playground3D = (() => {
     SPEED: 4.0,                   // world units per second at full stick
     TURN_RATE: 12.0,              // yaw lerp speed (rad/sec equivalent)
     PLAYER_RADIUS: 0.45,          // for wall AABB collision
-    STEP_PERIOD: 0.45             // seconds per full leg-swing cycle
+    STEP_PERIOD: 0.45,            // seconds per full leg-swing cycle
+    BACKPEDAL_MUL: 0.6            // speed multiplier while stepping backwards
   };
 
   // Collision footprint of OTHER actors (remote players + NPCs) when the local
@@ -728,6 +729,20 @@ const Playground3D = (() => {
       ? Playground.characterHidden(c) : {};
     const suit = c.suit ?? 0;
     const suitHex = suit > 0 ? _palette('SUIT_COLORS', c.suitColor) : null;
+    // Clothing that needs real geometry rather than a tint — skirts, coats,
+    // armour, capes. The logic module decides what to build; colours are
+    // resolved here, where the palettes live.
+    const garments = (typeof PG3DHumanoidLogic !== 'undefined' && PG3DHumanoidLogic.garmentsFor)
+      ? PG3DHumanoidLogic.garmentsFor(c) : null;
+    if (garments) {
+      const hexOf = (slot) => slot === 'suit' ? _palette('SUIT_COLORS', c.suitColor)
+        : slot === 'outer' ? _palette('SHIRT_COLORS', c.outerwearColor)
+        : slot === 'accessory' ? _palette('ACCESSORY_COLORS', c.accessoryColor)
+        : _palette('PANTS_COLORS', c.pantsColor);
+      for (const piece of [garments.shell, garments.skirt, garments.cape]) {
+        if (piece) piece.hex = hexOf(piece.color);
+      }
+    }
     return {
       model: (c.gender ?? 0) === 2 ? 'female' : 'male',
       build: c.build ?? 1,
@@ -739,8 +754,12 @@ const Playground3D = (() => {
       hair: _palette('HAIR_COLORS', c.hairColor),
       eyes: _palette('EYE_COLORS', c.eyeColor),
       sleeves: suit > 0 ? 'long' : (_SLEEVES[c.shirtStyle ?? 0] || 'short'),
-      // Dress / Robe read as a short hem; everything else covers the leg.
-      legs: suit > 0 ? ((suit === 2 || suit === 3) ? 'short' : 'long') : (_LEGS[c.pantsStyle ?? 0] || 'long'),
+      // A skirt / dress / robe hangs as real geometry, so the legs under it
+      // stay bare; otherwise the trouser style decides how far the cloth runs.
+      legs: (garments && garments.skirt) ? 'bare'
+        : suit > 0 ? ((suit === 2 || suit === 3) ? 'short' : 'long')
+        : (_LEGS[c.pantsStyle ?? 0] || 'long'),
+      garments,
       hairStyle: hidden.hairStyle ? null : (_HAIR_MESH[c.hairStyle ?? 0] || null),
       beard: !hidden.facialHairStyle && (c.facialHairStyle ?? 0) > 0
     };
@@ -918,6 +937,7 @@ const Playground3D = (() => {
     const st = PG3DHumanoidLogic.selectAnimState({
       now,
       speed: s.speed || 0,
+      backward: !!s.backward,
       maxSpeed: PHYSICS.SPEED,
       airborne: !!s.airborne,
       velY: s.velY || 0,
@@ -2820,6 +2840,15 @@ const Playground3D = (() => {
     const moveX = forward.x * (-ny) + right.x * nx;
     const moveZ = forward.z * (-ny) + right.z * nx;
 
+    // Backpedal. ny > 0 is "pull back" (S / joystick down). Reversing used to
+    // yaw the character 180° to face its movement direction, and the camera
+    // auto-follow below then swung the azimuth all the way round with it —
+    // which is why backing up felt like the whole screen rotated. Holding the
+    // yaw means the character steps backwards and the view stays put.
+    // A strong sideways component still reads as a turn, so diagonals are
+    // unchanged; only near-straight-back qualifies.
+    const backpedal = ny > 0.35 && Math.abs(nx) <= Math.abs(ny) * 0.8;
+
     // Airborne (mid-jump or falling) frees XZ movement from the walkability
     // check — the landing branch below decides what happens on touchdown.
     _airborne = _falling || _player.position.y > 0.01;
@@ -2830,14 +2859,19 @@ const Playground3D = (() => {
     if (len > 0.05 && !_falling && !_down) {   // input is dead while falling or down
       moved = true;
       // Slight air-speed boost so a running jump clears the island gaps.
-      const step = PHYSICS.SPEED * (_airborne ? FALL.AIR_SPEED_MUL : 1) * len * dt;
+      // Backing up is slower than going forward, the way it is on foot.
+      const step = PHYSICS.SPEED * (_airborne ? FALL.AIR_SPEED_MUL : 1)
+                 * (backpedal ? PHYSICS.BACKPEDAL_MUL : 1) * len * dt;
       // Move on each axis separately so collision response can slide along walls.
       _moveWithCollision(moveX * step, 0);
       _moveWithCollision(0, moveZ * step);
 
-      // Yaw toward movement direction.
-      const targetYaw = Math.atan2(moveX, moveZ);
-      _player.rotation.y = _lerpAngle(_player.rotation.y, targetYaw, Math.min(1, PHYSICS.TURN_RATE * dt));
+      // Yaw toward movement direction — skipped while backpedalling so the
+      // character keeps facing where it was already looking.
+      if (!backpedal) {
+        const targetYaw = Math.atan2(moveX, moveZ);
+        _player.rotation.y = _lerpAngle(_player.rotation.y, targetYaw, Math.min(1, PHYSICS.TURN_RATE * dt));
+      }
     }
     _localWalking = moved;
 
@@ -2927,6 +2961,7 @@ const Playground3D = (() => {
     // below is the procedural fallback.
     const _rigged = _animateActor(_player, {
       speed: moved ? PHYSICS.SPEED * len : 0,
+      backward: moved && backpedal,
       airborne: _airborne,
       velY: _velY,
       falling: _falling,
@@ -2940,7 +2975,10 @@ const Playground3D = (() => {
     if (_rigged) {
       // no-op: the clip drives every joint
     } else if (moved && _rig) {
-      _stepClock += dt;
+      // Run the phase backwards while backpedalling — same reason the rigged
+      // path flips its time scale: otherwise the legs stride forward while the
+      // body travels back.
+      _stepClock += backpedal ? -dt : dt;
       _idleClock = 0;
       const phase = (_stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
       _walkPose(_rig, phase);
@@ -4248,8 +4286,27 @@ const Playground3D = (() => {
   // the walk-cycle math, _isInWalkable, and the HUD projection helpers.
 
   const NPC_SPEED = 1.5;     // world units / sec — a leisurely stroll
-  const NPC_TURN  = 0.5;     // radians to steer per blocked sub-step (hug the ring)
   const NPC_RADIUS = 0.40;   // NPC body footprint for wall / player avoidance
+  // Chebyshev distance from the node centre of the patrol loop. The platform is
+  // 12 wide (half 6) with its wall just outside that, and the walkable apron
+  // reaches half-extent 8 — so a square ring at 7 is always clear of the walls
+  // and always on walkable stone, at every node, without needing to probe.
+  const NPC_RING = 7.0;
+  const NPC_RECOVER_MS = 700; // ease back onto the path after a knockdown
+
+  // Shared clock. NPC motion is a pure function of this, so two clients that
+  // agree on the time draw every hero in exactly the same place. Set from the
+  // server's timestamp in the world:snapshot payload (js/home-socket.js);
+  // until that lands — or if the socket never connects — it stays 0 and the
+  // device's own clock is used, which is already within a second or so.
+  let _worldClockSkew = 0;
+  function setWorldClockOffset(ms) {
+    if (typeof ms === 'number' && isFinite(ms)) _worldClockSkew = ms;
+  }
+  // Seconds since the epoch, on the shared clock.
+  function _sharedNow() {
+    return (Date.now() + _worldClockSkew) / 1000;
+  }
 
   // Public: declare which heroes should roam. Each spec is
   // { id, name, character, debut }. Stored so a hero can pop in the moment its
@@ -4270,142 +4327,124 @@ const Playground3D = (() => {
       const homeZ = node.mesh.position.z;
 
       const rig = _buildPlayer(spec.character || defaultCharacter());
-      // Start on the SQUARE apron ring at a deterministic per-hero angle so
-      // heroes sharing a node (Thor + Hawkeye at thor1) don't stack. The apron
-      // is axis-aligned, so scale the polar radius by 1/max(|cos|,|sin|) to land
-      // at a fixed Chebyshev distance (≈7) — squarely on the ring, off the poster.
-      const angle0 = _hashAngle(spec.id);
-      const m0 = Math.max(Math.abs(Math.cos(angle0)), Math.abs(Math.sin(angle0))) || 1;
-      const r0 = 7.0 / m0;
-      const x = homeX + Math.cos(angle0) * r0;
-      const z = homeZ + Math.sin(angle0) * r0;
-      const dir = (_hashAngle(spec.id + 'd') > Math.PI) ? 1 : -1;
-      const heading = angle0 + dir * Math.PI / 2;   // tangent → start strolling around the ring
-      rig.position.set(x, 0, z);
-      rig.rotation.y = heading;
+      // The patrol is derived from the hero's id alone, so two clients build an
+      // identical one: same lap offset, same direction, same pace, same pause
+      // rhythm. Heroes sharing a node (Thor + Hawkeye at thor1) get different
+      // offsets and so never stack.
+      const npc = {
+        id: spec.id, name: spec.name, rig, nameEl: null,
+        homeX, homeZ,
+        patrol: PG3DPhysics.npcPatrol(spec.id, NPC_RING, NPC_SPEED),
+        x: homeX, z: homeZ, yaw: 0,
+        walking: false, recoverUntil: 0,
+        radius: _actorRadiusFor(spec.character || defaultCharacter()),
+        headY: 2.05 * (((rig.scale && rig.scale.y) || 1)) + 0.3
+      };
+      // Place them on the path immediately so they never pop in at the node
+      // centre for a frame.
+      const p0 = _npcPathPoint(npc, _sharedNow());
+      npc.x = p0.x; npc.z = p0.z; npc.yaw = p0.yaw;
+      rig.position.set(npc.x, 0, npc.z);
+      rig.rotation.y = npc.yaw;
       _scene.add(rig);
 
       const nameEl = document.createElement('div');
       nameEl.className = 'pg3d-nametag pg3d-npc-nametag';
       nameEl.textContent = spec.name || '';
       if (_hudLayer) _hudLayer.appendChild(nameEl);
+      npc.nameEl = nameEl;
 
-      const bScale = (rig.scale && rig.scale.y) || 1;   // taller builds → higher tag
-      _npcs.push({
-        id: spec.id, name: spec.name, rig, nameEl,
-        homeX, homeZ, x, z, yaw: heading, heading, dir,
-        stepClock: 0, walking: false, pauseUntil: 0,
-        radius: _actorRadiusFor(spec.character || defaultCharacter()),
-        headY: 2.05 * bScale + 0.3
-      });
+      _npcs.push(npc);
     }
   }
 
-  // Deterministic angle [0, 2π) from a string — keeps a hero's start angle and
-  // patrol direction stable across rebuilds (no spawn-time Math.random jump).
-  function _hashAngle(s) {
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-    return ((Math.abs(h) % 360) / 360) * Math.PI * 2;
+  // Deterministic [0, 1) from a string, and the hero's position at shared-clock
+  // time `t`. Both live in PG3DPhysics so they can be unit-tested without THREE
+  // or a DOM — see test/physics.test.js.
+  function _hash01(s) { return PG3DPhysics.hash01(s); }
+  function _npcPathPoint(npc, t) {
+    return PG3DPhysics.npcPathPoint(npc.patrol, npc.homeX, npc.homeZ, NPC_RING, t);
   }
 
-  // Does a circle of `radius` centered at (x,z) overlap any wall AABB?
-  // Closest-point-on-box test — used to keep NPC bodies off the wall plane.
-  function _circleHitsWall(x, z, radius) {
-    const r2 = radius * radius;
-    for (const w of _walls) {
-      const nx = Math.max(w.minX, Math.min(x, w.maxX));
-      const nz = Math.max(w.minZ, Math.min(z, w.maxZ));
-      const dx = x - nx, dz = z - nz;
-      if (dx * dx + dz * dz < r2) return true;
-    }
-    return false;
-  }
-
-  // Can an NPC stand at (x,z)? It must be on legal ground (_isInWalkable),
-  // OUTSIDE its home node's poster footprint, and still within that node's
-  // apron band — this confines each hero to a ring around its own building
-  // (never on the poster, never wandering off down the roads). It must also keep
-  // its BODY clear of the building walls (the inner ring is widened by NPC_RADIUS
-  // so it never brushes the wall plane, with a circle test as a safety net) and
-  // give the local player a wide berth so it routes around you instead of through.
-  function _npcCanStand(x, z, npc) {
-    const cheb = Math.max(Math.abs(x - npc.homeX), Math.abs(z - npc.homeZ));
-    const inner = WORLD.PLATFORM_W / 2 + NPC_RADIUS + 0.15;          // clear the wall plane + body
-    const outer = (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2 - 0.2; // just inside the apron edge
-    if (cheb < inner || cheb > outer) return false;
-    if (!_isInWalkable(x, z)) return false;
-    if (_circleHitsWall(x, z, NPC_RADIUS)) return false;            // never overlap a wall
-    if (_player) {                                                  // steer around the player
-      const pdx = x - _player.position.x, pdz = z - _player.position.z;
-      const psep = NPC_RADIUS + PHYSICS.PLAYER_RADIUS;
-      if (pdx * pdx + pdz * pdz < psep * psep) return false;
-    }
-    return true;
+  // Push an NPC's RENDERED position clear of the local player if they overlap.
+  // Purely cosmetic and purely local: npc.x/npc.z are re-derived from the path
+  // every frame, so this never accumulates and never desyncs anyone.
+  function _npcAvoidPlayer(npc) {
+    if (!_player) return;
+    const sep = (npc.radius || NPC_RADIUS) + PHYSICS.PLAYER_RADIUS;
+    let dx = npc.x - _player.position.x;
+    let dz = npc.z - _player.position.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= sep * sep) return;
+    let d = Math.sqrt(d2);
+    if (d < 1e-4) { dx = 1; dz = 0; d = 1; }   // exactly coincident — pick an axis
+    npc.x = _player.position.x + (dx / d) * sep;
+    npc.z = _player.position.z + (dz / d) * sep;
   }
 
   function _tickNpcs(dt, now) {
     if (!_npcs.length) return;
+    // One shared-clock reading for the whole batch — every hero is evaluated
+    // at the same instant, and that instant is the same on every client.
+    const t = _sharedNow();
     for (const npc of _npcs) {
       const bones = npc.rig.userData.bones;
       // Rigged NPCs animate from last frame's walking flag — a frame of lag
       // no one can see, and it keeps the steering code below untouched.
       const npcRigged = _animateActor(npc.rig, {
-        speed: npc.walking ? NPC_SPEED : 0,
+        speed: npc.walking ? npc.patrol.speed : 0,
         downUntil: npc.downUntil || 0,
         getupUntil: npc.downUntil ? npc.downUntil + PUNCH.GETUP_MS : 0
       }, dt, now);
       const dampIdle = () => {
         if (!bones || npcRigged) return;
         _dampPose(bones, Math.min(1, dt * 8));
-        if (npc.swayPhase === undefined) npc.swayPhase = Math.random() * Math.PI * 2;
-        bones.body.rotation.z = Math.sin(now * 0.0008 + npc.swayPhase) * 0.02;
+        // Sway phase is hashed, not random, and runs off the shared clock —
+        // so even the idle weight-shift is in step across clients.
+        if (npc.swayPhase === undefined) npc.swayPhase = _hash01(npc.id + 'w') * Math.PI * 2;
+        bones.body.rotation.z = Math.sin(t * 0.8 + npc.swayPhase) * 0.02;
       };
 
       // Knockdown pose runs in every branch (falling over, lying, getting up).
       if (!npcRigged) _applyDownPose(npc.rig, npc.downUntil || 0, now);
-      if (npc.downUntil > now) { npc.walking = false; dampIdle(); continue; }
 
-      // Paused — stand still, relax limbs to idle.
-      if (now < npc.pauseUntil) { npc.walking = false; dampIdle(); continue; }
+      // Canonical position for this instant — identical on every client.
+      const p = _npcPathPoint(npc, t);
 
-      // Walk forward; if the next step would leave the apron ring, steer a
-      // consistent way and retry so the hero hugs the ring edge. Rig forward is
-      // (sin yaw, cos yaw) — matches the engine's atan2(dirX,dirZ) yaw.
-      const stepLen = NPC_SPEED * dt;
-      let moved = false;
-      for (let tries = 0; tries < 7; tries++) {
-        const nx = npc.x + Math.sin(npc.heading) * stepLen;
-        const nz = npc.z + Math.cos(npc.heading) * stepLen;
-        if (_npcCanStand(nx, nz, npc)) {
-          npc.x = nx; npc.z = nz;
-          npc.heading += (Math.random() - 0.5) * 0.15;   // gentle organic wander
-          moved = true;
-          break;
-        }
-        npc.heading += NPC_TURN * npc.dir;               // turn to follow the boundary
-      }
-
-      if (!moved) {
-        // Boxed in (shouldn't happen on a continuous ring) — reverse + pause.
-        npc.dir = -npc.dir;
+      if (npc.downUntil > now) {
+        // Knocked down: hold them where they fell. The path keeps running
+        // underneath, and they walk back onto it once they're up.
+        npc.recoverUntil = npc.downUntil + NPC_RECOVER_MS;
         npc.walking = false;
-        npc.pauseUntil = now + 500 + Math.random() * 800;
         dampIdle();
         continue;
       }
 
-      // Occasional idle pause so they don't pace forever.
-      if (Math.random() < 0.0015) { npc.pauseUntil = now + 1500 + Math.random() * 2500; }
-
-      npc.walking = true;
-      npc.yaw = npc.heading;
+      if (now < npc.recoverUntil) {
+        // Brief re-join after a knockdown — the only time a hero is off the
+        // canonical path, and only on the screen of whoever punched them.
+        const k = Math.min(1, dt * 5);
+        npc.x += (p.x - npc.x) * k;
+        npc.z += (p.z - npc.z) * k;
+      } else {
+        npc.x = p.x;
+        npc.z = p.z;
+      }
+      // Render-only sidestep so a hero doesn't walk through a player standing
+      // on their line. Deliberately applied AFTER the canonical position and
+      // never fed back into it — the path stays the shared truth, this is just
+      // what this one screen draws.
+      _npcAvoidPlayer(npc);
+      npc.yaw = _lerpAngle(npc.yaw, p.yaw, Math.min(1, dt * 6));   // round the corners
+      npc.walking = p.walking;
       npc.rig.position.set(npc.x, 0, npc.z);
       npc.rig.rotation.y = npc.yaw;
 
-      // Walk-cycle swing — shared pose with the player / remote players.
-      npc.stepClock += dt;
-      const phase = (npc.stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
+      if (!npc.walking) { dampIdle(); continue; }
+
+      // Walk-cycle swing — shared pose with the player / remote players. Phase
+      // comes off the shared clock too, so even the leg positions match.
+      const phase = (t / PHYSICS.STEP_PERIOD) * Math.PI * 2;
       if (bones && !npcRigged) _walkPose(bones, phase);
     }
   }
@@ -4909,8 +4948,9 @@ const Playground3D = (() => {
     // isProjectUnlocked is exported so WorldView's island grouping uses the
     // engine's own rule instead of a second, drifting copy of it.
     teleportToNode, isProjectUnlocked: _isProjectUnlocked,
-    // Local NPC surface — Avenger wanderers in /world.
-    setWorldNpcs,
+    // Local NPC surface — Avenger wanderers in /world. setWorldClockOffset
+    // feeds them the server's clock so every client patrols them identically.
+    setWorldNpcs, setWorldClockOffset,
     // Voice-chat surface — distance attenuation + speaking indicator.
     getRemotePlayers, setRemotePlayerSpeaking
   };
