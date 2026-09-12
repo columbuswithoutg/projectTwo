@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "license": "CC0-1.0",
+  "generated": "2026-09-11",
+  "quantized": true,
+  "bodies": {
+    "male": {
+      "file": "body_male.glb",
+      "height": 1.82,
+      "tris": 14318,
+      "bytes": 574540
+    },
+    "female": {
+      "file": "body_female.glb",
+      "height": 1.775,
+      "tris": 15060,
+      "bytes": 602548
+    }
+  },
+  "hair": {
+    "file": "hair.glb",
+    "styles": [
+      {
+        "name": "Hair_Buzzed",
+        "tris": 830
+      },
+      {
+        "name": "Hair_BuzzedFemale",
+        "tris": 830
+      },
+      {
+        "name": "Hair_SimpleParted",
+        "tris": 1301
+      },
+      {
+        "name": "Hair_Long",
+        "tris": 2906
+      },
+      {
+        "name": "Hair_Buns",
+        "tris": 3284
+      },
+      {
+        "name": "Hair_Beard",
+        "tris": 1034
+      },
+      {
+        "name": "Eyebrows_Regular",
+        "tris": 984
+      },
+      {
+        "name": "Eyebrows_Female",
+        "tris": 1480
+      }
+    ],
+    "bytes": 702236
+  },
+  "anims": {
+    "file": "anims.glb",
+    "clips": [
+      {
+        "name": "Dance_Loop",
+        "duration": 1,
+        "channels": 67
+      },
+      {
+        "name": "Death01",
+        "duration": 2.4,
+        "channels": 67
+      },
+      {
+        "name": "Hit_Chest",
+        "duration": 0.333,
+        "channels": 67
+      },
+      {
+        "name": "Hit_Head",
+        "duration": 0.433,
+        "channels": 67
+      },
+      {
+        "name": "Idle_Loop",
+        "duration": 2.5,
+        "channels": 67
+      },
+      {
+        "name": "Idle_Talking_Loop",
+        "duration": 2.933,
+        "channels": 67
+      },
+      {
+        "name": "Jog_Fwd_Loop",
+        "duration": 0.933,
+        "channels": 67
+      },
+      {
+        "name": "Jump_Land",
+        "duration": 1.267,
+        "channels": 67
+      },
+      {
+        "name": "Jump_Loop",
+        "duration": 2.5,
+        "channels": 67
+      },
+      {
+        "name": "Jump_Start",
+        "duration": 1.333,
+        "channels": 67
+      },
+      {
+        "name": "Punch_Cross",
+        "duration": 1,
+        "channels": 67
+      },
+      {
+        "name": "Punch_Jab",
+        "duration": 0.867,
+        "channels": 67
+      },
+      {
+        "name": "Roll",
+        "duration": 1.467,
+        "channels": 67
+      },
+      {
+        "name": "Spell_Simple_Shoot",
+        "duration": 0.5,
+        "channels": 67
+      },
+      {
+        "name": "Sprint_Loop",
+        "duration": 0.667,
+        "channels": 67
+      },
+      {
+        "name": "Walk_Loop",
+        "duration": 1.333,
+        "channels": 67
+      }
+    ],
+    "bytes": 508152
+  }
+}

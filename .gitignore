@@ -8,6 +8,11 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Raw third-party asset downloads (trimmed GLBs live in assets/models/)
+_incoming/
+# Dev-only preview pages (served locally from /assets/dev/, never shipped)
+assets/dev/
+
 # Personal Claude context — never push
 PROJECT_CONTEXT.md
 CLAUDE.md

@@ -43,7 +43,8 @@
   <script type="importmap">
   {
     "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
     }
   }
   </script>
@@ -56,6 +57,21 @@
     const ns = { ...THREE, RoundedBoxGeometry };
     window.THREE = ns;
     window.dispatchEvent(new Event('three-ready'));
+    // Realistic rigged characters (assets/models/humanoid) need GLTFLoader +
+    // SkeletonUtils. Imported AFTER three-ready fires so a slow or failed
+    // addon fetch can never delay — or break — the engine: characters just
+    // stay procedural. `ns` is a plain object, so attaching later is safe.
+    Promise.all([
+      import('three/addons/loaders/GLTFLoader.js'),
+      import('three/addons/utils/SkeletonUtils.js')
+    ]).then(([gltf, skel]) => {
+      ns.GLTFLoader = gltf.GLTFLoader;
+      ns.SkeletonUtils = skel;
+      window.dispatchEvent(new Event('three-addons-ready'));
+    }).catch((err) => {
+      console.warn('[three] addons unavailable — characters stay procedural', err);
+      window.dispatchEvent(new Event('three-addons-failed'));
+    });
   </script>
 </head>
 
@@ -123,6 +139,11 @@
   <!-- Pure physics helpers (also unit-tested via node --test) — must load
        before playground3d.js which calls PG3DPhysics from its tick. -->
   <script defer src="js/playground3d-physics.js"></script>
+  <!-- Realistic humanoid characters: pure logic (also unit-tested) + the glTF
+       rig loader. Both must load before playground3d.js, which calls them
+       from _buildPlayer. -->
+  <script defer src="js/playground3d-humanoid-logic.js"></script>
+  <script defer src="js/playground3d-humanoid.js"></script>
   <script defer src="js/playground3d.js"></script>
 
   <!-- Router + Views -->

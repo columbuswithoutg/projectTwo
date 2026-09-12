@@ -125,6 +125,20 @@ test('pickPunchTarget: vertical bound — cannot punch someone far above/below',
   assert.equal(P.pickPunchTarget(0, 0, 1.0, actors, 1.4), 'up');   // within 1.5u
 });
 
+// ── Actor footprint (build-scaled collision radius) ──
+
+test('actorRadius: Normal and Slim keep the base radius; Hulk-type grows but fits doorways', () => {
+  const PLAYER_RADIUS = 0.45;
+  const DOORWAY_W = 4.0;
+  assert.equal(P.actorRadius(PLAYER_RADIUS, 1), PLAYER_RADIUS);
+  assert.equal(P.actorRadius(PLAYER_RADIUS, 0.83), PLAYER_RADIUS);   // Slim never shrinks
+  const hulk = P.actorRadius(PLAYER_RADIUS, 1.4 * 1.75);              // Huge widthFactor
+  assert.ok(hulk > 0.65 && hulk < 0.75, `hulk radius ${hulk}`);
+  assert.ok(hulk * 2 < DOORWAY_W / 2, 'a Hulk still passes a doorway with room to spare');
+  assert.equal(P.actorRadius(PLAYER_RADIUS, 100), PLAYER_RADIUS * 1.8); // capped
+  assert.equal(P.actorRadius(PLAYER_RADIUS, NaN), PLAYER_RADIUS);
+});
+
 // ── Spawn islands (world spawn-picker grouping) ──
 
 // A small MCU-shaped fixture: three prerequisite branches that only merge at

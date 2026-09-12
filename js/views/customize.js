@@ -58,6 +58,16 @@ const CustomizeView = {
     CustomizeView._overlayRoot = container;
     CustomizeView._previewHandle = null;
     CustomizeView._load();
+
+    // The realistic bodies (js/playground3d-humanoid.js) stream in after boot.
+    // The big preview upgrades itself; the option tiles are rendered
+    // synchronously, so re-render them once the models land.
+    if (typeof PG3DHumanoid !== 'undefined' && PG3DHumanoid.whenReady) {
+      PG3DHumanoid.whenReady().then(() => {
+        if (CustomizeView._overlayRoot !== container) return;   // navigated away
+        CustomizeView._renderOptions();
+      }).catch(() => {});
+    }
   },
 
   async _load() {

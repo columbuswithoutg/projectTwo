@@ -89,6 +89,17 @@
     return best;
   }
 
+  // ── Actor footprint ──
+  // Collision radius for a character whose silhouette is `widthFactor` × a
+  // Normal body's width (PG3DHumanoidLogic.bodyShapeFor().widthFactor). Grows
+  // with the square root so a Hulk-type body doesn't clip walls/other players
+  // without becoming too wide for doorways; never shrinks below the base, and
+  // capped at 1.8× the base.
+  function actorRadius(baseRadius, widthFactor) {
+    const f = Number.isFinite(widthFactor) ? Math.max(1, widthFactor) : 1;
+    return Math.min(baseRadius * Math.sqrt(f), baseRadius * 1.8);
+  }
+
   // ── Spawn islands ──
   // Group the currently-unlocked projects into connected "islands" so the
   // /world spawn picker can offer one card per island. Two nodes are
@@ -140,6 +151,6 @@
 
   return {
     isWalkable, stepVertical, shouldRespawn, airtime, airCarry, pickPunchTarget,
-    spawnIslands
+    actorRadius, spawnIslands
   };
 });

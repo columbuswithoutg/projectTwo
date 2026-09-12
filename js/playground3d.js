@@ -347,8 +347,10 @@ const Playground3D = (() => {
     const pos = _player.position.clone();
     const yaw = _player.rotation.y;
     _player.parent.remove(_player);
+    _disposeActor(_player);
     _player = _buildPlayer(character);
     _rig = _player.userData.bones;        // re-point local rig to the new build
+    _playerR = _actorRadiusFor(character);
     _player.position.copy(pos);
     _player.rotation.y = yaw;
     _scene.add(_player);
@@ -462,6 +464,7 @@ const Playground3D = (() => {
     // Player.
     _player = _buildPlayer(_currentChar);
     _rig = _player.userData.bones;        // local rig — animated by _tick
+    _playerR = _actorRadiusFor(_currentChar);
     _player.position.set(spawn.x, 0, spawn.z);
     _lastSafe.x = spawn.x; _lastSafe.z = spawn.z;   // fall-respawn to where they actually started
     _scene.add(_player);
@@ -677,7 +680,285 @@ const Playground3D = (() => {
     });
   }
 
+  // ── realistic (rigged glTF) characters ──
+  // PG3DHumanoid streams assets/models/humanoid/v1/*.glb (CC0 Quaternius).
+  // Until they're ready — and permanently if they fail, or with ?rig=legacy /
+  // localStorage pg3dRig=legacy — every character stays procedural, so the
+  // engine never depends on that download.
+  const _legacyRig = (() => {
+    try {
+      if (/[?&]rig=legacy\b/.test(location.search)) return true;
+      return localStorage.getItem('pg3dRig') === 'legacy';
+    } catch (_) { return false; }
+  })();
+
+  // Note: no GLTFLoader check — PG3DHumanoid waits for the addons itself, so
+  // characters built during boot still upgrade once they arrive.
+  function _humanoidUsable() {
+    return !_legacyRig && typeof PG3DHumanoid !== 'undefined' &&
+      typeof PG3DHumanoidLogic !== 'undefined' && !!window.THREE;
+  }
+
+  // Collision footprint for a character: bulky builds are wider than the base
+  // 0.45u, so a Hulk-type can't clip through walls, doorways or other players.
+  // Grows with the square root of the silhouette width — see the unit tests in
+  // test/physics.test.js (actorRadius).
+  function _actorRadiusFor(c) {
+    const base = PHYSICS.PLAYER_RADIUS;
+    if (!c || typeof PG3DHumanoidLogic === 'undefined' || !PG3DPhysics.actorRadius) return base;
+    return PG3DPhysics.actorRadius(base, PG3DHumanoidLogic.bodyShapeFor(c).widthFactor);
+  }
+  let _playerR = PHYSICS.PLAYER_RADIUS;      // local player's footprint (build-scaled)
+
+  // Playground.HAIR styles → the 6 hair meshes the pack ships (nearest match).
+  const _HAIR_MESH = [
+    'Hair_BuzzedFemale', 'Hair_Long', 'Hair_SimpleParted', 'Hair_Long', null, 'Hair_Buzzed',
+    'Hair_Buns', 'Hair_Buzzed', 'Hair_Buns', 'Hair_SimpleParted', 'Hair_Buzzed', 'Hair_SimpleParted',
+    'Hair_Buns', 'Hair_Buzzed'
+  ];
+  // Playground.SHIRT_STYLES / PANTS_STYLES → how far the cloth runs down the limb.
+  const _SLEEVES = ['short', 'none', 'long', 'long', 'short', 'short', 'long', 'short', 'none'];
+  const _LEGS = ['long', 'long', 'long', 'short', 'short', 'long', 'long'];
+
+  // Character slots → PG3DHumanoid look. Clothing is tinted onto the body
+  // (the CC0 pack ships no garments), so styles map to colours + hems.
+  function _lookFor(c) {
+    c = c || {};
+    const hidden = (typeof Playground !== 'undefined' && Playground.characterHidden)
+      ? Playground.characterHidden(c) : {};
+    const suit = c.suit ?? 0;
+    const suitHex = suit > 0 ? _palette('SUIT_COLORS', c.suitColor) : null;
+    return {
+      model: (c.gender ?? 0) === 2 ? 'female' : 'male',
+      build: c.build ?? 1,
+      skin: _palette('SKIN_TONES', c.skin),
+      top: suitHex || _palette('SHIRT_COLORS', c.shirtColor),
+      bottom: suitHex || _palette('PANTS_COLORS', c.pantsColor),
+      shoes: _palette('SHOE_COLORS', c.shoeColor),
+      gloves: (c.gloves ?? 0) > 0 ? _palette('ACCESSORY_COLORS', c.accessoryColor) : null,
+      hair: _palette('HAIR_COLORS', c.hairColor),
+      eyes: _palette('EYE_COLORS', c.eyeColor),
+      sleeves: suit > 0 ? 'long' : (_SLEEVES[c.shirtStyle ?? 0] || 'short'),
+      // Dress / Robe read as a short hem; everything else covers the leg.
+      legs: suit > 0 ? ((suit === 2 || suit === 3) ? 'short' : 'long') : (_LEGS[c.pantsStyle ?? 0] || 'long'),
+      hairStyle: hidden.hairStyle ? null : (_HAIR_MESH[c.hairStyle ?? 0] || null),
+      beard: !hidden.facialHairStyle && (c.facialHairStyle ?? 0) > 0
+    };
+  }
+
+  // Swap a procedural character for its rigged model, cross-fading over 250ms
+  // so there's no pop. `instant` skips the fade — used when the assets are
+  // already loaded (nothing has been shown yet), including every synchronous
+  // /customize thumbnail. Any failure leaves the procedural body untouched.
+  function _upgradeActor(root, c, instant) {
+    if (!root || root.userData.humanoid || root.userData.disposed) return;
+    let inst;
+    try {
+      inst = PG3DHumanoid.createInstance(_lookFor(c));
+    } catch (err) {
+      console.warn('[pg3d] humanoid build failed — staying procedural', err);
+      return;
+    }
+    const old = root.children.slice();
+    root.add(inst.object);
+    root.userData.humanoid = inst;
+    root.userData.bones = null;          // procedural pose code must stop here
+    root.updateMatrixWorld(true);        // attachSlot reads world transforms
+    _attachRealisticGear(root, c, inst);
+    inst.setState('idle');
+    inst.update(0);                      // pose before the first render
+    const mats = [];
+    for (const o of old) o.traverse(m => {
+      if (!m.material) return;
+      for (const mat of (Array.isArray(m.material) ? m.material : [m.material])) mats.push(mat);
+    });
+    const fadeTo = () => (root.userData.fade == null ? 1 : root.userData.fade);
+    if (instant) {
+      for (const o of old) { root.remove(o); _disposeRig(o); }
+      inst.setOpacity(fadeTo());
+      return;
+    }
+    const t0 = performance.now();
+    const step = () => {
+      if (root.userData.disposed) return;
+      const k = Math.min(1, (performance.now() - t0) / 250);
+      inst.setOpacity(k * fadeTo());
+      for (const m of mats) { m.transparent = true; m.opacity = 1 - k; }
+      if (k < 1) { requestAnimationFrame(step); return; }
+      for (const o of old) { root.remove(o); _disposeRig(o); }
+      inst.setOpacity(fadeTo());
+    };
+    requestAnimationFrame(step);
+  }
+
+  // Re-mount the procedural hero pieces (hat / helmet / glasses / chest emblem
+  // / held prop) onto the rigged body's bones, so they follow the animation.
+  // They were authored around a 0.55u cube head and a blocky torso, hence the
+  // per-slot scale. Gloves are a hand tint (see _lookFor); belt + mask still
+  // need re-fitting and stay off for now.
+  const GEAR_HEAD_SZ = 0.55;     // head size the procedural pieces assume
+  const GEAR_ARM_LEN = 0.7;      // hand hangs at y = −ARM_LEN in prop space
+
+  // _buildAccessories takes one ctx of parents + dims; on a rigged body every
+  // piece mounts on its own slot, so the same slot stands in for each parent
+  // and the unused dimensions are zeroed.
+  function _gearCtx(slot, dims, styles, mat) {
+    return {
+      head: slot, torso: slot, leftArm: slot, rightArm: slot,
+      dims: Object.assign({ HEAD_SZ: 0, TORSO_W: 0, TORSO_H: 0, TORSO_D: 0, ARM_LEN: 0, ARM_W: 0, ARM_D: 0 }, dims),
+      styles: Object.assign({ gloves: 0, belt: 0, mask: 0 }, styles),
+      mat
+    };
+  }
+  function _attachRealisticGear(root, c, inst) {
+    if (!inst || !inst.attachSlot) return;
+    const THREE = window.THREE;
+    const hidden = (typeof Playground !== 'undefined' && Playground.characterHidden)
+      ? Playground.characterHidden(c) : {};
+    const mat = (pal, idx) => new THREE.MeshLambertMaterial({ color: _palette(pal, idx) });
+
+    const accMat = mat('ACCESSORY_COLORS', c.accessoryColor);
+    const maskIdx = hidden.mask ? 0 : (c.mask ?? 0);
+    // Centred on the real head and scaled to its width (the pieces assume a
+    // 0.55u cube head), so it fits both the male and female bodies.
+    const headSlot = inst.attachSlot('head', { center: true, fit: GEAR_HEAD_SZ });
+    if (headSlot) {
+      if (!hidden.hat) {
+        const hat = _buildHat(c.hat ?? 0, GEAR_HEAD_SZ, _palette('SHIRT_COLORS', c.shirtColor));
+        if (hat) headSlot.add(hat);
+      }
+      if (!hidden.glasses) {
+        const glasses = _buildGlasses(c.glasses ?? 0, GEAR_HEAD_SZ);
+        if (glasses) headSlot.add(glasses);
+      }
+      const helmet = _buildHelmet(c.helmet ?? 0, mat('SHIRT_COLORS', c.helmetColor), GEAR_HEAD_SZ);
+      if (helmet) headSlot.add(helmet);
+      if (maskIdx) _buildAccessories(_gearCtx(headSlot, { HEAD_SZ: GEAR_HEAD_SZ }, { mask: maskIdx }, accMat));
+      if (!headSlot.children.length) headSlot.removeFromParent();
+    }
+
+    // Belt at the waist; a sash lies across the chest instead. Dimensions are
+    // the realistic body's, so the builder's torso-relative maths still lands.
+    const beltIdx = c.belt ?? 0;
+    if (beltIdx) {
+      const sash = beltIdx === 3;
+      const slot = inst.attachSlot(sash ? 'chest' : 'pelvis', { center: true, y: sash ? 0.04 : 0.06, scale: 1 });
+      if (slot) {
+        _buildAccessories(_gearCtx(slot, { TORSO_W: 0.30, TORSO_H: 0.08, TORSO_D: 0.22 }, { belt: beltIdx }, accMat));
+      }
+    }
+
+    if ((c.emblem ?? 0) > 0) {
+      // Scaled to the chest's width; TORSO_D then puts it just proud of the
+      // sternum (the builder offsets by TORSO_D/2 + 0.14).
+      const chestSlot = inst.attachSlot('chest', { center: true, y: 0.04, fit: 0.85 });
+      const emblem = chestSlot && _buildEmblem(c.emblem, mat('SHIRT_COLORS', c.emblemColor), { TORSO_D: 0.30 });
+      if (emblem) chestSlot.add(emblem); else if (chestSlot) chestSlot.removeFromParent();
+    }
+
+    if ((c.prop ?? 0) > 0) {
+      // Whole-arm frames: the builder grips at y = −ARM_LEN from the shoulder,
+      // so the slot spans shoulder→hand and every offset scales with the arm.
+      const l = inst.attachSlot('hand.L', { armSpan: GEAR_ARM_LEN });
+      const r = inst.attachSlot('hand.R', { armSpan: GEAR_ARM_LEN });
+      if (l && r) {
+        _buildProp(c.prop, mat('SHIRT_COLORS', c.propColor), {
+          leftArm: l, rightArm: r, dims: { ARM_LEN: GEAR_ARM_LEN }
+        });
+        // The builder grips at y = −ARM_LEN and offsets sideways/forward for a
+        // chunky blocky arm. Slide the grip onto the palm (the slot origin) and
+        // tuck those offsets in, or the prop floats beside a slim real wrist.
+        for (const [side, slot] of [['L', l], ['R', r]]) {
+          for (const child of slot.children) {
+            child.position.y += GEAR_ARM_LEN;
+            child.position.x = 0;          // sideways nudge was for a fat blocky arm
+            child.position.z *= 0.15;      // keep a hint of "in front of the fingers"
+          }
+          // Close the hand that actually holds something.
+          if (slot.children.length && inst.setFist) inst.setFist(side, 1);
+        }
+      }
+    }
+  }
+
+  // Dispose a character built by _buildPlayer (either rig type). Shared
+  // geometry//textures survive — see _sharedGeom and the humanoid variants.
+  function _disposeActor(root) {
+    if (!root) return;
+    root.userData.disposed = true;
+    const inst = root.userData.humanoid;
+    if (inst) { try { inst.dispose(); } catch (_) {} root.userData.humanoid = null; }
+    _disposeRig(root);
+  }
+
+  // One animation entry point for every character. Returns false for
+  // procedural rigs so the caller runs the old hand-posed code.
+  //   s: { speed, airborne, velY, falling, landAt, downUntil, getupUntil,
+  //        punchUntil, emoteUntil }
+  let _coarsePointer = null;   // touch device → tighter LOD tiers
+
+  function _animateActor(root, s, dt, now) {
+    const inst = root && root.userData.humanoid;
+    if (!inst) return false;
+    // Level of detail: distant characters animate at a lower rate (or freeze),
+    // and only nearby ones cast shadows. Keeps a crowded /world cheap.
+    if (_coarsePointer === null) {
+      _coarsePointer = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    }
+    const dist = _camera ? _camera.position.distanceTo(root.position) : 0;
+    const tier = PG3DHumanoidLogic.lodTier(dist, true, _coarsePointer);
+    inst.setShadows(tier.castShadow);
+    if (!tier.animate) return true;                       // frozen: hold the pose
+    if (tier.interval > 0) {
+      root.userData.animAcc = (root.userData.animAcc || 0) + dt;
+      if (root.userData.animAcc < tier.interval) return true;
+      dt = root.userData.animAcc;
+      root.userData.animAcc = 0;
+    }
+    const st = PG3DHumanoidLogic.selectAnimState({
+      now,
+      speed: s.speed || 0,
+      maxSpeed: PHYSICS.SPEED,
+      airborne: !!s.airborne,
+      velY: s.velY || 0,
+      falling: !!s.falling,
+      landAt: s.landAt || 0,
+      downUntil: s.downUntil || 0,
+      getupUntil: s.getupUntil || 0,
+      punchUntil: s.punchUntil || 0,
+      emoteUntil: s.emoteUntil || 0
+    });
+    if (st.overlay !== root.userData.overlay) {
+      root.userData.overlay = st.overlay;
+      // The free clip set has no wave, so the emote borrows the talking idle.
+      if (st.overlay === 'punch') inst.play('Punch_Jab', { restart: true, once: true, fade: 0.08, timeScale: 1.7 });
+      else if (st.overlay === 'wave') inst.play('Idle_Talking_Loop', { restart: true, fade: 0.2 });
+      else inst.setState(st.base, st.timeScale, true);   // resume the base clip
+    } else if (!st.overlay) {
+      inst.setState(st.base, st.timeScale);
+    }
+    inst.update(dt);
+    return true;
+  }
+
+  // Builds a character: procedural immediately, upgraded to the rigged model
+  // when (and if) the assets land. The contract is unchanged — a root Group
+  // with its origin at the feet, facing −Z, scaled by the build.
   function _buildPlayer(c) {
+    const root = _buildProceduralPlayer(c);
+    if (!_humanoidUsable()) return root;
+    // Already loaded → swap synchronously, so callers that render the very
+    // next frame (thumbnails) get the real model.
+    if (PG3DHumanoid.status() === 'ready') { _upgradeActor(root, c, true); return root; }
+    const gen = (root.userData.buildGen || 0) + 1;
+    root.userData.buildGen = gen;
+    PG3DHumanoid.whenReady().then(() => {
+      if (root.userData.buildGen === gen) _upgradeActor(root, c);
+    }).catch(() => {});
+    return root;
+  }
+
+  function _buildProceduralPlayer(c) {
     const THREE = window.THREE;
     const skinHex = _palette('SKIN_TONES', c.skin);
     const shirtHex = _palette('SHIRT_COLORS', c.shirtColor);
@@ -2642,8 +2923,23 @@ const Playground3D = (() => {
         Math.min(1, CAMERA.FOLLOW_RATE * dt));
     }
 
-    // Animation.
-    if (moved && _rig) {
+    // Animation — rigged characters run a clip state machine; everything
+    // below is the procedural fallback.
+    const _rigged = _animateActor(_player, {
+      speed: moved ? PHYSICS.SPEED * len : 0,
+      airborne: _airborne,
+      velY: _velY,
+      falling: _falling,
+      landAt: _landAt,
+      downUntil: _localDownUntil,
+      getupUntil: _localDownUntil ? _localDownUntil + PUNCH.GETUP_MS : 0,
+      punchUntil: _localPunchUntil,
+      emoteUntil: _localEmoteUntil
+    }, dt, now);
+
+    if (_rigged) {
+      // no-op: the clip drives every joint
+    } else if (moved && _rig) {
       _stepClock += dt;
       _idleClock = 0;
       const phase = (_stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
@@ -2660,7 +2956,9 @@ const Playground3D = (() => {
     // Landing squash — a brief compress-and-recover after touching down
     // from a jump. Overrides the breathing scale for ~180ms (imperceptible)
     // and composes with everything else via body scale only.
-    if (_rig && now - _landAt < 180) {
+    if (_rigged) {
+      // landing/punch/emote/knockdown all come from clips
+    } else if (_rig && now - _landAt < 180) {
       const t = (now - _landAt) / 180;
       _rig.body.scale.y = 0.85 + 0.15 * t;
       const xz = 1.08 - 0.08 * t;
@@ -2672,7 +2970,9 @@ const Playground3D = (() => {
     }
 
     // Right-arm overrides: punch jab (highest priority), then wave emote.
-    if (_rig && _rig.rightArm && _localPunchUntil > now) {
+    if (_rigged) {
+      // clip-driven
+    } else if (_rig && _rig.rightArm && _localPunchUntil > now) {
       _applyJabPose(_rig, _localPunchUntil, now);
     } else if (_rig && _rig.rightArm && _localEmoteUntil > now) {
       const phase = (now - (_localEmoteUntil - WORLD.EMOTE_DURATION_MS)) / 200;
@@ -2684,7 +2984,9 @@ const Playground3D = (() => {
     }
 
     // Knockdown pose — falls backward while down, eases upright after.
-    _applyDownPose(_player, _localDownUntil, now);
+    // (Rigged characters play a knockdown clip instead; tipping the root too
+    // would make them fall over twice.)
+    if (!_rigged) _applyDownPose(_player, _localDownUntil, now);
 
     // World-mode-only ticks (no-ops in home mode).
     if (_mode === 'world') {
@@ -2701,7 +3003,7 @@ const Playground3D = (() => {
   }
 
   function _moveWithCollision(dx, dz) {
-    const r = PHYSICS.PLAYER_RADIUS;
+    const r = _playerR;
     const startX = _player.position.x;
     const startZ = _player.position.z;
     let x = startX + dx;
@@ -2753,9 +3055,11 @@ const Playground3D = (() => {
   // neither list, so there's no self-collision; collision is in the XZ plane
   // regardless of jump height (avatars are taller than the jump apex anyway).
   function _collideActors(x, z, dx, dz, r) {
-    const sep = r + BUMP_RADIUS;
-    const sep2 = sep * sep;
-    const hit = (ox, oz) => {
+    // Each actor carries its own build-scaled footprint (see _actorRadiusFor);
+    // BUMP_RADIUS is the fallback for anyone built before that was known.
+    const hit = (ox, oz, oR) => {
+      const sep = r + (oR || BUMP_RADIUS);
+      const sep2 = sep * sep;
       const ddx = x - ox, ddz = z - oz;
       if (ddx * ddx + ddz * ddz >= sep2) return;          // no overlap
       if (dx !== 0 && dz === 0) {
@@ -2766,8 +3070,8 @@ const Playground3D = (() => {
         z = dz > 0 ? oz - reach - 0.001 : oz + reach + 0.001;
       }
     };
-    for (const rp of _remotePlayers.values()) hit(rp.current.x, rp.current.z);
-    for (const npc of _npcs) hit(npc.x, npc.z);
+    for (const rp of _remotePlayers.values()) hit(rp.current.x, rp.current.z, rp.radius);
+    for (const npc of _npcs) hit(npc.x, npc.z, npc.radius || NPC_RADIUS);
     return { x, z };
   }
 
@@ -2985,7 +3289,7 @@ const Playground3D = (() => {
   function _updateCamera() {
     if (!_camera || !_player || !_orbit) return;
     const targetX = _player.position.x;
-    const targetY = _player.position.y + 1.0;   // chest level
+    const targetY = _player.position.y + 1.15 * (_player.scale.y || 1);   // chest level
     const targetZ = _player.position.z;
     const d = _orbit.distance;
     const e = _orbit.elevation;
@@ -3895,8 +4199,10 @@ const Playground3D = (() => {
     // Remote-player tags + bubbles. _hudAnchor is module-scoped and reused
     // each frame to avoid per-tick GC churn — set() instead of new.
     for (const rp of _remotePlayers.values()) {
-      const headY = 1.6;     // approx top-of-head Y in local rig space
-      _hudAnchor.set(rp.rig.position.x, headY + 0.4, rp.rig.position.z);
+      // Top of head, build-scaled (a Huge build stands 1.4× taller), and
+      // following the rig's Y so a tag rises with a jumping peer.
+      const headY = 2.05 * (rp.rig.scale.y || 1);
+      _hudAnchor.set(rp.rig.position.x, (rp.rig.position.y || 0) + headY + 0.3, rp.rig.position.z);
       if (rp.nameEl) _placeHudEl(rp.nameEl, _hudAnchor, 0);
       let stack = 0.4;
       for (const b of rp.bubbleEls) {
@@ -3913,7 +4219,7 @@ const Playground3D = (() => {
 
     // Local player's own chat bubbles, over the head.
     if (_localBubbleEls.length && _player) {
-      _hudAnchor.set(_player.position.x, 2.0, _player.position.z);
+      _hudAnchor.set(_player.position.x, _player.position.y + 2.05 * (_player.scale.y || 1), _player.position.z);
       let stack = 0.4;
       for (const b of _localBubbleEls) {
         stack += 0.5;
@@ -3975,6 +4281,7 @@ const Playground3D = (() => {
         id: spec.id, name: spec.name, rig, nameEl,
         homeX, homeZ, x, z, yaw: heading, heading, dir,
         stepClock: 0, walking: false, pauseUntil: 0,
+        radius: _actorRadiusFor(spec.character || defaultCharacter()),
         headY: 2.05 * bScale + 0.3
       });
     }
@@ -4027,15 +4334,22 @@ const Playground3D = (() => {
     if (!_npcs.length) return;
     for (const npc of _npcs) {
       const bones = npc.rig.userData.bones;
+      // Rigged NPCs animate from last frame's walking flag — a frame of lag
+      // no one can see, and it keeps the steering code below untouched.
+      const npcRigged = _animateActor(npc.rig, {
+        speed: npc.walking ? NPC_SPEED : 0,
+        downUntil: npc.downUntil || 0,
+        getupUntil: npc.downUntil ? npc.downUntil + PUNCH.GETUP_MS : 0
+      }, dt, now);
       const dampIdle = () => {
-        if (!bones) return;
+        if (!bones || npcRigged) return;
         _dampPose(bones, Math.min(1, dt * 8));
         if (npc.swayPhase === undefined) npc.swayPhase = Math.random() * Math.PI * 2;
         bones.body.rotation.z = Math.sin(now * 0.0008 + npc.swayPhase) * 0.02;
       };
 
       // Knockdown pose runs in every branch (falling over, lying, getting up).
-      _applyDownPose(npc.rig, npc.downUntil || 0, now);
+      if (!npcRigged) _applyDownPose(npc.rig, npc.downUntil || 0, now);
       if (npc.downUntil > now) { npc.walking = false; dampIdle(); continue; }
 
       // Paused — stand still, relax limbs to idle.
@@ -4078,14 +4392,14 @@ const Playground3D = (() => {
       // Walk-cycle swing — shared pose with the player / remote players.
       npc.stepClock += dt;
       const phase = (npc.stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
-      if (bones) _walkPose(bones, phase);
+      if (bones && !npcRigged) _walkPose(bones, phase);
     }
   }
 
   function _clearNpcs() {
     for (const npc of _npcs) {
       if (npc.rig && npc.rig.parent) npc.rig.parent.remove(npc.rig);
-      if (npc.rig) _disposeRig(npc.rig);
+      if (npc.rig) _disposeActor(npc.rig);
       if (npc.nameEl && npc.nameEl.parentNode) npc.nameEl.parentNode.removeChild(npc.nameEl);
     }
     _npcs.length = 0;
@@ -4108,6 +4422,7 @@ const Playground3D = (() => {
 
     _remotePlayers.set(id, {
       rig,
+      radius: _actorRadiusFor(character || defaultCharacter()),
       target: { x: x || 0, y: y || 0, z: z || 0, yaw: yaw || 0, walking: false },
       current: { x: x || 0, y: y || 0, z: z || 0, yaw: yaw || 0 },
       stepClock: 0,
@@ -4158,16 +4473,10 @@ const Playground3D = (() => {
     const rp = _remotePlayers.get(id);
     if (!rp) return;
     if (rp.rig.parent) rp.rig.parent.remove(rp.rig);
-    rp.rig.traverse(o => {
-      // Cache-owned (shared) geometries must survive this rig — see _sharedGeom.
-      if (o.geometry && !(o.geometry.userData && o.geometry.userData.shared)) {
-        o.geometry.dispose();
-      }
-      if (o.material) {
-        const mats = Array.isArray(o.material) ? o.material : [o.material];
-        mats.forEach(m => { if (m.map) m.map.dispose(); m.dispose(); });
-      }
-    });
+    // Shared geometry AND textures must survive: the humanoid models share one
+    // set of textures across every character, so disposing maps here used to
+    // blank out everyone else's avatar.
+    _disposeActor(rp.rig);
     if (rp.nameEl && rp.nameEl.parentNode) rp.nameEl.parentNode.removeChild(rp.nameEl);
     for (const b of rp.bubbleEls) if (b.parentNode) b.parentNode.removeChild(b);
     _remotePlayers.delete(id);
@@ -4241,11 +4550,15 @@ const Playground3D = (() => {
     const o = rp.opacity;
     const vis = o > 0.02;
     rp.rig.visible = vis;
-    if (vis) {
+    rp.rig.userData.fade = o;          // the humanoid upgrade fades in to this
+    const inst = rp.rig.userData.humanoid;
+    if (vis && inst) {
+      inst.setOpacity(o);
+    } else if (vis) {
       rp.rig.traverse(m => {
         if (!m.material) return;
         const mats = Array.isArray(m.material) ? m.material : [m.material];
-        mats.forEach(mat => { mat.transparent = true; mat.opacity = o; });
+        mats.forEach(mat => { mat.transparent = o < 1; mat.opacity = o; });
       });
     }
     if (rp.nameEl) rp.nameEl.style.opacity = String(o);
@@ -4274,6 +4587,20 @@ const Playground3D = (() => {
       rp.opacity += (visTarget - rp.opacity) * fadeK;
       if (Math.abs(rp.opacity - visTarget) < 0.01) rp.opacity = visTarget;
       _applyRemoteOpacity(rp);
+
+      // Rigged peers: speed/airborne come from the smoothed position, so the
+      // network protocol is unchanged.
+      const rpVelY = ((rp.current.y || 0) - (rp.prevY || 0)) / Math.max(dt, 0.001);
+      rp.prevY = rp.current.y || 0;
+      if (_animateActor(rp.rig, {
+        speed: rp.target.walking ? PHYSICS.SPEED * 0.8 : 0,
+        airborne: (rp.current.y || 0) > 0.05,
+        velY: rpVelY,
+        downUntil: rp.downUntil || 0,
+        getupUntil: rp.downUntil ? rp.downUntil + PUNCH.GETUP_MS : 0,
+        punchUntil: rp.punchUntil || 0,
+        emoteUntil: rp.emoteUntil || 0
+      }, dt, now)) continue;
 
       const bones = rp.rig.userData.bones;
       if (!bones) continue;
@@ -4398,6 +4725,9 @@ const Playground3D = (() => {
         last = now;
         if (!dragging) yaw += autoYawVel * dt;
         rotGroup.rotation.y = yaw;
+        // Rigged characters breathe/idle in the customiser preview.
+        const inst = rig && rig.userData.humanoid;
+        if (inst) inst.update(dt);
         renderer.render(scene, camera);
         rafId = requestAnimationFrame(loop);
       };
@@ -4536,7 +4866,7 @@ const Playground3D = (() => {
       url = _thumbR.domElement.toDataURL('image/png');
     } catch (_) { url = null; }
     _thumbGroup.remove(rig);
-    _disposeRig(rig);
+    _disposeActor(rig);
     return url;
   }
 

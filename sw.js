@@ -7,7 +7,7 @@
 // - Network-only for /api/* — auth-sensitive responses are never cached.
 // Bump CACHE_VERSION whenever the precache list or strategy changes.
 
-const CACHE_VERSION = 'mcu-v8'; // v8: CMS projects board, dark default, Goals panel, register transition
+const CACHE_VERSION = 'mcu-v9'; // v9: realistic rigged characters (assets/models/humanoid)
 const PRECACHE = [
   '/',
   '/spa.html',

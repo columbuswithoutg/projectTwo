@@ -56,7 +56,9 @@ app.use(helmet({
       'font-src': ["'self'", 'https://fonts.gstatic.com'],
       'img-src': ["'self'", 'data:', 'blob:', 'https://res.cloudinary.com'],
       'media-src': ["'self'", 'blob:', 'https://res.cloudinary.com'],
-      'connect-src': ["'self'", 'ws:', 'wss:', 'https://unpkg.com'],
+      // blob: — Three's GLTFLoader decodes textures embedded in .glb character
+      // models (assets/models/humanoid) by fetch()ing blob: URLs in Chrome.
+      'connect-src': ["'self'", 'ws:', 'wss:', 'https://unpkg.com', 'blob:'],
       'worker-src': ["'self'"],
       'upgrade-insecure-requests': null
     }
