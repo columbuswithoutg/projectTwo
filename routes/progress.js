@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/user');
 const auth = require('../middleware/auth');
+const feed = require('../server/feed');
 
 // Load progress
 router.get('/load', auth, async (req, res) => {
@@ -54,8 +55,16 @@ router.post('/save', auth, async (req, res) => {
     .slice(0, MAX_WATCHED_PROJECTS)
     .map(sanitizeEntry)
     .filter(Boolean);
-  await User.findByIdAndUpdate(req.user.id, { watchedProjects: clean });
+  // Pre-update projection so the feed can diff what changed (new watches,
+  // rewatches, co-watchers, un-watches). The feed write runs after the
+  // response and never blocks or fails the save.
+  const before = await User.findByIdAndUpdate(
+    req.user.id,
+    { watchedProjects: clean },
+    { projection: { watchedProjects: 1 } }
+  ).lean();
   res.json({ message: 'Saved' });
+  if (before) feed.diffSave(req.user.id, before.watchedProjects, clean);
 });
 
 // Increment watch count for a project.
@@ -76,7 +85,12 @@ router.post('/watch', auth, async (req, res) => {
     { $inc: { 'watchedProjects.$.count': 1 } },
     { new: true, projection: { watchedProjects: 1 } }
   );
-  if (incremented) return res.json({ watchedProjects: incremented.watchedProjects });
+  if (incremented) {
+    res.json({ watchedProjects: incremented.watchedProjects });
+    const e = incremented.watchedProjects.find(w => w.projectId === projectId);
+    feed.recordWatch(req.user.id, projectId, e ? e.count : 1, e ? e.watchedWith : []);
+    return;
+  }
 
   // Either the entry doesn't exist yet, or it's already capped at 9999.
   // Try to push a new entry atomically — guarded by $ne so two parallel
@@ -91,7 +105,11 @@ router.post('/watch', auth, async (req, res) => {
     { $push: { watchedProjects: { projectId, count: 1, watchedWith: [], memories: [] } } },
     { new: true, projection: { watchedProjects: 1 } }
   );
-  if (pushed) return res.json({ watchedProjects: pushed.watchedProjects });
+  if (pushed) {
+    res.json({ watchedProjects: pushed.watchedProjects });
+    feed.recordWatch(req.user.id, projectId, 1, []);
+    return;
+  }
 
   // Fell through: entry exists and is capped, OR user is at the project cap.
   // Re-fetch to distinguish — either way return current state so the client
@@ -122,6 +140,7 @@ router.post('/memory', auth, async (req, res) => {
   entry.memories.push(memory);
   await user.save();
   res.json({ memories: entry.memories });
+  feed.recordMemory(req.user.id, projectId, memory);
 });
 
 // Delete a memory
@@ -133,6 +152,7 @@ router.delete('/memory', auth, async (req, res) => {
   entry.memories = entry.memories.filter(m => m.url !== url);
   await user.save();
   res.json({ message: 'Deleted' });
+  if (typeof url === 'string') feed.removeMemory(req.user.id, projectId, url);
 });
 
 // Load walker selections

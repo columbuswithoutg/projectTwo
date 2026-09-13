@@ -279,6 +279,22 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-09-13 — Friends activity Feed tab
+
+New `/feed` tab (Watch Order · Feed · World): a Facebook-style card whenever you or a friend watches a project, who they watched it with, any memories they added, and a comment thread friends can post into.
+
+- `models/FeedPost.js` (new) — one post per watch "session": author, participants (author + accepted co-watchers — a post reaches friends of any participant), projectId, kind (`watch`/`memory`), count, watchedWith, memories (with uploader), comments, activityAt.
+- `server/feed.js` (new) — posts are created server-side only. Activity on the same project within 12h updates the existing post (rewatch, co-watcher, memory) instead of adding another. Un-watching retracts a fresh post with no comments/memories; a save that adds more than 3 projects at once (bulk restore) posts nothing. All helpers swallow errors so the feed can never fail a progress save.
+- `routes/progress.js` — `/save` diffs against the pre-update document; `/watch`, `/memory` (add/delete) record feed activity after responding.
+- `routes/friends.js` — accepting a watch-party request merges both users into one post (awaited, so the accepter's follow-up save doesn't duplicate it).
+- `routes/feed.js` (new) — `GET /api/feed?before=` (self + friends, 15/page), `POST /api/feed/:id/comments`, `DELETE /api/feed/:id/comments/:cid` (comment author or post author).
+- `js/views/feed.js` (new), `spa.html`, `js/boot.js`, `server.js` — view + route; names only link to people you're friends with.
+- `js/views/watchorder.js`, `js/views/app.js` — Feed tab added. `styles.css` — `.feed-*` rules; `.view-tab` no longer wraps on phones.
+- `sw.js` — cache bumped to `mcu-v15`.
+- **Follow-up (same day): reactions + captions.** `FeedPost` gains `caption` (author-only, 500 chars) and `reactions` (one per user: like/love/haha/wow/sad/angry). New `PUT /api/feed/:id/reaction { type | null }` (anyone who can see the post) and `PUT /api/feed/:id/caption` (author only). Cards show the caption (✎ to add/edit inline — Enter saves, Esc cancels), a "You and 3 others" reaction summary that opens a who-reacted list with per-reaction tabs, and a Like button: tap to like/unlike, hover or long-press for the six-reaction picker, ArrowUp from the keyboard. Cache bumped to `mcu-v16`.
+
+---
+
 ### 2026-08-06 — CMS drag-to-move board, dark default, Goals guide, register transition
 
 Four independent UX changes. Full details in each area's plan; summary per file:

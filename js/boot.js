@@ -66,6 +66,7 @@ async function bootContent() {
 // meant seconds of splash for content that rarely changes.)
 Router.register('/', WatchOrderView);
 Router.register('/map', AppView);
+Router.register('/feed', FeedView);
 Router.register('/login', LoginView);
 Router.register('/profile', ProfileView);
 Router.register('/characters', CharactersView);

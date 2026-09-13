@@ -17,6 +17,7 @@ const AppView = {
 
         <div class="view-tabs" role="tablist" aria-label="View mode">
           <button class="view-tab" data-route="/" role="tab" aria-selected="false">Watch Order</button>
+          <button class="view-tab" data-route="/feed" role="tab" aria-selected="false">Feed</button>
           <button class="view-tab" data-route="/world" role="tab" aria-selected="false">World</button>
         </div>
 

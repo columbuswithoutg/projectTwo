@@ -84,7 +84,7 @@ app.use(express.json({ limit: '64kb' }));
 
 // SPA routes — BEFORE static middleware so they take priority over index.html
 const spaFile = path.join(__dirname, 'spa.html');
-['/', '/map', '/login', '/profile', '/characters', '/home', '/customize', '/admin', '/world'].forEach(route => {
+['/', '/map', '/login', '/profile', '/characters', '/home', '/customize', '/admin', '/world', '/feed'].forEach(route => {
   app.get(route, (req, res) => res.sendFile(spaFile));
 });
 // Parameterized SPA routes — `/friend/:username` and its sub-tabs all
@@ -187,6 +187,7 @@ const publicConfigLimiter = rateLimit({
 app.use('/api/auth', authLimiter, require('./routes/auth'));
 app.use('/api/progress', apiLimiter, require('./routes/progress'));
 app.use('/api/friends', apiLimiter, require('./routes/friends'));
+app.use('/api/feed', apiLimiter, require('./routes/feed'));
 app.use('/api/upload', uploadLimiter, require('./routes/upload'));
 app.use('/api/profile', apiLimiter, require('./routes/profile'));
 app.use('/api/admin', adminLimiter, require('./middleware/requireAdmin'), require('./routes/admin'));

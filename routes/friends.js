@@ -4,6 +4,7 @@ const router = express.Router();
 const User = require('../models/user');
 const Friend = require('../models/Friend');
 const auth = require('../middleware/auth');
+const feed = require('../server/feed');
 
 // Escape regex metacharacters so a user can't pass ".*" to dump everyone
 // or "(a+)+$" to hang the DB with catastrophic backtracking (ReDoS).
@@ -138,6 +139,15 @@ router.post('/respond', auth, async (req, res) => {
         // Delete the watch request entirely instead of keeping it as accepted.
         // This prevents it from ever showing in friend lists.
         await Friend.findByIdAndDelete(request._id);
+
+        // Awaited (it never throws): the accepting client immediately saves
+        // its bumped count, and that save must find this merged post rather
+        // than create a second one for the same watch party.
+        await feed.recordCoWatch(
+            { _id: request.requester._id, username: requesterUsername },
+            { _id: recipient._id, username: recipientUsername },
+            projectId
+        );
     }
 
     res.json(request);

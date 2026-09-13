@@ -18,6 +18,7 @@ const WatchOrderView = {
 
         <div class="view-tabs" role="tablist" aria-label="View mode">
           <button class="view-tab active" data-route="/" role="tab" aria-selected="true">Watch Order</button>
+          <button class="view-tab" data-route="/feed" role="tab" aria-selected="false">Feed</button>
           <button class="view-tab" data-route="/world" role="tab" aria-selected="false">World</button>
         </div>
 
