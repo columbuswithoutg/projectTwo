@@ -5,7 +5,7 @@
  *   world   — everyone in the room
  *   project — only players standing on the same project island
  *   whisper — one named player (plus an echo to the sender)
- * One shared cooldown covers every channel.
+ * Only World chat has a cooldown; Project and Whisper send freely.
  *
  * Shared by BOTH ends of the wire:
  *   routes/world-socket.js — authoritative validation + "which island is
@@ -48,7 +48,13 @@
     return null;
   }
 
-  // ms until this sender may chat again (0 = now).
+  // Only the room-wide World channel is rate limited — Project reaches a
+  // handful of players and Whisper reaches one, so neither needs it.
+  function hasCooldown(channel) {
+    return channel === 'world';
+  }
+
+  // ms until this sender may chat on World again (0 = now).
   function cooldownLeft(lastChat, now) {
     if (!lastChat) return 0;
     return Math.max(0, C.COOLDOWN_MS - (now - lastChat));
@@ -80,7 +86,7 @@
   // Friendly text for a rejected send.
   function errorText(err, info) {
     switch (err) {
-      case 'cooldown':   return `Slow down — you can chat again in ${Math.ceil(((info && info.retryInMs) || 0) / 1000)}s.`;
+      case 'cooldown':   return `Slow down — you can chat in World again in ${Math.ceil(((info && info.retryInMs) || 0) / 1000)}s.`;
       case 'no-project': return 'You’re not on a project island — walk onto one to use Project chat.';
       case 'not-found':  return `${(info && info.to) || 'That player'} isn’t in the world right now.`;
       case 'self':       return 'You can’t whisper to yourself.';
@@ -90,5 +96,5 @@
     }
   }
 
-  return { CHANNELS, C, projectAt, cooldownLeft, normalizeMessage, parseWhisperCommand, sameName, errorText };
+  return { CHANNELS, C, projectAt, hasCooldown, cooldownLeft, normalizeMessage, parseWhisperCommand, sameName, errorText };
 });

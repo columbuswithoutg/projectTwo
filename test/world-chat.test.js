@@ -33,7 +33,13 @@ test('projectAt: bad input is null, never a throw', () => {
   assert.equal(L.projectAt(0, 18, [{ id: 'x' }]), null);
 });
 
-test('cooldownLeft: 10s shared cooldown', () => {
+test('hasCooldown: only World chat is rate limited', () => {
+  assert.equal(L.hasCooldown('world'), true);
+  assert.equal(L.hasCooldown('project'), false);
+  assert.equal(L.hasCooldown('whisper'), false);
+});
+
+test('cooldownLeft: 10s World cooldown', () => {
   assert.equal(L.C.COOLDOWN_MS, 10000);
   assert.equal(L.cooldownLeft(0, 5000), 0);
   assert.equal(L.cooldownLeft(1000, 1000), 10000);

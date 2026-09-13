@@ -333,8 +333,8 @@ module.exports = (io) => {
     });
 
     // Chat, split into channels: 'world' (everyone), 'project' (players on
-    // the sender's island) and 'whisper' (one named player). One 10s cooldown
-    // covers all three. `ack` (optional) reports the real outcome so the
+    // the sender's island) and 'whisper' (one named player). Only 'world' has
+    // the 10s cooldown. `ack` (optional) reports the real outcome so the
     // client only clears the box / shows the bubble / starts its countdown
     // for a message that actually went out — a rejected send costs nothing.
     socket.on('world:chat', (raw, ack) => {
@@ -344,8 +344,11 @@ module.exports = (io) => {
       const m = ChatLogic.normalizeMessage(raw);
       if (!m.ok) return reply(m);
       const now = Date.now();
-      const retryInMs = ChatLogic.cooldownLeft(p.lastChat, now);
-      if (retryInMs > 0) return reply({ ok: false, error: 'cooldown', retryInMs });
+      const limited = ChatLogic.hasCooldown(m.channel);
+      if (limited) {
+        const retryInMs = ChatLogic.cooldownLeft(p.lastChat, now);
+        if (retryInMs > 0) return reply({ ok: false, error: 'cooldown', retryInMs });
+      }
 
       // Sender always gets its own copy (so its log shows what went out).
       const out = { channel: m.channel, id: socket.id, username: p.username, text: m.text };
@@ -368,6 +371,7 @@ module.exports = (io) => {
         io.to(target.socketId).emit('world:chat', out);
         socket.emit('world:chat', out);
       }
+      if (!limited) return reply({ ok: true, cooldownMs: 0 });
       p.lastChat = now;
       reply({ ok: true, cooldownMs: ChatLogic.C.COOLDOWN_MS });
     });

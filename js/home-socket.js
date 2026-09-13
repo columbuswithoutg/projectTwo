@@ -180,6 +180,7 @@ const Multiplayer = (() => {
       try { localStorage.setItem(TAB_KEY, tab); } catch (_) {}
       if (tab === 'whisper') refreshWhisperPicker();
       renderTabs();
+      renderCooldown();
       renderChatLog();
     }
 
@@ -212,17 +213,20 @@ const Multiplayer = (() => {
       else renderChatLog();
     }
 
+    // The cooldown is World-only, so the countdown and the locked Send button
+    // only show on the World tab — Project / Whisper stay sendable meanwhile.
     function renderCooldown() {
       const left = Math.max(0, chan.cooldownUntil - Date.now());
+      const shown = (ChatL ? ChatL.hasCooldown(chan.active) : true) && left > 0;
       const el = document.getElementById('world-chat-cooldown');
       const sendBtn = document.getElementById('world-chat-send');
       const row = document.querySelector('.world-chat-row');
       if (el) {
-        el.hidden = left <= 0;
-        el.textContent = left > 0 ? `You can chat again in ${Math.ceil(left / 1000)}s` : '';
+        el.hidden = !shown;
+        el.textContent = shown ? `You can chat in World again in ${Math.ceil(left / 1000)}s` : '';
       }
-      if (sendBtn) sendBtn.disabled = left > 0 || chan.sending;
-      if (row) row.classList.toggle('cooling', left > 0);
+      if (sendBtn) sendBtn.disabled = shown || chan.sending;
+      if (row) row.classList.toggle('cooling', shown);
       if (left <= 0 && chan.cooldownTimer) { clearInterval(chan.cooldownTimer); chan.cooldownTimer = null; }
     }
 
@@ -264,7 +268,7 @@ const Multiplayer = (() => {
         return;
       }
       const left = chan.cooldownUntil - Date.now();
-      if (left > 0) { nudgeCooldown(); return; }
+      if (ChatL.hasCooldown(channel) && left > 0) { nudgeCooldown(); return; }
       if (!socket.connected) { chatWarn('Not connected — message not sent.'); return; }
 
       chan.sending = true;
@@ -282,7 +286,8 @@ const Multiplayer = (() => {
           if (cmd) { setWhisperTarget(cmd.to); setTab('whisper'); }
           // Whispers are private — no speech bubble over our head.
           if (channel !== 'whisper' && Playground3D.showLocalChat) Playground3D.showLocalChat(text);
-          startCooldown((res && res.cooldownMs) || ChatL.C.COOLDOWN_MS);
+          if (ChatL.hasCooldown(channel)) startCooldown(res.cooldownMs || ChatL.C.COOLDOWN_MS);
+          else renderCooldown();
           return;
         }
         if (res && res.error === 'cooldown') {
