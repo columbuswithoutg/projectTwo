@@ -217,7 +217,7 @@
   }
 
   // inp: { speed, maxSpeed, airborne, velY, falling, now, landAt,
-  //        downUntil, getupUntil, punchUntil, emoteUntil }
+  //        downUntil, getupUntil, hitUntil, punchUntil, emoteUntil }
   // → { base, overlay, timeScale }
   function selectAnimState(inp, opts) {
     const A = Object.assign({}, ANIM, opts || {});
@@ -253,8 +253,10 @@
     // whichever way you were going.
     if (inp.backward && (base === 'walk' || base === 'run')) timeScale = -timeScale;
 
+    // A flinch (just been hit) beats a swing, which beats a wave.
     let overlay = null;
-    if (inp.punchUntil && now < inp.punchUntil) overlay = 'punch';
+    if (inp.hitUntil && now < inp.hitUntil) overlay = 'hit';
+    else if (inp.punchUntil && now < inp.punchUntil) overlay = 'punch';
     else if (inp.emoteUntil && now < inp.emoteUntil) overlay = 'wave';
     return { base, overlay, timeScale: round3(timeScale) };
   }
@@ -336,10 +338,15 @@
     const pants = c.pantsStyle ?? 0;
     const out = { shell: null, skirt: null, cape: null, hood: false };
 
-    // Full-body armour (Iron Man) — a metal shell over everything but the head.
+    // Full-body armour (Iron Man) — a metal shell over everything but the head,
+    // two-tone: the biceps and thighs take the accessory colour (Iron Man's
+    // gold on red; a Knight's silver trim on grey).
     if (suit === SUIT.ARMOR) {
+      // Gauntlets over armour move the trim to the arms — plated arms and
+      // vambraces over dark legs (Thor). Silver thighs read as grey trousers.
+      const accentParts = (c.gloves ?? 0) === 3 ? ['upperArm', 'forearm'] : ['upperArm', 'thigh'];
       out.shell = {
-        kind: 'armor', color: 'suit', accent: 'accessory',
+        kind: 'armor', color: 'suit', accent: 'accessory', accentParts,
         parts: ['torso', 'upperArm', 'forearm', 'hand', 'pelvis', 'thigh', 'shin', 'foot'],
         inflate: 0.022, metal: 0.85, rough: 0.28, pauldrons: true
       };

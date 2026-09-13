@@ -13,7 +13,7 @@
 // stale-while-revalidate, so without a new cache name a returning phone runs
 // the OLD scripts for one more visit — which is precisely how the blank-map
 // bug kept reappearing "when reopened on Chrome".
-const CACHE_VERSION = 'mcu-v13'; // v13: garments — skirts, coats, Iron Man armour, Thor's cape
+const CACHE_VERSION = 'mcu-v14'; // v14: OG Avengers redesign + shared NPC fights (world-npc-logic.js)
 const PRECACHE = [
   '/',
   '/spa.html',

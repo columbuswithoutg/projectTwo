@@ -215,6 +215,26 @@ test('selectAnimState: punch overlay beats wave; both layer over walking', () =>
   assert.equal(H.selectAnimState({ ...both, punchUntil: 0, emoteUntil: base.now - 1 }).overlay, null);
 });
 
+test('selectAnimState: hit flinch beats punch and wave, layers over idle and walk', () => {
+  const s = { ...base, hitUntil: base.now + 200, punchUntil: base.now + 200, emoteUntil: base.now + 2000 };
+  assert.deepEqual([H.selectAnimState(s).base, H.selectAnimState(s).overlay], ['idle', 'hit']);
+  assert.deepEqual([H.selectAnimState({ ...s, speed: 1.5 }).base, H.selectAnimState({ ...s, speed: 1.5 }).overlay], ['walk', 'hit']);
+});
+
+test('selectAnimState: an expired hit falls through to punch, then wave, then none', () => {
+  const s = { ...base, hitUntil: base.now - 1, punchUntil: base.now + 200, emoteUntil: base.now + 2000 };
+  assert.equal(H.selectAnimState(s).overlay, 'punch');
+  assert.equal(H.selectAnimState({ ...s, punchUntil: base.now - 1 }).overlay, 'wave');
+  assert.equal(H.selectAnimState({ ...s, punchUntil: 0, emoteUntil: 0 }).overlay, null);
+});
+
+test('selectAnimState: no hit overlay while down, getting up, or falling', () => {
+  const k = { ...base, hitUntil: base.now + 200, downUntil: base.now + 300, getupUntil: base.now + 900 };
+  assert.deepEqual(H.selectAnimState(k), { base: 'down', overlay: null, timeScale: 1 });
+  assert.deepEqual([H.selectAnimState({ ...k, now: base.now + 500 }).base, H.selectAnimState({ ...k, now: base.now + 500 }).overlay], ['getup', null]);
+  assert.equal(H.selectAnimState({ ...base, airborne: true, falling: true, hitUntil: base.now + 200 }).overlay, null);
+});
+
 test('selectAnimState: falling to respawn shows the fall with no overlay', () => {
   const s = H.selectAnimState({ ...base, airborne: true, falling: true, velY: 3, punchUntil: base.now + 100 });
   assert.deepEqual(s, { base: 'fall', overlay: null, timeScale: 1 });

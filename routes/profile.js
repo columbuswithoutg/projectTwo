@@ -73,7 +73,7 @@ const HOME_CHARACTER_RANGES = {
   skin:            { max: 12 },   // 12 = Hulk green (added for Avengers presets)
   hairStyle:       { max: 13 },
   hairColor:       { max: 13 },
-  shirtColor:      { max: 15 },
+  shirtColor:      { max: 16 },
   pantsColor:      { max: 15 },
   eyeColor:        { max: 7 },
   eyeShape:        { max: 4 },
@@ -93,27 +93,27 @@ const HOME_CHARACTER_RANGES = {
   pantsStyle:      { max: 6 },    // 0 = plain pants (legacy)
   shoeStyle:       { max: 6 },    // 0 = plain shoe (legacy)
   outerwear:       { max: 6 },    // 0 = none
-  outerwearColor:  { max: 15 },   // reuses SHIRT_COLORS
+  outerwearColor:  { max: 16 },   // reuses SHIRT_COLORS
   suit:            { max: 5 },    // 0 = none (overrides top+bottom)
   suitColor:       { max: 7 },    // SUIT_COLORS
   gloves:          { max: 3 },    // 0 = none
-  belt:            { max: 3 },    // 0 = none
+  belt:            { max: 4 },    // 0 = none
   mask:            { max: 4 },    // 0 = none
   accessoryColor:  { max: 5 },    // ACCESSORY_COLORS (gloves/belt/mask trim)
   // Round 2: gender, accent/secondary colors, reusable hero slots + colors.
   // NOTE: the four accent (*Color2) maxes are palette.length, NOT length-1 —
   // index 0 is the "Auto" sentinel and 1..N map to palette[0..N-1].
   gender:          { max: 2 },    // 0 = Neutral (back-compat)
-  shirtColor2:     { max: 16 },   // Auto + SHIRT_COLORS (16)
+  shirtColor2:     { max: 17 },   // Auto + SHIRT_COLORS (17)
   pantsColor2:     { max: 16 },   // Auto + PANTS_COLORS (16)
-  outerwearColor2: { max: 16 },   // Auto + SHIRT_COLORS (16)
+  outerwearColor2: { max: 17 },   // Auto + SHIRT_COLORS (17)
   shoeColor2:      { max: 8 },    // Auto + SHOE_COLORS (8)
   helmet:          { max: 6 },    // HELMET_STYLES (0 = none); 6 = Soldier (WWII Cap)
-  helmetColor:     { max: 15 },   // SHIRT_COLORS
+  helmetColor:     { max: 16 },   // SHIRT_COLORS
   prop:            { max: 6 },    // PROP_STYLES (0 = none); 6 = Bow + quiver
-  propColor:       { max: 15 },   // SHIRT_COLORS
+  propColor:       { max: 16 },   // SHIRT_COLORS
   emblem:          { max: 7 },    // EMBLEM_STYLES (0 = none); 6 = Soldier flag, 7 = Discs
-  emblemColor:     { max: 15 }    // SHIRT_COLORS
+  emblemColor:     { max: 16 }    // SHIRT_COLORS
 };
 
 function pickInt(value, max) {

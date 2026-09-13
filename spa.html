@@ -139,6 +139,9 @@
   <!-- Pure physics helpers (also unit-tested via node --test) — must load
        before playground3d.js which calls PG3DPhysics from its tick. -->
   <script defer src="js/playground3d-physics.js"></script>
+  <!-- Shared Avengers NPC combat rules (HP / KO / aggro) — the server runs
+       the same file; playground3d.js reads its tables. -->
+  <script defer src="js/world-npc-logic.js"></script>
   <!-- Realistic humanoid characters: pure logic (also unit-tested) + the glTF
        rig loader. Both must load before playground3d.js, which calls them
        from _buildPlayer. -->

@@ -209,7 +209,9 @@ const Playground3D = (() => {
   let _localPunchUntil = 0;        // jab animation window on the local rig
   let _lastPunchAt = 0;            // cooldown anchor
   let _localDownUntil = 0;         // local player knocked down — input dead
-  let _onPunch = null;             // view/socket callback: ({ target }) on every local punch
+  let _onPunch = null;             // view/socket callback: ({ target, npc }) on every local punch
+  let _onNpcPunch = null;          // socket callback: (npcId) when a hero angry at US swings
+  const _npcCombat = new Map();    // npcId → last server record; seeds heroes that materialise mid-fight
   // ── shared Infinity Stones (server-authoritative PvP; see routes/world-socket.js) ──
   const _spawnPoint = { x: 0, z: 0 }; // /world start position (Iron Man 1) — snap-respawn target
   let _initialSpawnId = null;         // island/node the player picked to spawn on (spawn picker), or null
@@ -294,6 +296,8 @@ const Playground3D = (() => {
     _onStoneGrab = null;
     _localId = null;
     _onPunch = null;
+    _onNpcPunch = null;
+    _npcCombat.clear();
     _localPunchUntil = 0;
     _localDownUntil = 0;
     if (_rafId) cancelAnimationFrame(_rafId);
@@ -742,15 +746,25 @@ const Playground3D = (() => {
       for (const piece of [garments.shell, garments.skirt, garments.cape]) {
         if (piece) piece.hex = hexOf(piece.color);
       }
+      // Two-tone shells (armour): the accent parts take a second colour.
+      if (garments.shell && garments.shell.accent && garments.shell.accentParts) {
+        garments.shell.accentHex = hexOf(garments.shell.accent);
+      }
     }
+    // A Ripped top (no suit) means the whole outfit is torn — bare chest and
+    // arms, bare feet, and long trousers ripped off at mid-shin (the Hulk).
+    const ripped = suit === 0 && (c.shirtStyle ?? 0) === 8;
+    const accessoryHex = _palette('ACCESSORY_COLORS', c.accessoryColor);
     return {
       model: (c.gender ?? 0) === 2 ? 'female' : 'male',
       build: c.build ?? 1,
       skin: _palette('SKIN_TONES', c.skin),
-      top: suitHex || _palette('SHIRT_COLORS', c.shirtColor),
+      top: ripped ? null : (suitHex || _palette('SHIRT_COLORS', c.shirtColor)),
       bottom: suitHex || _palette('PANTS_COLORS', c.pantsColor),
-      shoes: _palette('SHOE_COLORS', c.shoeColor),
-      gloves: (c.gloves ?? 0) > 0 ? _palette('ACCESSORY_COLORS', c.accessoryColor) : null,
+      shoes: ripped ? null : _palette('SHOE_COLORS', c.shoeColor),
+      gloves: (c.gloves ?? 0) > 0 ? accessoryHex : null,
+      // Gauntlets run up the forearm: Thor's vambraces, Widow's bracers.
+      bracers: (c.gloves ?? 0) === 3 ? accessoryHex : null,
       hair: _palette('HAIR_COLORS', c.hairColor),
       eyes: _palette('EYE_COLORS', c.eyeColor),
       sleeves: suit > 0 ? 'long' : (_SLEEVES[c.shirtStyle ?? 0] || 'short'),
@@ -758,6 +772,7 @@ const Playground3D = (() => {
       // stay bare; otherwise the trouser style decides how far the cloth runs.
       legs: (garments && garments.skirt) ? 'bare'
         : suit > 0 ? ((suit === 2 || suit === 3) ? 'short' : 'long')
+        : (ripped && (_LEGS[c.pantsStyle ?? 0] || 'long') === 'long') ? 'torn'
         : (_LEGS[c.pantsStyle ?? 0] || 'long'),
       garments,
       hairStyle: hidden.hairStyle ? null : (_HAIR_MESH[c.hairStyle ?? 0] || null),
@@ -829,14 +844,30 @@ const Playground3D = (() => {
       mat
     };
   }
+  // Hero gear material — standard-shaded so the pieces sit in the same light
+  // as the rigged bodies (the old Lambert boxes read flat and pasted-on).
+  function _gearMat(hex, o) {
+    o = o || {};
+    const THREE = window.THREE;
+    const m = new THREE.MeshStandardMaterial({
+      color: hex, metalness: o.metal != null ? o.metal : 0.15, roughness: o.rough != null ? o.rough : 0.6
+    });
+    if (o.emissive != null) {
+      m.emissive = new THREE.Color(o.emissive);
+      m.emissiveIntensity = o.emissiveIntensity != null ? o.emissiveIntensity : 1;
+    }
+    return m;
+  }
+  const _METAL = { metal: 0.8, rough: 0.35 };
+
   function _attachRealisticGear(root, c, inst) {
     if (!inst || !inst.attachSlot) return;
     const THREE = window.THREE;
     const hidden = (typeof Playground !== 'undefined' && Playground.characterHidden)
       ? Playground.characterHidden(c) : {};
-    const mat = (pal, idx) => new THREE.MeshLambertMaterial({ color: _palette(pal, idx) });
+    const mat = (pal, idx, o) => _gearMat(_palette(pal, idx), o);
 
-    const accMat = mat('ACCESSORY_COLORS', c.accessoryColor);
+    const accMat = mat('ACCESSORY_COLORS', c.accessoryColor, { metal: 0.3, rough: 0.55 });
     const maskIdx = hidden.mask ? 0 : (c.mask ?? 0);
     // Centred on the real head and scaled to its width (the pieces assume a
     // 0.55u cube head), so it fits both the male and female bodies.
@@ -850,7 +881,7 @@ const Playground3D = (() => {
         const glasses = _buildGlasses(c.glasses ?? 0, GEAR_HEAD_SZ);
         if (glasses) headSlot.add(glasses);
       }
-      const helmet = _buildHelmet(c.helmet ?? 0, mat('SHIRT_COLORS', c.helmetColor), GEAR_HEAD_SZ);
+      const helmet = _buildHelmet(c.helmet ?? 0, mat('SHIRT_COLORS', c.helmetColor, { metal: 0.7, rough: 0.35 }), GEAR_HEAD_SZ);
       if (helmet) headSlot.add(helmet);
       if (maskIdx) _buildAccessories(_gearCtx(headSlot, { HEAD_SZ: GEAR_HEAD_SZ }, { mask: maskIdx }, accMat));
       if (!headSlot.children.length) headSlot.removeFromParent();
@@ -875,15 +906,40 @@ const Playground3D = (() => {
       if (emblem) chestSlot.add(emblem); else if (chestSlot) chestSlot.removeFromParent();
     }
 
+    // Iron Man helmet ⇒ powered armour: repulsor glow in each palm.
+    if ((c.helmet ?? 0) === 1 && inst.anchors) {
+      for (const side of ['L', 'R']) {
+        const g = inst.attachSlot('hand.' + side, { scale: 1 });
+        const hand = inst.anchors['hand.' + side];
+        if (!g || !hand) continue;
+        // Middle of the palm: halfway to the average knuckle (bone-local, so
+        // it rides the hand through every clip).
+        const ks = hand.children.filter(b => b.isBone && !/thumb/i.test(b.name));
+        if (ks.length) {
+          const p = new THREE.Vector3();
+          for (const k of ks) p.add(k.position);
+          g.position.copy(p.divideScalar(ks.length).multiplyScalar(0.55));
+        }
+        const orb = new THREE.Mesh(new THREE.SphereGeometry(0.036, 12, 10),
+          _gearMat(0xbff4ff, { emissive: 0x9fe6ff, emissiveIntensity: 1.8, rough: 0.3 }));
+        orb.name = 'gear:repulsor';
+        g.add(orb);
+      }
+    }
+
     if ((c.prop ?? 0) > 0) {
       // Whole-arm frames: the builder grips at y = −ARM_LEN from the shoulder,
       // so the slot spans shoulder→hand and every offset scales with the arm.
       const l = inst.attachSlot('hand.L', { armSpan: GEAR_ARM_LEN });
       const r = inst.attachSlot('hand.R', { armSpan: GEAR_ARM_LEN });
       if (l && r) {
-        _buildProp(c.prop, mat('SHIRT_COLORS', c.propColor), {
-          leftArm: l, rightArm: r, dims: { ARM_LEN: GEAR_ARM_LEN }
+        // Back-mounted pieces (the quiver) hang off the chest; the builder
+        // offsets them behind the torso centre.
+        const back = inst.attachSlot('chest', { center: true, y: 0.02, scale: 1 });
+        _buildProp(c.prop, mat('SHIRT_COLORS', c.propColor, { metal: 0.5, rough: 0.45 }), {
+          leftArm: l, rightArm: r, torso: back, dims: { ARM_LEN: GEAR_ARM_LEN }
         });
+        if (back && !back.children.length) back.removeFromParent();
         // The builder grips at y = −ARM_LEN and offsets sideways/forward for a
         // chunky blocky arm. Slide the grip onto the palm (the slot origin) and
         // tuck those offsets in, or the prop floats beside a slim real wrist.
@@ -913,7 +969,7 @@ const Playground3D = (() => {
   // One animation entry point for every character. Returns false for
   // procedural rigs so the caller runs the old hand-posed code.
   //   s: { speed, airborne, velY, falling, landAt, downUntil, getupUntil,
-  //        punchUntil, emoteUntil }
+  //        hitUntil, hitClip, punchUntil, punchClip, emoteUntil, overlaySeq }
   let _coarsePointer = null;   // touch device → tighter LOD tiers
 
   function _animateActor(root, s, dt, now) {
@@ -945,13 +1001,19 @@ const Playground3D = (() => {
       landAt: s.landAt || 0,
       downUntil: s.downUntil || 0,
       getupUntil: s.getupUntil || 0,
+      hitUntil: s.hitUntil || 0,
       punchUntil: s.punchUntil || 0,
       emoteUntil: s.emoteUntil || 0
     });
-    if (st.overlay !== root.userData.overlay) {
-      root.userData.overlay = st.overlay;
+    // Overlays are keyed by name + a caller-bumped sequence, so two hits in a
+    // row (or a jab straight into a cross) restart the clip instead of
+    // running on from the first one. Callers without a seq behave as before.
+    const key = st.overlay ? st.overlay + ':' + (s.overlaySeq | 0) : null;
+    if (key !== root.userData.overlayKey) {
+      root.userData.overlayKey = key;
       // The free clip set has no wave, so the emote borrows the talking idle.
-      if (st.overlay === 'punch') inst.play('Punch_Jab', { restart: true, once: true, fade: 0.08, timeScale: 1.7 });
+      if (st.overlay === 'hit') inst.play(s.hitClip || 'Hit_Chest', { restart: true, once: true, fade: 0.05, timeScale: 1.3 });
+      else if (st.overlay === 'punch') inst.play(s.punchClip || 'Punch_Jab', { restart: true, once: true, fade: 0.08, timeScale: 1.7 });
       else if (st.overlay === 'wave') inst.play('Idle_Talking_Loop', { restart: true, fade: 0.2 });
       else inst.setState(st.base, st.timeScale, true);   // resume the base clip
     } else if (!st.overlay) {
@@ -1758,15 +1820,33 @@ const Playground3D = (() => {
     const grp = new THREE.Group();
     const fz = headSize / 2;
     const mkB = (w, h, d, m) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+    // Sphere-based helms: the head slot is scaled per axis to the real head,
+    // so a sphere here becomes head-shaped on the rigged body (and a slightly
+    // rounded cube on the legacy one). Sphere phi runs around Y with +Z (the
+    // face) at phi = π/2.
+    const R = headSize * 0.56;
+    const front = (r, widthRad, thetaStart, thetaLen, m) =>
+      new THREE.Mesh(new THREE.SphereGeometry(r, 28, 18, Math.PI / 2 - widthRad / 2, widthRad, thetaStart, thetaLen), m);
     switch (idx) {
-      case 1: { // Iron Man — shell + gold faceplate + cyan eye slits
-        grp.add(mkB(headSize * 1.08, headSize * 1.08, headSize * 1.08, mat));
-        const face = mkB(headSize * 0.82, headSize * 0.7, 0.06, new THREE.MeshLambertMaterial({ color: 0xd9a420 }));
-        face.position.set(0, -0.02, fz + 0.03); grp.add(face);
-        [-0.12, 0.12].forEach(x => {
-          const eye = mkB(0.13, 0.045, 0.02, new THREE.MeshLambertMaterial({ color: 0x9fe6ff, emissive: 0x9fe6ff }));
-          eye.position.set(x, 0.05, fz + 0.06); grp.add(eye);
+      case 1: { // Iron Man — red shell, gold faceplate, glowing eye slits
+        const shell = new THREE.Mesh(new THREE.SphereGeometry(R * 1.02, 28, 20), mat);
+        shell.scale.set(1, 1.08, 1.04); grp.add(shell);
+        const gold = _gearMat(0xd9a420, { metal: 0.85, rough: 0.3 });
+        const face = front(R * 1.03, Math.PI * 0.5, Math.PI * 0.3, Math.PI * 0.46, gold);
+        face.scale.set(1, 1.08, 1.04); grp.add(face);
+        // Cheek ridges and the chin line frame the plate.
+        [-1, 1].forEach(s => {
+          const ridge = mkB(0.035, 0.2, 0.03, gold);
+          ridge.position.set(s * headSize * 0.33, -0.02, R * 0.92); ridge.rotation.y = s * 0.45; grp.add(ridge);
         });
+        const chin = mkB(headSize * 0.42, 0.045, 0.03, gold);
+        chin.position.set(0, -headSize * 0.36, R * 0.9); grp.add(chin);
+        [-0.1, 0.1].forEach(x => {
+          const eye = mkB(0.11, 0.04, 0.03, _gearMat(0xbff4ff, { emissive: 0x9fe6ff, emissiveIntensity: 1.6 }));
+          eye.position.set(x, 0.06, R * 1.02); eye.rotation.y = x > 0 ? -0.25 : 0.25; grp.add(eye);
+        });
+        const mouth = mkB(0.12, 0.018, 0.02, _gearMat(0x3a2408, { metal: 0.6, rough: 0.5 }));
+        mouth.position.set(0, -0.11, R * 1.04); grp.add(mouth);
         break;
       }
       case 2: { // cowl — crown + sides, open face
@@ -1782,7 +1862,7 @@ const Playground3D = (() => {
         const cap = mkB(headSize * 1.06, headSize * 0.5, headSize * 1.06, mat);
         cap.position.y = headSize * 0.3; grp.add(cap);
         [-1, 1].forEach(s => {
-          const wing = mkB(0.04, 0.22, 0.12, new THREE.MeshLambertMaterial({ color: 0xd8dce4 }));
+          const wing = mkB(0.04, 0.22, 0.12, _gearMat(0xd8dce4));
           wing.position.set(s * headSize * 0.6, headSize * 0.42, 0);
           wing.rotation.z = s * 0.5; grp.add(wing);
         });
@@ -1790,32 +1870,37 @@ const Playground3D = (() => {
       }
       case 4: { // knight — full helm + dark visor slit
         grp.add(mkB(headSize * 1.08, headSize * 1.08, headSize * 1.08, mat));
-        const visor = mkB(headSize * 0.8, 0.06, 0.03, new THREE.MeshLambertMaterial({ color: 0x111111 }));
+        const visor = mkB(headSize * 0.8, 0.06, 0.03, _gearMat(0x111111));
         visor.position.set(0, 0.04, fz + 0.04); grp.add(visor);
         break;
       }
       case 5: { // visor — skullcap + tinted band over the eyes
         const cap = mkB(headSize * 1.06, headSize * 0.5, headSize * 1.06, mat);
         cap.position.y = headSize * 0.3; grp.add(cap);
-        const visor = mkB(headSize * 1.02, 0.16, 0.05, new THREE.MeshLambertMaterial({ color: 0x28435a }));
+        const visor = mkB(headSize * 1.02, 0.16, 0.05, _gearMat(0x28435a));
         visor.position.set(0, 0.05, fz + 0.03); grp.add(visor);
         break;
       }
-      case 6: { // soldier — snug helm showing the face + white "A" + small side wings (WWII Cap)
-        const white = new THREE.MeshLambertMaterial({ color: 0xf0f0f0 });
-        const crown = mkB(headSize * 1.06, headSize * 0.64, headSize * 1.06, mat);
-        crown.position.y = headSize * 0.2; grp.add(crown);
+      case 6: { // soldier — rounded helm open at the face + white "A" + temple wings (WWII Cap)
+        const white = _gearMat(0xf0f0f0, { metal: 0.2, rough: 0.5 });
+        // Dome over the crown, then a band round the back and sides that
+        // stops ±45° either side of the face, so the eyes and mouth show.
+        const dome = new THREE.Mesh(new THREE.SphereGeometry(R * 1.05, 28, 14, 0, Math.PI * 2, 0, Math.PI * 0.5), mat);
+        dome.scale.set(1, 1.02, 1.04); grp.add(dome);
+        const band = new THREE.Mesh(new THREE.SphereGeometry(R * 1.05, 28, 10, Math.PI * 0.75, Math.PI * 1.5, Math.PI * 0.5, Math.PI * 0.3), mat);
+        band.scale.set(1, 1.02, 1.04); grp.add(band);
         [-1, 1].forEach(s => {                    // ear flaps, leaving the face open
-          const side = mkB(headSize * 0.16, headSize * 0.52, headSize * 1.04, mat);
-          side.position.set(s * headSize * 0.47, -headSize * 0.02, 0); grp.add(side);
+          const side = mkB(headSize * 0.1, headSize * 0.34, headSize * 0.42, mat);
+          side.position.set(s * R * 1.0, -headSize * 0.1, -0.02); grp.add(side);
         });
-        const aLeft = mkB(0.04, 0.2, 0.02, white);  aLeft.position.set(-0.04, 0.1, fz + 0.02);  aLeft.rotation.z = -0.32; grp.add(aLeft);
-        const aRight = mkB(0.04, 0.2, 0.02, white); aRight.position.set(0.04, 0.1, fz + 0.02);  aRight.rotation.z = 0.32;  grp.add(aRight);
-        const aBar = mkB(0.1, 0.035, 0.02, white);  aBar.position.set(0, 0.06, fz + 0.02);       grp.add(aBar);
+        const zA = R * 1.02;
+        const aLeft = mkB(0.035, 0.17, 0.02, white);  aLeft.position.set(-0.035, 0.15, zA);  aLeft.rotation.z = -0.3; grp.add(aLeft);
+        const aRight = mkB(0.035, 0.17, 0.02, white); aRight.position.set(0.035, 0.15, zA);  aRight.rotation.z = 0.3;  grp.add(aRight);
+        const aBar = mkB(0.085, 0.03, 0.02, white);   aBar.position.set(0, 0.12, zA + 0.005); grp.add(aBar);
         [-1, 1].forEach(s => {                    // swept-back temple wings
-          const wing = mkB(0.16, 0.1, 0.02, white);
-          wing.position.set(s * headSize * 0.62, headSize * 0.12, 0.06);
-          wing.rotation.z = s * 0.35; grp.add(wing);
+          const wing = mkB(0.15, 0.08, 0.02, white);
+          wing.position.set(s * R * 1.02, headSize * 0.14, 0.05);
+          wing.rotation.z = s * 0.3; wing.rotation.y = s * 0.5; grp.add(wing);
         });
         break;
       }
@@ -1836,36 +1921,68 @@ const Playground3D = (() => {
     const { leftArm, rightArm, dims } = ctx;
     const { ARM_LEN } = dims;
     const handY = -ARM_LEN;
-    const metal = () => new THREE.MeshLambertMaterial({ color: 0xc9ccd4 });
+    const metal = () => _gearMat(0xc9ccd4, _METAL);
     const grp = new THREE.Group();
     let arm = rightArm;
+    // Recurve bow: two limbs sweeping forward at the tips, a leather grip and
+    // a string between the tips. Lies in the frontal plane, tips toward +Z.
+    const buildBow = () => {
+      const limb = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0, -0.46, 0.06), new THREE.Vector3(-0.015, -0.36, 0.13), new THREE.Vector3(0, -0.18, 0.06),
+        new THREE.Vector3(0, 0, 0.02),
+        new THREE.Vector3(0, 0.18, 0.06), new THREE.Vector3(-0.015, 0.36, 0.13), new THREE.Vector3(0, 0.46, 0.06)
+      ]);
+      grp.add(new THREE.Mesh(new THREE.TubeGeometry(limb, 36, 0.014, 7, false), mat));
+      const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.13, 10), _gearMat(0x2a1a10, { rough: 0.9 }));
+      grip.position.z = 0.02; grp.add(grip);
+      const string = new THREE.Mesh(new THREE.BoxGeometry(0.007, 0.9, 0.007), _gearMat(0xdddddd, { rough: 0.8 }));
+      string.position.z = -0.01; grp.add(string);
+    };
     switch (idx) {
       case 1: { // shield — strapped to the left forearm, facing forward
         arm = leftArm;
-        const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.05, 20), mat);
-        disc.rotation.x = Math.PI / 2; grp.add(disc);
-        const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.06, 20), new THREE.MeshLambertMaterial({ color: 0xf0f0f0 }));
-        ring.rotation.x = Math.PI / 2; grp.add(ring);
-        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.07, 16), mat);
-        hub.rotation.x = Math.PI / 2; grp.add(hub);
+        const white = _gearMat(0xf0f0f0, _METAL);
+        const blue = _gearMat(0x2a4a9a, _METAL);
+        // Concentric rings, each a hair prouder than the last, then the star.
+        const ring = (r, h, m) => { const d = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 32), m); d.rotation.x = Math.PI / 2; grp.add(d); };
+        ring(0.34, 0.05, mat);
+        ring(0.265, 0.056, white);
+        ring(0.19, 0.062, mat);
+        ring(0.115, 0.068, blue);
+        const star = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.02, 5), white);
+        star.rotation.x = Math.PI / 2; star.rotation.y = Math.PI; star.position.z = 0.04; grp.add(star);
+        // Forearm straps behind the disc.
+        [-0.06, 0.06].forEach(y => {
+          const strap = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.03, 0.05), _gearMat(0x5a3a22, { rough: 0.9 }));
+          strap.position.set(0, y, -0.04); grp.add(strap);
+        });
         grp.position.set(0, handY + 0.12, 0.2);
         break;
       }
-      case 2: { // hammer — gripped at the side, heavy head down, tilted forward
-        const handle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.42, 0.07), new THREE.MeshLambertMaterial({ color: 0x5a3a22 }));
+      case 2: { // Mjolnir — squat bevelled head, leather-wrapped handle, strap loop
+        const leather = _gearMat(0x4a2e1a, { rough: 0.9 });
+        const wrap = _gearMat(0x7a5230, { rough: 0.85 });
+        const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.44, 12), leather);
         handle.position.y = -0.1; grp.add(handle);
-        const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.24, 0.24), metal());
+        [-0.02, 0.0, 0.02, 0.04, 0.06].forEach(y => {
+          const band = new THREE.Mesh(new THREE.TorusGeometry(0.031, 0.007, 6, 14), wrap);
+          band.rotation.x = Math.PI / 2; band.position.y = y - 0.1; grp.add(band);
+        });
+        const loop = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.008, 6, 14), leather);
+        loop.position.y = 0.14; grp.add(loop);
+        const head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.2), metal());
         head.position.y = -0.38; grp.add(head);
+        const bevel = new THREE.Mesh(new THREE.BoxGeometry(0.365, 0.16, 0.16), metal());
+        bevel.position.y = -0.38; grp.add(bevel);
+        const bevel2 = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.215, 0.215), metal());
+        bevel2.position.y = -0.38; grp.add(bevel2);
         grp.position.set(0.02, handY + 0.06, 0.14);
         grp.rotation.x = -0.3;
         break;
       }
       case 3: { // bow — held vertically in the left hand, FACING FORWARD
         arm = leftArm;
-        const bow = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.022, 8, 22, Math.PI * 1.5), mat);
-        bow.rotation.z = Math.PI * 0.25; grp.add(bow);
-        const string = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.6, 0.012), new THREE.MeshLambertMaterial({ color: 0xdddddd }));
-        string.position.z = -0.04; grp.add(string);
+        buildBow();
         grp.position.set(-0.03, handY, 0.26);
         break;
       }
@@ -1874,7 +1991,7 @@ const Playground3D = (() => {
         blade.position.y = 0.3; grp.add(blade);
         const guard = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.06), mat);
         guard.position.y = 0.02; grp.add(guard);
-        const grip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.05), new THREE.MeshLambertMaterial({ color: 0x3a2a1a }));
+        const grip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.05), _gearMat(0x3a2a1a));
         grip.position.y = -0.06; grp.add(grip);
         grp.position.set(0, handY + 0.04, 0.12);
         grp.rotation.x = -0.25;
@@ -1883,7 +2000,7 @@ const Playground3D = (() => {
       case 5: { // staff — vertical, gripped at the side, slight forward tilt
         const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.0, 10), mat);
         grp.add(shaft);
-        const orb = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 10), new THREE.MeshLambertMaterial({ color: 0xd9a420 }));
+        const orb = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 10), _gearMat(0xd9a420));
         orb.position.y = 0.55; grp.add(orb);
         grp.position.set(0, handY + 0.2, 0.12);
         grp.rotation.x = -0.12;
@@ -1891,17 +2008,14 @@ const Playground3D = (() => {
       }
       case 6: { // bow + quiver — bow in the left hand, a quiver of arrows on the back
         arm = leftArm;
-        const bow = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.022, 8, 22, Math.PI * 1.5), mat);
-        bow.rotation.z = Math.PI * 0.25; grp.add(bow);
-        const string = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.6, 0.012), new THREE.MeshLambertMaterial({ color: 0xdddddd }));
-        string.position.z = -0.04; grp.add(string);
+        buildBow();
         grp.position.set(-0.03, handY, 0.26);
         // Quiver — parented to the torso/back so it rides the body, not the arm.
         if (ctx.torso) {
           const q = new THREE.Group();
-          q.add(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.5, 12), new THREE.MeshLambertMaterial({ color: 0x5a3a22 })));
-          const shaftMat = new THREE.MeshLambertMaterial({ color: 0xcfcfcf });
-          const headMat = new THREE.MeshLambertMaterial({ color: 0xd9a420 });
+          q.add(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.5, 12), _gearMat(0x5a3a22, { rough: 0.9 })));
+          const shaftMat = _gearMat(0xcfcfcf, { rough: 0.7 });
+          const headMat = _gearMat(0xd9a420, _METAL);
           [-0.03, 0.03].forEach(x => {
             const sh = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.28, 6), shaftMat);
             sh.position.set(x, 0.34, 0); q.add(sh);
@@ -1934,10 +2048,12 @@ const Playground3D = (() => {
         star.rotation.x = Math.PI / 2; grp.add(star);
         break;
       }
-      case 2: { // arc reactor — emissive ring + core
-        const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.03, 18), new THREE.MeshLambertMaterial({ color: 0x9fe6ff, emissive: 0x6fd0e6 }));
+      case 2: { // arc reactor — recessed steel housing, glowing ring + white-hot core
+        const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.025, 24), _gearMat(0x8a8f99, _METAL));
+        housing.rotation.x = Math.PI / 2; housing.position.z = -0.01; grp.add(housing);
+        const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.105, 0.03, 24), _gearMat(0x9fe6ff, { emissive: 0x6fd0e6, emissiveIntensity: 1.6, rough: 0.3 }));
         ring.rotation.x = Math.PI / 2; grp.add(ring);
-        const core = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.04, 14), new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffffff }));
+        const core = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.04, 18), _gearMat(0xffffff, { emissive: 0xffffff, emissiveIntensity: 2.2 }));
         core.rotation.x = Math.PI / 2; grp.add(core);
         break;
       }
@@ -1959,8 +2075,8 @@ const Playground3D = (() => {
         break;
       }
       case 6: { // soldier flag — white chest star + red/white abdomen stripes (WWII Cap)
-        const white = new THREE.MeshLambertMaterial({ color: 0xf0f0f0 });
-        const red = new THREE.MeshLambertMaterial({ color: 0xc62a2a });
+        const white = _gearMat(0xf0f0f0);
+        const red = _gearMat(0xc62a2a);
         const star = new THREE.Mesh(new THREE.CylinderGeometry(0.135, 0.135, 0.02, 5), white);
         star.rotation.x = Math.PI / 2; star.position.y = 0.14; grp.add(star);
         [red, white, red, white, red].forEach((m, i) => {
@@ -1970,7 +2086,7 @@ const Playground3D = (() => {
         break;
       }
       case 7: { // discs — Thor's silver chest discs in a 3-2 cluster (hardcoded silver)
-        const silver = new THREE.MeshLambertMaterial({ color: 0xc9ccd4 });
+        const silver = _gearMat(0xc9ccd4);
         const disc = (x, y) => {
           const d2 = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.025, 16), silver);
           d2.rotation.x = Math.PI / 2; d2.position.set(x, y, 0); grp.add(d2);
@@ -2316,14 +2432,23 @@ const Playground3D = (() => {
         sash.position.set(0, 0, TORSO_D / 2 + 0.01);
         sash.rotation.z = 0.5;
         add(torso, sash);
-      } else {          // belt / utility
+      } else {          // belt / utility / widow
         const b = mkB(TORSO_W * 1.04, 0.12, TORSO_D * 1.04, mat);
         b.position.y = -TORSO_H / 2 + 0.04;
         add(torso, b);
         if (belt === 2) { // utility — gold buckle
-          const buckle = mkB(0.14, 0.1, 0.03, new THREE.MeshLambertMaterial({ color: 0xd9a420 }));
+          const buckle = mkB(0.14, 0.1, 0.03, _gearMat(0xd9a420, _METAL));
           buckle.position.set(0, -TORSO_H / 2 + 0.04, TORSO_D / 2 + 0.02);
           add(torso, buckle);
+        } else if (belt === 4) { // widow — black disc with a red hourglass
+          const y = -TORSO_H / 2 + 0.04, z = TORSO_D / 2 + 0.02;
+          const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.03, 20), _gearMat(0x151515, { metal: 0.5, rough: 0.4 }));
+          disc.rotation.x = Math.PI / 2; disc.position.set(0, y, z); add(torso, disc);
+          const red = _gearMat(0xe23636, { rough: 0.45 });
+          const top = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.042, 12), red);
+          top.rotation.x = Math.PI; top.position.set(0, y + 0.022, z + 0.02); add(torso, top);
+          const bottom = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.042, 12), red);
+          bottom.position.set(0, y - 0.022, z + 0.02); add(torso, bottom);
         }
       }
     }
@@ -2902,25 +3027,29 @@ const Playground3D = (() => {
             actors.push({ id: 'rp:' + id, x: rp.current.x, z: rp.current.z, y: rp.current.y || 0 });
           }
           for (let i = 0; i < _npcs.length; i++) {
+            if ((_npcs[i].koUntil || 0) > now) continue;   // out cold — not a target
             actors.push({ id: 'npc:' + i, x: _npcs[i].x, z: _npcs[i].z, y: 0 });
           }
         }
         const hit = PG3DPhysics.pickPunchTarget(
           _player.position.x, _player.position.z, _player.position.y, actors, PUNCH.RANGE);
         let targetSocket = null;
+        let targetNpc = null;
         if (hit && hit.startsWith('npc:')) {
+          // A hero flinches at once; its HP, anger and knock-out come back
+          // from the server (world:npc-update) so every player agrees.
           const n = _npcs[+hit.slice(4)];
           if (n) {
-            n.downUntil = now + PUNCH.DOWN_MS;
-            n.pauseUntil = Math.max(n.pauseUntil || 0, n.downUntil + PUNCH.GETUP_MS);
-            n.walking = false;
+            _npcFlinch(n, now);
+            n.optimisticUntil = n.hitUntil;
+            targetNpc = n.id;
           }
         } else if (hit) {
           targetSocket = hit.slice(3);
           const rp = _remotePlayers.get(targetSocket);
           if (rp) rp.downUntil = now + PUNCH.DOWN_MS;   // optimistic — relay confirms
         }
-        if (_onPunch) { try { _onPunch({ target: targetSocket }); } catch (_) {} }
+        if (_onPunch) { try { _onPunch({ target: targetSocket, npc: targetNpc }); } catch (_) {} }
       }
     }
     if (_falling || _velY !== 0 || _player.position.y > 0) {
@@ -4263,10 +4392,26 @@ const Playground3D = (() => {
       }
     }
 
-    // NPC hero tags — float above each NPC's (build-scaled) head.
+    // NPC hero tags (name + health pips) — float above each NPC's
+    // (build-scaled) head, sinking toward the floor while it's out cold.
     for (const npc of _npcs) {
-      _hudAnchor.set(npc.x, npc.headY, npc.z);
+      const lying = (npc.koUntil || 0) > now || (npc.koGetupUntil || 0) > now;
+      const tagTarget = lying ? Math.min(npc.headY, 1.1) : npc.headY;
+      if (npc.tagY == null) npc.tagY = npc.headY;
+      npc.tagY += (tagTarget - npc.tagY) * 0.04;
+      _hudAnchor.set(npc.x, npc.tagY, npc.z);
       if (npc.nameEl) _placeHudEl(npc.nameEl, _hudAnchor, 0);
+      // Floating "−1"s rise and fade over NPC_DMG_MS.
+      const dmg = npc.dmgEls;
+      if (dmg && dmg.length) {
+        for (let i = dmg.length - 1; i >= 0; i--) {
+          const d = dmg[i];
+          const age = (now - d.bornAt) / NPC_DMG_MS;
+          if (age >= 1) { if (d.el.parentNode) d.el.parentNode.removeChild(d.el); dmg.splice(i, 1); continue; }
+          _placeHudEl(d.el, _hudAnchor, 0.35 + age * 0.7);
+          d.el.style.opacity = String(1 - age * age);
+        }
+      }
     }
 
     // Local player's own chat bubbles, over the head.
@@ -4292,7 +4437,6 @@ const Playground3D = (() => {
   // reaches half-extent 8 — so a square ring at 7 is always clear of the walls
   // and always on walkable stone, at every node, without needing to probe.
   const NPC_RING = 7.0;
-  const NPC_RECOVER_MS = 700; // ease back onto the path after a knockdown
 
   // Shared clock. NPC motion is a pure function of this, so two clients that
   // agree on the time draw every hero in exactly the same place. Set from the
@@ -4331,28 +4475,56 @@ const Playground3D = (() => {
       // identical one: same lap offset, same direction, same pace, same pause
       // rhythm. Heroes sharing a node (Thor + Hawkeye at thor1) get different
       // offsets and so never stack.
+      const maxHp = _npcMaxHp(spec.id);
       const npc = {
         id: spec.id, name: spec.name, rig, nameEl: null,
         homeX, homeZ,
         patrol: PG3DPhysics.npcPatrol(spec.id, NPC_RING, NPC_SPEED),
         x: homeX, z: homeZ, yaw: 0,
-        walking: false, recoverUntil: 0,
+        walking: false,
         radius: _actorRadiusFor(spec.character || defaultCharacter()),
-        headY: 2.05 * (((rig.scale && rig.scale.y) || 1)) + 0.3
+        headY: 2.05 * (((rig.scale && rig.scale.y) || 1)) + 0.3,
+        // Combat (server-authoritative — see the NPC combat section below).
+        hp: maxHp, maxHp, target: null, holdT: 0, pathOffsetMs: 0, koUntil: 0, koGetupUntil: 0, aggroUntil: 0,
+        hitUntil: 0, hitSeq: 0, animSeq: 0, optimisticUntil: 0, punchUntil: 0, swingCount: 0,
+        lastSwingAt: 0, hpEl: null, pipEls: [], dmgEls: []
       };
       // Place them on the path immediately so they never pop in at the node
       // centre for a frame.
       const p0 = _npcPathPoint(npc, _sharedNow());
       npc.x = p0.x; npc.z = p0.z; npc.yaw = p0.yaw;
+
+      // Name tag with a row of health pips under it (one per hit point).
+      const nameEl = document.createElement('div');
+      nameEl.className = 'pg3d-nametag pg3d-npc-nametag';
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'pg3d-npc-name';
+      nameSpan.textContent = spec.name || '';
+      const hpEl = document.createElement('div');
+      hpEl.className = 'pg3d-npc-hp good';
+      for (let i = 0; i < maxHp; i++) {
+        const pip = document.createElement('span');
+        pip.className = 'pg3d-npc-hp-pip filled';
+        hpEl.appendChild(pip);
+        npc.pipEls.push(pip);
+      }
+      nameEl.appendChild(nameSpan);
+      nameEl.appendChild(hpEl);
+      if (_hudLayer) _hudLayer.appendChild(nameEl);
+      npc.nameEl = nameEl;
+      npc.hpEl = hpEl;
+
+      // A hero whose node unlocks mid-fight starts in the server's state —
+      // hurt, angry, or lying at its hold point — rather than fresh.
+      const rec = _npcCombat.get(spec.id);
+      if (rec) {
+        _applyNpcRecord(npc, rec, performance.now());
+        const h = _npcPathPoint(npc, npc.holdT || _sharedNow());
+        npc.x = h.x; npc.z = h.z;
+      }
       rig.position.set(npc.x, 0, npc.z);
       rig.rotation.y = npc.yaw;
       _scene.add(rig);
-
-      const nameEl = document.createElement('div');
-      nameEl.className = 'pg3d-nametag pg3d-npc-nametag';
-      nameEl.textContent = spec.name || '';
-      if (_hudLayer) _hudLayer.appendChild(nameEl);
-      npc.nameEl = nameEl;
 
       _npcs.push(npc);
     }
@@ -4362,8 +4534,11 @@ const Playground3D = (() => {
   // time `t`. Both live in PG3DPhysics so they can be unit-tested without THREE
   // or a DOM — see test/physics.test.js.
   function _hash01(s) { return PG3DPhysics.hash01(s); }
+  // `t` is shared-clock seconds. Time a hero has spent held in fights
+  // (pathOffsetMs, from the server) is subtracted so its patrol resumes from
+  // where it stopped rather than jumping ahead.
   function _npcPathPoint(npc, t) {
-    return PG3DPhysics.npcPathPoint(npc.patrol, npc.homeX, npc.homeZ, NPC_RING, t);
+    return PG3DPhysics.npcPathPoint(npc.patrol, npc.homeX, npc.homeZ, NPC_RING, t - (npc.pathOffsetMs || 0) / 1000);
   }
 
   // Push an NPC's RENDERED position clear of the local player if they overlap.
@@ -4389,12 +4564,23 @@ const Playground3D = (() => {
     const t = _sharedNow();
     for (const npc of _npcs) {
       const bones = npc.rig.userData.bones;
+      // patrol / aggro / ko / getup — from the server's record, on this tab's
+      // clock. Held = the server has paused this hero's patrol clock (stopAt),
+      // or a local phase is still playing out (get-up after the KO expired).
+      const phase = _npcPhase(npc, now);
+      const held = npc.holdT > 0 || phase !== 'patrol';
+      const isKo = phase === 'ko';
+      if (npc.hudKo !== isKo) { npc.hudKo = isKo; _syncNpcHp(npc, now); }
+
       // Rigged NPCs animate from last frame's walking flag — a frame of lag
       // no one can see, and it keeps the steering code below untouched.
       const npcRigged = _animateActor(npc.rig, {
         speed: npc.walking ? npc.patrol.speed : 0,
-        downUntil: npc.downUntil || 0,
-        getupUntil: npc.downUntil ? npc.downUntil + PUNCH.GETUP_MS : 0
+        downUntil: npc.koUntil || 0,
+        getupUntil: npc.koGetupUntil || 0,
+        hitUntil: npc.hitUntil || 0, hitClip: npc.hitClip,
+        punchUntil: npc.punchUntil || 0, punchClip: npc.punchClip,
+        overlaySeq: npc.animSeq || 0
       }, dt, now);
       const dampIdle = () => {
         if (!bones || npcRigged) return;
@@ -4405,31 +4591,37 @@ const Playground3D = (() => {
         bones.body.rotation.z = Math.sin(t * 0.8 + npc.swayPhase) * 0.02;
       };
 
-      // Knockdown pose runs in every branch (falling over, lying, getting up).
-      if (!npcRigged) _applyDownPose(npc.rig, npc.downUntil || 0, now);
+      // Knock-out pose runs in every branch on the legacy rig (falling over,
+      // lying, getting up); rigged bodies play the clips instead.
+      if (!npcRigged) _applyDownPose(npc.rig, npc.koUntil || 0, now);
 
       // Canonical position for this instant — identical on every client.
-      const p = _npcPathPoint(npc, t);
+      // While held, the patrol clock is frozen at stopAt, so this is the spot
+      // the hero stopped on; afterwards it continues from that same spot.
+      const p = _npcPathPoint(npc, npc.holdT || t);
 
-      if (npc.downUntil > now) {
-        // Knocked down: hold them where they fell. The path keeps running
-        // underneath, and they walk back onto it once they're up.
-        npc.recoverUntil = npc.downUntil + NPC_RECOVER_MS;
+      if (held) {
+        // Ease onto the hold point (absorbs the hitter's optimistic freeze,
+        // and the frame or two before the server's stopAt arrives).
+        const k = Math.min(1, dt * 8);
+        npc.x += (p.x - npc.x) * k;
+        npc.z += (p.z - npc.z) * k;
         npc.walking = false;
+        if (phase === 'aggro') {
+          // Square up to the attacker; if that's us and we're in reach, swing.
+          const tp = _npcTargetPos(npc);
+          if (tp) npc.yaw = _lerpAngle(npc.yaw, Math.atan2(tp.x - npc.x, tp.z - npc.z), Math.min(1, dt * 10));
+          if (npc.target === _localId) _npcMaybeSwing(npc, now);
+        }
+        _npcAvoidPlayer(npc);
+        npc.rig.position.set(npc.x, 0, npc.z);
+        npc.rig.rotation.y = npc.yaw;
         dampIdle();
         continue;
       }
 
-      if (now < npc.recoverUntil) {
-        // Brief re-join after a knockdown — the only time a hero is off the
-        // canonical path, and only on the screen of whoever punched them.
-        const k = Math.min(1, dt * 5);
-        npc.x += (p.x - npc.x) * k;
-        npc.z += (p.z - npc.z) * k;
-      } else {
-        npc.x = p.x;
-        npc.z = p.z;
-      }
+      npc.x = p.x;
+      npc.z = p.z;
       // Render-only sidestep so a hero doesn't walk through a player standing
       // on their line. Deliberately applied AFTER the canonical position and
       // never fed back into it — the path stays the shared truth, this is just
@@ -4444,8 +4636,8 @@ const Playground3D = (() => {
 
       // Walk-cycle swing — shared pose with the player / remote players. Phase
       // comes off the shared clock too, so even the leg positions match.
-      const phase = (t / PHYSICS.STEP_PERIOD) * Math.PI * 2;
-      if (bones && !npcRigged) _walkPose(bones, phase);
+      const walkPhase = (t / PHYSICS.STEP_PERIOD) * Math.PI * 2;
+      if (bones && !npcRigged) _walkPose(bones, walkPhase);
     }
   }
 
@@ -4454,8 +4646,162 @@ const Playground3D = (() => {
       if (npc.rig && npc.rig.parent) npc.rig.parent.remove(npc.rig);
       if (npc.rig) _disposeActor(npc.rig);
       if (npc.nameEl && npc.nameEl.parentNode) npc.nameEl.parentNode.removeChild(npc.nameEl);
+      for (const d of (npc.dmgEls || [])) if (d.el.parentNode) d.el.parentNode.removeChild(d.el);
     }
     _npcs.length = 0;
+  }
+
+  // ── NPC combat (server-authoritative; see routes/world-socket.js) ──
+  // Every hero's HP, knock-out and target live on the server and arrive as
+  // world:npcs / world:npc-update. Server-time deadlines are converted to
+  // this tab's performance.now() clock; the hold point (stopAt) stays on the
+  // shared clock because the patrol path is evaluated on it.
+
+  const NPCC = (typeof WorldNpcLogic !== 'undefined') ? WorldNpcLogic.C : {
+    KO_MS: 8000, KO_GETUP_MS: 1500, AGGRO_MS: 6000, NPC_PUNCH_COOLDOWN_MS: 1400, NPC_FIRST_SWING_MS: 650,
+    NPC_GRACE_MS: 900, NPC_PUNCH_RANGE: 1.6, NPC_PUNCH_ANIM_MS: 450, HIT_MS: 380
+  };
+  const NPC_DMG_MS = 800;          // floating "−1" lifetime
+
+  function _sharedNowMs() { return Date.now() + _worldClockSkew; }
+  function _serverMsToPerf(ms) { return ms ? performance.now() + (ms - _sharedNowMs()) : 0; }
+  function _npcMaxHp(id) {
+    const s = (typeof WorldNpcLogic !== 'undefined') && WorldNpcLogic.NPC_STATS[id];
+    return s ? s.maxHp : 3;
+  }
+
+  // patrol → aggro (holding, facing its target) → ko (lying) → getup.
+  function _npcPhase(npc, now) {
+    if ((npc.koUntil || 0) > now) return 'ko';
+    if ((npc.koGetupUntil || 0) > now) return 'getup';
+    if (npc.target && (npc.aggroUntil || 0) > now) return 'aggro';
+    return 'patrol';
+  }
+
+  function _applyNpcRecord(npc, rec, now) {
+    if (typeof rec.hp === 'number') npc.hp = rec.hp;
+    if (typeof rec.maxHp === 'number') npc.maxHp = rec.maxHp;
+    // A fresh grudge gets a wind-up: the flinch plays before the first
+    // counter-punch instead of the two landing in the same frame.
+    if (rec.target && !npc.target) {
+      npc.lastSwingAt = Math.max(npc.lastSwingAt || 0, now - NPCC.NPC_PUNCH_COOLDOWN_MS + NPCC.NPC_FIRST_SWING_MS);
+    }
+    npc.target = rec.target || null;
+    npc.holdT = rec.stopAt ? rec.stopAt / 1000 : 0;
+    npc.pathOffsetMs = rec.pathOffsetMs || 0;
+    const ko = _serverMsToPerf(rec.koUntil);
+    // A NEW knock-out schedules its get-up; a cleared one (the server's
+    // 'getup' event) keeps the get-up window that was already computed.
+    if (ko && Math.abs(ko - (npc.koUntil || 0)) > 50) npc.koGetupUntil = ko + NPCC.KO_GETUP_MS;
+    npc.koUntil = ko;
+    if (rec.getupUntil) npc.koGetupUntil = _serverMsToPerf(rec.getupUntil);
+    npc.aggroUntil = _serverMsToPerf(rec.aggroUntil);
+    _syncNpcHp(npc, now);
+  }
+
+  function _syncNpcHp(npc, now) {
+    if (!npc.hpEl) return;
+    for (let i = 0; i < npc.pipEls.length; i++) npc.pipEls[i].classList.toggle('filled', i < npc.hp);
+    const cls = (typeof WorldNpcLogic !== 'undefined') ? WorldNpcLogic.healthClass(npc.hp, npc.maxHp)
+      : (npc.hp / npc.maxHp >= 0.67 ? 'good' : npc.hp / npc.maxHp >= 0.34 ? 'warn' : 'low');
+    npc.hpEl.classList.remove('good', 'warn', 'low');
+    npc.hpEl.classList.add(cls);
+    npc.hpEl.classList.toggle('ko', (npc.koUntil || 0) > now);
+    npc.hpEl.setAttribute('aria-label', `${npc.hp} of ${npc.maxHp} hits left`);
+  }
+
+  // Flinch: hit clip overlay + red flash. Bumps animSeq so back-to-back hits restart the clip.
+  function _npcFlinch(npc, now) {
+    npc.hitSeq = (npc.hitSeq || 0) + 1;
+    npc.animSeq = (npc.animSeq || 0) + 1;
+    npc.hitUntil = now + NPCC.HIT_MS;
+    npc.hitClip = (typeof WorldNpcLogic !== 'undefined') ? WorldNpcLogic.hitClip(npc.hitSeq) : 'Hit_Chest';
+    const inst = npc.rig && npc.rig.userData.humanoid;
+    if (inst && inst.setHitFlash) inst.setHitFlash(1);
+  }
+
+  function _spawnNpcDamage(npc, now) {
+    if (!_hudLayer) return;
+    const el = document.createElement('div');
+    el.className = 'pg3d-dmg';
+    el.textContent = '−1';
+    _hudLayer.appendChild(el);
+    (npc.dmgEls || (npc.dmgEls = [])).push({ el, bornAt: now });
+  }
+
+  // Where the hero's target stands right now (us, or a remote rig).
+  function _npcTargetPos(npc) {
+    if (!npc.target) return null;
+    if (npc.target === _localId) return _player ? _player.position : null;
+    const rp = _remotePlayers.get(npc.target);
+    return rp ? rp.current : null;
+  }
+
+  // The hero is angry at US: ask the server for a swing when we're in reach
+  // and back on our feet. The knockdown only lands on the server's echo.
+  function _npcMaybeSwing(npc, now) {
+    if (!_player || !_onNpcPunch) return;
+    if (now - (npc.lastSwingAt || 0) < NPCC.NPC_PUNCH_COOLDOWN_MS) return;
+    // Not while we're down or getting up, and not for a moment after — the
+    // player gets a window to hit back (or step away) instead of a lock.
+    if (_falling || _localDownUntil + PUNCH.GETUP_MS + NPCC.NPC_GRACE_MS > now) return;
+    const hit = PG3DPhysics.pickPunchTarget(npc.x, npc.z, 0,
+      [{ id: 'me', x: _player.position.x, z: _player.position.z, y: _player.position.y }], NPCC.NPC_PUNCH_RANGE);
+    if (hit !== 'me') return;
+    npc.lastSwingAt = now;
+    try { _onNpcPunch(npc.id); } catch (_) {}
+  }
+
+  // ── public NPC-combat surface (wired by js/home-socket.js) ──
+
+  function setNpcPunchHandler(fn) { _onNpcPunch = fn; }
+
+  // Full state on join / reconnect.
+  function setWorldNpcState(npcs) {
+    _npcCombat.clear();
+    const now = performance.now();
+    for (const id of Object.keys(npcs || {})) {
+      const rec = npcs[id];
+      if (!rec || typeof rec !== 'object') continue;
+      _npcCombat.set(id, rec);
+      const npc = _npcs.find(n => n.id === id);
+      if (npc) _applyNpcRecord(npc, rec, now);
+    }
+  }
+
+  // One hero changed: hit / ko / getup / heal / aggro-expire / target-left.
+  function applyNpcUpdate(u) {
+    if (!u || typeof u.npc !== 'string') return;
+    _npcCombat.set(u.npc, u);
+    const npc = _npcs.find(n => n.id === u.npc);
+    if (!npc) return;
+    const now = performance.now();
+    _applyNpcRecord(npc, u, now);
+    if (u.event === 'hit' || u.event === 'ko') {
+      // The hitter already flinched optimistically; everyone else does it now.
+      if (!((npc.optimisticUntil || 0) > now)) _npcFlinch(npc, now);
+      npc.optimisticUntil = 0;
+      _spawnNpcDamage(npc, now);
+    }
+  }
+
+  // A hero swung at its target (server echo) — play the swing on every screen.
+  function playNpcPunch(id) {
+    const npc = _npcs.find(n => n.id === id);
+    if (!npc) return;
+    npc.swingCount = (npc.swingCount || 0) + 1;
+    npc.animSeq = (npc.animSeq || 0) + 1;
+    npc.punchClip = (typeof WorldNpcLogic !== 'undefined') ? WorldNpcLogic.swingClip(npc.swingCount) : 'Punch_Jab';
+    npc.punchUntil = performance.now() + NPCC.NPC_PUNCH_ANIM_MS;
+  }
+
+  // Socket reconnect: our old id is gone, so nobody can be angry at it.
+  function resetNpcCombat() {
+    _npcCombat.clear();
+    for (const npc of _npcs) {
+      npc.target = null; npc.aggroUntil = 0;
+      npc.hitUntil = 0; npc.punchUntil = 0; npc.optimisticUntil = 0;
+    }
   }
 
   // ── remote player API ──
@@ -4951,7 +5297,21 @@ const Playground3D = (() => {
     // Local NPC surface — Avenger wanderers in /world. setWorldClockOffset
     // feeds them the server's clock so every client patrols them identically.
     setWorldNpcs, setWorldClockOffset,
+    // NPC fights — HP / KO / aggro are server-authoritative (world:npcs,
+    // world:npc-update, world:npc-punch in js/home-socket.js).
+    setWorldNpcState, applyNpcUpdate, playNpcPunch, setNpcPunchHandler, resetNpcCombat,
     // Voice-chat surface — distance attenuation + speaking indicator.
-    getRemotePlayers, setRemotePlayerSpeaking
+    getRemotePlayers, setRemotePlayerSpeaking,
+    // Debugging aids for the browser preview (same idea as PG3DHumanoid._debug):
+    // live NPC records, the local knockdown deadline, and a raw teleport so a
+    // fight can be staged without steering the character by hand.
+    _debug: {
+      npcs() { return _npcs; },
+      localDownUntil() { return _localDownUntil; },
+      teleport(x, z) { if (_player) { _player.position.set(x, 0, z); _lastSafe.x = x; _lastSafe.z = z; } },
+      // Advance one frame by hand when the tab is throttled (rAF frozen).
+      // Cancels the queued frame first so the loop never doubles up.
+      step() { if (!_running) return; if (_rafId) cancelAnimationFrame(_rafId); _tick(performance.now()); }
+    }
   };
 })();

@@ -52,7 +52,7 @@ const UserSchema = new mongoose.Schema({
     skin:            { type: Number, default: null, min: 0, max: 12 },
     hairStyle:       { type: Number, default: null, min: 0, max: 13 },
     hairColor:       { type: Number, default: null, min: 0, max: 13 },
-    shirtColor:      { type: Number, default: null, min: 0, max: 15 },
+    shirtColor:      { type: Number, default: null, min: 0, max: 16 },
     pantsColor:      { type: Number, default: null, min: 0, max: 15 },
     eyeColor:        { type: Number, default: null, min: 0, max: 7 },
     eyeShape:        { type: Number, default: null, min: 0, max: 4 },
@@ -70,26 +70,26 @@ const UserSchema = new mongoose.Schema({
     pantsStyle:      { type: Number, default: null, min: 0, max: 6 },
     shoeStyle:       { type: Number, default: null, min: 0, max: 6 },
     outerwear:       { type: Number, default: null, min: 0, max: 6 },
-    outerwearColor:  { type: Number, default: null, min: 0, max: 15 },
+    outerwearColor:  { type: Number, default: null, min: 0, max: 16 },
     suit:            { type: Number, default: null, min: 0, max: 5 },
     suitColor:       { type: Number, default: null, min: 0, max: 7 },
     gloves:          { type: Number, default: null, min: 0, max: 3 },
-    belt:            { type: Number, default: null, min: 0, max: 3 },
+    belt:            { type: Number, default: null, min: 0, max: 4 },
     mask:            { type: Number, default: null, min: 0, max: 4 },
     accessoryColor:  { type: Number, default: null, min: 0, max: 5 },
     // Round 2: gender, accent/secondary colors (max = palette.length due to the
     // "Auto" sentinel at index 0), reusable hero slots + their colors.
     gender:          { type: Number, default: null, min: 0, max: 2 },
-    shirtColor2:     { type: Number, default: null, min: 0, max: 16 },
+    shirtColor2:     { type: Number, default: null, min: 0, max: 17 },
     pantsColor2:     { type: Number, default: null, min: 0, max: 16 },
-    outerwearColor2: { type: Number, default: null, min: 0, max: 16 },
+    outerwearColor2: { type: Number, default: null, min: 0, max: 17 },
     shoeColor2:      { type: Number, default: null, min: 0, max: 8 },
     helmet:          { type: Number, default: null, min: 0, max: 6 },
-    helmetColor:     { type: Number, default: null, min: 0, max: 15 },
+    helmetColor:     { type: Number, default: null, min: 0, max: 16 },
     prop:            { type: Number, default: null, min: 0, max: 6 },
-    propColor:       { type: Number, default: null, min: 0, max: 15 },
+    propColor:       { type: Number, default: null, min: 0, max: 16 },
     emblem:          { type: Number, default: null, min: 0, max: 7 },
-    emblemColor:     { type: Number, default: null, min: 0, max: 15 }
+    emblemColor:     { type: Number, default: null, min: 0, max: 16 }
   },
   // Project-themed room layout for /home. Each room is a 1×1 grid cell;
   // world-space cell size + wall/doorway geometry are derived at render time

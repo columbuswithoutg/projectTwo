@@ -19,7 +19,12 @@ const Playground = (() => {
   // routes/profile.js (HOME_CHARACTER_RANGES) and models/user.js.
   const SKIN_TONES   = ['#f5d4a8', '#e8b48a', '#c98c5d', '#8b5a3c', '#5d3a24', '#fce4d0', '#d6a878', '#3a2418', '#fbe7d7', '#c79a6b', '#7a5230', '#2a160a', '#5aa64a'];
   const HAIR_COLORS  = ['#1a1a1a', '#5a3a22', '#a06030', '#dca960', '#cccccc', '#9b59b6', '#e74c3c', '#3498db', '#1abc9c', '#ff69b4', '#f5f0e6', '#9c4a2b', '#3a1d5a', '#8eead0'];
-  const SHIRT_COLORS = ['#e23636', '#3a85f0', '#39b54a', '#f0c040', '#9b59b6', '#ff7eb6', '#444444', '#f08020', '#ffffff', '#2c3e50', '#a52a2a', '#16a085', '#1f8a8a', '#c8b4ff', '#d8a93a', '#f5e6c8'];
+  // Index 16 (#b1232b) is the Iron Man armour red (SUIT_COLORS[0]) so helmets,
+  // shields and capes can match the suit. Bumping this length requires bumping
+  // shirtColor / outerwearColor / helmetColor / propColor / emblemColor (and
+  // the +1 "Auto" accents shirtColor2 / outerwearColor2) in routes/profile.js
+  // AND models/user.js.
+  const SHIRT_COLORS = ['#e23636', '#3a85f0', '#39b54a', '#f0c040', '#9b59b6', '#ff7eb6', '#444444', '#f08020', '#ffffff', '#2c3e50', '#a52a2a', '#16a085', '#1f8a8a', '#c8b4ff', '#d8a93a', '#f5e6c8', '#b1232b'];
   const PANTS_COLORS = ['#1f3a68', '#444444', '#222222', '#5a3a22', '#7a6a3a', '#7d4a3a', '#0e3a2e', '#3a3a3a', '#888888', '#5a2a8a', '#003366', '#8b4513', '#a89058', '#6a1a2a', '#7ab8e8', '#1a4a2a'];
   const EYE_COLORS   = ['#5a3a22', '#3a85f0', '#2c8a3a', '#a06030', '#7a7a7a', '#d6a040', '#1a1a1a', '#7a3aa6'];
   const SHOE_COLORS  = ['#1a1a1a', '#5a3a22', '#ffffff', '#8b4513', '#a02828', '#3a85f0', '#f0c040', '#7a7a7a'];
@@ -52,34 +57,44 @@ const Playground = (() => {
   const CHARACTER_PRESETS = [
     // Heroes — rebuilt (round 2) from the reusable helmet / prop / emblem /
     // suit / outerwear / gender slots (the old all-in-one `gear` slot is gone).
+    // Iron Man — Mark VI: red armour with gold biceps/thighs (armour accent =
+    // accessoryColor), head-shaped helmet in the same red with a gold
+    // faceplate, glowing arc reactor + repulsor palms, parted dark hair and
+    // a goatee under the helmet. Hands are armour, so no glove tint.
     { id: 'ironman', charId: 'ironman', group: 'Heroes', name: 'Iron Man', char: {
-        skin: 1, gender: 1, build: 1, hairStyle: 10, hairColor: 0, facialHairStyle: 3, facialHairColor: 0, eyeColor: 0,
-        suit: 4, suitColor: 0, helmet: 1, helmetColor: 0, emblem: 2, gloves: 2, accessoryColor: 3 } },
-    // Captain America — The First Avenger (WWII) look: muted blue, Soldier helm
-    // with the white "A" + wings, star-and-stripes chest flag, brown leather
-    // gloves/boots, round star shield.
+        skin: 1, gender: 1, build: 1, hairStyle: 11, hairColor: 0, facialHairStyle: 3, facialHairColor: 0, eyeColor: 0,
+        suit: 4, suitColor: 0, helmet: 1, helmetColor: 16, emblem: 2, gloves: 0, accessoryColor: 3,
+        shoeStyle: 3, shoeColor: 4 } },
+    // Captain America — The First Avenger (WWII) look: muted blue, rounded
+    // Soldier helm with the white "A" + wings, star-and-stripes chest flag,
+    // brown leather gloves/boots, ringed star shield in the armour red.
     { id: 'cap', charId: 'cap', group: 'Heroes', name: 'Captain America', char: {
         skin: 0, gender: 1, build: 2, hairStyle: 11, hairColor: 3, eyeColor: 1,
         suit: 1, suitColor: 1, helmet: 6, helmetColor: 1, emblem: 6, emblemColor: 8,
-        prop: 1, propColor: 0, gloves: 2, belt: 1, accessoryColor: 1, shoeStyle: 3, shoeColor: 1 } },
-    // Thor (2011) classic armor: dark sleeved armor, silver chest discs, red
-    // cape, Mjolnir, long blonde hair + short stubble.
+        prop: 1, propColor: 16, gloves: 2, belt: 1, accessoryColor: 1, shoeStyle: 3, shoeColor: 1 } },
+    // Thor (2011) classic armor: dark sleeved armor, silver chest discs and
+    // vambraces (Gauntlets paint the forearms), red cape, Mjolnir, long
+    // blonde hair + short stubble.
     { id: 'thor', charId: 'thor', group: 'Heroes', name: 'Thor', char: {
         skin: 0, gender: 1, build: 2, hairStyle: 3, hairColor: 3, facialHairStyle: 1, facialHairColor: 3, eyeColor: 1,
-        suit: 4, suitColor: 2, emblem: 7, outerwear: 6, outerwearColor: 0, prop: 2, accessoryColor: 4, shoeStyle: 3, shoeColor: 0 } },
-    // Hulk: bare green chest (Ripped top → torso renders as skin) with torn
-    // purple trousers.
+        suit: 4, suitColor: 2, emblem: 7, outerwear: 6, outerwearColor: 0, prop: 2, gloves: 3, accessoryColor: 4,
+        shoeStyle: 3, shoeColor: 0 } },
+    // Hulk: bare green chest, bare feet and purple trousers torn off at
+    // mid-shin (a Ripped top means the whole outfit is torn).
     { id: 'hulk', charId: 'hulk', group: 'Heroes', name: 'Hulk', char: {
         skin: 12, gender: 1, build: 3, hairStyle: 10, hairColor: 0, eyeColor: 2, eyeShape: 3,
-        shirtStyle: 8, shirtColor: 4, pantsStyle: 3, pantsColor: 9, shoeStyle: 0, shoeColor: 0 } },
-    // Black Widow — Iron Man 2 catsuit: black bodysuit, wavy red hair, utility belt.
+        shirtStyle: 8, shirtColor: 4, pantsStyle: 0, pantsColor: 9, shoeStyle: 0, shoeColor: 0 } },
+    // Black Widow — Iron Man 2 catsuit: black bodysuit, long red hair, silver
+    // Widow's Bite bracers (Gauntlets), hourglass-buckle belt, black boots.
     { id: 'widow', charId: 'blackwidow', group: 'Heroes', name: 'Black Widow', char: {
-        skin: 0, gender: 2, build: 1, hairStyle: 9, hairColor: 6, eyeColor: 2, eyeShape: 1,
-        suit: 1, suitColor: 2, belt: 2, gloves: 2, accessoryColor: 0 } },
-    // Hawkeye — The Avengers (2012): black tactical suit, no mask, bow + back quiver.
+        skin: 0, gender: 2, build: 1, hairStyle: 3, hairColor: 6, eyeColor: 2, eyeShape: 1,
+        suit: 1, suitColor: 2, belt: 4, gloves: 3, accessoryColor: 4, shoeStyle: 3, shoeColor: 0 } },
+    // Hawkeye — The Avengers (2012): sleeveless dark tactical vest, bare arms,
+    // black trousers and boots, fingerless gloves, recurve bow + back quiver.
     { id: 'hawkeye', charId: 'hawkeye', group: 'Heroes', name: 'Hawkeye', char: {
         skin: 1, gender: 1, build: 1, hairStyle: 10, hairColor: 1, facialHairStyle: 1, facialHairColor: 2, eyeColor: 0,
-        suit: 1, suitColor: 2, prop: 6, propColor: 6, belt: 1, gloves: 1, accessoryColor: 0, shoeStyle: 3, shoeColor: 0 } },
+        shirtStyle: 1, shirtColor: 9, pantsStyle: 0, pantsColor: 2, prop: 6, propColor: 6, belt: 1, gloves: 1, accessoryColor: 0,
+        shoeStyle: 3, shoeColor: 0 } },
 
     // Wardrobe presets — built from the new clothing slots (no hero gear).
     // Spread over defaultCharacter() by the consumer, so omitted slots default.
@@ -250,7 +265,9 @@ const Playground = (() => {
   const OUTERWEAR_STYLES = ['None', 'Jacket', 'Bomber', 'Trench coat', 'Hoodie', 'Vest', 'Cape'];
   const SUIT_STYLES      = ['None', 'Bodysuit', 'Dress', 'Robe', 'Armor', 'Jumpsuit'];
   const GLOVES_STYLES    = ['None', 'Fingerless', 'Full', 'Gauntlets'];
-  const BELT_STYLES      = ['None', 'Belt', 'Utility', 'Sash'];
+  // 4 = Widow: utility belt with a red hourglass buckle (Black Widow preset).
+  // Adding a style means bumping `belt` max in routes/profile.js + models/user.js.
+  const BELT_STYLES      = ['None', 'Belt', 'Utility', 'Sash', 'Widow'];
   const MASK_STYLES      = ['None', 'Domino', 'Full', 'Visor', 'Bandana'];
 
   // Body gender — index 0 = Neutral = today's silhouette (back-compat). The 3D

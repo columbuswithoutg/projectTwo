@@ -4844,11 +4844,43 @@ body.fight-active .flow-wrapper {
   box-shadow: 0 0 0 2px rgba(120, 220, 140, 0.35),
               0 0 12px rgba(120, 220, 140, 0.55);
 }
-/* Avenger NPC tags — gold so heroes read differently from real players. */
+/* Avenger NPC tags — gold so heroes read differently from real players.
+   Name on top, a row of health pips (one per hit point) underneath. */
 .pg3d-npc-nametag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 9px 4px;
+  border-radius: 10px;
   color: var(--color-primary-light, #f0d585);
   background: rgba(36, 28, 10, 0.82);
   border-color: rgba(237, 29, 36, 0.6);
+}
+.pg3d-npc-hp {
+  display: flex;
+  gap: 2px;
+}
+.pg3d-npc-hp-pip {
+  width: 9px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.16);
+  transition: background-color 0.18s ease, opacity 0.18s ease;
+}
+.pg3d-npc-hp.good .pg3d-npc-hp-pip.filled { background: var(--color-health-good); box-shadow: 0 0 4px rgba(74, 222, 128, 0.55); }
+.pg3d-npc-hp.warn .pg3d-npc-hp-pip.filled { background: var(--color-health-warn); box-shadow: 0 0 4px rgba(251, 191, 36, 0.55); }
+.pg3d-npc-hp.low  .pg3d-npc-hp-pip.filled { background: var(--color-health-low);  box-shadow: 0 0 4px rgba(239, 68, 68, 0.6); }
+.pg3d-npc-hp.ko { opacity: 0.45; }
+/* Floating "−1" that rises off a hero's head on each landed punch. */
+.pg3d-dmg {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--color-health-low);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 8px rgba(239, 68, 68, 0.6);
+  white-space: nowrap;
 }
 .pg3d-bubble {
   max-width: 220px;

@@ -30,6 +30,9 @@ const Multiplayer = (() => {
     stoneGrab:   'world:stone-grab',    // client claims a free stone (→ server)
     snap:        'world:snap',          // client requests a snap (→ server)
     snapped:     'world:snapped',       // server: a snap happened
+    npcs:        'world:npcs',          // server: hero HP / KO / aggro snapshot on join
+    npcUpdate:   'world:npc-update',    // server: one hero's state changed (hit / ko / getup / heal / …)
+    npcPunch:    'world:npc-punch',     // both ways: a hero swings at its target
     snapshot:    'world:snapshot',
     joined:      'world:joined',
     left:        'world:left',
@@ -46,6 +49,9 @@ const Multiplayer = (() => {
     stoneGrab:   null,
     snap:        null,
     snapped:     null,
+    npcs:        null,             // no hero NPCs in homes
+    npcUpdate:   null,
+    npcPunch:    null,
     snapshot:    'home:snapshot',
     joined:      'home:joined',
     left:        'home:left',
@@ -104,13 +110,18 @@ const Multiplayer = (() => {
     socket.on('connect', () => {
       if (joined) {
         if (Playground3D.clearRemotePlayers) Playground3D.clearRemotePlayers();
+        // Our old socket id is gone, so any hero that was angry at it has been
+        // released server-side; drop the local fight state before the fresh
+        // world:npcs snapshot lands.
+        if (events.npcs && Playground3D.resetNpcCombat) Playground3D.resetNpcCombat();
         if (typeof toast === 'function') toast('Reconnected', 'success');
       }
       joined = true;
       errToasted = false;
       // Tell the engine our (possibly new-on-reconnect) socket id so it can
-      // tell "held by me" from "held by a remote" for the shared stones.
-      if (events.stones && Playground3D.setLocalId) Playground3D.setLocalId(socket.id);
+      // tell "held by me" from "held by a remote" for the shared stones, and
+      // "the hero is angry at ME" for NPC fights.
+      if ((events.stones || events.punch) && Playground3D.setLocalId) Playground3D.setLocalId(socket.id);
       socket.emit(events.join, {
         username: Auth.getUsername() || 'Anon',
         character,
@@ -151,12 +162,39 @@ const Multiplayer = (() => {
     // the victim's socket id.
     if (events.punch) {
       if (Playground3D.setPunchHandler) {
-        Playground3D.setPunchHandler(({ target }) => {
-          if (socket.connected) socket.emit(events.punch, { target: target || null });
+        Playground3D.setPunchHandler(({ target, npc }) => {
+          if (socket.connected) socket.emit(events.punch, { target: target || null, npc: npc || null });
         });
       }
       socket.on(events.punch, ({ id, target }) => {
         if (Playground3D.playRemotePunch) Playground3D.playRemotePunch(id);
+        if (!target) return;
+        if (target === socket.id) {
+          if (Playground3D.knockdownLocal) Playground3D.knockdownLocal();
+        } else if (Playground3D.knockdownRemote) {
+          Playground3D.knockdownRemote(target);
+        }
+      });
+    }
+
+    // Avengers NPC fights (world only). The server owns every hero's HP, KO
+    // and target; the engine renders from these broadcasts. When a hero is
+    // angry at US, the engine asks for its swings (setNpcPunchHandler) and we
+    // knock ourselves down on the server's echo — same shape as world:punch.
+    if (events.npcs) {
+      if (Playground3D.setNpcPunchHandler) {
+        Playground3D.setNpcPunchHandler((npc) => {
+          if (socket.connected) socket.emit(events.npcPunch, { npc });
+        });
+      }
+      socket.on(events.npcs, ({ npcs, serverTime }) => {
+        if (Playground3D.setWorldNpcState) Playground3D.setWorldNpcState(npcs || {}, serverTime);
+      });
+      socket.on(events.npcUpdate, (u) => {
+        if (u && Playground3D.applyNpcUpdate) Playground3D.applyNpcUpdate(u);
+      });
+      socket.on(events.npcPunch, ({ npc, target }) => {
+        if (Playground3D.playNpcPunch) Playground3D.playNpcPunch(npc);
         if (!target) return;
         if (target === socket.id) {
           if (Playground3D.knockdownLocal) Playground3D.knockdownLocal();
@@ -268,6 +306,7 @@ const Multiplayer = (() => {
       // Detach the punch + stone-grab → socket bridges so a stale closure
       // can't emit on a dead socket after unmount.
       if (events.punch && Playground3D.setPunchHandler) Playground3D.setPunchHandler(null);
+      if (events.npcs && Playground3D.setNpcPunchHandler) Playground3D.setNpcPunchHandler(null);
       if (events.stones && Playground3D.setStoneGrabHandler) Playground3D.setStoneGrabHandler(null);
       if (socket) {
         if (events.leave && socket.connected) {

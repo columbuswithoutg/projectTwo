@@ -635,9 +635,10 @@
     }
   }
 
-  // look: { skin, top, bottom, shoes, gloves, hair (hex; null top/bottom/
-  //         shoes/gloves = bare), sleeves: 'none'|'short'|'long',
-  //         legs: 'short'|'torn'|'long', hairStyle: style name|null, beard }
+  // look: { skin, top, bottom, shoes, gloves, bracers, hair (hex; null top/
+  //         bottom/shoes/gloves/bracers = bare), sleeves: 'none'|'short'|'long',
+  //         legs: 'bare'|'short'|'torn'|'long', hairStyle: style name|null, beard }
+  // `bracers` paints the forearms (gauntlets / vambraces) over any sleeve.
   function _paintBody(u, look) {
     u.uSkinColor.value.set(look.skin != null ? look.skin : 0xc68642);
     const put = (p, hex, cut, rag) => {
@@ -656,7 +657,8 @@
     put(PART.neck, null);
     put(PART.torso, top, 2);
     put(PART.upperArm, top, sleeves === 'long' ? 2 : sleeves === 'short' ? 0.5 : 0);
-    put(PART.forearm, top, sleeves === 'long' ? 2 : 0);
+    if (look.bracers != null) put(PART.forearm, look.bracers, 2);
+    else put(PART.forearm, top, sleeves === 'long' ? 2 : 0);
     put(PART.hand, look.gloves, 2);
     put(PART.pelvis, bottom, 2);
     // Torso + pelvis use the horizontal waistline: trousers below, shirt above.
@@ -681,6 +683,8 @@
     'varying float vHeight;',
     `uniform float uCover[${PART_COUNT}];`,
     `uniform float uCoverCut[${PART_COUNT}];`,
+    `uniform float uAccent[${PART_COUNT}];`,
+    'uniform vec3 uAccentColor;',
     'uniform float uHemY;'
   ].join('\n') + '\n';
 
@@ -695,6 +699,10 @@
     const u = {
       uCover: { value: new Array(PART_COUNT).fill(0) },
       uCoverCut: { value: new Array(PART_COUNT).fill(2) },
+      // Two-tone: parts flagged in uAccent render in uAccentColor instead of
+      // the material colour (Iron Man's gold biceps/thighs).
+      uAccent: { value: new Array(PART_COUNT).fill(0) },
+      uAccentColor: { value: new THREE.Color(spec.accentHex != null ? spec.accentHex : hex) },
       uHemY: { value: -1e3 },
       uInflate: { value: spec.inflate != null ? spec.inflate : 0.014 }
     };
@@ -711,7 +719,9 @@
           '#include <clipping_planes_fragment>\n' +
           'if ( uCover[ vPart ] < 0.5 ) discard;\n' +
           'if ( vAlong > uCoverCut[ vPart ] ) discard;\n' +
-          'if ( vHeight < uHemY ) discard;');
+          'if ( vHeight < uHemY ) discard;')
+        .replace('#include <color_fragment>',
+          '#include <color_fragment>\nif ( uAccent[ vPart ] > 0.5 ) diffuseColor.rgb = uAccentColor;');
     };
     mat.customProgramCacheKey = () => 'pg3d-humanoid-shell';
     return mat;
@@ -834,6 +844,9 @@
           if (PART[p] == null) continue;
           u.uCover.value[PART[p]] = 1;
           u.uCoverCut.value[PART[p]] = (sh.cut && sh.cut[p] != null) ? sh.cut[p] : 2;
+        }
+        if (sh.accentHex != null) {
+          for (const p of sh.accentParts || []) if (PART[p] != null) u.uAccent.value[PART[p]] = 1;
         }
         const mesh = new THREE.SkinnedMesh(bodyMesh.geometry, mat);
         mesh.name = 'garment:' + sh.kind;
@@ -1008,6 +1021,22 @@
       }
     }
 
+    // Brief red glow when hit — every material's emissive is driven up and
+    // decays over ~250ms in update(). Tinted materials keep `emissive`
+    // (onBeforeCompile only rewrites the diffuse sample), so it's one loop.
+    let flash = 0;
+    const FLASH_HEX = 0xff2a2a;
+    function setHitFlash(strength) {
+      flash = Math.max(flash, strength == null ? 1 : strength);
+      for (const m of mats) if (m.emissive) { m.emissive.setHex(FLASH_HEX); m.emissiveIntensity = flash * 0.8; }
+    }
+    function _decayFlash(dt) {
+      if (flash <= 0) return;
+      flash = Math.max(0, flash - dt / 0.25);
+      for (const m of mats) if (m.emissive) m.emissiveIntensity = flash * 0.8;
+      if (flash === 0) for (const m of mats) if (m.emissive) m.emissive.setHex(0x000000);
+    }
+
     function dispose() {
       _clearGarments();
       mixer.stopAllAction();
@@ -1135,8 +1164,9 @@
     applyLook(look);
     const handle = {
       object: pivot, body, mixer, shape: variant.shape, anchors,
-      setState, play, applyLook, setOpacity, setShadows, attachSlot, setFist, dispose,
+      setState, play, applyLook, setOpacity, setShadows, attachSlot, setFist, setHitFlash, dispose,
       update(dt) {
+        _decayFlash(dt);
         // Put the clean (animation-only) rotations back before the mixer runs.
         // The mixer snapshots a bone's current value as its "original" state
         // when an action activates and lerps towards it at partial weight, so

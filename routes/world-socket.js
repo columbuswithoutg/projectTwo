@@ -15,6 +15,7 @@
 const auth = require('../middleware/auth');
 const User = require('../models/user');
 const AdminConfig = require('../models/AdminConfig');
+const NpcLogic = require('../js/world-npc-logic');
 
 // Whitelisted homeCharacter slots (mirrors models/user.js homeCharacter). The
 // client sends its character on join and the server re-broadcasts it verbatim
@@ -125,6 +126,30 @@ function stonesHeldBy(socketId) {
   return STONE_IDS.filter(id => worldStones[id].holder === socketId);
 }
 
+// ── Avengers NPC fights (single 'world' room) ──
+// The six hero NPCs patrol client-side from a shared clock (no server
+// simulation), but their HIT POINTS, knock-outs and "who they're angry at"
+// live here so every player sees the same fight and can gang up. Rules are
+// the pure reducers in js/world-npc-logic.js (shared with the client).
+// Ephemeral like worldStones — a restart heals everyone.
+//
+// Trust: the server has no world geometry, so the ATTACKING client asserts
+// "my punch reached hero X" — exactly like today's player-vs-player punch —
+// and the hero's TARGET client asserts "the hero reached me" for its swings.
+// Guards: the per-socket punch floor, a per-hero swing cooldown, KO'd heroes
+// ignore hits, and every HP / KO / aggro transition happens only here.
+const worldNpcs = NpcLogic.initialNpcState();
+const NPC_IDS = new Set(NpcLogic.NPC_IDS);
+
+function npcUpdatePayload(id, event, by) {
+  const n = worldNpcs[id];
+  return {
+    npc: id, hp: n.hp, maxHp: n.maxHp, target: n.target, stopAt: n.stopAt, pathOffsetMs: n.pathOffsetMs || 0,
+    koUntil: n.koUntil, getupUntil: n.getupUntil || 0, aggroUntil: n.aggroUntil,
+    event, by: by || null, serverTime: Date.now()
+  };
+}
+
 module.exports = (io) => {
   stonesEventEnabled();   // prime the cached event flag at startup
 
@@ -170,6 +195,33 @@ module.exports = (io) => {
     }
   }
 
+  // A hero's target left — it stops squaring up and walks back to its patrol.
+  function releaseNpcTarget(socketId) {
+    for (const id of NpcLogic.NPC_IDS) {
+      const r = NpcLogic.releaseTarget(worldNpcs[id], socketId, Date.now());
+      if (!r.changed) continue;
+      worldNpcs[id] = r.npc;
+      io.to('world').emit('world:npc-update', npcUpdatePayload(id, 'target-left'));
+    }
+  }
+
+  // One timer for get-ups, cooling off and healing — runs only while someone
+  // is hurt, angry or out cold, so an idle world costs nothing.
+  let npcTicker = null;
+  function ensureNpcTicker() {
+    if (npcTicker) return;
+    npcTicker = setInterval(() => {
+      const now = Date.now();
+      for (const id of NpcLogic.NPC_IDS) {
+        const r = NpcLogic.tickNpc(worldNpcs[id], now);
+        if (!r.events.length) continue;
+        worldNpcs[id] = r.npc;
+        for (const ev of r.events) io.to('world').emit('world:npc-update', npcUpdatePayload(id, ev));
+      }
+      if (NpcLogic.allIdle(worldNpcs, now)) { clearInterval(npcTicker); npcTicker = null; }
+    }, NpcLogic.C.TICK_MS);
+  }
+
   io.on('connection', (socket) => {
     // Client must emit 'world:join' before broadcasting anything else.
     socket.on('world:join', (raw) => {
@@ -200,6 +252,7 @@ module.exports = (io) => {
           worldPlayers.delete(sid);
           io.to('world').emit('world:left', { id: sid });
           freeStonesOf(sid);   // don't strand this user's stones on the retired socket
+          releaseNpcTarget(sid);
         }
       }
 
@@ -209,6 +262,9 @@ module.exports = (io) => {
       // simulated locally on every client from that clock, so without a common
       // time base each user would see the same hero in a different spot.
       socket.emit('world:snapshot', { players: others, serverTime: Date.now() });
+      // Hero HP / KO / aggro — sent after the snapshot so the client's clock
+      // skew is set before it converts these server-time deadlines.
+      socket.emit('world:npcs', { npcs: NpcLogic.snapshot(worldNpcs), serverTime: Date.now() });
       // Current shared-stone ownership so the joiner renders held/free correctly.
       // Only while the event is on — off, we send nothing so the client never
       // materializes the stone ring (its HUD is hidden client-side too).
@@ -266,7 +322,9 @@ module.exports = (io) => {
     // Punch relay. Same per-user cooldown pattern as chat. `target` must be
     // null (a whiffed swing everyone still sees) or a current world player's
     // socket id — the victim's client knocks itself down on receipt; the
-    // sender already animated the hit optimistically.
+    // sender already animated the hit optimistically. `npc` (exclusive with
+    // `target`) names a hero the swing reached: HP comes off here and the
+    // result is broadcast to everyone, sender included.
     socket.on('world:punch', (raw) => {
       const p = worldPlayers.get(socket.id);
       if (!p) return;
@@ -275,7 +333,18 @@ module.exports = (io) => {
       p.lastPunch = now;
       let target = raw && raw.target;
       if (target != null && (typeof target !== 'string' || !worldPlayers.has(target))) return;
+      let npc = raw && raw.npc;
+      if (npc != null && (typeof npc !== 'string' || !NPC_IDS.has(npc))) return;
+      if (target && npc) return;
       socket.to('world').emit('world:punch', { id: socket.id, target: target || null });
+      if (npc) {
+        const r = NpcLogic.applyHit(worldNpcs[npc], socket.id, now);
+        if (r.event) {
+          worldNpcs[npc] = r.npc;
+          io.to('world').emit('world:npc-update', npcUpdatePayload(npc, r.event, socket.id));
+          ensureNpcTicker();
+        }
+      }
       // Steal ONE stone from the victim if they're carrying any. Punch/knockdown
       // stays a general mechanic; only the stone theft is gated by the event.
       if (target && stonesEventEnabled()) {
@@ -286,6 +355,20 @@ module.exports = (io) => {
           io.to('world').emit('world:stone-update', { stone, holder: socket.id });
         }
       }
+    });
+
+    // A hero swings at ITS TARGET — requested by the target's own client (the
+    // only one that knows where it really stands), gated by a per-hero
+    // cooldown. Broadcast to everyone including the sender, which knocks
+    // itself down on the echo, the same way world:punch works.
+    socket.on('world:npc-punch', (raw) => {
+      if (!worldPlayers.has(socket.id)) return;
+      const npc = raw && raw.npc;
+      if (typeof npc !== 'string' || !NPC_IDS.has(npc)) return;
+      const now = Date.now();
+      if (!NpcLogic.canNpcSwing(worldNpcs[npc], socket.id, now)) return;
+      worldNpcs[npc] = Object.assign({}, worldNpcs[npc], { lastSwingAt: now });
+      io.to('world').emit('world:npc-punch', { npc, target: socket.id });
     });
 
     // Claim a FREE stone the client reached on foot. Authoritative: only the
@@ -550,6 +633,7 @@ module.exports = (io) => {
         worldPlayers.delete(socket.id);
         socket.to('world').emit('world:left', { id: socket.id });
         freeStonesOf(socket.id);   // drop any stones this player was carrying
+        releaseNpcTarget(socket.id);
       }
       const home = homePlayers.get(socket.id);
       if (home) {
