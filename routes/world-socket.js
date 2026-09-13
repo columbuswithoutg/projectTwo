@@ -16,6 +16,9 @@ const auth = require('../middleware/auth');
 const User = require('../models/user');
 const AdminConfig = require('../models/AdminConfig');
 const NpcLogic = require('../js/world-npc-logic');
+const ChatLogic = require('../js/world-chat-logic');
+const Project = require('../models/Project');
+const { PUNCH_COOLDOWN_MS } = require('../js/playground3d-physics');
 
 // Whitelisted homeCharacter slots (mirrors models/user.js homeCharacter). The
 // client sends its character on join and the server re-broadcasts it verbatim
@@ -63,8 +66,12 @@ const voiceHomes = new Map();
 
 const MAX_USERNAME = 40;
 const MAX_CHAT_LEN = 200;
+// /home chat keeps its 1s floor; /world chat uses ChatLogic.C.COOLDOWN_MS
+// (10s, shared across the world / project / whisper channels).
 const CHAT_INTERVAL_MS = 1000;
-const PUNCH_INTERVAL_MS = 500;        // floor between relayed punches per socket
+// Floor between relayed punches per socket — the client cooldown, less slack
+// for network jitter so an honest punch sent right at 1s is never dropped.
+const PUNCH_INTERVAL_MS = PUNCH_COOLDOWN_MS - 150;
 const POSITION_BOUND = 1000;          // sanity clamp; world is < 300u square in practice
 // Per-socket floor between accepted position updates. The client broadcasts at
 // ~100ms (POS_INTERVAL_MS), so legitimate traffic never trips this — it only
@@ -126,6 +133,26 @@ function stonesHeldBy(socketId) {
   return STONE_IDS.filter(id => worldStones[id].holder === socketId);
 }
 
+// ── Project grid (for Project chat) ──
+// The server has no world geometry, but every project island sits at a fixed
+// grid cell, so "which island is this player on" falls straight out of their
+// broadcast position (ChatLogic.projectAt). Same cached-read shape as the
+// stones flag: synchronous, refreshes in the background when stale.
+const PROJECT_GRID_TTL_MS = 60000;
+let _projectGrid = [];
+let _projectGridAt = 0;
+let _projectGridRefreshing = false;
+function projectGrid() {
+  if (Date.now() - _projectGridAt >= PROJECT_GRID_TTL_MS && !_projectGridRefreshing) {
+    _projectGridRefreshing = true;
+    Project.find({}).select('id gridX gridY').lean()
+      .then((docs) => { _projectGrid = docs || []; _projectGridAt = Date.now(); })
+      .catch(() => { /* keep last known grid */ })
+      .finally(() => { _projectGridRefreshing = false; });
+  }
+  return _projectGrid;
+}
+
 // ── Avengers NPC fights (single 'world' room) ──
 // The six hero NPCs patrol client-side from a shared clock (no server
 // simulation), but their HIT POINTS, knock-outs and "who they're angry at"
@@ -152,6 +179,7 @@ function npcUpdatePayload(id, event, by) {
 
 module.exports = (io) => {
   stonesEventEnabled();   // prime the cached event flag at startup
+  projectGrid();          // prime the island grid for Project chat
 
   // Handshake auth — verify the JWT AND enforce the same ban / tokenVersion
   // checks the HTTP layer does (validateToken). Without this, a banned or
@@ -238,7 +266,8 @@ module.exports = (io) => {
         character,
         x: 0, y: 0, z: 0, yaw: 0,
         walking: false,
-        lastChat: 0
+        lastChat: 0,
+        projectId: null     // island the player stands on (Project chat scope)
       };
       worldPlayers.set(socket.id, player);
 
@@ -291,24 +320,56 @@ module.exports = (io) => {
       p.y = Math.max(-2, Math.min(10, rawY));
       p.yaw = (typeof raw.yaw === 'number' && Number.isFinite(raw.yaw)) ? raw.yaw : 0;
       p.walking = !!raw.walking;
+      // Track which project island they're on; tell the client when it
+      // changes so its Project chat tab can relabel / enable itself.
+      const zone = ChatLogic.projectAt(p.x, p.z, projectGrid());
+      if (zone !== p.projectId) {
+        p.projectId = zone;
+        socket.emit('world:zone', { projectId: zone });
+      }
       socket.to('world').emit('world:pos', {
         id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking
       });
     });
 
-    socket.on('world:chat', (raw) => {
+    // Chat, split into channels: 'world' (everyone), 'project' (players on
+    // the sender's island) and 'whisper' (one named player). One 10s cooldown
+    // covers all three. `ack` (optional) reports the real outcome so the
+    // client only clears the box / shows the bubble / starts its countdown
+    // for a message that actually went out — a rejected send costs nothing.
+    socket.on('world:chat', (raw, ack) => {
+      const reply = (typeof ack === 'function') ? ack : () => {};
       const p = worldPlayers.get(socket.id);
-      if (!p) return;
-      const msg = String((raw && raw.text) || '').trim().slice(0, MAX_CHAT_LEN);
-      if (!msg) return;
-      if (Date.now() - p.lastChat < CHAT_INTERVAL_MS) return;
-      p.lastChat = Date.now();
-      // Broadcast to everyone in the room INCLUDING the sender so the
-      // local UI can show the bubble via the same code path as remote
-      // bubbles (single source of truth for rendering).
-      io.to('world').emit('world:chat', {
-        id: socket.id, username: p.username, text: msg
-      });
+      if (!p) return reply({ ok: false, error: 'not-joined' });
+      const m = ChatLogic.normalizeMessage(raw);
+      if (!m.ok) return reply(m);
+      const now = Date.now();
+      const retryInMs = ChatLogic.cooldownLeft(p.lastChat, now);
+      if (retryInMs > 0) return reply({ ok: false, error: 'cooldown', retryInMs });
+
+      // Sender always gets its own copy (so its log shows what went out).
+      const out = { channel: m.channel, id: socket.id, username: p.username, text: m.text };
+      if (m.channel === 'world') {
+        io.to('world').emit('world:chat', out);
+      } else if (m.channel === 'project') {
+        if (!p.projectId) return reply({ ok: false, error: 'no-project' });
+        out.projectId = p.projectId;
+        for (const [sid, other] of worldPlayers) {
+          if (other.projectId === p.projectId) io.to(sid).emit('world:chat', out);
+        }
+      } else {
+        let target = null;
+        for (const other of worldPlayers.values()) {
+          if (ChatLogic.sameName(other.username, m.to)) { target = other; break; }
+        }
+        if (!target) return reply({ ok: false, error: 'not-found', to: m.to });
+        if (target.userId === p.userId) return reply({ ok: false, error: 'self' });
+        out.to = target.username;
+        io.to(target.socketId).emit('world:chat', out);
+        socket.emit('world:chat', out);
+      }
+      p.lastChat = now;
+      reply({ ok: true, cooldownMs: ChatLogic.C.COOLDOWN_MS });
     });
 
     socket.on('world:emote', (raw) => {

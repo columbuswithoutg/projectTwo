@@ -89,6 +89,21 @@
     return best;
   }
 
+  // ── Punch cooldown ──
+  // Floor between one player's punches. The server enforces the same value
+  // (less a little network slack) in routes/world-socket.js, so a modified
+  // client can't spam hits either.
+  const PUNCH_COOLDOWN_MS = 1000;
+
+  // lastAt: when the last punch landed (0/null = never).
+  // → { ready, remainingMs, frac } where frac runs 1 (just punched) → 0 (ready).
+  function punchCooldown(now, lastAt, cooldownMs) {
+    const cd = cooldownMs == null ? PUNCH_COOLDOWN_MS : cooldownMs;
+    if (!lastAt || cd <= 0) return { ready: true, remainingMs: 0, frac: 0 };
+    const remainingMs = Math.max(0, Math.min(cd, cd - (now - lastAt)));
+    return { ready: remainingMs === 0, remainingMs, frac: remainingMs / cd };
+  }
+
   // ── Actor footprint ──
   // Collision radius for a character whose silhouette is `widthFactor` × a
   // Normal body's width (PG3DHumanoidLogic.bodyShapeFor().widthFactor). Grows
@@ -211,8 +226,17 @@
     return { x: homeX + x, z: homeZ + z, yaw: Math.atan2(dx, dz), walking };
   }
 
+  // Two-finger pinch → camera distance. Fingers spreading apart (newGap >
+  // prevGap) zooms IN, like every map app; the result is clamped to the same
+  // [min, max] the mouse wheel uses. Degenerate gaps leave distance unchanged.
+  function pinchZoom(distance, prevGap, newGap, min, max) {
+    if (!(prevGap > 0) || !(newGap > 0) || !Number.isFinite(distance)) return distance;
+    return Math.max(min, Math.min(max, distance * (prevGap / newGap)));
+  }
+
   return {
     isWalkable, stepVertical, shouldRespawn, airtime, airCarry, pickPunchTarget,
-    actorRadius, spawnIslands, hash01, npcPatrol, npcPathPoint
+    actorRadius, spawnIslands, PUNCH_COOLDOWN_MS, punchCooldown, hash01, npcPatrol, npcPathPoint,
+    pinchZoom
   };
 });

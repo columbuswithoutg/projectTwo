@@ -125,6 +125,38 @@ test('pickPunchTarget: vertical bound — cannot punch someone far above/below',
   assert.equal(P.pickPunchTarget(0, 0, 1.0, actors, 1.4), 'up');   // within 1.5u
 });
 
+// ── Punch cooldown ──
+
+test('punchCooldown: ready before the first punch, blocked for a second after', () => {
+  assert.equal(P.PUNCH_COOLDOWN_MS, 1000);
+  assert.deepEqual(P.punchCooldown(500, 0), { ready: true, remainingMs: 0, frac: 0 }, 'never punched');
+  const just = P.punchCooldown(5000, 5000);
+  assert.equal(just.ready, false);
+  assert.equal(just.frac, 1);
+  const half = P.punchCooldown(5500, 5000);
+  assert.equal(half.ready, false);
+  assert.equal(half.remainingMs, 500);
+  assert.equal(half.frac, 0.5);
+  assert.equal(P.punchCooldown(5999, 5000).ready, false);
+  assert.equal(P.punchCooldown(6000, 5000).ready, true);
+  assert.equal(P.punchCooldown(9000, 5000).frac, 0);
+});
+
+test('punchCooldown: custom length, and clock going backwards never exceeds a full cooldown', () => {
+  assert.equal(P.punchCooldown(1300, 1000, 600).ready, false, '300ms into a 600ms cooldown');
+  assert.equal(P.punchCooldown(1600, 1000, 600).ready, true);
+  assert.equal(P.punchCooldown(1600, 1000, 600).frac, 0);
+  assert.equal(P.punchCooldown(900, 1000).frac, 1);
+});
+
+test('server punch floor is the client cooldown less a little network slack', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'routes', 'world-socket.js'), 'utf8');
+  const m = src.match(/const PUNCH_INTERVAL_MS = PUNCH_COOLDOWN_MS - (\d+);/);
+  assert.ok(m, 'server derives its floor from PUNCH_COOLDOWN_MS');
+  const slack = +m[1];
+  assert.ok(slack > 0 && slack <= 250, `slack ${slack}ms`);
+});
+
 // ── Actor footprint (build-scaled collision radius) ──
 
 test('actorRadius: Normal and Slim keep the base radius; Hulk-type grows but fits doorways', () => {
@@ -291,4 +323,13 @@ test('npcPathPoint: heroes face the way they are travelling, both directions', (
       assert.ok(off < 1e-6, `dir ${dir} faced ${a.yaw} but moved ${travel} at t=${t.toFixed(2)}`);
     }
   }
+});
+
+test('pinchZoom: spreading fingers zooms in, pinching zooms out, clamped like the wheel', () => {
+  const { pinchZoom } = require('../js/playground3d-physics.js');
+  assert.equal(pinchZoom(8, 100, 200, 3, 14), 4);     // fingers apart → closer
+  assert.equal(pinchZoom(8, 200, 100, 3, 14), 14);    // 16 clamped to MAX_DIST
+  assert.equal(pinchZoom(8, 100, 1000, 3, 14), 3);    // 0.8 clamped to MIN_DIST
+  assert.equal(pinchZoom(8, 0, 100, 3, 14), 8);       // degenerate gap → unchanged
+  assert.equal(pinchZoom(8, 100, NaN, 3, 14), 8);
 });

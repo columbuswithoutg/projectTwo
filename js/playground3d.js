@@ -139,7 +139,7 @@ const Playground3D = (() => {
   const PUNCH = {
     RANGE: 1.4,
     ANIM_MS: 300,
-    COOLDOWN_MS: 600,
+    COOLDOWN_MS: (typeof PG3DPhysics !== 'undefined' && PG3DPhysics.PUNCH_COOLDOWN_MS) || 1000,
     DOWN_MS: 1800,
     GETUP_MS: 400,
     DOWN_ANGLE: -1.35             // root rotation.x while flat on the back
@@ -2556,6 +2556,16 @@ const Playground3D = (() => {
     let activeJoyTouchId = null;
     let activeCamTouchId = null;
     let lastCamTouch = { x: 0, y: 0 };
+    // Pinch-to-zoom: every finger down on the scene (not the joystick), by
+    // touch identifier. Two or more → pinching, which pauses orbit so a
+    // zoom gesture doesn't also spin the camera.
+    const camTouches = new Map();
+    let pinchGap = 0;
+    const pinching = () => camTouches.size >= 2;
+    function firstTwoGap() {
+      const [a, b] = camTouches.values();
+      return (a && b) ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+    }
 
     // Always create the joystick element. CSS gates visibility via a
     // (pointer: coarse) / narrow-viewport media query so it shows on
@@ -2600,6 +2610,27 @@ const Playground3D = (() => {
       punchRequested = true;
     });
     document.body.appendChild(punchEl);
+
+    // Cooldown display: --pg-cd (1 → 0) drives a sweep that drains off the
+    // button. Quantised so the DOM is only touched ~50 times per cooldown.
+    let punchCdShown = -1;
+    function setPunchCooldown(frac) {
+      const q = frac > 0 ? Math.ceil(frac * 50) / 50 : 0;
+      if (q === punchCdShown) return;
+      const was = punchCdShown;
+      punchCdShown = q;
+      punchEl.style.setProperty('--pg-cd', String(q));
+      if ((q > 0) !== (was > 0)) {
+        punchEl.classList.toggle('pg-punch--cooling', q > 0);
+        punchEl.setAttribute('aria-label', q > 0 ? 'Punch (cooling down)' : 'Punch');
+      }
+    }
+    function denyPunch() {
+      punchEl.classList.remove('pg-punch--denied');
+      void punchEl.offsetWidth;                 // restart the shake animation
+      punchEl.classList.add('pg-punch--denied');
+    }
+    punchEl.addEventListener('animationend', () => punchEl.classList.remove('pg-punch--denied'));
 
     // Joystick activation — three redundant entry points (pointer, mouse,
     // document-level pointer) all funnel through engageJoystick().
@@ -2675,6 +2706,8 @@ const Playground3D = (() => {
         const dy = e.clientY - lastCamPointer.y;
         lastCamPointer.x = e.clientX;
         lastCamPointer.y = e.clientY;
+        // Keep tracking during a pinch so orbit resumes without a jump.
+        if (pinching()) return;
         _orbit.azimuth -= dx * CAMERA.ROTATE_SPEED;
         _orbit.elevation = Math.max(_minElev(),
           Math.min(CAMERA.MAX_ELEV, _orbit.elevation - dy * CAMERA.ROTATE_SPEED));
@@ -2768,7 +2801,15 @@ const Playground3D = (() => {
       // The pointerdown path may have just activated the joystick — don't
       // also engage the touch-based joystick branch or the camera-orbit
       // drag, otherwise both would race the same finger.
-      if (activeJoyPointerId !== null) return;
+      // A second finger while the joystick is held is still a scene touch
+      // for pinch purposes — only skip the joystick finger itself.
+      if (activeJoyPointerId !== null) {
+        for (const t of e.changedTouches) {
+          if (!(joyEl && joyEl.contains(t.target))) camTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
+        }
+        if (pinching()) pinchGap = firstTwoGap();
+        return;
+      }
       for (const t of e.changedTouches) {
         // Joystick gets priority hit-test.
         if (joyEl && joyEl.contains(t.target)) {
@@ -2776,6 +2817,11 @@ const Playground3D = (() => {
           joyStart(t);
           return;
         }
+      }
+      for (const t of e.changedTouches) camTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
+      if (pinching()) {
+        e.preventDefault();          // stop the browser's own page zoom
+        pinchGap = firstTwoGap();
       }
       // Otherwise — start a camera-orbit drag with the first new touch.
       if (activeCamTouchId === null) {
@@ -2786,7 +2832,10 @@ const Playground3D = (() => {
       }
     }
     function onTouchMove(e) {
+      let pinchMoved = false;
       for (const t of e.changedTouches) {
+        const tracked = camTouches.get(t.identifier);
+        if (tracked) { tracked.x = t.clientX; tracked.y = t.clientY; pinchMoved = true; }
         if (t.identifier === activeJoyTouchId) {
           e.preventDefault();
           joyMove(t);
@@ -2795,20 +2844,43 @@ const Playground3D = (() => {
           const dy = t.clientY - lastCamTouch.y;
           lastCamTouch.x = t.clientX;
           lastCamTouch.y = t.clientY;
+          // The same finger also drives the pointer-event orbit above; only
+          // rotate here when that path isn't active (browsers without
+          // pointer events, or after a pointercancel) — otherwise the camera
+          // turned twice as fast on touch.
+          if (activeCamPointerId !== null || pinching()) continue;
           _orbit.azimuth -= dx * CAMERA.ROTATE_SPEED;
           _orbit.elevation = Math.max(_minElev(),
             Math.min(CAMERA.MAX_ELEV, _orbit.elevation - dy * CAMERA.ROTATE_SPEED));
         }
       }
+      if (pinchMoved && pinching() && _orbit) {
+        e.preventDefault();
+        const gap = firstTwoGap();
+        if (typeof PG3DPhysics !== 'undefined' && PG3DPhysics.pinchZoom) {
+          _orbit.distance = PG3DPhysics.pinchZoom(_orbit.distance, pinchGap, gap, CAMERA.MIN_DIST, CAMERA.MAX_DIST);
+        }
+        pinchGap = gap;
+      }
     }
     function onTouchEnd(e) {
       for (const t of e.changedTouches) {
+        camTouches.delete(t.identifier);
         if (t.identifier === activeJoyTouchId) {
           e.preventDefault();
           joyEnd();
         } else if (t.identifier === activeCamTouchId) {
           activeCamTouchId = null;
         }
+      }
+      if (pinching()) pinchGap = firstTwoGap();
+      // Pinch ended with one finger still down — re-anchor its orbit so the
+      // camera doesn't snap by however far that finger travelled mid-pinch.
+      const rest = camTouches.size === 1 ? [...camTouches.entries()][0] : null;
+      if (rest && activeCamTouchId === null) {
+        activeCamTouchId = rest[0];
+        lastCamTouch.x = rest[1].x;
+        lastCamTouch.y = rest[1].y;
       }
     }
     // Touch listeners are always attached. Devices without touch input
@@ -2836,7 +2908,7 @@ const Playground3D = (() => {
     // touch-orbit in progress). Tick uses this to suspend auto-follow so
     // the user's manual rotation isn't fought by the follow lerp.
     function isOrbiting() {
-      return mouseDragging || activeCamTouchId !== null;
+      return mouseDragging || activeCamTouchId !== null || activeCamPointerId !== null;
     }
 
     // One-shot jump request. Tick reads and clears once per keydown so
@@ -2881,7 +2953,7 @@ const Playground3D = (() => {
       if (punchEl && punchEl.parentNode) punchEl.parentNode.removeChild(punchEl);
     }
 
-    return { getAxis, isOrbiting, consumeJump, consumePunch, detach };
+    return { getAxis, isOrbiting, consumeJump, consumePunch, setPunchCooldown, denyPunch, detach };
   }
 
   // ── tick / animation ──
@@ -3017,8 +3089,11 @@ const Playground3D = (() => {
     // Punch — quick jab; a remote player or NPC within reach gets knocked
     // down. Fires the _onPunch callback on EVERY punch (target or whiff) so
     // peers see the swing; the socket layer relays it (world mode only).
+    const _punchCd = PG3DPhysics.punchCooldown(now, _lastPunchAt, PUNCH.COOLDOWN_MS);
     if (_input && _input.consumePunch && _input.consumePunch()) {
-      if (!_falling && !_down && now - _lastPunchAt >= PUNCH.COOLDOWN_MS) {
+      // Pressed too early → a small shake on the button instead of a swing.
+      if (!_punchCd.ready && _input.denyPunch) _input.denyPunch();
+      if (!_falling && !_down && _punchCd.ready) {
         _lastPunchAt = now;
         _localPunchUntil = now + PUNCH.ANIM_MS;
         const actors = [];
@@ -3051,6 +3126,10 @@ const Playground3D = (() => {
         }
         if (_onPunch) { try { _onPunch({ target: targetSocket, npc: targetNpc }); } catch (_) {} }
       }
+    }
+    // Drain the cooldown sweep on the punch button.
+    if (_input && _input.setPunchCooldown) {
+      _input.setPunchCooldown(PG3DPhysics.punchCooldown(now, _lastPunchAt, PUNCH.COOLDOWN_MS).frac);
     }
     if (_falling || _velY !== 0 || _player.position.y > 0) {
       // Ceiling cap: under a building roof / in a doorway, keep the head below
@@ -5308,6 +5387,7 @@ const Playground3D = (() => {
     _debug: {
       npcs() { return _npcs; },
       localDownUntil() { return _localDownUntil; },
+      orbit() { return _orbit ? { distance: _orbit.distance, azimuth: _orbit.azimuth, elevation: _orbit.elevation } : null; },
       teleport(x, z) { if (_player) { _player.position.set(x, 0, z); _lastSafe.x = x; _lastSafe.z = z; } },
       // Advance one frame by hand when the tab is throttled (rAF frozen).
       // Cancels the queued frame first so the loop never doubles up.

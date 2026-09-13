@@ -5004,6 +5004,13 @@ body.fight-active .flow-wrapper {
 @media (prefers-reduced-motion: reduce) {
   .world-snap-btn { animation: none; }
 }
+/* Narrow phones: Back + title + SNAP + stone chip don't fit at full size. */
+@media (max-width: 400px) {
+  .world-header { gap: 8px; }
+  .world-title { font-size: 18px; }
+  .world-header-spacer { min-width: 0; gap: 6px; }
+  .world-snap-btn, .world-stone-chip { padding: 5px 9px; font-size: 0.75rem; }
+}
 
 /* Snap flash over the 3D stage. */
 .world-snap-flash {
@@ -5194,8 +5201,10 @@ body.fight-active .flow-wrapper {
    joystick (which lives ~28px from the bottom). Must stay immediately after
    the base rule — media queries carry no extra specificity, so if the base
    rule came later it would win on `bottom` and leave `top` and `bottom` both
-   set, stretching this transparent row over the entire screen. */
-@media (max-width: 640px) {
+   set, stretching this transparent row over the entire screen.
+   Same query that reveals the joystick (further down) — with a narrower one,
+   641–768px screens got the joystick parked on top of the chat input. */
+@media (pointer: coarse), (max-width: 768px) {
   .world-chat-row {
     top: calc(var(--header-height) + env(safe-area-inset-top) + 8px);
     bottom: auto;
@@ -5230,6 +5239,148 @@ body.fight-active .flow-wrapper {
   color: var(--color-primary);
   font-weight: 600;
   margin-right: 6px;
+}
+/* /world renders names as buttons (tap a name to whisper them) — strip the
+   button chrome so they read exactly like the old spans. */
+button.world-chat-name {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  cursor: default;
+}
+button.world-chat-name[data-whisper] { cursor: pointer; }
+button.world-chat-name[data-whisper]:hover,
+button.world-chat-name[data-whisper]:focus-visible { text-decoration: underline; }
+.world-chat-line.project .world-chat-name { color: #ffc857; }
+.world-chat-line.whisper { color: #e3c8ff; font-style: italic; }
+.world-chat-line.whisper .world-chat-name { color: #c792ff; font-style: normal; }
+
+/* ── Chat channel tabs (World / Project / Whisper) ── */
+.world-chat-tabs {
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+  align-self: flex-start;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.world-chat-tabs::-webkit-scrollbar { display: none; }
+.world-chat-tab {
+  position: relative;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(15, 17, 28, 0.82);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.world-chat-tab:hover { color: #fff; border-color: rgba(255, 255, 255, 0.3); }
+.world-chat-tab.active { color: #fff; background: var(--color-primary); border-color: var(--color-primary); }
+.world-chat-tab[data-channel="project"].active { background: #b7791f; border-color: #b7791f; }
+.world-chat-tab[data-channel="whisper"].active { background: #7c3aed; border-color: #7c3aed; }
+.world-chat-tab.off-island:not(.active) { opacity: 0.55; }
+.world-chat-tab.unread::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffd23f;
+  box-shadow: 0 0 0 2px rgba(15, 17, 28, 0.9);
+}
+.world-chat-row[data-channel="project"] .pg3d-chat:focus { border-color: #ffc857; }
+.world-chat-row[data-channel="whisper"] .pg3d-chat:focus { border-color: #c792ff; }
+
+/* Whisper target picker — only on the Whisper tab. */
+.world-whisper-to {
+  display: none;
+  flex: 0 1 132px;
+  min-width: 0;
+  height: 44px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(199, 146, 255, 0.45);
+  background: rgba(15, 17, 28, 0.88);
+  color: #fff;
+  font-size: 13px;
+}
+.world-chat-row[data-channel="whisper"] .world-whisper-to { display: block; }
+
+/* Input + inline clear (the touch stand-in for Escape). */
+.world-chat-field { position: relative; flex: 1; min-width: 0; display: flex; }
+.world-chat-field .pg3d-chat { width: 100%; min-width: 0; }
+.world-chat-clear {
+  display: none;
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+  cursor: pointer;
+}
+.world-chat-inputrow.has-text .world-chat-clear { display: block; }
+.world-chat-inputrow.has-text .world-chat-field .pg3d-chat { padding-right: 44px; }
+
+.world-chat-send {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 17px;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.world-chat-send:disabled { opacity: 0.4; cursor: not-allowed; background: rgba(15, 17, 28, 0.88); border-color: rgba(255, 255, 255, 0.16); }
+
+/* 10s cooldown countdown. */
+.world-chat-cooldown {
+  align-self: flex-start;
+  pointer-events: none;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(15, 17, 28, 0.82);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.world-chat-cooldown.nudge { animation: world-chat-nudge 0.35s ease; color: #ffd23f; }
+@keyframes world-chat-nudge {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .world-chat-cooldown.nudge { animation: none; }
+}
+/* Touch / narrow: same query as the joystick. Must come after the base chat
+   rules above (media queries add no specificity). The whisper picker gets its
+   own line so the text box keeps a usable width on a phone. */
+@media (pointer: coarse), (max-width: 768px) {
+  .world-chat-tab { min-height: 34px; padding: 0 10px; font-size: 11px; max-width: 150px; }
+  .world-chat-inputrow { gap: 6px; flex-wrap: wrap; }
+  .world-chat-row[data-channel="whisper"] .world-whisper-to { flex: 1 0 100%; height: 40px; font-size: 13px; }
 }
 .pg3d-chat {
   flex: 1;
@@ -5478,6 +5629,47 @@ body.fight-active .flow-wrapper {
 }
 .pg-punch:active {
   background: rgba(237, 29, 36, 0.35);
+}
+/* Punch cooldown — a dark sweep drains clockwise off the button as the
+   cooldown runs out (--pg-cd: 1 just punched → 0 ready). */
+.pg-punch::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: conic-gradient(rgba(7, 8, 15, 0.72) calc(var(--pg-cd, 0) * 360deg), transparent 0);
+  pointer-events: none;
+}
+.pg-punch--cooling {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+.pg-punch--cooling:active {
+  background: rgba(20, 20, 30, 0.55);
+}
+/* Pressed before it was ready. */
+.pg-punch--denied {
+  animation: pg-punch-denied 0.28s ease;
+}
+@keyframes pg-punch-denied {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pg-punch--denied { animation: none; }
+}
+/* Desktop punches with F and hides the button, so show a small read-only
+   indicator only while the cooldown is running. */
+@media (pointer: fine) and (min-width: 769px) {
+  .pg-punch.pg-punch--cooling,
+  .pg-punch.pg-punch--denied {
+    display: block;
+    width: 48px;
+    height: 48px;
+    bottom: 32px;
+    font-size: 1.1rem;
+    pointer-events: none;
+  }
 }
 /* Show on touch primary-input devices OR small viewports (covers iOS
    standalone web apps where pointer detection sometimes lies, plus

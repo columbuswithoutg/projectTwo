@@ -36,7 +36,9 @@ const Multiplayer = (() => {
     snapshot:    'world:snapshot',
     joined:      'world:joined',
     left:        'world:left',
-    leave:       null              // /world auto-cleans on disconnect; no explicit leave
+    leave:       null,             // /world auto-cleans on disconnect; no explicit leave
+    zone:        'world:zone',     // server: the project island we're standing on changed
+    channels:    true              // World / Project / Whisper chat tabs + 10s cooldown
   };
   const HOME_EVENTS = {
     join:        'home:join',
@@ -55,7 +57,9 @@ const Multiplayer = (() => {
     snapshot:    'home:snapshot',
     joined:      'home:joined',
     left:        'home:left',
-    leave:       'home:leave'      // emitted before disconnect so the room's owner gets prompt notice
+    leave:       'home:leave',     // emitted before disconnect so the room's owner gets prompt notice
+    zone:        null,             // homes have one shared chat — no channels
+    channels:    false
   };
 
   const POS_INTERVAL_MS = 100;
@@ -85,6 +89,9 @@ const Multiplayer = (() => {
     let lastPosSent = { x: 0, y: 0, z: 0, yaw: 0, walking: false };
     let chatLog = [];
 
+    const esc = (s) => String(s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
     function appendChatLog(username, text) {
       chatLog.push({ username, text });
       if (chatLog.length > CHAT_LOG_MAX) chatLog.shift();
@@ -93,12 +100,205 @@ const Multiplayer = (() => {
     function renderChatLog() {
       const el = document.getElementById('world-chat-log');
       if (!el) return;
-      const esc = (s) => String(s).replace(/[&<>"']/g, c =>
-        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      if (events.channels) { renderChannelLog(el); return; }
       el.innerHTML = chatLog.map(m =>
         `<div class="world-chat-line"><span class="world-chat-name">${esc(m.username)}</span>${esc(m.text)}</div>`
       ).join('');
       el.scrollTop = el.scrollHeight;
+    }
+
+    // ── Chat channels (/world only: events.channels) ──
+    // One log per tab; only the active one renders. The server decides who
+    // receives what — these logs just file each incoming line by channel.
+    const ChatL = (typeof WorldChatLogic !== 'undefined') ? WorldChatLogic : null;
+    const TAB_KEY = 'world_chat_tab';
+    const chan = {
+      logs: { world: [], project: [], whisper: [] },
+      unread: { world: false, project: false, whisper: false },
+      active: 'world',
+      projectId: null,
+      whisperTo: '',
+      cooldownUntil: 0,
+      cooldownTimer: null,
+      sending: false
+    };
+    try {
+      const saved = localStorage.getItem(TAB_KEY);
+      if (saved === 'world' || saved === 'project' || saved === 'whisper') chan.active = saved;
+    } catch (_) {}
+
+    function renderChannelLog(el) {
+      const myId = socket.id;
+      el.innerHTML = chan.logs[chan.active].map((m) => {
+        if (m.channel === 'whisper') {
+          const mine = m.id === myId;
+          const other = mine ? m.to : m.username;
+          const label = mine ? `→ ${esc(m.to)}` : `${esc(m.username)} →`;
+          return `<div class="world-chat-line whisper"><button type="button" class="world-chat-name" data-whisper="${esc(other)}" title="Whisper ${esc(other)}">${label}</button>${esc(m.text)}</div>`;
+        }
+        const nameAttr = m.id === myId ? '' : ` data-whisper="${esc(m.username)}" title="Whisper ${esc(m.username)}"`;
+        return `<div class="world-chat-line ${m.channel}"><button type="button" class="world-chat-name"${nameAttr}>${esc(m.username)}</button>${esc(m.text)}</div>`;
+      }).join('');
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function projectTitle(id) {
+      if (!id) return '';
+      const p = (typeof projects !== 'undefined' && Array.isArray(projects)) ? projects.find(q => q.id === id) : null;
+      return (p && p.title) || id;
+    }
+
+    function placeholderFor(tab) {
+      if (tab === 'project') return chan.projectId ? `Say something to ${projectTitle(chan.projectId)}…` : 'Walk onto a project island to chat here';
+      if (tab === 'whisper') return chan.whisperTo ? `Whisper to ${chan.whisperTo}…` : 'Pick a player, or type /w name message';
+      return 'Say something to everyone…';
+    }
+
+    function renderTabs() {
+      document.querySelectorAll('.world-chat-tab').forEach((btn) => {
+        const tab = btn.getAttribute('data-channel');
+        const on = tab === chan.active;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        btn.classList.toggle('unread', !on && chan.unread[tab]);
+      });
+      const label = document.getElementById('world-chat-project-label');
+      if (label) {
+        label.textContent = chan.projectId ? projectTitle(chan.projectId) : 'Project';
+        label.parentElement.classList.toggle('off-island', !chan.projectId);
+        label.parentElement.title = chan.projectId ? `Chat with players on ${projectTitle(chan.projectId)}` : 'Not on a project island';
+      }
+      const row = document.querySelector('.world-chat-row');
+      if (row) row.setAttribute('data-channel', chan.active);
+      if (input) input.placeholder = placeholderFor(chan.active);
+    }
+
+    function setTab(tab) {
+      if (!chan.logs[tab]) return;
+      chan.active = tab;
+      chan.unread[tab] = false;
+      try { localStorage.setItem(TAB_KEY, tab); } catch (_) {}
+      if (tab === 'whisper') refreshWhisperPicker();
+      renderTabs();
+      renderChatLog();
+    }
+
+    function refreshWhisperPicker() {
+      const sel = document.getElementById('world-whisper-to');
+      if (!sel) return;
+      const names = new Set();
+      const players = (Playground3D.getRemotePlayers && Playground3D.getRemotePlayers()) || [];
+      for (const p of players) if (p.username) names.add(p.username);
+      if (chan.whisperTo) names.add(chan.whisperTo);
+      const sorted = [...names].sort((a, b) => a.localeCompare(b));
+      sel.innerHTML = `<option value="">${sorted.length ? 'Whisper to…' : 'No one else here'}</option>` +
+        sorted.map(n => `<option value="${esc(n)}"${n === chan.whisperTo ? ' selected' : ''}>${esc(n)}</option>`).join('');
+    }
+
+    function setWhisperTarget(name) {
+      chan.whisperTo = name || '';
+      refreshWhisperPicker();
+      renderTabs();
+    }
+
+    function fileChannelLine(msg) {
+      const channel = (msg && ChatL && ChatL.CHANNELS.includes(msg.channel)) ? msg.channel : 'world';
+      const log = chan.logs[channel];
+      log.push({ ...msg, channel });
+      if (log.length > CHAT_LOG_MAX) log.shift();
+      // First whisper someone sends us → pre-pick them so replying is one tap.
+      if (channel === 'whisper' && msg.id !== socket.id && !chan.whisperTo) setWhisperTarget(msg.username);
+      if (channel !== chan.active) { chan.unread[channel] = true; renderTabs(); }
+      else renderChatLog();
+    }
+
+    function renderCooldown() {
+      const left = Math.max(0, chan.cooldownUntil - Date.now());
+      const el = document.getElementById('world-chat-cooldown');
+      const sendBtn = document.getElementById('world-chat-send');
+      const row = document.querySelector('.world-chat-row');
+      if (el) {
+        el.hidden = left <= 0;
+        el.textContent = left > 0 ? `You can chat again in ${Math.ceil(left / 1000)}s` : '';
+      }
+      if (sendBtn) sendBtn.disabled = left > 0 || chan.sending;
+      if (row) row.classList.toggle('cooling', left > 0);
+      if (left <= 0 && chan.cooldownTimer) { clearInterval(chan.cooldownTimer); chan.cooldownTimer = null; }
+    }
+
+    function startCooldown(ms) {
+      chan.cooldownUntil = Date.now() + ms;
+      if (!chan.cooldownTimer) chan.cooldownTimer = setInterval(renderCooldown, 250);
+      renderCooldown();
+    }
+
+    function nudgeCooldown() {
+      const el = document.getElementById('world-chat-cooldown');
+      if (!el) return;
+      el.classList.remove('nudge');
+      void el.offsetWidth;          // restart the animation
+      el.classList.add('nudge');
+    }
+
+    const chatWarn = (msg) => { if (typeof toast === 'function') toast(msg, 'warn'); };
+
+    // Send whatever's in the box on the active tab (or as a whisper when it
+    // starts with /w). The box only clears once the server acks the message.
+    function sendChannelChat() {
+      if (!input || chan.sending) return;
+      let text = input.value.trim();
+      if (!text) { input.value = ''; syncInputState(); return; }
+      let channel = chan.active;
+      let to = null;
+      const cmd = ChatL && ChatL.parseWhisperCommand(text);
+      if (cmd) {
+        channel = 'whisper'; to = cmd.to; text = cmd.text;
+      } else if (/^\/(w|whisper|msg)\b/i.test(text)) {
+        chatWarn('To whisper, type /w name message');
+        return;
+      } else if (channel === 'whisper') {
+        to = chan.whisperTo;
+        if (!to) { chatWarn(ChatL.errorText('no-target')); return; }
+      } else if (channel === 'project' && !chan.projectId) {
+        chatWarn(ChatL.errorText('no-project'));
+        return;
+      }
+      const left = chan.cooldownUntil - Date.now();
+      if (left > 0) { nudgeCooldown(); return; }
+      if (!socket.connected) { chatWarn('Not connected — message not sent.'); return; }
+
+      chan.sending = true;
+      renderCooldown();
+      let settled = false;
+      const guard = setTimeout(() => done({ ok: false, error: 'timeout' }), 6000);
+      function done(res) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(guard);
+        chan.sending = false;
+        if (res && res.ok) {
+          input.value = '';
+          syncInputState();
+          if (cmd) { setWhisperTarget(cmd.to); setTab('whisper'); }
+          // Whispers are private — no speech bubble over our head.
+          if (channel !== 'whisper' && Playground3D.showLocalChat) Playground3D.showLocalChat(text);
+          startCooldown((res && res.cooldownMs) || ChatL.C.COOLDOWN_MS);
+          return;
+        }
+        if (res && res.error === 'cooldown') {
+          startCooldown(res.retryInMs || 0);
+          nudgeCooldown();
+          return;
+        }
+        renderCooldown();
+        chatWarn(res && res.error === 'timeout' ? 'Message not sent — the server didn’t answer.' : ChatL.errorText(res && res.error, res));
+      }
+      socket.emit(events.chat, { channel, text, to }, done);
+    }
+
+    function syncInputState() {
+      const row = document.querySelector('.world-chat-inputrow');
+      if (row && input) row.classList.toggle('has-text', input.value.length > 0);
     }
 
     // `joined` distinguishes the FIRST connect from automatic reconnects.
@@ -118,6 +318,14 @@ const Multiplayer = (() => {
       }
       joined = true;
       errToasted = false;
+      if (events.zone) {
+        // A fresh socket starts with no island server-side; force the next
+        // position tick to go out (even standing still) so the server
+        // re-derives our zone and the Project tab comes back.
+        chan.projectId = null;
+        lastPosSent = { x: NaN, y: 0, z: NaN, yaw: 0, walking: false };
+        renderTabs();
+      }
       // Tell the engine our (possibly new-on-reconnect) socket id so it can
       // tell "held by me" from "held by a remote" for the shared stones, and
       // "the hero is angry at ME" for NPC fights.
@@ -142,17 +350,32 @@ const Multiplayer = (() => {
     });
     socket.on(events.joined, (p) => {
       Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y);
+      if (events.channels && chan.active === 'whisper') refreshWhisperPicker();
     });
     socket.on(events.pos, (p) => {
       Playground3D.updateRemotePlayer(p.id, p.x, p.z, p.yaw, p.walking, p.y);
     });
     socket.on(events.left, ({ id }) => {
       Playground3D.removeRemotePlayer(id);
+      if (events.channels && chan.active === 'whisper') refreshWhisperPicker();
     });
-    socket.on(events.chat, ({ id, username, text }) => {
+    socket.on(events.chat, (msg) => {
+      const { id, username, text } = msg || {};
+      if (events.channels) {
+        // Whispers stay private: log only, no bubble over the sender's head.
+        if (msg.channel !== 'whisper') Playground3D.showRemoteChat(id, username, text);
+        fileChannelLine(msg);
+        return;
+      }
       Playground3D.showRemoteChat(id, username, text);
       appendChatLog(username, text);
     });
+    if (events.zone) {
+      socket.on(events.zone, ({ projectId }) => {
+        chan.projectId = projectId || null;
+        renderTabs();
+      });
+    }
     socket.on(events.emote, ({ id, kind }) => {
       Playground3D.playRemoteEmote(id, kind);
     });
@@ -253,6 +476,11 @@ const Multiplayer = (() => {
     // Chat input — same DOM ids as /world's HTML (.world-chat-row).
     const input = document.getElementById('world-chat-input');
     const onChatKey = (e) => {
+      if (events.channels) {
+        if (e.key === 'Enter') { e.preventDefault(); sendChannelChat(); }
+        else if (e.key === 'Escape') { input.value = ''; syncInputState(); input.blur(); }
+        return;
+      }
       if (e.key === 'Enter') {
         e.preventDefault();
         const text = input.value.trim();
@@ -276,6 +504,42 @@ const Multiplayer = (() => {
       }
     };
     if (input) input.addEventListener('keydown', onChatKey);
+
+    // Channel UI wiring (tabs, whisper picker, send / clear buttons, tapping a
+    // name in the log to whisper them). One delegated click listener on the
+    // chat row so teardown is a single removeEventListener.
+    const chatRow = events.channels ? document.querySelector('.world-chat-row') : null;
+    const whisperSel = events.channels ? document.getElementById('world-whisper-to') : null;
+    const onChatRowClick = (e) => {
+      const tabBtn = e.target.closest('.world-chat-tab');
+      if (tabBtn) { setTab(tabBtn.getAttribute('data-channel')); return; }
+      const nameBtn = e.target.closest('[data-whisper]');
+      if (nameBtn) {
+        setWhisperTarget(nameBtn.getAttribute('data-whisper'));
+        setTab('whisper');
+        if (input) input.focus();
+        return;
+      }
+      if (e.target.closest('#world-chat-send')) { sendChannelChat(); return; }
+      if (e.target.closest('#world-chat-clear')) {
+        if (input) { input.value = ''; syncInputState(); input.focus(); }
+      }
+    };
+    const onWhisperChange = () => { setWhisperTarget(whisperSel.value); if (input) input.focus(); };
+    const onWhisperOpen = () => refreshWhisperPicker();
+    const onChatInput = () => syncInputState();
+    if (chatRow) {
+      chatRow.addEventListener('click', onChatRowClick);
+      if (whisperSel) {
+        whisperSel.addEventListener('change', onWhisperChange);
+        whisperSel.addEventListener('pointerdown', onWhisperOpen);
+        whisperSel.addEventListener('focus', onWhisperOpen);
+      }
+      if (input) input.addEventListener('input', onChatInput);
+      renderTabs();
+      renderCooldown();
+      renderChatLog();
+    }
 
     // Emote button.
     const emoteBtn = document.getElementById('world-emote-btn');
@@ -302,6 +566,17 @@ const Multiplayer = (() => {
     function stop() {
       if (posTimer) { clearInterval(posTimer); posTimer = null; }
       if (input) input.removeEventListener('keydown', onChatKey);
+      if (chatRow) {
+        chatRow.removeEventListener('click', onChatRowClick);
+        if (whisperSel) {
+          whisperSel.removeEventListener('change', onWhisperChange);
+          whisperSel.removeEventListener('pointerdown', onWhisperOpen);
+          whisperSel.removeEventListener('focus', onWhisperOpen);
+        }
+        if (input) input.removeEventListener('input', onChatInput);
+      }
+      if (chan.cooldownTimer) { clearInterval(chan.cooldownTimer); chan.cooldownTimer = null; }
+      chan.logs = { world: [], project: [], whisper: [] };
       if (emoteBtn) emoteBtn.removeEventListener('click', onEmoteClick);
       // Detach the punch + stone-grab → socket bridges so a stale closure
       // can't emit on a dead socket after unmount.

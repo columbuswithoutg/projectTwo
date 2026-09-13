@@ -142,6 +142,9 @@
   <!-- Shared Avengers NPC combat rules (HP / KO / aggro) — the server runs
        the same file; playground3d.js reads its tables. -->
   <script defer src="js/world-npc-logic.js"></script>
+  <!-- /world chat channel rules (World / Project / Whisper, 10s cooldown) —
+       shared with routes/world-socket.js. -->
+  <script defer src="js/world-chat-logic.js"></script>
   <!-- Realistic humanoid characters: pure logic (also unit-tested) + the glTF
        rig loader. Both must load before playground3d.js, which calls them
        from _buildPlayer. -->

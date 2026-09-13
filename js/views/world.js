@@ -60,10 +60,21 @@ const WorldView = (() => {
           <div class="world-loading-text">Entering the world…</div>
         </div>
       </div>
-      <div class="world-chat-row">
+      <div class="world-chat-row" data-channel="world">
+        <div class="world-chat-tabs" role="tablist" aria-label="Chat channel">
+          <button class="world-chat-tab active" type="button" role="tab" aria-selected="true" data-channel="world" title="Everyone in the world">🌍 World</button>
+          <button class="world-chat-tab off-island" type="button" role="tab" aria-selected="false" data-channel="project" title="Not on a project island">🎬 <span id="world-chat-project-label">Project</span></button>
+          <button class="world-chat-tab" type="button" role="tab" aria-selected="false" data-channel="whisper" title="Private message to one player">🤫 Whisper</button>
+        </div>
         <div class="world-chat-log" id="world-chat-log" aria-live="polite"></div>
+        <div class="world-chat-cooldown" id="world-chat-cooldown" hidden></div>
         <div class="world-chat-inputrow">
-          <input class="pg3d-chat" id="world-chat-input" placeholder="Say something…" maxlength="200" autocomplete="off" />
+          <select class="world-whisper-to" id="world-whisper-to" aria-label="Whisper to"><option value="">Whisper to…</option></select>
+          <div class="world-chat-field">
+            <input class="pg3d-chat" id="world-chat-input" placeholder="Say something to everyone…" maxlength="200" autocomplete="off" enterkeyhint="send" />
+            <button class="world-chat-clear" id="world-chat-clear" type="button" aria-label="Clear message">✕</button>
+          </div>
+          <button class="world-chat-send" id="world-chat-send" type="button" aria-label="Send message" title="Send (Enter)">➤</button>
           <button class="pg3d-emote" id="world-emote-btn" type="button" aria-label="Wave">👋</button>
           <button class="pg3d-voice" id="world-voice-btn" type="button" aria-label="Toggle voice chat" aria-pressed="false" title="Voice chat (off)">🎙️</button>
         </div>
@@ -414,12 +425,14 @@ const WorldView = (() => {
     if (seen) return;
     try { localStorage.setItem('world_controls_seen', '1'); } catch (_) {}
 
-    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    // Same query that reveals the joystick / jump / punch buttons in styles.css,
+    // so the hint always describes the controls actually on screen.
+    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse), (max-width: 768px)').matches;
     const hint = document.createElement('div');
     hint.className = 'world-hint';
     hint.innerHTML = coarse
-      ? `<span class="world-hint-icon">🕹️</span> Drag the joystick to move · ⤒ to jump · 👊 to punch`
-      : `<span class="world-hint-icon">⌨️</span> <b>WASD</b> to move · <b>Space</b> to jump · <b>F</b> to punch · drag to look`;
+      ? `<span class="world-hint-icon">🕹️</span> Joystick to move · ⤒ jump · 👊 punch · pinch to zoom · chat tabs for World / Project / Whisper`
+      : `<span class="world-hint-icon">⌨️</span> <b>WASD</b> to move · <b>Space</b> to jump · <b>F</b> to punch · drag to look · <b>/w name</b> to whisper`;
     _stage.appendChild(hint);
     requestAnimationFrame(() => hint.classList.add('show'));
 
