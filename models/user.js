@@ -62,6 +62,7 @@ const UserSchema = new mongoose.Schema({
     hat:             { type: Number, default: null, min: 0, max: 4 },
     shoeColor:       { type: Number, default: null, min: 0, max: 7 },
     build:           { type: Number, default: null, min: 0, max: 3 },
+    bodyType:        { type: Number, default: null, min: 0, max: 1 },   // 0 Realistic, 1 Box
     gear:            { type: Number, default: null, min: 0, max: 6 },   // DEPRECATED (round 2): ignored by renderer; kept for old docs
     // Clothing SHAPE slots — maxes mirror js/playground.js array lengths +
     // routes/profile.js HOME_CHARACTER_RANGES. Keep all three in sync. 0 =

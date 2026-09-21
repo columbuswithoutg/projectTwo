@@ -27,6 +27,13 @@ const AdminConfigSchema = new mongoose.Schema({
     // Defaults off — it's an opt-in event the admin turns on.
     worldEventStonesEnabled: { type: Boolean, default: false }
   },
+  // /world settings. npcBodyTypes: body for each hero NPC, keyed by NPC id
+  // (WorldNpcLogic.NPC_IDS, e.g. 'npc_hulk') — 0 = Realistic (rigged human),
+  // 1 = Box (the original blocky body); mirrors Playground.BODY_TYPES. A hero
+  // with no entry is Realistic. Global: every player sees the same NPCs.
+  world: {
+    npcBodyTypes: { type: Map, of: { type: Number, min: 0, max: 1 }, default: {} }
+  },
   // Bumped on every save so the client can detect staleness. Currently
   // unused for cache busting (the boot-time fetch is fresh per page load),
   // but reserved so a future ETag/SSE push has a comparison value.
@@ -42,7 +49,8 @@ AdminConfigSchema.statics.defaults = function () {
     walker:    { speed: 40, pauseMin: 800, pauseMax: 2500 },
     encounter: { dist: 26, cooldown: 30000 },
     fight:     { spawnChance: 0.15 },
-    flags:     { fightsEnabled: false, dialoguesEnabled: true, worldEventStonesEnabled: false }
+    flags:     { fightsEnabled: false, dialoguesEnabled: true, worldEventStonesEnabled: false },
+    world:     { npcBodyTypes: {} }
   };
 };
 

@@ -86,7 +86,7 @@ const Multiplayer = (() => {
 
     const socket = io({ auth: { token: Auth.getToken() } });
     let posTimer = null;
-    let lastPosSent = { x: 0, y: 0, z: 0, yaw: 0, walking: false };
+    let lastPosSent = { x: 0, y: 0, z: 0, yaw: 0, walking: false, backward: false };
     let chatLog = [];
 
     const esc = (s) => String(s).replace(/[&<>"']/g, c =>
@@ -328,7 +328,7 @@ const Multiplayer = (() => {
         // position tick to go out (even standing still) so the server
         // re-derives our zone and the Project tab comes back.
         chan.projectId = null;
-        lastPosSent = { x: NaN, y: 0, z: NaN, yaw: 0, walking: false };
+        lastPosSent = { x: NaN, y: 0, z: NaN, yaw: 0, walking: false, backward: false };
         renderTabs();
       }
       // Tell the engine our (possibly new-on-reconnect) socket id so it can
@@ -358,7 +358,7 @@ const Multiplayer = (() => {
       if (events.channels && chan.active === 'whisper') refreshWhisperPicker();
     });
     socket.on(events.pos, (p) => {
-      Playground3D.updateRemotePlayer(p.id, p.x, p.z, p.yaw, p.walking, p.y);
+      Playground3D.updateRemotePlayer(p.id, p.x, p.z, p.yaw, p.walking, p.y, p.backward);
     });
     socket.on(events.left, ({ id }) => {
       Playground3D.removeRemotePlayer(id);
@@ -563,8 +563,10 @@ const Multiplayer = (() => {
       const dz = Math.abs(s.z - lastPosSent.z);
       const dy = Math.abs((s.y || 0) - (lastPosSent.y || 0));
       const dyaw = Math.abs(((s.yaw - lastPosSent.yaw) + Math.PI) % (2 * Math.PI) - Math.PI);
-      if (dx < POS_EPSILON && dz < POS_EPSILON && dy < POS_EPSILON && dyaw < YAW_EPSILON && s.walking === lastPosSent.walking) return;
-      lastPosSent = { x: s.x, y: s.y || 0, z: s.z, yaw: s.yaw, walking: s.walking };
+      const backward = !!s.backward;
+      if (dx < POS_EPSILON && dz < POS_EPSILON && dy < POS_EPSILON && dyaw < YAW_EPSILON
+          && s.walking === lastPosSent.walking && backward === lastPosSent.backward) return;
+      lastPosSent = { x: s.x, y: s.y || 0, z: s.z, yaw: s.yaw, walking: s.walking, backward };
       socket.emit(events.pos, lastPosSent);
     }, POS_INTERVAL_MS);
 

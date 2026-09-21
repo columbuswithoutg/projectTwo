@@ -83,6 +83,7 @@ const HOME_CHARACTER_RANGES = {
   hat:             { max: 4 },
   shoeColor:       { max: 7 },
   build:           { max: 3 },    // body size/bulk
+  bodyType:        { max: 1 },    // BODY_TYPES: 0 = Realistic, 1 = Box
   gear:            { max: 6 },    // DEPRECATED (round 2): hero `gear` slot removed
                                   // from UI/render; kept so old docs/clients
                                   // that still PUT it don't 400. Ignored.

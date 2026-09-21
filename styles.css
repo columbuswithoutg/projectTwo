@@ -4322,6 +4322,14 @@ body.fight-active .flow-wrapper {
   cursor: pointer;
   accent-color: var(--color-primary);
 }
+/* "Set all: Realistic / Box" shortcuts above the per-NPC body rows */
+.admin-config-bulk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
 .admin-config-actions {
   display: flex;
   gap: 8px;

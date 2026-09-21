@@ -30,7 +30,8 @@ const CHARACTER_KEYS = new Set([
   'facialHairStyle', 'facialHairColor', 'glasses', 'hat', 'shoeColor', 'build', 'gear',
   'shirtStyle', 'pantsStyle', 'shoeStyle', 'outerwear', 'outerwearColor', 'suit', 'suitColor',
   'gloves', 'belt', 'mask', 'accessoryColor', 'gender', 'shirtColor2', 'pantsColor2',
-  'outerwearColor2', 'shoeColor2', 'helmet', 'helmetColor', 'prop', 'propColor', 'emblem', 'emblemColor'
+  'outerwearColor2', 'shoeColor2', 'helmet', 'helmetColor', 'prop', 'propColor', 'emblem', 'emblemColor',
+  'bodyType'
 ]);
 
 function sanitizeCharacter(raw) {
@@ -320,6 +321,7 @@ module.exports = (io) => {
       p.y = Math.max(-2, Math.min(10, rawY));
       p.yaw = (typeof raw.yaw === 'number' && Number.isFinite(raw.yaw)) ? raw.yaw : 0;
       p.walking = !!raw.walking;
+      p.backward = p.walking && !!raw.backward;
       // Track which project island they're on; tell the client when it
       // changes so its Project chat tab can relabel / enable itself.
       const zone = ChatLogic.projectAt(p.x, p.z, projectGrid());
@@ -328,7 +330,7 @@ module.exports = (io) => {
         socket.emit('world:zone', { projectId: zone });
       }
       socket.to('world').emit('world:pos', {
-        id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking
+        id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward
       });
     });
 
@@ -549,8 +551,9 @@ module.exports = (io) => {
       p.y = Math.max(-2, Math.min(10, rawY));
       p.yaw = (typeof raw.yaw === 'number' && Number.isFinite(raw.yaw)) ? raw.yaw : 0;
       p.walking = !!raw.walking;
+      p.backward = p.walking && !!raw.backward;
       socket.to('home:' + p.ownerId).emit('home:pos', {
-        id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking
+        id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward
       });
     });
 

@@ -197,6 +197,7 @@ const Playground3D = (() => {
   let _localEmoteUntil = 0;        // ms timestamp; while > now, override right-arm pose
   let _localBubbleEls = [];        // chat bubbles floating over the LOCAL player
   let _localWalking = false;       // set each tick; read by getLocalState() for MP broadcast
+  let _localBackward = false;      // walking while backpedalling — peers lean the avatar back too
   let _walkableRoads = [];         // [{ cx, cz, cos, sin, halfW, halfL }] for point-in-rotated-rect tests
   let _velY = 0;                   // vertical velocity for jump physics
   // ── gap-jump / fall state ──
@@ -292,6 +293,7 @@ const Playground3D = (() => {
   function destroy() {
     _running = false;
     _sceneAlive = false;
+    _resetOcclusion();
     clearStones();
     _onStoneGrab = null;
     _localId = null;
@@ -336,6 +338,7 @@ const Playground3D = (() => {
     _localEmoteUntil = 0;
     _localBubbleEls = [];
     _localWalking = false;
+    _localBackward = false;
     _velY = 0;
     _mode = 'home';
     if (_container) _container.innerHTML = '';
@@ -697,6 +700,11 @@ const Playground3D = (() => {
     } catch (_) { return false; }
   })();
 
+  // Body type slot (Playground.BODY_TYPES): 0 Realistic, 1 Box.
+  function _isBoxBody(c) {
+    return !!c && c.bodyType === 1;
+  }
+
   // Note: no GLTFLoader check — PG3DHumanoid waits for the addons itself, so
   // characters built during boot still upgrade once they arrive.
   function _humanoidUsable() {
@@ -1019,6 +1027,7 @@ const Playground3D = (() => {
     } else if (!st.overlay) {
       inst.setState(st.base, st.timeScale);
     }
+    if (inst.setBackpedal) inst.setBackpedal(!!s.backward && (st.base === 'walk' || st.base === 'run'));
     inst.update(dt);
     return true;
   }
@@ -1027,6 +1036,8 @@ const Playground3D = (() => {
   // when (and if) the assets land. The contract is unchanged — a root Group
   // with its origin at the feet, facing −Z, scaled by the build.
   function _buildPlayer(c) {
+    // Box characters never load the rigged model — they keep the blocky body.
+    if (_isBoxBody(c)) return _buildBoxPlayer(c);
     const root = _buildProceduralPlayer(c);
     if (!_humanoidUsable()) return root;
     // Already loaded → swap synchronously, so callers that render the very
@@ -1037,6 +1048,311 @@ const Playground3D = (() => {
     PG3DHumanoid.whenReady().then(() => {
       if (root.userData.buildGen === gen) _upgradeActor(root, c);
     }).catch(() => {});
+    return root;
+  }
+
+  // ── Box body (Body type: "Box") ──
+  // The original all-box character, restored from before the rounded/capsule
+  // rework (4047b59) so players can pick the blocky look. Pure boxes: box
+  // legs, torso and arms, cube head, no elbows or knees. It shares every
+  // outfit/gear helper with the procedural body and exposes the same core
+  // bones, so walk, punch, knockdown and idle all run through the shared
+  // pose code (which already skips the missing lower-limb segments).
+  function _buildBoxPlayer(c) {
+    const THREE = window.THREE;
+    const skinHex = _palette('SKIN_TONES', c.skin);
+    const shirtHex = _palette('SHIRT_COLORS', c.shirtColor);
+    const pantsHex = _palette('PANTS_COLORS', c.pantsColor);
+    const hairHex = _palette('HAIR_COLORS', c.hairColor);
+    const shoeHex = _palette('SHOE_COLORS', c.shoeColor);
+    const eyeHex  = _palette('EYE_COLORS', c.eyeColor);
+    const beardHex = _palette('HAIR_COLORS', c.facialHairColor ?? c.hairColor);
+    const styleIdx = c.hairStyle ?? 0;
+    const eyeShapeIdx = c.eyeShape ?? 0;
+    const beardIdx = c.facialHairStyle ?? 0;
+    const glassesIdx = c.glasses ?? 0;
+    const hatIdx = c.hat ?? 0;
+    // Body build (size/bulk). `?? 1` keeps pre-existing saved characters
+    // (which have no `build` field) at Normal.
+    const buildIdx = c.build ?? 1;
+    // ── clothing-shape slots ──
+    // A full-body suit (suit > 0) recolors and owns the torso + legs + arms and
+    // suppresses the standalone top/bottom styles; only a cape may layer over it
+    // (handled below). All slots default 0 → legacy/None, so pre-upgrade saved
+    // characters render identically.
+    const suitIdx = c.suit ?? 0;
+    const suitActive = suitIdx > 0;
+    const topStyle = c.shirtStyle ?? 0;
+    const bottomStyle = c.pantsStyle ?? 0;
+    const footStyle = c.shoeStyle ?? 0;
+    let outerIdx = c.outerwear ?? 0;
+    if (suitActive && outerIdx !== 6) outerIdx = 0;     // suit allows only a cape
+    const topSpec = _topSpec(suitActive ? -1 : topStyle);
+    const bottomSpec = _bottomSpec(suitActive ? -1 : bottomStyle);
+    // Round 2: gender silhouette, reusable hero pieces, and the shared
+    // hidden-slot map (so the rig never builds a part the UI greys out).
+    const g = _genderSpec(c.gender ?? 0);
+    const helmetIdx = c.helmet ?? 0, propIdx = c.prop ?? 0, emblemIdx = c.emblem ?? 0;
+    const hidden = (typeof Playground !== 'undefined' && Playground.characterHidden)
+      ? Playground.characterHidden(c) : {};
+    const buildDef = (typeof Playground !== 'undefined' && Playground.BUILDS && Playground.BUILDS[buildIdx])
+      || { scale: 1, bulk: 1 };
+    const bulk = buildDef.bulk;
+
+    const skinMat  = new THREE.MeshLambertMaterial({ color: skinHex });
+    const shirtMat = new THREE.MeshLambertMaterial({ color: shirtHex });
+    const pantsMat = new THREE.MeshLambertMaterial({ color: pantsHex });
+    const hairMat  = new THREE.MeshLambertMaterial({ color: hairHex });
+    const shoeMat  = new THREE.MeshLambertMaterial({ color: shoeHex });
+    const eyeMat   = new THREE.MeshLambertMaterial({ color: eyeHex });
+    const beardMat = new THREE.MeshLambertMaterial({ color: beardHex });
+    // New clothing-shape materials.
+    const outerMat = new THREE.MeshLambertMaterial({ color: _palette('SHIRT_COLORS', c.outerwearColor) });
+    const suitMat  = new THREE.MeshLambertMaterial({ color: _palette('SUIT_COLORS', c.suitColor) });
+    const accMat   = new THREE.MeshLambertMaterial({ color: _palette('ACCESSORY_COLORS', c.accessoryColor) });
+    // Base limb/torso colors honoring the suit override. A "ripped" top (Hulk)
+    // bares the chest, so the torso + sleeves render in skin tone.
+    const rippedTop = !suitActive && topStyle === 8;
+    const legMat   = suitActive ? suitMat : pantsMat;
+    const topMat   = suitActive ? suitMat : (rippedTop ? skinMat : shirtMat);
+    // Hero-piece colors + pants accent (secondary) material (Auto → legMat).
+    const helmetMat = new THREE.MeshLambertMaterial({ color: _palette('SHIRT_COLORS', c.helmetColor) });
+    const propMat   = new THREE.MeshLambertMaterial({ color: _palette('SHIRT_COLORS', c.propColor) });
+    const emblemMat = new THREE.MeshLambertMaterial({ color: _palette('SHIRT_COLORS', c.emblemColor) });
+    const pantsAccInt = ((c.pantsColor2 ?? 0) > 0) ? _palette('PANTS_COLORS', (c.pantsColor2) - 1) : null;
+    const pantsAccMat = (pantsAccInt != null) ? new THREE.MeshLambertMaterial({ color: pantsAccInt }) : legMat;
+
+    const mkBox = (w, h, d, mat, cast = true) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      m.castShadow = cast;
+      return m;
+    };
+
+    // Root — moved/yawed by the engine. Origin at feet center.
+    const root = new THREE.Group();
+
+    // Body group — for breathing scale that doesn't affect feet placement.
+    const body = new THREE.Group();
+    root.add(body);
+
+    // Legs (with pivots at the hip so we can swing them).
+    const HIP_Y = 0.7;
+    const LEG_LEN = 0.7;
+    const LEG_W = 0.32 * bulk;
+    const LEG_D = 0.32 * bulk;
+    const FOOT_H = 0.18;
+
+    const mkLeg = (xOffset) => {
+      const pivot = new THREE.Group();
+      pivot.position.set(xOffset, HIP_Y, 0);
+      const shape = bottomSpec.legShape;
+      // Shorts/skirt expose a bare (skin) lower leg; everything else is a
+      // single pant/suit-colored limb. Slim narrows the limb. Index 0/legacy
+      // and the suit case both fall through to a plain full-length leg, so the
+      // base geometry is unchanged from before.
+      const bare = (shape === 'shorts' || shape === 'skirt');
+      const limbMat = bare ? skinMat : legMat;
+      const wScale = (shape === 'slim') ? 0.85 : 1;
+      const leg = mkBox(LEG_W * wScale, LEG_LEN, LEG_D * wScale, limbMat);
+      leg.position.y = -LEG_LEN / 2;
+      pivot.add(leg);
+      if (shape === 'shorts') {
+        const sh = mkBox(LEG_W * 1.06, LEG_LEN * 0.5, LEG_D * 1.06, legMat);
+        sh.position.y = -LEG_LEN * 0.25;
+        pivot.add(sh);
+      } else if (shape === 'cargo') {
+        [-1, 1].forEach(s => {
+          const pk = mkBox(0.06, LEG_LEN * 0.22, LEG_D * 0.7, pantsAccMat);
+          pk.position.set(s * (LEG_W / 2 + 0.02), -LEG_LEN * 0.45, 0);
+          pivot.add(pk);
+        });
+      } else if (shape === 'joggers') {
+        const cuff = mkBox(LEG_W * 1.1, 0.12, LEG_D * 1.1, pantsAccMat);
+        cuff.position.y = -LEG_LEN + 0.06;
+        pivot.add(cuff);
+      } else if (shape === 'greaves') {
+        const plate = mkBox(LEG_W * 1.12, LEG_LEN * 0.55, LEG_D * 1.12, pantsAccInt != null ? pantsAccMat : accMat);
+        plate.position.set(0, -LEG_LEN * 0.6, 0.02);
+        pivot.add(plate);
+      }
+      // Footwear (index 0 reproduces the legacy foot box exactly).
+      const fw = _buildFootwear(footStyle, shoeMat, { LEG_W, LEG_D, LEG_LEN, FOOT_H }, c.shoeColor2 ?? 0);
+      if (fw) pivot.add(fw);
+      return pivot;
+    };
+    const leftLeg = mkLeg(-0.18 * bulk);
+    const rightLeg = mkLeg(0.18 * bulk);
+    body.add(leftLeg);
+    body.add(rightLeg);
+    // Skirt — a single flared piece around the hips (the legs underneath stay
+    // bare skin). Only for the standalone skirt bottom, not a suit.
+    if (!suitActive && bottomSpec.legShape === 'skirt') {
+      const skirt = new THREE.Mesh(
+        new THREE.CylinderGeometry(LEG_W * 2.2, LEG_W * 3.4, 0.55, 16),
+        pantsMat
+      );
+      skirt.position.y = HIP_Y - 0.18;
+      skirt.castShadow = true;
+      body.add(skirt);
+    }
+
+    // Torso. Width/depth widen with `bulk` so a Huge build reads as broad,
+    // not just a bigger copy; height stays fixed (overall scale handles tall).
+    const TORSO_W = 0.85 * bulk * g.torsoWMul, TORSO_H = 0.75, TORSO_D = 0.45 * bulk;
+    const torso = mkBox(TORSO_W, TORSO_H, TORSO_D, topMat);
+    torso.position.y = HIP_Y + TORSO_H / 2;
+    body.add(torso);
+    // Top-style detail (collar / hood / pocket / stripe) — torso-local.
+    // Suppressed for a suit (the suit builder owns torso detailing).
+    if (!suitActive) {
+      const topDetail = _buildTopDetail(topStyle, shirtMat, skinMat, { TORSO_W, TORSO_H, TORSO_D }, c.shirtColor2 ?? 0);
+      if (topDetail) torso.add(topDetail);
+    }
+
+    // Arms (pivot at the shoulder, hangs down).
+    const SHOULDER_Y = HIP_Y + TORSO_H - 0.05;
+    const ARM_LEN = 0.7;
+    const ARM_W = 0.22 * bulk, ARM_D = 0.22 * bulk;
+
+    const mkArm = (xSign) => {
+      const pivot = new THREE.Group();
+      pivot.position.set(xSign * (TORSO_W / 2 + ARM_W / 2 - 0.02), SHOULDER_Y, 0);
+      const arm = mkBox(ARM_W, ARM_LEN, ARM_D, skinMat);
+      arm.position.y = -ARM_LEN / 2;
+      pivot.add(arm);
+      // Sleeve length depends on the top style: 'short' (legacy tee, 0.4),
+      // 'long' (long-sleeve/hoodie/turtleneck/suit, 0.95), or 'none' (tank).
+      if (topSpec.sleeve !== 'none') {
+        const frac = topSpec.sleeve === 'long' ? 0.95 : 0.4;
+        const sleeve = mkBox(ARM_W * 1.02, ARM_LEN * frac, ARM_D * 1.02, topMat);
+        sleeve.position.y = -ARM_LEN * (frac / 2);
+        pivot.add(sleeve);
+      }
+      return pivot;
+    };
+    const leftArm = mkArm(-1);
+    const rightArm = mkArm(1);
+    body.add(leftArm);
+    body.add(rightArm);
+
+    // Gender shaping — parented to bones so it animates. Neutral (g.* all 0)
+    // adds nothing → identical to pre-round-2 output.
+    if (g.shoulderPad > 0) {
+      const pad = mkBox(TORSO_W * 1.18, 0.12, TORSO_D * 1.05, topMat);
+      pad.position.y = TORSO_H / 2 - 0.02;
+      torso.add(pad);
+    }
+    if (g.chest > 0) {
+      [-1, 1].forEach(s => {
+        const b = new THREE.Mesh(new THREE.SphereGeometry(g.chest * bulk, 10, 8), topMat);
+        b.position.set(s * TORSO_W * 0.22, TORSO_H * 0.08, TORSO_D / 2);
+        b.castShadow = true;
+        torso.add(b);
+      });
+    }
+    if (g.hip > 0) {
+      const hipPiece = new THREE.Mesh(new THREE.CylinderGeometry(TORSO_W * 0.42, TORSO_W * 0.52, 0.35, 14), legMat);
+      hipPiece.position.y = HIP_Y;
+      hipPiece.castShadow = true;
+      body.add(hipPiece);
+    }
+
+    // Head + face.
+    const HEAD_SZ = 0.55;
+    const head = new THREE.Group();
+    head.position.y = HIP_Y + TORSO_H + HEAD_SZ / 2 + 0.02;
+    const headBox = mkBox(HEAD_SZ, HEAD_SZ, HEAD_SZ, skinMat);
+    head.add(headBox);
+    // Eyes — shape varies by eyeShape index. Positive Z is "front".
+    const eyeFrontZ = HEAD_SZ / 2 + 0.001;
+    const eyeShapeDims = _eyeShapeDims(eyeShapeIdx);
+    const leftEye = new THREE.Mesh(
+      new THREE.BoxGeometry(eyeShapeDims.w, eyeShapeDims.h, 0.02),
+      eyeMat
+    );
+    leftEye.position.set(-0.12, 0.04, eyeFrontZ);
+    leftEye.rotation.z = eyeShapeDims.rot || 0;
+    head.add(leftEye);
+    const rightEye = new THREE.Mesh(
+      new THREE.BoxGeometry(eyeShapeDims.w, eyeShapeDims.h, 0.02),
+      eyeMat
+    );
+    rightEye.position.set(0.12, 0.04, eyeFrontZ);
+    rightEye.rotation.z = -(eyeShapeDims.rot || 0);
+    head.add(rightEye);
+    // Mouth — small dark bar.
+    const mouthMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+    const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.03, 0.02), mouthMat);
+    mouth.position.set(0, -0.12, HEAD_SZ / 2 + 0.001);
+    head.add(mouth);
+
+    // Facial hair — skipped when hidden (a full mask covers the face).
+    if (!hidden.facialHairStyle) {
+      const beard = _buildFacialHair(beardIdx, beardMat, HEAD_SZ);
+      if (beard) head.add(beard);
+    }
+
+    // Hair — skipped when hidden (helmet / hood).
+    if (!hidden.hairStyle) {
+      const hair = _buildHair(styleIdx, hairMat, HEAD_SZ);
+      if (hair) head.add(hair);
+    }
+
+    // Glasses — skipped when hidden (full mask).
+    if (!hidden.glasses) {
+      const glasses = _buildGlasses(glassesIdx, HEAD_SZ);
+      if (glasses) head.add(glasses);
+    }
+
+    // Hat — skipped when hidden (helmet). Cap variant borrows the shirt color.
+    if (!hidden.hat) {
+      const hat = _buildHat(hatIdx, HEAD_SZ, shirtHex);
+      if (hat) head.add(hat);
+    }
+
+    body.add(head);
+
+    // Outerwear layer (jacket / coat / vest / cape) — body-local, over the
+    // torso. No-op when outerIdx is 0.
+    const outerwearGrp = _buildOuterwear(outerIdx, outerMat, { TORSO_W, TORSO_H, TORSO_D, HIP_Y }, c.outerwearColor2 ?? 0);
+    if (outerwearGrp) body.add(outerwearGrp);
+
+    // Full-body suit detailing (the base torso/legs/arms are already recolored
+    // to the suit color above). No-op when suit is 0.
+    if (suitActive) {
+      const suitExtra = _buildSuit(suitIdx, suitMat, accMat, { TORSO_W, TORSO_H, TORSO_D, HIP_Y });
+      if (suitExtra) body.add(suitExtra);
+    }
+
+    // Reusable hero pieces (replaced the old `gear` slot). Helmet → head,
+    // emblem → torso (proud of any chest layer), prop → a hand (swings w/ arm).
+    const helmetGrp = _buildHelmet(helmetIdx, helmetMat, HEAD_SZ);
+    if (helmetGrp) head.add(helmetGrp);
+    const emblemGrp = _buildEmblem(emblemIdx, emblemMat, { TORSO_D });
+    if (emblemGrp) torso.add(emblemGrp);
+    _buildProp(propIdx, propMat, { leftArm, rightArm, torso, dims: { ARM_LEN } });
+
+    // Accessories (gloves / belt / mask) — mask suppressed when a helmet hides it.
+    _buildAccessories({
+      head, torso, leftArm, rightArm,
+      dims: { HEAD_SZ, TORSO_W, TORSO_H, TORSO_D, ARM_LEN, ARM_W, ARM_D },
+      styles: { gloves: c.gloves ?? 0, belt: c.belt ?? 0, mask: hidden.mask ? 0 : (c.mask ?? 0) },
+      mat: accMat
+    });
+
+    // Build scale — grows the whole figure from the feet (root origin is at
+    // foot level, so feet stay planted). Untouched by the tick, which only
+    // animates body.scale (breathing) and root position/rotation.
+    root.scale.setScalar(buildDef.scale);
+
+    // Default forward: character faces -Z by convention. The engine yaws
+    // the root via root.rotation.y to face the movement direction.
+    // userData.bones is read both by the local _tick() (via the module-
+    // level _rig set by the local-only call sites) and by
+    // _tickRemotePlayers() (via the remote rig stored in _remotePlayers).
+    root.userData.bones = {
+      body, head, torso, leftArm, rightArm, leftLeg, rightLeg
+    };
     return root;
   }
 
@@ -2963,8 +3279,11 @@ const Playground3D = (() => {
   // pivots exactly as before and adds knee/elbow bend on the second limb
   // segments (guarded, so a rig without lowers still animates).
   // Character faces -Z; rotation.x > 0 moves a hanging limb toward +Z (back).
-  function _walkPose(bones, phase) {
-    const swing = Math.sin(phase) * 0.6;        // ~34° peak
+  // `back` = backpedalling: a subtle lean back (~9°, pivoting at the feet)
+  // with the head tipped forward to keep the gaze level, and shorter strides.
+  const BACKPEDAL_LEAN = 0.16;
+  function _walkPose(bones, phase, back) {
+    const swing = Math.sin(phase) * (back ? 0.42 : 0.6);   // ~34° peak (24° backpedalling)
     bones.leftLeg.rotation.x = swing;
     bones.rightLeg.rotation.x = -swing;
     bones.leftArm.rotation.x = -swing * 0.7;
@@ -2978,6 +3297,14 @@ const Playground3D = (() => {
     if (bones.rightArmLower) bones.rightArmLower.rotation.x = elbow;
     bones.body.position.y = Math.abs(Math.sin(phase)) * 0.04;
     bones.body.rotation.z = 0;   // cancel any idle sway while walking
+    // The face is on the body's local +Z side (the eyes sit at +Z), so a
+    // NEGATIVE rotation.x tips the top away from the face: a lean back.
+    // Checked in /world: the head moves with the direction of travel while
+    // backpedalling. Eased, not snapped, so walking forward again straightens
+    // up smoothly.
+    const lean = back ? -BACKPEDAL_LEAN : 0;
+    bones.body.rotation.x += (lean - bones.body.rotation.x) * 0.2;
+    if (bones.head) bones.head.rotation.x += (-lean * 0.8 - bones.head.rotation.x) * 0.2;
   }
 
   // Punch jab — right arm thrusts forward and snaps back over ANIM_MS.
@@ -3015,6 +3342,8 @@ const Playground3D = (() => {
     if (bones.leftArmLower)  bones.leftArmLower.rotation.x  *= d;
     if (bones.rightArmLower) bones.rightArmLower.rotation.x *= d;
     bones.body.position.y *= d;
+    bones.body.rotation.x *= d;
+    if (bones.head) bones.head.rotation.x *= d;
   }
 
   function _tick(now) {
@@ -3071,6 +3400,7 @@ const Playground3D = (() => {
       }
     }
     _localWalking = moved;
+    _localBackward = moved && backpedal;
 
     // Remember the last grounded, walkable spot — the fall-respawn target.
     if (!_falling && _player.position.y <= 0.01 &&
@@ -3168,7 +3498,8 @@ const Playground3D = (() => {
     // Animation — rigged characters run a clip state machine; everything
     // below is the procedural fallback.
     const _rigged = _animateActor(_player, {
-      speed: moved ? PHYSICS.SPEED * len : 0,
+      // Real ground speed (backpedalling is slower), so the steps slow to match.
+      speed: moved ? PHYSICS.SPEED * len * (backpedal ? PHYSICS.BACKPEDAL_MUL : 1) : 0,
       backward: moved && backpedal,
       airborne: _airborne,
       velY: _velY,
@@ -3189,7 +3520,7 @@ const Playground3D = (() => {
       _stepClock += backpedal ? -dt : dt;
       _idleClock = 0;
       const phase = (_stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
-      _walkPose(_rig, phase);
+      _walkPose(_rig, phase, backpedal);
     } else if (_rig) {
       _idleClock += dt;
       _dampPose(_rig, Math.min(1, dt * 8));
@@ -3244,8 +3575,112 @@ const Playground3D = (() => {
     }
 
     _updateCamera();
+    _tickOcclusion(dt, now);
     _renderer.render(_scene, _camera);
     _rafId = requestAnimationFrame(_tick);
+  }
+
+  // ── See-through occluders ──
+  // Anything standing between the camera and the local player (a neighbour's
+  // roof, a wall, a lamp post) fades to see-through so the character is never
+  // hidden. Static scenery is gathered into a list of world-space boxes (rebuilt
+  // about once a second, since rooms stream in), and each frame a few sight
+  // lines — feet, chest, head — are tested against those boxes. A blocking mesh
+  // swaps to its own transparent clone of its material (materials are shared
+  // town-wide, so fading the original would fade every house) and swaps back
+  // once it has faded fully in again.
+  const OCCLUDE = { ALPHA: 0.22, RATE: 10, REBUILD_MS: 1000, PAD: 0.05 };
+  let _occluders = [];            // [{ mesh, box }]
+  let _occluderBuiltAt = -Infinity;
+  const _faded = new Map();       // mesh → { orig, clones, alpha }
+
+  function _isActor(o) {
+    for (let p = o; p; p = p.parent) {
+      if (p.userData && ('bones' in p.userData || p.userData.humanoid)) return true;
+    }
+    return false;
+  }
+
+  function _rebuildOccluders() {
+    const THREE = window.THREE;
+    _occluders = [];
+    _scene.traverse((o) => {
+      if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh) return;
+      if (_faded.has(o)) { _occluders.push({ mesh: o, box: _faded.get(o).box }); return; }
+      if (_isActor(o)) return;
+      const box = new THREE.Box3().setFromObject(o);
+      if (box.isEmpty()) return;
+      _occluders.push({ mesh: o, box });
+    });
+  }
+
+  function _setFadeOpacity(state, a) {
+    for (const m of state.clones) m.opacity = a;
+  }
+
+  function _restoreFaded(mesh, state) {
+    mesh.material = state.orig;
+    for (const m of state.clones) m.dispose();
+    _faded.delete(mesh);
+  }
+
+  function _resetOcclusion() {
+    for (const [mesh, state] of _faded) _restoreFaded(mesh, state);
+    _occluders = [];
+    _occluderBuiltAt = -Infinity;
+  }
+
+  function _tickOcclusion(dt, now) {
+    const THREE = window.THREE;
+    if (!THREE || !_player || !_camera || !_scene) return;
+    if (now - _occluderBuiltAt > OCCLUDE.REBUILD_MS) {
+      _rebuildOccluders();
+      _occluderBuiltAt = now;
+    }
+    const s = _player.scale.y || 1;
+    const px = _player.position.x, py = _player.position.y, pz = _player.position.z;
+    const cam = _camera.position;
+    const targets = [0.25, 1.15, 1.9].map((h) => new THREE.Vector3(px, py + h * s, pz));
+    const ray = new THREE.Ray();
+    const hitPt = new THREE.Vector3();
+    const blocking = new Set();
+    for (const t of targets) {
+      const len = cam.distanceTo(t);
+      ray.origin.copy(cam);
+      ray.direction.copy(t).sub(cam).normalize();
+      for (const oc of _occluders) {
+        const mesh = oc.mesh;
+        if (!mesh.visible || !mesh.parent || blocking.has(mesh)) continue;
+        // Boxes that hold the player (sky dome, the floor under them) never
+        // count — only things between the camera and the character.
+        if (oc.box.containsPoint(t)) continue;
+        if (!ray.intersectBox(oc.box, hitPt)) continue;
+        if (cam.distanceTo(hitPt) < len - OCCLUDE.PAD) blocking.add(mesh);
+      }
+    }
+    const k = 1 - Math.exp(-dt * OCCLUDE.RATE);
+    for (const mesh of blocking) {
+      if (_faded.has(mesh)) continue;
+      const orig = mesh.material;
+      const list = Array.isArray(orig) ? orig : [orig];
+      const clones = list.map((m) => {
+        const c = m.clone();
+        c.transparent = true;
+        c.depthWrite = false;
+        c.opacity = m.opacity == null ? 1 : m.opacity;
+        return c;
+      });
+      const box = (_occluders.find((o) => o.mesh === mesh) || {}).box;
+      _faded.set(mesh, { orig, clones, alpha: 1, box });
+      mesh.material = Array.isArray(orig) ? clones : clones[0];
+    }
+    for (const [mesh, state] of _faded) {
+      if (!mesh.parent) { _restoreFaded(mesh, state); continue; }
+      const target = blocking.has(mesh) ? OCCLUDE.ALPHA : 1;
+      state.alpha += (target - state.alpha) * k;
+      if (target === 1 && state.alpha > 0.98) { _restoreFaded(mesh, state); continue; }
+      _setFadeOpacity(state, state.alpha);
+    }
   }
 
   function _moveWithCollision(dx, dz) {
@@ -3356,6 +3791,7 @@ const Playground3D = (() => {
   function knockdownLocal() {
     _localDownUntil = performance.now() + PUNCH.DOWN_MS;
     _localWalking = false;
+    _localBackward = false;
   }
 
   // Build the 6 stone meshes once the world scene exists. Ring positions are
@@ -4937,7 +5373,7 @@ const Playground3D = (() => {
     rp.nameEl.classList.toggle('speaking', !!isSpeaking);
   }
 
-  function updateRemotePlayer(id, x, z, yaw, walking, y) {
+  function updateRemotePlayer(id, x, z, yaw, walking, y, backward) {
     const rp = _remotePlayers.get(id);
     if (!rp) return;
     rp.target.x = x;
@@ -4945,6 +5381,7 @@ const Playground3D = (() => {
     rp.target.y = (typeof y === 'number' && Number.isFinite(y)) ? y : 0;
     rp.target.yaw = yaw;
     rp.target.walking = !!walking;
+    rp.target.backward = !!walking && !!backward;
   }
 
   function removeRemotePlayer(id) {
@@ -5071,7 +5508,8 @@ const Playground3D = (() => {
       const rpVelY = ((rp.current.y || 0) - (rp.prevY || 0)) / Math.max(dt, 0.001);
       rp.prevY = rp.current.y || 0;
       if (_animateActor(rp.rig, {
-        speed: rp.target.walking ? PHYSICS.SPEED * 0.8 : 0,
+        speed: rp.target.walking ? PHYSICS.SPEED * (rp.target.backward ? PHYSICS.BACKPEDAL_MUL : 0.8) : 0,
+        backward: !!rp.target.backward,
         airborne: (rp.current.y || 0) > 0.05,
         velY: rpVelY,
         downUntil: rp.downUntil || 0,
@@ -5083,9 +5521,9 @@ const Playground3D = (() => {
       const bones = rp.rig.userData.bones;
       if (!bones) continue;
       if (rp.target.walking) {
-        rp.stepClock += dt;
+        rp.stepClock += rp.target.backward ? -dt : dt;
         const phase = (rp.stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
-        _walkPose(bones, phase);
+        _walkPose(bones, phase, rp.target.backward);
       } else {
         rp.stepClock = 0;
         _dampPose(bones, Math.min(1, dt * 8));
@@ -5122,7 +5560,8 @@ const Playground3D = (() => {
       z: _player.position.z,
       yaw: _player.rotation.y,
       // Walking = local stepClock advanced recently (set in the main tick).
-      walking: !!_localWalking
+      walking: !!_localWalking,
+      backward: !!_localBackward
     };
   }
 
@@ -5386,6 +5825,7 @@ const Playground3D = (() => {
     // fight can be staged without steering the character by hand.
     _debug: {
       npcs() { return _npcs; },
+      player() { return _player; },
       localDownUntil() { return _localDownUntil; },
       orbit() { return _orbit ? { distance: _orbit.distance, azimuth: _orbit.azimuth, elevation: _orbit.elevation } : null; },
       teleport(x, z) { if (_player) { _player.position.set(x, 0, z); _lastSafe.x = x; _lastSafe.z = z; } },

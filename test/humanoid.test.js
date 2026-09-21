@@ -338,13 +338,31 @@ test('selectAnimState: backpedalling reverses the locomotion clip, not the rest'
   assert.equal(back.base, 'walk', 'still the walk clip, just reversed');
   assert.equal(back.timeScale, -fwd.timeScale);
 
+  // Backpedalling never breaks into a jog, even at full stick.
   const runBack = H.selectAnimState({ ...base, speed: 4, backward: true });
-  assert.equal(runBack.base, 'run');
+  assert.equal(runBack.base, 'walk');
   assert.ok(runBack.timeScale < 0);
+  assert.ok(Math.abs(runBack.timeScale) <= 1.4, 'capped cadence');
 
   // Standing still has no direction to reverse.
   assert.equal(H.selectAnimState({ ...base, speed: 0, backward: true }).timeScale, 1);
   // Airborne and knocked-down clips read the same whichever way you were going.
   assert.equal(H.selectAnimState({ ...base, speed: 3, backward: true, airborne: true, velY: 5 }).timeScale, 1);
   assert.equal(H.selectAnimState({ ...base, speed: 3, backward: true, falling: true }).timeScale, 1);
+});
+
+test('selectAnimState: backpedal at its real (slower) speed steps slower than walking forward', () => {
+  // The engine passes speed × BACKPEDAL_MUL (0.6) while stepping back.
+  const fwd = H.selectAnimState({ ...base, speed: 2.0 });
+  const back = H.selectAnimState({ ...base, speed: 2.0 * 0.6, backward: true });
+  assert.equal(back.base, 'walk');
+  assert.ok(Math.abs(back.timeScale) < Math.abs(fwd.timeScale), 'slower cadence backwards');
+});
+
+test('slot map covers bodyType, and the schema offers Realistic / Box', () => {
+  const schema = require('../js/character-schema.js').CHARACTER_SCHEMA;
+  const entry = schema.find((e) => e.key === 'bodyType');
+  assert.ok(entry, 'bodyType is in the customizer schema');
+  assert.equal(entry.optionsFrom, 'BODY_TYPES');
+  assert.ok(entry.noRandom, 'Randomize leaves the body type alone');
 });

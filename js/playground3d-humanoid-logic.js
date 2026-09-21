@@ -202,6 +202,7 @@
     IDLE_EPS: 0.15,       // below this ground speed → idle
     RUN_FRAC: 0.55,       // at/above this fraction of maxSpeed → run
     WALK_REF: 1.5,
+    BACK_MAX_TS: 1.4,     // backpedal cadence cap — a step back is never a scramble
     RUN_REF: 4.0,
     LAND_MS: 180,
     JUMP_UP_VEL: 0.5
@@ -246,12 +247,15 @@
       timeScale = clamp(speed / A.RUN_REF, 0.7, 1.4);
     }
 
-    // Backpedalling plays the same locomotion clip in reverse (negative time
-    // scale), so the legs cycle backwards with the motion. Without it the
-    // character moonwalks — feet striding forward while the body slides back.
-    // Only locomotion reverses; jumps, landings and knockdowns read the same
-    // whichever way you were going.
-    if (inp.backward && (base === 'walk' || base === 'run')) timeScale = -timeScale;
+    // Backpedalling is always a careful walk, never a jog, played in reverse
+    // (negative time scale) so the legs cycle backwards with the motion —
+    // without it the character moonwalks. The engine layers a lean-back on
+    // top. Only locomotion reverses; jumps, landings and knockdowns read the
+    // same whichever way you were going.
+    if (inp.backward && (base === 'walk' || base === 'run')) {
+      base = 'walk';
+      timeScale = -clamp(speed / A.WALK_REF, 0.6, A.BACK_MAX_TS);
+    }
 
     // A flinch (just been hit) beats a swing, which beats a wave.
     let overlay = null;
@@ -285,6 +289,7 @@
   const SLOT_MAP = {
     gender:          { kind: 'body' },
     build:           { kind: 'body' },
+    bodyType:        { kind: 'body' },   // 1 = Box skips the rigged body entirely
     skin:            { kind: 'tint', target: 'skin' },
     eyeColor:        { kind: 'tint', target: 'eyes' },
     eyeShape:        { kind: 'unsupported' },

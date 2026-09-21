@@ -23,6 +23,8 @@
  ************************************************/
 const CHARACTER_SCHEMA = [
   // ── Body ──
+  // `noRandom` — a style choice, not an outfit slot, so Randomize leaves it.
+  { section: 'Body',  key: 'bodyType', label: 'Body type', control: 'label', optionsFrom: 'BODY_TYPES', noRandom: true },
   { section: 'Body',  key: 'skin',   label: 'Skin',   control: 'swatch', palette: 'SKIN_TONES' },
   { section: 'Body',  key: 'gender', label: 'Gender', control: 'label',  optionsFrom: 'GENDER_LABELS' },
   { section: 'Body',  key: 'build',  label: 'Build',  control: 'label',  optionsFrom: 'BUILDS' },

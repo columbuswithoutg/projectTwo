@@ -15,6 +15,20 @@
     { path: 'fight.spawnChance',  label: 'Fight spawn chance',      min: 0,     max: 1,      step: 0.05, default: 0.15 }
   ];
 
+  // Mirror of Playground.BODY_TYPES (index = stored value).
+  const NPC_BODY_TYPES = ['Realistic', 'Box'];
+
+  // The /world heroes: ids from WorldNpcLogic.NPC_IDS ('npc_' + preset id),
+  // display names from the matching Playground.CHARACTER_PRESETS entry.
+  function npcList() {
+    const ids = (typeof WorldNpcLogic !== 'undefined' && WorldNpcLogic.NPC_IDS) || [];
+    const presets = (typeof Playground !== 'undefined' && Playground.CHARACTER_PRESETS) || [];
+    return ids.map(id => {
+      const p = presets.find(x => 'npc_' + x.id === id);
+      return { id, name: p ? p.name : id.replace(/^npc_/, '') };
+    });
+  }
+
   function getPath(obj, path) {
     return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
   }
@@ -111,6 +125,26 @@
           </label>
         </div>
 
+        <h3 class="admin-h3">World NPCs — body type</h3>
+        <p class="admin-config-help">Pick the body each hero uses in /world. Global — every player sees the same heroes. Players see the change on their next /world entry (page load).</p>
+        <div class="admin-config-bulk">
+          <span class="admin-config-label">Set all:</span>
+          ${NPC_BODY_TYPES.map((name, i) => `<button type="button" class="admin-btn" data-npc-all="${i}">${esc(name)}</button>`).join('')}
+        </div>
+        <div class="admin-config-grid">
+          ${npcList().map(n => {
+            const cur = (cfg.world?.npcBodyTypes || {})[n.id] === 1 ? 1 : 0;
+            return `
+              <label class="admin-config-row admin-config-toggle">
+                <span class="admin-config-label">${esc(n.name)}</span>
+                <select class="admin-input" data-path="world.npcBodyTypes.${esc(n.id)}">
+                  ${NPC_BODY_TYPES.map((name, i) => `<option value="${i}" ${cur === i ? 'selected' : ''}>${esc(name)}</option>`).join('')}
+                </select>
+              </label>
+            `;
+          }).join('')}
+        </div>
+
         <div class="admin-config-actions">
           <button class="admin-btn" id="admin-config-save" disabled>Save changes</button>
           <button class="admin-btn admin-btn-danger" id="admin-config-reset">Reset to defaults…</button>
@@ -136,6 +170,23 @@
         });
       });
 
+      body.querySelectorAll('select[data-path]').forEach(sel => {
+        sel.addEventListener('change', (e) => {
+          setPath(Config._state.current, e.target.dataset.path, parseInt(e.target.value, 10));
+          Config._markDirty();
+        });
+      });
+      body.querySelectorAll('[data-npc-all]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const v = parseInt(btn.dataset.npcAll, 10);
+          body.querySelectorAll('select[data-path^="world.npcBodyTypes."]').forEach(sel => {
+            sel.value = String(v);
+            setPath(Config._state.current, sel.dataset.path, v);
+          });
+          Config._markDirty();
+        });
+      });
+
       document.getElementById('admin-config-save').addEventListener('click', Config.save);
       document.getElementById('admin-config-reset').addEventListener('click', Config.reset);
     },
@@ -153,7 +204,8 @@
         walker:    cfg.walker,
         encounter: cfg.encounter,
         fight:     cfg.fight,
-        flags:     cfg.flags
+        flags:     cfg.flags,
+        world:     { npcBodyTypes: { ...(cfg.world?.npcBodyTypes || {}) } }
       };
       try {
         const updated = await AdminView.api('/config', {
@@ -174,7 +226,7 @@
     async reset() {
       const ok = await confirmDialog({
         title: 'Reset to factory defaults?',
-        message: 'All eight values will be reset. This is logged in the audit trail.',
+        message: 'Every setting on this page will be reset. This is logged in the audit trail.',
         confirmLabel: 'Reset'
       });
       if (!ok) return;

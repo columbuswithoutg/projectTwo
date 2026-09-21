@@ -447,6 +447,14 @@
     return out;
   }
 
+  // Backpedal lean (radians, same convention as bodyShapeFor().posture:
+  // positive pitches forward). The chest tips back ~9°, and the neck and head
+  // tip forward by about as much, so the gaze stays level. STRIDE_K pulls the
+  // thighs and shins that far back towards their straight rest pose, so the
+  // steps come out shorter.
+  const BACKPEDAL_POSE = { spine: -0.16, neck: 0.07, head: 0.07 };
+  const BACKPEDAL_STRIDE_K = 0.3;
+
   function _variant(model, build) {
     const key = model + '|' + build;
     if (_variants.has(key)) return _variants.get(key);
@@ -477,6 +485,11 @@
       m.receiveShadow = true;
     }
     const posture = _postureOffsets(bones, rig, shape.posture);
+    const lean = _postureOffsets(bones, rig, BACKPEDAL_POSE);
+    const strideRest = ['thigh.L', 'thigh.R', 'shin.L', 'shin.R']
+      .map((k) => rig.cls[k] && rig.cls[k][0])
+      .filter((nm) => nm != null && rig.idx.has(nm))
+      .map((nm) => ({ name: nm, q: bones[rig.idx.get(nm)].quaternion.clone() }));
     const jointY = (name) => {
       const i = name != null ? rig.idx.get(name) : null;
       return i == null ? 0 : new THREE.Vector3().setFromMatrixPosition(Wp[i]).y;
@@ -484,7 +497,7 @@
     const hipsY = jointY(rig.cls.hips);
     const waistY = hipsY + (jointY(rig.cls.spine[0]) - hipsY) * WAIST_K;
     const variant = {
-      key, model, build, shape, template: tpl, A, rig, posture, waistY,
+      key, model, build, shape, template: tpl, A, rig, posture, lean, strideRest, waistY,
       partBox: _partBoxes(body.geometry), hairGeo: new Map()
     };
     _variants.set(key, variant);
@@ -1066,6 +1079,46 @@
     const postureQ = new THREE.Quaternion();
     let postureW = 1;
     let postureOn = false;
+    // Backpedal layer — same restore-then-reapply scheme as the posture, on top
+    // of it. Eases in and out over ~0.2s so turning around doesn't snap.
+    const lean = variant.lean.map((p) => ({ bone: boneBy(p.name), q: p.q, clean: new THREE.Quaternion() })).filter((p) => p.bone);
+    const stride = variant.strideRest.map((p) => ({ bone: boneBy(p.name), rest: p.q, clean: new THREE.Quaternion() })).filter((p) => p.bone);
+    const leanQ = new THREE.Quaternion();
+    let leanTarget = 0;
+    let leanW = 0;
+    let leanOn = false;
+    function setBackpedal(on) { leanTarget = on ? 1 : 0; }
+
+    function _applyPosture(dt) {
+      if (!posture.length) return;
+      const down = currentState === 'down' || currentState === 'getup';
+      const target = down ? 0 : (mixer.time < softUntil ? 0.35 : 1);
+      postureW += (target - postureW) * (1 - Math.exp(-dt * 8));
+      if (postureW < 0.001) return;
+      // A cape drifts as the character breathes and walks.
+      if (capeMesh) capeMesh.rotation.x = 0.05 + Math.sin(mixer.time * 1.7) * 0.045;
+      for (const p of posture) {
+        p.clean.copy(p.bone.quaternion);
+        p.bone.quaternion.premultiply(postureQ.identity().slerp(p.q, postureW));
+      }
+      postureOn = true;
+    }
+
+    function _applyLean(dt) {
+      const down = currentState === 'down' || currentState === 'getup';
+      const target = down ? 0 : leanTarget;
+      leanW += (target - leanW) * (1 - Math.exp(-dt * 12));
+      if (leanW < 0.001) { leanW = target ? leanW : 0; return; }
+      for (const p of lean) {
+        p.clean.copy(p.bone.quaternion);
+        p.bone.quaternion.premultiply(leanQ.identity().slerp(p.q, leanW));
+      }
+      for (const s of stride) {
+        s.clean.copy(s.bone.quaternion);
+        s.bone.quaternion.slerp(s.rest, BACKPEDAL_STRIDE_K * leanW);
+      }
+      leanOn = true;
+    }
 
     // A mount point on an anchor bone for procedural gear (hats, helmets,
     // emblems, held props). Re-aligned to the character's own axes — bone rest
@@ -1164,7 +1217,7 @@
     applyLook(look);
     const handle = {
       object: pivot, body, mixer, shape: variant.shape, anchors,
-      setState, play, applyLook, setOpacity, setShadows, attachSlot, setFist, setHitFlash, dispose,
+      setState, play, applyLook, setOpacity, setShadows, attachSlot, setFist, setHitFlash, setBackpedal, dispose,
       update(dt) {
         _decayFlash(dt);
         // Put the clean (animation-only) rotations back before the mixer runs.
@@ -1172,25 +1225,22 @@
         // when an action activates and lerps towards it at partial weight, so
         // leaving the offset on the bone made every clip change compound it —
         // the Hulk-type ended up tilted 75° mid-punch.
+        // Undo in reverse order of application: lean went on last.
+        if (leanOn) {
+          for (let i = stride.length - 1; i >= 0; i--) stride[i].bone.quaternion.copy(stride[i].clean);
+          for (let i = lean.length - 1; i >= 0; i--) lean[i].bone.quaternion.copy(lean[i].clean);
+          leanOn = false;
+        }
         if (postureOn) {
           for (const p of posture) p.bone.quaternion.copy(p.clean);
           postureOn = false;
         }
         mixer.update(dt);
         _applyFists();
-        if (!posture.length) return;
-        const down = currentState === 'down' || currentState === 'getup';
-        const target = down ? 0 : (mixer.time < softUntil ? 0.35 : 1);
-        postureW += (target - postureW) * (1 - Math.exp(-dt * 8));
-        if (postureW < 0.001) return;
-        // A cape drifts as the character breathes and walks.
-        if (capeMesh) capeMesh.rotation.x = 0.05 + Math.sin(mixer.time * 1.7) * 0.045;
-        for (const p of posture) {
-          p.clean.copy(p.bone.quaternion);
-          p.bone.quaternion.premultiply(postureQ.identity().slerp(p.q, postureW));
-        }
-        postureOn = true;
+        _applyPosture(dt);
+        _applyLean(dt);
       },
+      get backpedal() { return leanW; },
       get state() { return currentState; }
     };
     _lastInstance = handle;          // debugging aid (PG3DHumanoid._debug.last)

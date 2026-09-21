@@ -13,7 +13,7 @@
 // stale-while-revalidate, so without a new cache name a returning phone runs
 // the OLD scripts for one more visit — which is precisely how the blank-map
 // bug kept reappearing "when reopened on Chrome".
-const CACHE_VERSION = 'mcu-v18'; // v18: /world chat channels (world-chat-logic.js) + pinch zoom. v17: 1s punch cooldown (server-enforced) + button sweep. v16: feed reactions + captions. v15: /feed tab. v14: OG Avengers redesign + shared NPC fights (world-npc-logic.js)
+const CACHE_VERSION = 'mcu-v19'; // v19: villain fights always end + Body type (Realistic/Box) + backpedal lean + see-through walls/roofs between camera and player + admin per-NPC body type. v18: /world chat channels (world-chat-logic.js) + pinch zoom. v17: 1s punch cooldown (server-enforced) + button sweep. v16: feed reactions + captions. v15: /feed tab. v14: OG Avengers redesign + shared NPC fights (world-npc-logic.js)
 const PRECACHE = [
   '/',
   '/spa.html',

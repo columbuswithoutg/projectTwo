@@ -20,6 +20,7 @@ router.get('/public', async (req, res) => {
           encounter: { ...defaults.encounter, ...(doc.encounter || {}) },
           fight:     { ...defaults.fight,     ...(doc.fight || {}) },
           flags:     { ...defaults.flags,     ...(doc.flags || {}) },
+          world:     { npcBodyTypes: { ...defaults.world.npcBodyTypes, ...((doc.world && doc.world.npcBodyTypes) || {}) } },
           version:   doc.version || 1
         }
       : { ...defaults, version: 0 };

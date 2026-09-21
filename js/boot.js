@@ -121,6 +121,7 @@ fetch(`${API}/config/public`)
     // views can gate on them. Distinct from Walkers' per-user flag defaults —
     // these are read as authoritative global switches.
     if (cfg && cfg.flags) window.APP_FLAGS = cfg.flags;
+    if (cfg && cfg.world) window.APP_WORLD = cfg.world;   // /world settings (per-NPC body type)
   })
   .catch(() => { /* offline / blocked — defaults are fine */ });
 

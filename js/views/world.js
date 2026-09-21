@@ -154,12 +154,15 @@ const WorldView = (() => {
     // Map preset → roster character (via charId) to resolve the debut project;
     // Playground3D spawns each hero once its debut node is unlocked.
     if (Playground3D.setWorldNpcs && typeof Playground !== 'undefined' && Array.isArray(Playground.CHARACTER_PRESETS)) {
+      const npcBodies = await _npcBodyTypes();
+      if (myMount !== _mountSeq) return;
       const roster = (typeof window.characters !== 'undefined' && window.characters) || [];
       const unresolved = [];
       const npcSpecs = Playground.CHARACTER_PRESETS.map(p => {
         const c = roster.find(x => x.id === p.charId);
         if (!c || !c.debut) { unresolved.push(p.charId); return null; }
-        return { id: 'npc_' + p.id, name: p.name, character: p.char, debut: c.debut };
+        const id = 'npc_' + p.id;
+        return { id, name: p.name, character: { ...p.char, bodyType: npcBodies[id] === 1 ? 1 : 0 }, debut: c.debut };
       }).filter(Boolean);
       // The Avengers vanishing from /world is a silent, confusing failure. It
       // happens when the roster (from /api/content/characters) drifts from the
@@ -197,12 +200,21 @@ const WorldView = (() => {
   // after its /config/public fetch; if a deep-link to /world beat that fetch,
   // fetch once ourselves so the event's on/off state is always correct.
   async function _ensureFlags() {
-    if (window.APP_FLAGS) return window.APP_FLAGS;
+    if (window.APP_FLAGS && window.APP_WORLD) return window.APP_FLAGS;
     try {
       const res = await fetch(`${API}/config/public`);
-      if (res.ok) { const cfg = await res.json(); if (cfg && cfg.flags) window.APP_FLAGS = cfg.flags; }
+      if (res.ok) {
+        const cfg = await res.json();
+        if (cfg && cfg.flags) window.APP_FLAGS = cfg.flags;
+        if (cfg && cfg.world) window.APP_WORLD = cfg.world;
+      }
     } catch (_) { /* offline — treat as defaults (event off) */ }
     return window.APP_FLAGS || {};
+  }
+  // Admin-chosen body type per hero NPC (id → Playground.BODY_TYPES index).
+  async function _npcBodyTypes() {
+    await _ensureFlags();
+    return (window.APP_WORLD && window.APP_WORLD.npcBodyTypes) || {};
   }
   async function _stonesEventOn() {
     const flags = await _ensureFlags();

@@ -275,6 +275,11 @@ const Playground = (() => {
   // the customizer also surfaces gender-leaning style options first.
   const GENDER_LABELS = ['Neutral', 'Masculine', 'Feminine'];
 
+  // Body type — the overall art style of the 3D character. 0 = Realistic
+  // (rigged human, the default), 1 = Box (the original all-box body). Other
+  // players see whichever the owner picked.
+  const BODY_TYPES = ['Realistic', 'Box'];
+
   // Reusable hero pieces (replaced the old all-in-one `gear` slot). Shape-only
   // label lists; their colors come from the matching helmetColor/propColor/
   // emblemColor fields (reuse SHIRT_COLORS). 0 = None for all three.
@@ -591,7 +596,7 @@ const Playground = (() => {
       eyeColor: 6, eyeShape: 0,
       facialHairStyle: 0, facialHairColor: 0,
       glasses: 0, hat: 0, shoeColor: 0,
-      build: 1, gear: 0,
+      build: 1, gear: 0, bodyType: 0,
       // Clothing shape slots — 0 = legacy/plain for shirt/pants/shoe, 0 = None
       // for outerwear/suit/accessories. New colors default to index 0.
       shirtStyle: 0, pantsStyle: 0, shoeStyle: 0,
@@ -1009,6 +1014,6 @@ const Playground = (() => {
     SUIT_COLORS, ACCESSORY_COLORS,
     SHIRT_STYLES, PANTS_STYLES, SHOE_STYLES,
     OUTERWEAR_STYLES, SUIT_STYLES, GLOVES_STYLES, BELT_STYLES, MASK_STYLES,
-    GENDER_LABELS, HELMET_STYLES, PROP_STYLES, EMBLEM_STYLES
+    GENDER_LABELS, HELMET_STYLES, PROP_STYLES, EMBLEM_STYLES, BODY_TYPES
   };
 })();

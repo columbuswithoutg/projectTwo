@@ -7,6 +7,7 @@ const User = require('../models/user');
 const Friend = require('../models/Friend');
 const AuditLog = require('../models/AuditLog');
 const AdminConfig = require('../models/AdminConfig');
+const WorldNpcLogic = require('../js/world-npc-logic');   // NPC_IDS for world.npcBodyTypes
 const Project = require('../models/Project');
 const Character = require('../models/Character');
 const Location = require('../models/Location');
@@ -323,19 +324,32 @@ const CONFIG_RULES = {
   'fight.spawnChance': { min: 0, max: 1 }
 };
 
+// Per-NPC body type (world.npcBodyTypes): keys must be real NPC ids, values a
+// Playground.BODY_TYPES index (0 Realistic, 1 Box).
+const NPC_BODY_RULE = { min: 0, max: 1, integer: true };
+
 function pickNumber(value, rule) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   if (value < rule.min || value > rule.max) return null;
+  if (rule.integer && !Number.isInteger(value)) return null;
   return value;
 }
 
 function diffConfig(prev, next) {
   const out = {};
-  const sections = ['walker', 'encounter', 'fight', 'flags'];
+  const sections = ['walker', 'encounter', 'fight', 'flags', 'world'];
   for (const sec of sections) {
     const p = (prev && prev[sec]) || {};
     const n = (next && next[sec]) || {};
     for (const k of Object.keys(n)) {
+      // One level of nesting (world.npcBodyTypes) — diff per NPC, not the map.
+      if (n[k] && typeof n[k] === 'object') {
+        const pk = (p[k] && typeof p[k] === 'object') ? p[k] : {};
+        for (const kk of Object.keys(n[k])) {
+          if (pk[kk] !== n[k][kk]) out[`${sec}.${k}.${kk}`] = { from: pk[kk], to: n[k][kk] };
+        }
+        continue;
+      }
       if (p[k] !== n[k]) out[`${sec}.${k}`] = { from: p[k], to: n[k] };
     }
   }
@@ -361,9 +375,25 @@ router.put('/config', async (req, res) => {
     if (body[sec] && Object.prototype.hasOwnProperty.call(body[sec], key)) {
       const v = pickNumber(body[sec][key], rule);
       if (v === null) {
-        errors[path] = `must be a number between ${rule.min} and ${rule.max}`;
+        errors[path] = rule.integer
+          ? `must be a whole number between ${rule.min} and ${rule.max}`
+          : `must be a number between ${rule.min} and ${rule.max}`;
       } else {
         update[`${sec}.${key}`] = v;
+      }
+    }
+  }
+
+  const npcBodies = body.world && body.world.npcBodyTypes;
+  if (npcBodies !== undefined) {
+    if (!npcBodies || typeof npcBodies !== 'object' || Array.isArray(npcBodies)) {
+      errors['world.npcBodyTypes'] = 'must be an object of NPC id → body type';
+    } else {
+      for (const [id, raw] of Object.entries(npcBodies)) {
+        if (!WorldNpcLogic.NPC_IDS.includes(id)) { errors['world.npcBodyTypes.' + id] = 'unknown NPC'; continue; }
+        const v = pickNumber(raw, NPC_BODY_RULE);
+        if (v === null) errors['world.npcBodyTypes.' + id] = 'must be 0 (Realistic) or 1 (Box)';
+        else update['world.npcBodyTypes.' + id] = v;
       }
     }
   }

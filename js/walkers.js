@@ -24,7 +24,7 @@ const Walkers = (() => {
     ROAD:       { halfW: 13, damping: 0.998, bounce: 0.85 },
     ENCOUNTER:  { dist: 26, cooldown: 30000, lineDuration: 2500 },
     WEAPON:     { radius: 18, size: 14, baseSpeed: 3.5, hitCooldown: 300 },
-    FIGHT:      { spawnChance: 0.15, villainHpMult: 1.5, defeatDisplayMs: 2000, deployGrace: 5000, noShowTimeoutMs: 8000 },
+    FIGHT:      { spawnChance: 0.15, villainHpMult: 1.5, defeatDisplayMs: 2000, deployGrace: 5000, noShowTimeoutMs: 8000, maxFightMs: 60000 },
     PROJECTILE: { speed: 120, cooldown: 1400, size: 6 },
   };
 
@@ -778,7 +778,27 @@ const Walkers = (() => {
     w.hpBarEl = null;
     w.hpEl?.remove();
     w.hpEl = null;
-    w.state = W_STATE.WALKING;
+    // Visuals only — callers decide the next state. Resetting to WALKING here
+    // used to overwrite DEFEATED on a fainted walker, so the fight never saw
+    // everyone down and never ended.
+  }
+
+  // A fighter is out if either flag says so; checking both means a stale
+  // state can never keep a fight alive.
+  function isDown(w) {
+    return w.state === W_STATE.DEFEATED || w.hp <= 0;
+  }
+
+  function releaseParticipants(fight) {
+    fight.participants.forEach(w => {
+      unequipFight(w);
+      if (!isDown(w)) {
+        w.state = W_STATE.WALKING;
+        giveRandomVelocity(w);
+        w.paused = true;
+        w.pauseEnd = performance.now() + randBetween(300, 800);
+      }
+    });
   }
 
   function setFightClass(nodeId, on) {
@@ -1056,14 +1076,7 @@ const Walkers = (() => {
       activeProjectiles = [];
 
       // Release participants
-      fight.participants.forEach(w => {
-        unequipFight(w);
-        if (w.state !== W_STATE.DEFEATED) {
-          giveRandomVelocity(w);
-          w.paused = true;
-          w.pauseEnd = performance.now() + randBetween(300, 800);
-        }
-      });
+      releaseParticipants(fight);
 
       // Zoom out and start revive checks
       endFightZoom();
@@ -1098,6 +1111,7 @@ const Walkers = (() => {
       // Clear any remaining projectiles
       activeProjectiles.forEach(p => p.el.remove());
       activeProjectiles = [];
+      releaseParticipants(fight);
 
       // Zoom out, then revive fainted walkers after delay
       endFightZoom();
@@ -1296,7 +1310,7 @@ const Walkers = (() => {
                 if (target.isVillain) { handleVillainDefeat(fight, nodeId); return; }
                 else {
                   handleWalkerFaint(target);
-                  if (![...fight.participants].some(p => p.state !== W_STATE.DEFEATED)) { handleVillainWins(fight, nodeId); return; }
+                  if (![...fight.participants].some(p => !isDown(p))) { handleVillainWins(fight, nodeId); return; }
                 }
               }
             }
@@ -1360,7 +1374,7 @@ const Walkers = (() => {
                 if (target.isVillain) { handleVillainDefeat(fight, nodeId); }
                 else {
                   handleWalkerFaint(target);
-                  if (![...fight.participants].some(pp => pp.state !== W_STATE.DEFEATED)) { handleVillainWins(fight, nodeId); }
+                  if (![...fight.participants].some(pp => !isDown(pp))) { handleVillainWins(fight, nodeId); }
                 }
               }
             }
@@ -1642,10 +1656,17 @@ const Walkers = (() => {
       }
       const fightClusterId = getClusterOf(nodeId);
       const liveAndPresent = [...fight.participants].some(p =>
-        p.state !== W_STATE.DEFEATED && p.clusterId === fightClusterId
+        !isDown(p) && p.clusterId === fightClusterId
       );
-      if (!liveAndPresent && fight.villain.state !== W_STATE.DEFEATED) {
+      if (!liveAndPresent && !isDown(fight.villain)) {
         handleVillainWins(fight, nodeId);
+        return;
+      }
+      // Last resort: no fight runs forever. Whoever has more HP left wins.
+      if ((now - fight.started) > PHYSICS.FIGHT.maxFightMs) {
+        const heroHp = [...fight.participants].reduce((t, p) => t + Math.max(0, p.hp || 0), 0);
+        if (heroHp >= Math.max(0, fight.villain.hp || 0)) handleVillainDefeat(fight, nodeId);
+        else handleVillainWins(fight, nodeId);
       }
     });
 
@@ -2165,5 +2186,16 @@ const Walkers = (() => {
 
   function getDialoguesEnabled() { return dialoguesEnabled; }
 
-  return { init, deploy, destroy, resetInit, showWalkerPicker, getSelectedIds, getSelectedEntries, getMaxSlots, getUnlockedCharacters, toggleCharacter, setCharacterStage, setSelections, deployWithSelections, restoreSelections, setFightsEnabled, getFightsEnabled, setDialoguesEnabled, getDialoguesEnabled, applyConfig, applyFlagDefaults };
+  // Debug handle for console / preview checks (mirrors Playground3D._debug).
+  // Read-only views plus spawnVillain so a fight can be forced on demand.
+  const _debug = {
+    fights: () => activeFights,
+    walkers: () => activeWalkers,
+    spawnVillain: (nodeId) => spawnVillain(nodeId),
+    clearCooldown: () => { globalFightCooldownEnd = 0; },
+    // Run one frame by hand (the preview's rAF can stall during scripts).
+    step: () => { if (animFrameId) cancelAnimationFrame(animFrameId); tick(performance.now()); }
+  };
+
+  return { _debug, init, deploy, destroy, resetInit, showWalkerPicker, getSelectedIds, getSelectedEntries, getMaxSlots, getUnlockedCharacters, toggleCharacter, setCharacterStage, setSelections, deployWithSelections, restoreSelections, setFightsEnabled, getFightsEnabled, setDialoguesEnabled, getDialoguesEnabled, applyConfig, applyFlagDefaults };
 })();

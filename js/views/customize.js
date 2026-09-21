@@ -423,6 +423,7 @@ const CustomizeView = {
   // ── toolbar actions ──
   _randomize() {
     (CHARACTER_SCHEMA || []).forEach(e => {
+      if (e.noRandom) return;
       const n = characterSchemaCount(e);
       if (n > 0) CustomizeView._current[e.key] = Math.floor(Math.random() * n);
     });
