@@ -15,8 +15,14 @@ jobs:
         with:
           node-version: 20
 
-      # No build step by design (vanilla JS, raw files served as-is), so a
-      # syntax pass over every shipped script is the compile check.
+      # npm ci runs the postinstall build (scripts/build.mjs), so a bundle
+      # that fails its top-level-globals assertion fails CI here. dist/ is
+      # gitignored, so it is not part of the syntax sweep below.
+      - name: Install (builds dist/ via postinstall)
+        run: npm ci
+
+      # Sources are served concatenated + minified, never transpiled, so a
+      # syntax pass over every shipped source file is still the compile check.
       - name: Syntax-check all JavaScript
         run: |
           set -e

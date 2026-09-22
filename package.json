@@ -1,9 +1,13 @@
 {
-  "name": "projectone",
+  "name": "mcu-tracker",
   "version": "1.0.0",
-  "description": "",
-  "main": "projects.js",
+  "description": "MCU watch-order tracker with a multiplayer 3D world",
+  "main": "server.js",
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "postinstall": "npm run build",
+    "start": "node server.js",
+    "dev": "node scripts/build.mjs --watch --serve",
     "test": "node --test"
   },
   "repository": {
@@ -24,6 +28,7 @@
     "compression": "^1.7.5",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
+    "esbuild": "^0.25.12",
     "express": "^5.2.1",
     "express-rate-limit": "^8.3.2",
     "helmet": "^8.0.0",

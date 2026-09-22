@@ -30,15 +30,16 @@
       if (m) m.setAttribute('content', t === 'dark' ? '#07080f' : '#ffffff');
     })();
   </script>
-  <link rel="stylesheet" href="styles.css" />
+  <!-- build:styles -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
   <!--
-    Three.js for the /home 3D playground. Loaded via importmap so the
-    no-bundler script setup keeps working. The module script below imports
-    three and exposes it on window.THREE so the deferred classic script
-    js/playground3d.js can use it without itself being a module.
+    Three.js for the 3D views. The importmap must stay inline (it has to
+    exist before any module import resolves). The module that imports three
+    and exposes window.THREE is js/three-shim.mjs, injected by
+    js/chunk-loader.js only when the world chunk loads, so /login and the
+    2D views never wait on unpkg.
   -->
   <script type="importmap">
   {
@@ -47,31 +48,6 @@
       "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
     }
   }
-  </script>
-  <script type="module">
-    import * as THREE from 'three';
-    // RoundedBoxGeometry lives in examples/jsm; its internal `import 'three'`
-    // resolves through the importmap above. Attached onto the THREE namespace
-    // copy we expose so the classic-script engine can use it like core geometry.
-    import { RoundedBoxGeometry } from 'https://unpkg.com/three@0.160.0/examples/jsm/geometries/RoundedBoxGeometry.js';
-    const ns = { ...THREE, RoundedBoxGeometry };
-    window.THREE = ns;
-    window.dispatchEvent(new Event('three-ready'));
-    // Realistic rigged characters (assets/models/humanoid) need GLTFLoader +
-    // SkeletonUtils. Imported AFTER three-ready fires so a slow or failed
-    // addon fetch can never delay — or break — the engine: characters just
-    // stay procedural. `ns` is a plain object, so attaching later is safe.
-    Promise.all([
-      import('three/addons/loaders/GLTFLoader.js'),
-      import('three/addons/utils/SkeletonUtils.js')
-    ]).then(([gltf, skel]) => {
-      ns.GLTFLoader = gltf.GLTFLoader;
-      ns.SkeletonUtils = skel;
-      window.dispatchEvent(new Event('three-addons-ready'));
-    }).catch((err) => {
-      console.warn('[three] addons unavailable — characters stay procedural', err);
-      window.dispatchEvent(new Event('three-addons-failed'));
-    });
   </script>
 </head>
 
@@ -83,7 +59,7 @@
     visible loading state is announced via the role="status" text.
   -->
   <div id="boot-splash" aria-hidden="true">
-    <img class="boot-splash-logo" src="assets/avengers-logo.svg" alt="" />
+    <img class="boot-splash-logo" src="/assets/avengers-logo.svg" alt="" />
     <div class="boot-splash-bar"><span></span></div>
   </div>
   <span class="visually-hidden" role="status" id="boot-splash-status">Loading MCU Tracker…</span>
@@ -92,112 +68,15 @@
   <div id="app"></div>
 
   <!--
-    All scripts use `defer` so the browser parses the HTML without blocking
-    on script download/execution. Defer preserves source order, so the
-    existing script-order dependencies (config → auth → state → …) still
-    hold. Scripts execute after DOMContentLoaded, which is when Router.init
-    expects to run anyway.
+    THIS FILE IS A TEMPLATE. scripts/build.mjs fills the two build: markers
+    and writes dist/spa.html, which is what server.js serves. The app's JS is
+    concatenated + minified into content-hashed chunks: a core bundle (always
+    loaded, deferred) and lazy chunks — world (Three.js engine, 3D views,
+    sockets, voice) and admin — that js/chunk-loader.js injects on first
+    navigation. The file lists and their required order live in
+    scripts/build.mjs, so adding a JS file means adding it there, not here.
   -->
-
-  <!--
-    Shared content. As of Phase 3 these files are CLIENT-SIDE FALLBACKS:
-    boot.js fetches /api/content/* and overwrites the globals with the
-    live DB values. Keeping them static means a network blip during the
-    boot fetch leaves us with last-known-good content rather than blank.
-    world-config.js (display geometry, not editable content) loads first
-    because locations.js used to define CONFIG_WORLD inline and several
-    layout modules read it before locations finishes parsing.
-  -->
-  <script defer src="js/world-config.js"></script>
-  <script defer src="projects.js"></script>
-  <script defer src="characters.js"></script>
-  <script defer src="locations.js"></script>
-
-  <!-- Core modules (order matters — these create globals) -->
-  <script defer src="js/config.js"></script>
-  <script defer src="js/theme.js"></script>
-  <script defer src="js/auth.js"></script>
-  <script defer src="js/state.js"></script>
-  <script defer src="js/layout.js"></script>
-  <script defer src="js/utils.js"></script>
-  <script defer src="js/nodeFactory.js"></script>
-  <script defer src="js/renderer.js"></script>
-  <script defer src="js/orderRenderer.js"></script>
-  <script defer src="js/popup.js"></script>
-  <!-- Goals guide panel — depends on isUnlocked/isRevealed/allPrereqs
-       (js/utils.js) and showPopup (js/popup.js) above. -->
-  <script defer src="js/goals.js"></script>
-  <script defer src="js/friend-view.js"></script>
-  <script defer src="js/friends.js"></script>
-  <script defer src="js/memory.js"></script>
-  <script defer src="js/walker-dialogues.js"></script>
-  <script defer src="js/walkerView.js"></script>
-  <script defer src="js/walkers.js"></script>
-  <script defer src="js/playground.js"></script>
-  <script defer src="js/character-schema.js"></script>
-  <script defer src="js/theme-color.js"></script>
-  <!-- Pure physics helpers (also unit-tested via node --test) — must load
-       before playground3d.js which calls PG3DPhysics from its tick. -->
-  <script defer src="js/playground3d-physics.js"></script>
-  <!-- Shared Avengers NPC combat rules (HP / KO / aggro) — the server runs
-       the same file; playground3d.js reads its tables. -->
-  <script defer src="js/world-npc-logic.js"></script>
-  <!-- /world chat channel rules (World / Project / Whisper, 10s cooldown) —
-       shared with routes/world-socket.js. -->
-  <script defer src="js/world-chat-logic.js"></script>
-  <!-- Realistic humanoid characters: pure logic (also unit-tested) + the glTF
-       rig loader. Both must load before playground3d.js, which calls them
-       from _buildPlayer. -->
-  <script defer src="js/playground3d-humanoid-logic.js"></script>
-  <script defer src="js/playground3d-humanoid.js"></script>
-  <!-- Engine pieces split out of playground3d.js (2026-09-22): avatar mesh
-       builders, input handling, see-through occluders. All three must load
-       before playground3d.js, which aliases their exports. -->
-  <script defer src="js/playground3d-avatar.js"></script>
-  <script defer src="js/playground3d-input.js"></script>
-  <script defer src="js/playground3d-occlusion.js"></script>
-  <script defer src="js/playground3d.js"></script>
-
-  <!-- Router + Views -->
-  <script defer src="js/router.js"></script>
-  <script defer src="js/views/login.js"></script>
-  <script defer src="js/views/app.js"></script>
-  <script defer src="js/views/watchorder.js"></script>
-  <script defer src="js/views/profile.js"></script>
-  <script defer src="js/views/feed.js"></script>
-  <script defer src="js/views/characters.js"></script>
-  <script defer src="js/views/home-builder.js"></script>
-  <script defer src="js/views/customize.js"></script>
-  <script defer src="js/views/home.js"></script>
-  <script defer src="js/views/home-edit.js"></script>
-  <!-- Socket.IO client is auto-served by the server when io is mounted. -->
-  <script defer src="/socket.io/socket.io.js"></script>
-  <!-- Shared multiplayer wire — used by /world, /home, and /friend/:user/home -->
-  <script defer src="js/home-socket.js"></script>
-  <!-- Proximity voice chat — WebRTC P2P, lazily started by views -->
-  <script defer src="js/voice-chat.js"></script>
-  <script defer src="js/views/world.js"></script>
-  <script defer src="js/views/friend-watch.js"></script>
-  <script defer src="js/views/friend-map.js"></script>
-  <script defer src="js/views/friend-home.js"></script>
-  <script defer src="js/views/friend-profile.js"></script>
-
-  <!-- Admin (shell first, then tab modules append into AdminView._tabs) -->
-  <script defer src="js/views/admin/index.js"></script>
-  <script defer src="js/views/admin/users.js"></script>
-  <script defer src="js/views/admin/moderation.js"></script>
-  <script defer src="js/views/admin/config.js"></script>
-  <script defer src="js/views/admin/cms.js"></script>
-  <script defer src="js/views/admin/cms-projects.js"></script>
-  <script defer src="js/views/admin/cms-projects-board.js"></script>
-  <script defer src="js/views/admin/cms-characters.js"></script>
-  <script defer src="js/views/admin/cms-locations.js"></script>
-  <script defer src="js/views/admin/cms-dialogues.js"></script>
-  <script defer src="js/views/admin/audit.js"></script>
-  <script defer src="js/views/admin/overview.js"></script>
-
-  <!-- Boot (also deferred via inline defer pattern — use DOMContentLoaded) -->
-  <script defer src="js/boot.js"></script>
+  <!-- build:scripts -->
 </body>
 
 </html>

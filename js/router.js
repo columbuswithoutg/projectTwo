@@ -34,7 +34,7 @@ const Router = (() => {
     }
   }
 
-  // Match `path` against registered pattern routes. Returns { view, params }
+  // Match `path` against registered pattern routes. Returns { route, params }
   // or null. Patterns and paths are compared segment-by-segment; `:name`
   // segments capture into params. No regex, no nested catch-alls — flat
   // patterns only, which is all the SPA needs.
@@ -54,7 +54,7 @@ const Router = (() => {
           ok = false; break;
         }
       }
-      if (ok) return { view: r.view, params };
+      if (ok) return { route: r, params };
     }
     return null;
   }
@@ -78,7 +78,12 @@ const Router = (() => {
     navigate(location.pathname, false);
   }
 
-  function navigate(path, pushState = true) {
+  // Lazy routes await a chunk download inside navigate(); a navigation that
+  // starts while one is in flight supersedes it (see the seq check below).
+  let navSeq = 0;
+
+  async function navigate(path, pushState = true) {
+    const seq = ++navSeq;
     // Strip query + hash first so "?q=1" and "#section" don't break lookups.
     const qIdx = path.indexOf('?');
     if (qIdx !== -1) path = path.slice(0, qIdx);
@@ -111,18 +116,36 @@ const Router = (() => {
     }
 
     // Resolve route — exact match first, then pattern match.
-    let view = exactRoutes[path];
+    let entry = exactRoutes[path];
     let params = {};
-    if (!view) {
-      const matched = matchPattern(path);
-      if (matched) { view = matched.view; params = matched.params; }
+    let matched = null;
+    if (!entry) {
+      matched = matchPattern(path);
+      if (matched) { entry = matched.route.view; params = matched.params; }
     }
-    if (!view) {
+    if (!entry) {
       // Last resort: go to /
       if (path !== '/' && exactRoutes['/']) {
         navigate('/', pushState);
       }
       return;
+    }
+
+    // A route registered with a function is lazy: the function loads its
+    // chunk (boot.js + chunk-loader.js) and resolves to the view object.
+    // The result is memoized onto the route so the await happens once.
+    let view = entry;
+    if (typeof entry === 'function') {
+      try {
+        view = await entry();
+      } catch (err) {
+        console.error('[router] chunk load failed for', path, err);
+        _reloadOnce(path);
+        return;
+      }
+      if (seq !== navSeq) return;   // superseded while the chunk downloaded
+      if (matched) matched.route.view = view; else exactRoutes[path] = view;
+      try { sessionStorage.removeItem('mcu-chunk-reload'); } catch (_) {}
     }
 
     // Skip if already on this view AND no params changed (so /friend/kevin →
@@ -154,6 +177,22 @@ const Router = (() => {
     currentView._params = params;
     document.title = view.title || 'MCU Tracker';
     view.mount(appContainer, params);
+  }
+
+  // A chunk URL that fails to load usually means a deploy happened while
+  // this tab was open: its manifest points at hashes that no longer exist.
+  // One full page load picks up the new shell; the sessionStorage guard
+  // stops a genuinely broken build from reload-looping.
+  function _reloadOnce(path) {
+    const key = 'mcu-chunk-reload';
+    let last = null;
+    try { last = sessionStorage.getItem(key); } catch (_) {}
+    if (last === path) {
+      console.error('[router] chunk still failing after a reload — giving up on', path);
+      return;
+    }
+    try { sessionStorage.setItem(key, path); } catch (_) {}
+    location.assign(path);
   }
 
   function _shallowEqualParams(a, b) {

@@ -1,30 +1,23 @@
-// Minimal service worker for the MCU Tracker SPA shell.
-// - Precaches the SPA shell + static fallback data so an offline visit still
-//   renders the app skeleton (auth-gated views won't function without /api,
-//   but the shell, router, and views load).
-// - Stale-while-revalidate for /js/* and /assets/* — repeat visits are
-//   instant; new deploys update on the second load.
-// - Network-only for /api/* — auth-sensitive responses are never cached.
-// Bump CACHE_VERSION whenever the precache list or strategy changes.
-
-// v12: deterministic /world NPCs + backpedal. v11: watch-order zoom.
-// v10: project-field re-derive + mobile chat-row/toggle fixes.
-// The bump matters as much as the code: /js/* and /styles.css are
-// stale-while-revalidate, so without a new cache name a returning phone runs
-// the OLD scripts for one more visit — which is precisely how the blank-map
-// bug kept reappearing "when reopened on Chrome".
-const CACHE_VERSION = 'mcu-v19'; // v19: villain fights always end + Body type (Realistic/Box) + backpedal lean + see-through walls/roofs between camera and player + admin per-NPC body type. v18: /world chat channels (world-chat-logic.js) + pinch zoom. v17: 1s punch cooldown (server-enforced) + button sweep. v16: feed reactions + captions. v15: /feed tab. v14: OG Avengers redesign + shared NPC fights (world-npc-logic.js)
-const PRECACHE = [
-  '/',
-  '/spa.html',
-  '/styles.css',
-  '/projects.js',
-  '/characters.js',
-  '/locations.js',
-  '/assets/favicon.jpg',
-  '/assets/avengers-logo.svg',
-  '/manifest.json'
-];
+// Service worker for the MCU Tracker SPA shell.
+//
+// THIS FILE IS A TEMPLATE. scripts/build.mjs reads it and writes dist/sw.js
+// with __CACHE_VERSION__ and __PRECACHE__ filled in from the build's content
+// hashes. Never edit dist/sw.js by hand — and there is no manual version
+// bump any more: any change to any built file changes CACHE_VERSION, and the
+// activate handler drops every older cache.
+//
+// - Precaches the shell (spa.html, the core bundle, the stylesheet, icons and
+//   the manifest) so an offline visit still renders the app skeleton.
+// - /dist/* files carry a content hash in their name → cache-first, kept
+//   until the version changes. Lazy chunks (world, admin) land here on first
+//   use.
+// - /assets/* → stale-while-revalidate. event.waitUntil keeps the worker
+//   alive until the refreshed copy is written; without it the browser could
+//   kill the worker first, the cache never updated, and a returning phone ran
+//   old files ("blank map when reopened on Chrome").
+// - /api/* and /socket.io/* → network only, never cached.
+const CACHE_VERSION = '__CACHE_VERSION__';
+const PRECACHE = __PRECACHE__;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -52,7 +45,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigation requests — try network first, fall back to cached shell.
+  // Navigation requests — network first, fall back to the cached shell.
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req).catch(() => caches.match('/spa.html'))
@@ -60,17 +53,26 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Stale-while-revalidate for static assets and JS modules.
-  if (url.pathname.startsWith('/js/') || url.pathname.startsWith('/assets/') ||
-      PRECACHE.includes(url.pathname)) {
+  // Hashed build output — cache-first. A given URL never changes content.
+  if (url.pathname.startsWith('/dist/')) {
+    event.respondWith(
+      caches.open(CACHE_VERSION).then(async (cache) => {
+        const cached = await cache.match(req);
+        if (cached) return cached;
+        const res = await fetch(req);
+        if (res && res.status === 200) event.waitUntil(cache.put(req, res.clone()));
+        return res;
+      })
+    );
+    return;
+  }
+
+  // Stale-while-revalidate for images/models and the precached shell files.
+  if (url.pathname.startsWith('/assets/') || PRECACHE.includes(url.pathname)) {
     event.respondWith(
       caches.open(CACHE_VERSION).then(async (cache) => {
         const cached = await cache.match(req);
         const networkFetch = fetch(req).then((res) => {
-          // waitUntil keeps the worker alive until the write lands. Without
-          // it, when a cached copy is returned immediately the browser may
-          // terminate the worker before cache.put resolves, so the cache
-          // never updated and a returning phone ran the OLD scripts again.
           if (res && res.status === 200) event.waitUntil(cache.put(req, res.clone()));
           return res;
         });

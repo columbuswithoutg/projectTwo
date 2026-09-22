@@ -28,6 +28,17 @@ const compression = require('compression');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 const { Server: SocketIOServer } = require('socket.io');
+const fs = require('fs');
+
+// The client is served from dist/ — hashed, minified chunks plus the
+// generated spa.html and sw.js written by scripts/build.mjs. `npm install`
+// builds it (postinstall) and `npm run dev` builds + watches. Refuse to start
+// without it rather than 404 the whole app.
+const DIST = path.join(__dirname, 'dist');
+if (!fs.existsSync(path.join(DIST, 'spa.html'))) {
+  console.error('FATAL: dist/spa.html not found. Run `npm run build` (or `npm run dev`) first.');
+  process.exit(1);
+}
 
 const app = express();
 
@@ -92,8 +103,9 @@ app.use(cors({
 app.use(express.json({ limit: '64kb' }));
 
 // SPA routes — BEFORE static middleware so they take priority over index.html
-const spaFile = path.join(__dirname, 'spa.html');
-['/', '/map', '/login', '/profile', '/characters', '/home', '/customize', '/admin', '/world', '/feed'].forEach(route => {
+const spaFile = path.join(DIST, 'spa.html');
+// '/spa.html' itself is the service worker's precached offline fallback.
+['/', '/spa.html', '/map', '/login', '/profile', '/characters', '/home', '/customize', '/admin', '/world', '/feed'].forEach(route => {
   app.get(route, (req, res) => res.sendFile(spaFile));
 });
 // Parameterized SPA routes — `/friend/:username` and its sub-tabs all
@@ -111,38 +123,38 @@ app.get('/home/edit', (req, res) => res.sendFile(spaFile));
 // instead of hiding behind the browser HTTP cache for a day.
 const IS_PROD = process.env.NODE_ENV === 'production';
 app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: IS_PROD ? '30d' : 0 }));
-// /js is the biggest chunk of per-request bytes and the content is static
-// between deploys — cache it for a day. Browsers still revalidate via ETag
-// when the file changes, and a hard refresh bypasses this entirely, so a
-// stale bundle after deploy resolves itself within one day without manual
-// intervention. For shorter invalidation, adopt hashed filenames.
-app.use('/js', express.static(path.join(__dirname, 'js'), { maxAge: IS_PROD ? '1d' : 0, etag: true }));
+// Built client. Every file under dist/static carries a content hash in its
+// name (core.a1b2c3d4.js, styles.<hash>.css …), so it is cached forever: a
+// new build produces new names and the generated spa.html points at them.
+// Source files under js/ are no longer served.
+app.use('/dist', express.static(path.join(DIST, 'static'), { immutable: true, maxAge: '1y', index: false }));
 // Root-level client files (HTML + top-level scripts + stylesheet) are served
 // from an explicit allowlist. The pre-SPA orphan pages (app.html,
 // characters.html, profile.html) and their scripts are deliberately omitted
 // so old links can't resurrect the broken flow.
-const ROOT_FILES = ['index.html', 'spa.html', 'styles.css', 'auth.js',
-                    'projects.js', 'characters.js', 'locations.js',
-                    'manifest.json', 'sw.js'];
-// Same caching policy as /js — one-day max-age keeps the network out of the
-// critical path on repeat visits. HTML (spa.html, index.html) is served with
-// no-cache so shell updates reach users immediately. sw.js is also served
-// no-cache so service-worker updates can't be pinned by the HTTP cache.
-const HTML_FILES = new Set(['index.html', 'spa.html']);
-const NO_CACHE_FILES = new Set(['sw.js']);
+// Only the legacy login page (index.html + auth.js + the raw stylesheet) and
+// the PWA manifest still come from the repo root. spa.html and sw.js are the
+// generated ones in dist/ (below); projects.js / characters.js / locations.js
+// are bundled into the core chunk.
+const ROOT_FILES = ['index.html', 'styles.css', 'auth.js', 'manifest.json'];
+const HTML_FILES = new Set(['index.html']);
 ROOT_FILES.forEach(name => {
   app.get('/' + name, (req, res) => {
-    if (HTML_FILES.has(name) || NO_CACHE_FILES.has(name) || !IS_PROD) {
+    if (HTML_FILES.has(name) || !IS_PROD) {
       res.set('Cache-Control', 'no-cache');
     } else {
       res.set('Cache-Control', 'public, max-age=86400');
     }
-    // The service worker must be allowed to control the whole origin even
-    // though it sits at root — defensive header for hosting setups that
-    // otherwise narrow scope.
-    if (name === 'sw.js') res.set('Service-Worker-Allowed', '/');
     res.sendFile(path.join(__dirname, name));
   });
+});
+// Generated service worker (dist/sw.js). no-cache so a new build can't be
+// pinned by the HTTP cache; Service-Worker-Allowed lets it control the whole
+// origin on hosting setups that would otherwise narrow the scope.
+app.get('/sw.js', (req, res) => {
+  res.set('Cache-Control', 'no-cache');
+  res.set('Service-Worker-Allowed', '/');
+  res.sendFile(path.join(DIST, 'sw.js'));
 });
 
 mongoose.connect(process.env.MONGO_URI)

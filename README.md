@@ -15,6 +15,7 @@ This document describes the **current state** of the project. The Changelog at t
 | File store  | Cloudinary (user memories — images & video)                          |
 | Auth        | JWT (7-day expiry) + bcryptjs                                        |
 | Frontend    | Vanilla JS SPA (no framework)                                        |
+| Build       | esbuild via `scripts/build.mjs` — concat + minify into hashed chunks |
 | PWA         | `manifest.json` + `sw.js` — installable, offline shell               |
 | Hosting     | Render.com                                                           |
 
@@ -26,8 +27,10 @@ This document describes the **current state** of the project. The Changelog at t
 projectOne/
 ├── server.js                  Express app entry — routes, rate limits, static allowlist, helmet, compression
 ├── manifest.json              PWA manifest (name, icons, theme color, start_url)
-├── sw.js                      Service worker — precache shell + SWR for /js & /assets; never caches /api
+├── sw.js                      Service worker TEMPLATE → dist/sw.js (version + precache filled by the build)
 ├── package.json
+├── dist/                      BUILD OUTPUT (gitignored): static/{core,world,admin}.<hash>.js,
+│                              styles.<hash>.css, three-shim.<hash>.js, spa.html, sw.js
 ├── .env                       MONGO_URI, JWT_SECRET, CLOUDINARY_*, CLIENT_URL
 ├── README.md                  ← this file
 │
@@ -36,8 +39,8 @@ projectOne/
 ├── locations.js               Static fallback: 36 world-map locations
 ├── auth.js                    Login-page script (bound to index.html)
 ├── index.html                 Login page
-├── spa.html                   SPA shell — defers all the JS bundles
-├── styles.css                 Single global stylesheet (~3500 lines)
+├── spa.html                   SPA shell TEMPLATE → dist/spa.html (build fills stylesheet, chunk manifest, core script)
+├── styles.css                 Single global stylesheet (~7300 lines; minified + hashed by the build)
 │
 ├── models/                    Mongoose schemas
 │   ├── user.js                username, password, watchedProjects, walkers,
@@ -74,6 +77,7 @@ projectOne/
 │                              "accepted friend incl. legacy type-less docs" query lives
 │
 ├── scripts/
+│   ├── build.mjs              Client build → dist/ (`npm run build`; `--watch --serve` = `npm run dev`)
 │   ├── seed-content.js        Idempotent seed: JS files → Mongo (run once)
 │   ├── export-content.js      Inverse: Mongo → static fallback files (--dry-run)
 │   ├── optimize-images.mjs    Shrink assets/characters + assets/images in place (--dry-run)
@@ -91,10 +95,12 @@ projectOne/
 ├── docs/
 │   └── VOICE-TURN-SETUP.md    5-minute TURN relay setup for cross-NAT voice
 │
-├── .github/workflows/ci.yml   CI: node --check sweep + npm test
+├── .github/workflows/ci.yml   CI: npm ci (runs the build) + node --check sweep + npm test
 │
 └── js/
-    ├── boot.js                Instant mount from fallbacks + background content refresh
+    ├── boot.js                Instant mount from fallbacks + background content refresh; lazy routes
+    ├── chunk-loader.js        Chunks.load(name) — injects a lazy chunk's <script>s from the manifest in dist/spa.html
+    ├── three-shim.mjs         ES module: imports three from unpkg, exposes window.THREE (loaded with the world chunk)
     ├── router.js              Hash-free SPA router
     ├── auth.js                Auth helper (token, isAdmin via JWT decode)
     ├── theme.js               Light/Dark/System theme manager (see profile toggle)
@@ -162,10 +168,10 @@ PORT=3000
 
 ### Run locally
 ```
-npm install
-node server.js
+npm install          # also builds dist/ (postinstall)
+npm run dev          # build, watch js/ + styles.css + templates, and start server.js
 ```
-Open `http://localhost:3000`. The server forces Google DNS (8.8.8.8) at startup to work around Atlas SRV resolution issues on Windows.
+Open `http://localhost:3000`. Edits rebuild in ~300 ms; reload to pick them up. `npm start` (= `node server.js`) serves an existing build without watching — run `npm run build` first. The server forces Google DNS (8.8.8.8) at startup to work around Atlas SRV resolution issues on Windows.
 
 ### One-time content seed (optional)
 The CMS tab will be empty until you copy the static JS files into MongoDB:
@@ -181,10 +187,10 @@ If you skip the seed: the app falls back to the static JS files via `server/cont
 ## Architecture
 
 ### Client boot order
-1. spa.html loads scripts in `defer` order. `js/world-config.js` and the static content files (`projects.js`, `characters.js`, `locations.js`, `js/walker-dialogues.js`) populate global vars as **fallbacks**.
+1. `dist/spa.html` loads the **core chunk** (deferred). Inside it, `js/world-config.js` and the static content files (`projects.js`, `characters.js`, `locations.js`, `js/walker-dialogues.js`) populate global vars as **fallbacks**. The 3D views, sockets and voice (`world` chunk) and the admin panel (`admin` chunk) are fetched by `js/chunk-loader.js` the first time their route is visited; the Three.js module shim loads with the world chunk, so `/login` and the 2D views never wait on unpkg.
 2. `js/boot.js` runs last. It calls `Promise.allSettled` on `/api/content/{projects,characters,locations,dialogues}` and overwrites `window.projects` / `characters` / `LOCATIONS` and `WALKER_DIALOGUES.applyData(...)` with live DB values.
 3. It also fetches `/api/config/public` and merges admin-tunable physics into `Walkers.PHYSICS`.
-4. After both fetches settle, `Router.init('app')` mounts the initial view.
+4. `Router.init('app')` mounts the initial view immediately against the fallbacks; when the content fetch reports a change, `/`, `/map` and `/characters` remount.
 
 If any fetch fails the static globals remain — the SPA still works.
 
@@ -273,7 +279,9 @@ It rewrites only files that get at least 10% smaller (characters ≤600px, poste
 - **CMS edits do not propagate back to the static JS files.** Once you start editing via the admin UI, the JS files become a stale snapshot. There is no automatic export-to-JS-files job (could be built later as `scripts/export-content.js`).
 - **MongoDB SRV lookup fails on default Windows DNS.** Both `server.js` and `scripts/seed-content.js` force Google DNS (`8.8.8.8`) at startup to work around this.
 - **`isAdmin` is set manually in MongoDB.** No promote-from-UI flow exists by design — there's no public path to admin.
-- **Service worker cache invalidation.** `sw.js` precaches the SPA shell + static fallback data and serves stale-while-revalidate for `/js/*` and `/assets/*`. `/api/*` and `/socket.io/*` are never cached. When a deploy must invalidate the precache (precache list changed, shell shape changed), bump `CACHE_VERSION` in `sw.js`; the `activate` handler deletes old caches.
+- **The client is a build artefact.** `server.js` serves `dist/` and refuses to start without `dist/spa.html`. `spa.html` and `sw.js` in the repo root are templates; `js/*.js` are sources and are no longer served over HTTP. Adding a JS file means adding it to the right chunk list in `scripts/build.mjs`, in dependency order. Chunks are plain concatenations minified with `esbuild.transform` — **never switch to `bundle`/`format`**: the files share state through top-level declarations and `boot.js` reassigns `window.projects` etc., which any bundle format would scope away. The build's global-name assertion exists to catch exactly that.
+- **Service worker cache invalidation is automatic.** `dist/sw.js` gets `CACHE_VERSION` from the hash of the build outputs, so any change to any built file rolls the cache — no manual bumps. `/dist/*` is cache-first (hashed names), `/assets/*` stale-while-revalidate (held open with `waitUntil`), `/api/*` and `/socket.io/*` never cached. A tab left open across a deploy that then asks for a lazy chunk whose hash is gone gets one full reload (`_reloadOnce` in `js/router.js`).
+- **Render must run the build.** The default Build Command (`npm install`) triggers `postinstall` → `npm run build`; if the Build Command is ever customised keep `npm run build` in it. Start Command: `npm start`.
 - **`trust proxy` is set to 1** (one hop: Render's load balancer). `req.ip` and every rate limiter key off `X-Forwarded-For`. If another proxy layer (e.g. Cloudflare) is ever added in front of Render, raise the hop count in `server.js` or the limiters collapse back into one shared bucket.
 - **Helmet CSP is ENFORCED** (since 2026-07-07) with an allowlist covering the inline importmap, unpkg.com (Three.js), Cloudinary, Google Fonts, websockets, and data:/blob: images. **Adding any new external source requires extending the allowlist in server.js first** or first paint will brick. Other security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS, COOP, CORP=cross-origin) are on.
 - **`index.html` + root `auth.js` are a stale legacy login page** (since 2026-08-06). The in-app router rewrites `/index.html` → `/` and `/login` always serves `spa.html`, so nothing in normal navigation reaches them — but a direct request for `/index.html` still gets served statically (`server.js` `ROOT_FILES`) and runs the old, un-animated register/login script. `js/views/login.js` is the live implementation; keep new auth UX changes there, not in the legacy file.
@@ -300,6 +308,21 @@ Append new entries at the **top** of this section. Use the format:
 Brief summary of what changed and why.
 - file/path:line — what changed
 ```
+
+---
+
+### 2026-09-22 — esbuild build: hashed core/world/admin chunks, lazy 3D + admin, generated sw.js
+
+The shell used to load 62 separate unminified scripts (~1.1 MB) on every route, plus the Three.js module from unpkg — and because a parser-inserted module script shares the deferred execution list, `/login` could not run `boot.js` until unpkg answered. There is now a build step. `npm install` / `npm run build` writes `dist/`; `npm run dev` builds, watches and starts the server.
+
+- `scripts/build.mjs` (new) — concatenates each chunk's files in the old `<script defer>` order and minifies with `esbuild.transform` (no bundling, so top-level globals and the `var`-declared content files survive; a build-time assertion proves it). Outputs `dist/static/core|world|admin.<hash>.js` (+ source maps), `styles.<hash>.css`, `three-shim.<hash>.js`, and generates `dist/spa.html` and `dist/sw.js` from the root templates. Core 430 KB → 227 KB; world 563 KB → 240 KB (lazy); admin 102 KB → 63 KB (lazy).
+- `js/chunk-loader.js` (new) — `Chunks.load(name)` injects a chunk's scripts (in order) from the JSON manifest in `dist/spa.html`, then the Three shim as a fire-and-forget module.
+- `js/three-shim.mjs` (new) — the former inline module script; also records `window.__threeAddons`.
+- `js/router.js` — `navigate` is async; a route registered with a function is lazy (await → memoize); a navigation started while a chunk downloads supersedes it; a failed chunk load does one full reload (sessionStorage-guarded).
+- `js/boot.js` — `/home`, `/customize`, `/world`, `/friend/:u/home` load `world`; `/admin` loads `world` then `admin` (its Config tab reads `WorldNpcLogic` + `Playground`).
+- `spa.html`, `sw.js` — now templates with `build:` markers / `__PLACEHOLDERS__`; absolute asset URLs (relative ones broke on hard reload of `/home/edit`).
+- `server.js` — fails fast without `dist/spa.html`; `/dist` served `immutable, max-age=1y`; `spa.html` + `sw.js` from `dist/`; `/js` mount and the content data files removed from the static allowlist (the legacy `index.html` + `auth.js` + raw `styles.css` stay).
+- `package.json` — `build`, `postinstall`, `start`, `dev` scripts; `esbuild` dependency; name `mcu-tracker`. `.gitignore` — `dist/`. CI — `npm ci` step so the build runs in CI. `.claude/launch.json` — `dev` config.
 
 ---
 

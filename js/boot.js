@@ -70,14 +70,22 @@ Router.register('/feed', FeedView);
 Router.register('/login', LoginView);
 Router.register('/profile', ProfileView);
 Router.register('/characters', CharactersView);
-Router.register('/home', HomeView);
+// Lazy routes. The 3D views, sockets and voice ride in the `world` chunk and
+// the admin panel in `admin` (chunk lists: scripts/build.mjs). Router.register
+// accepts a function that resolves to the view: Chunks.load injects the
+// chunk's scripts, after which the view's global exists and the arrow
+// function can return it. The admin Config tab lists /world NPCs via
+// WorldNpcLogic + Playground, so admin loads world first.
+const lazyRoute = (chunks, pick) => () =>
+  chunks.reduce((p, c) => p.then(() => Chunks.load(c)), Promise.resolve()).then(pick);
+Router.register('/home', lazyRoute(['world'], () => HomeView));
 Router.register('/home/edit', HomeEditView);
-Router.register('/customize', CustomizeView);
-Router.register('/world', WorldView);
-Router.register('/admin', AdminView);
+Router.register('/customize', lazyRoute(['world'], () => CustomizeView));
+Router.register('/world', lazyRoute(['world'], () => WorldView));
+Router.register('/admin', lazyRoute(['world', 'admin'], () => AdminView));
 Router.register('/friend/:username',         FriendWatchView);
 Router.register('/friend/:username/map',     FriendMapView);
-Router.register('/friend/:username/home',    FriendHomeView);
+Router.register('/friend/:username/home',    lazyRoute(['world'], () => FriendHomeView));
 Router.register('/friend/:username/profile', FriendProfileView);
 Router.init('app');
 

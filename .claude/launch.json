@@ -2,11 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "projectTwo",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["server.js"],
-      "port": 3000,
-      "autoPort": true
+      "name": "dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 3000
     }
   ]
 }
