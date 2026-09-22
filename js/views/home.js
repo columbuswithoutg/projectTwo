@@ -38,6 +38,8 @@ const HomeView = {
               <div class="nav-section">
                 <div class="nav-section-title">You</div>
                 <button id="nav-character-btn">Customize character</button>
+                <button data-route="/messages">Messages <span class="nav-badge" data-unread-badge hidden></span></button>
+                <button id="report-btn">Report a bug</button>
               </div>
               <div class="nav-section">
                 <div class="nav-section-title">Data</div>
@@ -66,6 +68,11 @@ const HomeView = {
     document.getElementById('logout-btn')?.addEventListener('click', () => {
       Auth.logout();
     });
+    document.getElementById('report-btn')?.addEventListener('click', () => {
+      closeDrawer();
+      showReportDialog();
+    });
+    if (typeof MessagesBadge !== 'undefined') MessagesBadge.apply();
     // Drawer shortcut to the character editor — reuse the same path as the
     // ✎ button so onSave still hot-swaps the live 3D playground.
     document.getElementById('nav-character-btn')?.addEventListener('click', () => {

@@ -17,19 +17,26 @@ const PG3DProps = (() => {
   const WOOD = 0x7a5a3a, WOOD_DARK = 0x4e3a25, IRON = 0x3a342a, LEAF = 0x4f8a52, POT = 0xb5563f;
 
   // Half extents (at rot 0) for the collision box; `solid: false` = walk over.
+  // `top` = height of a surface the player can stand on (jump onto it, walk
+  // off it); a solid prop without `top` (plant, lamp) just blocks.
   const FOOTPRINTS = {
-    chair:     { hx: 0.35, hz: 0.35, solid: true },
-    table:     { hx: 0.70, hz: 0.40, solid: true },
+    chair:     { hx: 0.35, hz: 0.35, solid: true, top: 0.53 },
+    table:     { hx: 0.70, hz: 0.40, solid: true, top: 0.80 },
     frame:     { hx: 0.70, hz: 0.05, solid: false },   // wall-hung; the wall itself collides
     plant:     { hx: 0.30, hz: 0.30, solid: true },
     lamp:      { hx: 0.18, hz: 0.18, solid: true },
     rug:       { hx: 1.00, hz: 0.70, solid: false },
-    bookshelf: { hx: 0.60, hz: 0.22, solid: true },
-    crate:     { hx: 0.40, hz: 0.40, solid: true }
+    bookshelf: { hx: 0.60, hz: 0.22, solid: true, top: 1.805 },
+    crate:     { hx: 0.40, hz: 0.40, solid: true, top: 0.80 },
+    bed:       { hx: 0.50, hz: 1.00, solid: true, top: 0.60 }   // 2 cells: headboard at −z
   };
 
-  function footprint(kind) {
-    return FOOTPRINTS[kind] || { hx: 0.3, hz: 0.3, solid: true };
+  // `width` (bookshelf runs): a shelf built wider than its default gets a
+  // matching collision half-width.
+  function footprint(kind, width) {
+    const fp = FOOTPRINTS[kind] || { hx: 0.3, hz: 0.3, solid: true };
+    if (kind === 'bookshelf' && width > 0) return { ...fp, hx: width / 2 };
+    return fp;
   }
 
   function box(THREE, w, h, d, color, x, y, z) {
@@ -131,18 +138,41 @@ const PG3DProps = (() => {
       return g;
     },
     bookshelf(THREE, o) {
+      // `o.width` — a run of shelves side by side is built as ONE object
+      // exactly `cells × 1.0` wide so the bays meet edge to edge; a lone
+      // shelf keeps its 1.2 width. Books are laid out per bay.
+      const w = (o.width > 0) ? o.width : 1.2;
       const g = new THREE.Group();
-      g.add(box(THREE, 0.06, 1.8, 0.4, WOOD, -0.57, 0.9, 0));
-      g.add(box(THREE, 0.06, 1.8, 0.4, WOOD, 0.57, 0.9, 0));
-      g.add(box(THREE, 1.2, 0.05, 0.4, WOOD, 0, 1.78, 0));
-      g.add(box(THREE, 1.2, 1.8, 0.04, WOOD_DARK, 0, 0.9, -0.18));
+      g.add(box(THREE, 0.06, 1.8, 0.4, WOOD, -(w / 2 - 0.03), 0.9, 0));
+      g.add(box(THREE, 0.06, 1.8, 0.4, WOOD, (w / 2 - 0.03), 0.9, 0));
+      g.add(box(THREE, w, 0.05, 0.4, WOOD, 0, 1.78, 0));
+      g.add(box(THREE, w, 1.8, 0.04, WOOD_DARK, 0, 0.9, -0.18));
       const bookColors = [0xb5563f, 0x6478a6, 0x6f8f5a, 0xb98a3f, 0x8a5a86];
-      for (let s = 0; s < 3; s++) {
-        const y = 0.35 + s * 0.55;
-        g.add(box(THREE, 1.08, 0.05, 0.36, WOOD, 0, y - 0.2, 0));
-        g.add(box(THREE, 0.95, 0.34, 0.24, bookColors[(s * 2) % bookColors.length], -0.02, y, -0.03));
-        g.add(box(THREE, 0.5, 0.3, 0.2, bookColors[(s * 2 + 1) % bookColors.length], 0.2, y + 0.02, 0.05));
+      const bays = Math.max(1, Math.round(w / 1.1));
+      const bayW = (w - 0.12) / bays;
+      for (let b = 0; b < bays; b++) {
+        const bx = -(w - 0.12) / 2 + bayW * (b + 0.5);
+        if (b > 0) g.add(box(THREE, 0.04, 1.75, 0.36, WOOD, bx - bayW / 2, 0.88, 0));   // divider between bays
+        for (let s = 0; s < 3; s++) {
+          const y = 0.35 + s * 0.55;
+          g.add(box(THREE, bayW - 0.04, 0.05, 0.36, WOOD, bx, y - 0.2, 0));
+          g.add(box(THREE, bayW * 0.8, 0.34, 0.24, bookColors[(s * 2 + b) % bookColors.length], bx - bayW * 0.02, y, -0.03));
+          g.add(box(THREE, bayW * 0.42, 0.3, 0.2, bookColors[(s * 2 + 1 + b) % bookColors.length], bx + bayW * 0.17, y + 0.02, 0.05));
+        }
       }
+      return g;
+    },
+    bed(THREE, o) {
+      // Two cells long: the group origin is the midpoint, the headboard at
+      // local −z (the anchor / pillow end), the foot toward +z. Blanket in
+      // the trim colour, sheet cream.
+      const g = new THREE.Group();
+      g.add(box(THREE, 1.0, 0.35, 2.0, WOOD, 0, 0.175, 0));                // frame
+      g.add(box(THREE, 0.92, 0.18, 1.9, 0xf2e6d0, 0, 0.44, 0));            // mattress / sheet
+      g.add(box(THREE, 0.94, 0.08, 1.2, o.accent, 0, 0.57, 0.3));           // blanket over the lower half
+      g.add(box(THREE, 0.6, 0.12, 0.35, 0xffffff, 0, 0.59, -0.7));          // pillow
+      g.add(box(THREE, 1.0, 0.9, 0.06, WOOD_DARK, 0, 0.45, -0.97));         // headboard
+      g.add(box(THREE, 1.0, 0.45, 0.06, WOOD_DARK, 0, 0.225, 0.97));        // footboard
       return g;
     },
     crate(THREE, o) {
@@ -166,6 +196,7 @@ const PG3DProps = (() => {
     const o = {
       lampTex: opts && opts.lampTex,
       hasPortrait: !!(opts && opts.hasPortrait),
+      width: (opts && opts.width > 0) ? opts.width : 0,
       lamp:   (opts && opts.lampColor != null) ? opts.lampColor : 0xffd98a,
       accent: (opts && opts.trimColor != null) ? opts.trimColor : 0x9a8c6f,
       roof:   (opts && opts.roofColor != null) ? opts.roofColor : 0x6478a6

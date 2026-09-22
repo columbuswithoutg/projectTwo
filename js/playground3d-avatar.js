@@ -1235,6 +1235,9 @@
     const handY = -ARM_LEN;
     const metal = () => _gearMat(0xc9ccd4, _METAL);
     const grp = new THREE.Group();
+    // Held items (staffs, bows) can reach above the head — keep them out of the
+    // body-height measurement the customizer uses to frame body regions.
+    grp.userData.noFrame = true;
     let arm = rightArm;
     // Recurve bow: two limbs sweeping forward at the tips, a leather grip and
     // a string between the tips. Lies in the frontal plane, tips toward +Z.

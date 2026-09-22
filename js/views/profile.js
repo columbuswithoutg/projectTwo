@@ -63,6 +63,15 @@ const ProfileView = {
           </div>
         </div>
 
+        <div id="profile-support">
+          <p class="profile-section-label">Support</p>
+          <div class="profile-support-actions">
+            <button type="button" class="profile-support-btn" id="profile-messages-btn">Messages <span class="nav-badge" data-unread-badge hidden></span></button>
+            <button type="button" class="profile-support-btn" id="profile-reports-btn">My reports</button>
+            <button type="button" class="profile-support-btn primary" id="profile-report-btn">Report a bug or idea</button>
+          </div>
+        </div>
+
         <div id="avatar-picker" hidden>
           <p class="profile-section-label">Choose your hero</p>
           <p id="avatar-picker-empty" style="display:none">Watch more movies to unlock heroes!</p>
@@ -74,6 +83,10 @@ const ProfileView = {
     document.getElementById('back-btn').addEventListener('click', () => Router.go('/'));
     const adminLinkBtn = document.getElementById('admin-link-btn');
     if (adminLinkBtn) adminLinkBtn.addEventListener('click', () => Router.go('/admin'));
+    document.getElementById('profile-messages-btn').addEventListener('click', () => Router.go('/messages'));
+    document.getElementById('profile-reports-btn').addEventListener('click', () => Router.go('/reports'));
+    document.getElementById('profile-report-btn').addEventListener('click', () => showReportDialog());
+    MessagesBadge.apply();
 
     // Appearance toggle — drives js/theme.js; active state mirrors the
     // SAVED mode ('system' when no explicit choice), not the resolved theme.

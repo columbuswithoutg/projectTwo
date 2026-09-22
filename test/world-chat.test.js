@@ -76,7 +76,7 @@ test('sameName is case-insensitive; errorText covers every rejection', () => {
   assert.ok(!L.sameName('Tony', 'Tonya'));
   assert.match(L.errorText('cooldown', { retryInMs: 6200 }), /7s/);
   assert.match(L.errorText('not-found', { to: 'bob' }), /bob/);
-  for (const e of ['no-project', 'self', 'no-target', 'empty', 'weird']) assert.ok(L.errorText(e).length > 0);
+  for (const e of ['no-project', 'self', 'no-target', 'empty', 'not-sent', 'weird']) assert.ok(L.errorText(e).length > 0);
 });
 
 // ── islandPeers: who shares my island (voice mesh / project scope) ──

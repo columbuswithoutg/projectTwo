@@ -38,7 +38,9 @@ const AppView = {
                 <div class="nav-section-title">You</div>
                 <button id="nav-character-btn">Customize character</button>
                 <button id="friends-btn">Friends</button>
+                <button id="messages-btn">Messages <span class="nav-badge" data-unread-badge hidden></span></button>
                 <button id="goals-btn">Goals</button>
+                <button id="report-btn">Report a bug</button>
               </div>
               <div class="nav-section">
                 <div class="nav-section-title">Walkers</div>
@@ -180,6 +182,9 @@ const AppView = {
     });
 
     $("#friends-btn")?.addEventListener("click", () => showFriendsPanel());
+    $("#messages-btn")?.addEventListener("click", () => Router.go('/messages'));
+    $("#report-btn")?.addEventListener("click", () => showReportDialog());
+    MessagesBadge.apply();
     $("#goals-btn")?.addEventListener("click", () => showGoalsPanel());
     $("#walkers-btn")?.addEventListener("click", () => Walkers.showWalkerPicker());
     // Character editor — HomeBuilder.open() now routes to the /customize page

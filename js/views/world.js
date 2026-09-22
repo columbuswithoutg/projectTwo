@@ -54,6 +54,8 @@ const WorldView = (() => {
   let _houseBtnHandler = null;
   let _houseEditorClose = null;    // close fn of the open editor overlay, if any
   let _houseEditing = null;        // projectId whose editor is open (its preview survives the poll)
+  let _houseMaxProps = null;       // admin cap from GET /houses (else public config, else the shared default)
+  const SPAWN_PREF_KEY = 'world_spawn_pref';   // last "start at" choice (project id)
   // Daily Infinity Stone hunt state.
   let _snapKeyHandler = null;      // 'G' → snap when holding all six
   // Pending spawn-picker resolver, so unmount() can settle the awaited promise
@@ -131,6 +133,9 @@ const WorldView = (() => {
   async function _loadCharacterThenStart(myMount) {
     let character = null;
     let fetchFailed = false;
+    // Houses + keepers in parallel with the character: the spawn picker
+    // below offers the houses this user keeps, before the engine mounts.
+    const housesP = _fetchHouses(myMount);
     try {
       const res = await fetch(`${API}/profile/home-character`, {
         headers: { Authorization: `Bearer ${Auth.getToken()}` }
@@ -169,14 +174,18 @@ const WorldView = (() => {
     // island (e.g. someone who's seen Iron Man and Moon Knight but nothing
     // joining them), let the player choose which one to start on — otherwise
     // they'd always land on the first and couldn't walk to the others.
+    // …and a keeper can start at one of their own houses.
+    const houseData = await housesP;
+    if (myMount !== _mountSeq) return;
     let chosenSpawnId = null;
     const islands = _spawnIslands();
-    if (islands.length > 1) {
-      chosenSpawnId = await _openSpawnPicker(islands, 'enter');
+    const myHouses = _myHouses(islands);
+    if (islands.length > 1 || myHouses.length) {
+      chosenSpawnId = await _openSpawnPicker(islands, 'enter', { houses: myHouses });
       if (myMount !== _mountSeq) return;   // unmounted while the picker was open
     }
     Playground3D.initWorld(_stage, character, chosenSpawnId);
-    _loadHouses(myMount);
+    _applyHouses(houseData, myMount);
 
     // Avenger NPCs — each preset model roams the apron around its debut node.
     // Map preset → roster character (via charId) to resolve the debut project;
@@ -311,7 +320,7 @@ const WorldView = (() => {
     // reassemble (the engine already respawned us at Iron Man; this relocates).
     if (iDusted) {
       const islands = _spawnIslands();
-      if (islands.length > 1) _openSpawnPicker(islands, 'respawn');
+      if (islands.length > 1 || _myHouses(islands).length) _openSpawnPicker(islands, 'respawn');
     }
     if (typeof toast !== 'function') return;
     if (iSnapped) toast('✨ You snapped! Half the world turned to dust.', { type: 'success', duration: 5000 });
@@ -389,18 +398,33 @@ const WorldView = (() => {
   // the engine boots, and again (throttled) when we step onto an island so
   // a player who just overtook the keeper sees the Edit button.
   async function _loadHouses(myMount) {
+    const data = await _fetchHouses(myMount);
+    _applyHouses(data, myMount);
+  }
+
+  // Fetch + remember the keeper state (no engine calls, so it can run before
+  // the engine exists). Returns the payload, or null when offline / stale.
+  async function _fetchHouses(myMount) {
     try {
       const res = await fetch(`${API}/world/houses`, {
         headers: { Authorization: `Bearer ${Auth.getToken()}` }
       });
-      if (!res.ok) return;
+      if (!res.ok) return null;
       const data = await res.json();
-      if (myMount !== _mountSeq) return;
+      if (myMount !== _mountSeq) return null;
       _houseMe = data.me || null;
       _houseKeepers = data.keepers || {};
       _houseMine = data.mine || {};
       _housesAt = Date.now();
+      if (Number.isFinite(data.maxProps)) _houseMaxProps = data.maxProps;
       if (_liveStay) { _liveSettle(_housesAt); _liveStay.extraMs = 0; }
+      return data;
+    } catch (_) { return null; /* offline — houses stay default, HUD stays hidden */ }
+  }
+
+  // Push fetched houses into the engine + HUD, and keep the 30 s poll alive.
+  function _applyHouses(data, myMount) {
+    if (data && myMount === _mountSeq) {
       // Keep the editor's live preview: the island being edited stays on its
       // draft (setHouses only rebuilds nodes whose house object changed).
       const houses = data.houses || {};
@@ -410,10 +434,36 @@ const WorldView = (() => {
       }
       if (Playground3D.setHouses) Playground3D.setHouses(houses);
       _refreshHouseHud();
-    } catch (_) { /* offline — houses stay default, HUD stays hidden */ }
+    }
     if (!_housePoll && myMount === _mountSeq) {
       _housePoll = setInterval(() => _loadHouses(_mountSeq), HOUSE_POLL_MS);
     }
+  }
+
+  // The prop cap for the editor: the server's current setting (GET /houses),
+  // else the public config, else the shared default.
+  function _maxPropsCap() {
+    const L = WorldHouseLogic;
+    const v = Number.isFinite(_houseMaxProps) ? _houseMaxProps
+      : (window.APP_WORLD && Number.isFinite(window.APP_WORLD.maxProps)) ? window.APP_WORLD.maxProps
+      : L.C.MAX_PROPS;
+    return Math.max(1, Math.min(L.C.GRID_MAX * L.C.GRID_MAX, Math.round(v)));
+  }
+
+  // Houses this user keeps on islands they can visit: [{ id, title, image, ms }]
+  // in project order. A kept house on an un-watched island isn't built for
+  // them, so it can't be a spawn.
+  function _myHouses(islands) {
+    if (!_houseMe || typeof projects === 'undefined') return [];
+    const visible = new Set();
+    for (const isl of islands || []) for (const n of isl.nodes) visible.add(n.id);
+    const out = [];
+    for (const p of projects) {
+      const k = _houseKeepers[p.id];
+      if (!k || k.userId !== _houseMe || !visible.has(p.id)) continue;
+      out.push({ id: p.id, title: p.title, image: p.image, ms: k.ms || 0 });
+    }
+    return out;
   }
 
   // In-world tags over every unlocked house: who keeps it (and their stay),
@@ -557,12 +607,13 @@ const WorldView = (() => {
     const v1 = v0.ok ? v0 : L.validateHouse({ ...saved, portrait: '' });
     const draft = v1.ok ? v1.house : L.defaultHouse();
     const hex = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
-    const GLYPH = { chair: '🪑', table: '🛋️', frame: '🖼️', plant: '🪴', lamp: '💡', rug: '🟫', bookshelf: '📚', crate: '📦', window: '🪟' };
+    const GLYPH = { chair: '🪑', table: '🛋️', frame: '🖼️', plant: '🪴', lamp: '💡', rug: '🟫', bookshelf: '📚', crate: '📦', bed: '🛏️', window: '🪟' };
+    const maxProps = () => _maxPropsCap();
     const SLOTS = [['wallColor', 'Walls'], ['roofColor', 'Roof'], ['trimColor', 'Trim'], ['lampColor', 'Lamps']];
     // Shape / finish rows: [field, label, [[value, caption, title], …]].
     const STYLE_ROWS = [
       ['roofStyle', 'Roof', [['flat', 'Flat', 'A flat slab roof'], ['gable', 'Gable', 'A pitched roof with a ridge'], ['hip', 'Hip', 'A pyramid roof sloping on all four sides']]],
-      ['wallStyle', 'Walls', [['plaster', 'Plaster', 'Smooth stucco'], ['brick', 'Brick', 'Brick courses'], ['stone', 'Stone', 'Rough stone blocks'], ['timber', 'Timber', 'Wooden planks']]],
+      ['wallStyle', 'Walls', [['plaster', 'Plaster', 'Smooth stucco'], ['brick', 'Brick', 'Brick courses'], ['stone', 'Stone', 'Rough stone blocks'], ['timber', 'Timber', 'Wooden planks'], ['glass', 'Glass', 'See-through glass walls — the whole wall is a window, so none are carved']]],
       ['windowStyle', 'Windows', [['cross', 'Cross', 'Four panes'], ['grid', 'Grid', 'Six small panes'], ['plain', 'Plain', 'One clear pane'], ['shutters', 'Shutters', 'A plain pane with trim-coloured shutters']]]
     ];
     const CELL = 32, N = L.C.GRID_MAX, RING = N + 2;   // 12×12: interior 1..10 + the wall ring
@@ -650,7 +701,7 @@ const WorldView = (() => {
             <button type="button" class="world-house-tool" data-tool="remove" title="Remove the selected prop or window">Remove</button>
             <span class="world-house-count" id="world-house-count"></span>
           </div>
-          <p class="world-house-hint">Tap an empty floor cell to place the chosen prop; tap a prop to select it. Frames hang on the nearest wall; a bookshelf on an edge cell stands against that wall. The outer ring is the wall: pick 🪟 and tap it to place windows. 🚪 is the door — it's fixed. Top of the plan is north.</p>
+          <p class="world-house-hint">Tap an empty floor cell to place the chosen prop; tap a prop to select it. Frames hang on the nearest wall; anything on an edge cell stands against that wall (a bookshelf, chair or bed turns its back to it), and bookshelves side by side join into one run. A bed takes two cells. The outer ring is the wall: pick 🪟 and tap it to place windows — side-by-side cells join into one wide window. 🚪 is the door — it's fixed. Top of the plan is north.</p>
           <svg class="world-house-grid" viewBox="0 0 ${RING * CELL} ${RING * CELL}" role="img" aria-label="House floor plan with walls"></svg>
         </div>
         <div class="world-house-actions">
@@ -676,7 +727,9 @@ const WorldView = (() => {
     signInput.value = draft.sign || '';
 
     function preview() {
-      const v = L.validateHouse(draft);
+      // An over-cap legacy house (the admin lowered the cap) still previews;
+      // Save refuses until enough props are removed.
+      const v = L.validateHouse(draft, { maxProps: Math.max(maxProps(), draft.props.length) });
       if (v.ok && Playground3D.applyHouse) Playground3D.applyHouse(projectId, v.house);
     }
     function renderSwatches() {
@@ -705,6 +758,12 @@ const WorldView = (() => {
       if (chimney) chimney.classList.toggle('active', !!draft.chimney);
       const auto = overlay.querySelector('.world-house-chip[data-winauto]');
       if (auto) auto.classList.toggle('active', draft.windows == null);
+      // Glass walls are see-through already: the window controls go dim.
+      const glass = draft.wallStyle === 'glass';
+      const winRow = overlay.querySelector('.world-house-row[data-style="windowStyle"]');
+      if (winRow) { winRow.classList.toggle('dimmed', glass); winRow.title = glass ? 'Glass walls are see-through — pick another wall finish to carve windows.' : ''; }
+      const winKind = overlay.querySelector('.world-house-kind[data-kind="window"]');
+      if (winKind) winKind.classList.toggle('dimmed', glass);
     }
     function renderKinds() {
       overlay.querySelectorAll('.world-house-kind').forEach((b) => {
@@ -712,7 +771,8 @@ const WorldView = (() => {
       });
       const n = draft.props.length;
       const w = draft.windows == null ? 'auto' : `${draft.windows.length}/${L.C.MAX_WINDOWS}`;
-      countEl.textContent = `${n}/${L.C.MAX_PROPS} props · ${w} windows`;
+      countEl.textContent = `${n}/${maxProps()} props · ${w} windows`;
+      countEl.classList.toggle('over', n > maxProps());
       const hasSel = selectedProp >= 0 || selectedWindow >= 0;
       overlay.querySelectorAll('.world-house-tool').forEach((b) => { b.disabled = !hasSel; });
     }
@@ -761,16 +821,33 @@ const WorldView = (() => {
           }
         }
       }
+      // Bookshelves side by side render as one run of shelving: a joined
+      // outline behind them, and no per-cell box.
+      const runs = L.propRuns(draft.props, 'bookshelf').filter(r => r.cells > 1);
+      const inRun = new Set();
+      const runRects = runs.map((r) => {
+        for (const i of r.indices) inRun.add(i);
+        const x0 = Math.min(r.from[0], r.to[0]), y0 = Math.min(r.from[1], r.to[1]);
+        const x1 = Math.max(r.from[0], r.to[0]), y1 = Math.max(r.from[1], r.to[1]);
+        return `<rect class="world-house-run" x="${x0 * CELL + 2}" y="${y0 * CELL + 2}" width="${(x1 - x0 + 1) * CELL - 4}" height="${(y1 - y0 + 1) * CELL - 4}" rx="6" />`;
+      }).join('');
       const props = draft.props.map((p, i) => {
         const cx = (p.gx + 0.5) * CELL, cy = (p.gy + 0.5) * CELL;
         const sel = i === selectedProp ? ' selected' : '';
-        return `<g class="world-house-prop${sel}" data-i="${i}" transform="translate(${cx} ${cy})">
-          <rect x="${-CELL / 2 + 2}" y="${-CELL / 2 + 2}" width="${CELL - 4}" height="${CELL - 4}" rx="5" />
+        const run = inRun.has(i) ? ' in-run' : '';
+        // Multi-cell props (bed): the box spans every cell, glyph + arrow on the anchor.
+        const cells = L.propCells(p);
+        const xs = cells.map(c => c[0]), ys = cells.map(c => c[1]);
+        const bx = (Math.min(...xs) - p.gx) * CELL - CELL / 2 + 2, by = (Math.min(...ys) - p.gy) * CELL - CELL / 2 + 2;
+        const bw = (Math.max(...xs) - Math.min(...xs) + 1) * CELL - 4, bh = (Math.max(...ys) - Math.min(...ys) + 1) * CELL - 4;
+        return `<g class="world-house-prop${sel}${run}" data-i="${i}" transform="translate(${cx} ${cy})">
+          <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="5" />
           <text x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-size="18">${GLYPH[p.kind] || '▪'}</text>
           <path d="M0,-${CELL / 2 - 3} l4,5 h-8 z" transform="rotate(${(p.rot || 0) * 90})" />
         </g>`;
       }).join('');
-      grid.innerHTML = `<rect class="world-house-floor" x="${CELL}" y="${CELL}" width="${N * CELL}" height="${N * CELL}" />${cells.join('')}${windows}${props}`;
+      const propsSvg = runRects + props;
+      grid.innerHTML = `<rect class="world-house-floor" x="${CELL}" y="${CELL}" width="${N * CELL}" height="${N * CELL}" />${cells.join('')}${windows}${propsSvg}`;
     }
     // Portrait: a photo the keeper uploads (same /upload route as memories),
     // shown inside every Frame prop. Uploading auto-places a frame if there
@@ -790,7 +867,7 @@ const WorldView = (() => {
         : (frames ? `Hanging in ${frames} frame${frames > 1 ? 's' : ''}.` : 'Place a Frame prop to hang it.');
     }
     function ensureFrame() {
-      if (draft.props.some(p => p.kind === 'frame') || draft.props.length >= L.C.MAX_PROPS) return;
+      if (draft.props.some(p => p.kind === 'frame') || draft.props.length >= maxProps()) return;
       const taken = new Set(draft.props.map(p => `${p.gx},${p.gy}`));
       // Wall cells, north wall first (the picture then faces the room).
       for (const [gx, gy] of [[4, 1], [7, 1], [3, 1], [8, 1], [1, 5], [10, 5], [4, 10], [7, 10]]) {
@@ -876,12 +953,22 @@ const WorldView = (() => {
             if (typeof toast === 'function') toast('Frames face into the room from their wall — move it to another wall instead.', 'info');
             return;
           }
-          // A bookshelf on an edge cell keeps its back to that wall.
+          // A bookshelf / chair / bed on an edge cell keeps its back to that wall.
           if (L.wallBackedRot(sp.kind, sp.gx, sp.gy) != null) {
             if (typeof toast === 'function') toast(`A ${sp.kind} against the wall keeps its back to it — place it a cell further in to turn it.`, 'info');
             return;
           }
-          draft.props[selectedProp].rot = ((draft.props[selectedProp].rot || 0) + 1) % 4;
+          // Turn to the next facing whose cells are free (a bed needs the
+          // cell in front of it); refuse if none of the other three fit.
+          let turned = false;
+          for (let k = 1; k <= 3 && !turned; k++) {
+            const r = L.canPlaceProp(draft.props, { ...sp, rot: ((sp.rot || 0) + k) % 4 }, { maxProps: Math.max(maxProps(), draft.props.length), skipIndex: selectedProp });
+            if (r.ok) { draft.props[selectedProp] = r.placed; turned = true; }
+          }
+          if (!turned) {
+            if (typeof toast === 'function') toast('No room to turn it here — the cell in front is taken.', 'warn');
+            return;
+          }
         } else {
           draft.props.splice(selectedProp, 1);
           selectedProp = -1;
@@ -905,6 +992,10 @@ const WorldView = (() => {
           if (typeof toast === 'function') toast('That\'s the wall — pick 🪟 window to put a window there.', 'info');
           return;
         }
+        if (draft.wallStyle === 'glass') {
+          if (typeof toast === 'function') toast('Glass walls are already see-through — pick another wall finish to add windows.', 'info');
+          return;
+        }
         const current = draft.windows == null ? [] : draft.windows;
         const can = L.canPlaceWindow(current, side, pos, layout ? layout[side] : []);
         if (!can.ok) { if (typeof toast === 'function') toast(can.error, 'warn'); return; }
@@ -921,21 +1012,22 @@ const WorldView = (() => {
           if (typeof toast === 'function') toast('Windows go on the wall — tap the outer ring.', 'info');
           return;
         }
-        if (draft.props.length >= L.C.MAX_PROPS) {
-          if (typeof toast === 'function') toast(`That's the limit — ${L.C.MAX_PROPS} props per house.`, 'warn');
+        if (draft.props.length >= maxProps()) {
+          if (typeof toast === 'function') toast(`That's the limit — ${maxProps()} props per house.`, 'warn');
           return;
         }
-        // Frames hang on the nearest wall, so an inside tap snaps to the edge;
-        // that wall cell may already be taken.
-        const placed = selectedKind === 'frame' ? L.snapFrameToWall(gx, gy) : { gx, gy, rot: 0 };
-        // Wall-backed props (bookshelf) placed on an edge cell turn to face the room.
-        const forced = L.wallBackedRot(selectedKind, placed.gx, placed.gy);
-        if (forced != null) placed.rot = forced;
-        if (draft.props.some(p => p.gx === placed.gx && p.gy === placed.gy)) {
-          if (typeof toast === 'function') toast('That wall spot is taken — tap nearer a free stretch of wall.', 'warn');
+        // canPlaceProp snaps frames to the nearest wall, turns wall-backed
+        // props (bookshelf / chair / bed) on an edge cell to face the room,
+        // and checks every cell a prop covers (a bed takes two).
+        const r = L.canPlaceProp(draft.props, { kind: selectedKind, gx, gy, rot: 0 }, { maxProps: maxProps() });
+        if (!r.ok) {
+          const msg = /share cell/.test(r.error) ? (selectedKind === 'frame' ? 'That wall spot is taken — tap nearer a free stretch of wall.' : 'That spot is taken.')
+            : /cell in front/.test(r.error) ? 'A bed needs the cell in front of it too — tap a spot with room.'
+            : r.error;
+          if (typeof toast === 'function') toast(msg, 'warn');
           return;
         }
-        draft.props.push({ kind: selectedKind, ...placed });
+        draft.props.push(r.placed);
         selectedProp = draft.props.length - 1;
         renderKinds(); renderGrid(); renderPortrait(); preview();
       }
@@ -957,7 +1049,11 @@ const WorldView = (() => {
     overlay.querySelector('.popup-close').addEventListener('click', () => { restore(); close(); });
     overlay.querySelector('.world-house-cancel').addEventListener('click', () => { restore(); close(); });
     overlay.querySelector('.world-house-save').addEventListener('click', async () => {
-      const v = L.validateHouse(draft);
+      if (draft.props.length > maxProps()) {
+        if (typeof toast === 'function') toast(`The limit is now ${maxProps()} props — remove ${draft.props.length - maxProps()} first.`, 'warn');
+        return;
+      }
+      const v = L.validateHouse(draft, { maxProps: maxProps() });
       if (!v.ok) { if (typeof toast === 'function') toast(v.error, 'warn'); return; }
       const btn = overlay.querySelector('.world-house-save');
       btn.disabled = true;
@@ -1006,8 +1102,14 @@ const WorldView = (() => {
   // Show the island picker. `mode` is 'enter' (before the world builds — resolves
   // to the chosen anchor id, or null if dismissed) or 'respawn' (after a snap —
   // teleports the live player onto the chosen island and resolves).
-  function _openSpawnPicker(islands, mode) {
+  // `extra.houses` — the houses this user keeps ([{ id, title, image, ms }]);
+  // they're offered first, then the islands. The last pick is remembered
+  // (localStorage) and preselected so the usual answer is one tap.
+  function _openSpawnPicker(islands, mode, extra) {
     document.querySelector('.world-spawn')?.remove();
+    const houses = (extra && Array.isArray(extra.houses)) ? extra.houses : _myHouses(islands);
+    let pref = null;
+    try { pref = localStorage.getItem(SPAWN_PREF_KEY); } catch (_) {}
     return new Promise((resolve) => {
       let settled = false;
       const settle = (val) => { if (settled) return; settled = true; _spawnPickerResolve = null; resolve(val); };
@@ -1018,24 +1120,26 @@ const WorldView = (() => {
       overlay.className = 'world-spawn';
       overlay.setAttribute('role', 'dialog');
       overlay.setAttribute('aria-modal', 'true');
-      overlay.setAttribute('aria-label', mode === 'respawn' ? 'Choose where to reassemble' : 'Choose where to spawn');
+      overlay.setAttribute('aria-label', mode === 'respawn' ? 'Choose where to reassemble' : 'Choose where to start');
 
-      const heading = mode === 'respawn' ? '💨 Reassemble where?' : '🌍 Where to?';
+      const heading = mode === 'respawn' ? '💨 Reassemble where?' : (houses.length ? '🏠 Where do you want to start?' : '🌍 Where to?');
       const sub = mode === 'respawn'
-        ? 'Your islands aren’t connected by road — pick where to come back.'
-        : 'Your watched locations aren’t all connected by road — pick where to start.';
+        ? (houses.length ? 'Come back at a house you keep, or at the start of an island.' : 'Your islands aren’t connected by road — pick where to come back.')
+        : (houses.length ? 'Start at a house you keep, or at the start of an island.' : 'Your watched locations aren’t all connected by road — pick where to start.');
 
-      const cards = islands.map((isl) => {
+      const poster = (image) => (typeof CONFIG !== 'undefined' && CONFIG.IMAGE_BASE && image) ? `${CONFIG.IMAGE_BASE}${image}` : '';
+      const card = (id, image, title, sub2, cls) => `
+          <button class="world-spawn-card${cls || ''}${pref === id ? ' preselected' : ''}" type="button" data-id="${esc(id)}">
+            <span class="world-spawn-poster"${poster(image) ? ` style="background-image:url('${esc(poster(image))}')"` : ''} aria-hidden="true"></span>
+            <span class="world-spawn-name">${esc(title)}</span>
+            <span class="world-spawn-count">${sub2}</span>
+          </button>`;
+      const houseCards = houses.map(h => card(h.id, h.image, h.title, `🔑 you keep this · ${esc(WorldHouseLogic.formatStay(h.ms))}`, ' world-spawn-house')).join('');
+      const islandCards = islands.map((isl) => {
         const a = isl.anchor;
-        const url = (typeof CONFIG !== 'undefined' && CONFIG.IMAGE_BASE && a.image) ? `${CONFIG.IMAGE_BASE}${a.image}` : '';
         const n = isl.nodes.length;
         const count = n === 1 ? '1 location' : `${n} locations`;
-        return `
-          <button class="world-spawn-card" type="button" data-id="${esc(a.id)}">
-            <span class="world-spawn-poster"${url ? ` style="background-image:url('${esc(url)}')"` : ''} aria-hidden="true"></span>
-            <span class="world-spawn-name">${esc(a.title)}</span>
-            <span class="world-spawn-count">${count}</span>
-          </button>`;
+        return card(a.id, a.image, a.title, count);
       }).join('');
 
       overlay.innerHTML = `
@@ -1043,7 +1147,8 @@ const WorldView = (() => {
           <button class="popup-close" aria-label="Close">✕</button>
           <h3>${heading}</h3>
           <p class="world-spawn-sub">${sub}</p>
-          <div class="world-spawn-grid">${cards}</div>
+          ${houses.length ? `<h4 class="world-spawn-section">Your houses</h4><div class="world-spawn-grid">${houseCards}</div><h4 class="world-spawn-section">Islands</h4>` : ''}
+          <div class="world-spawn-grid">${islandCards}</div>
         </div>
       `;
       document.body.appendChild(overlay);
@@ -1052,12 +1157,13 @@ const WorldView = (() => {
       // then uses the default Iron Man spawn; in 'respawn' the engine already
       // put the player back at the start, so doing nothing is correct.
       const close = wireModalDismiss(overlay, () => { overlay.remove(); settle(null); }, {
-        initialFocus: overlay.querySelector('.world-spawn-card') || overlay.querySelector('.popup-close')
+        initialFocus: overlay.querySelector('.world-spawn-card.preselected') || overlay.querySelector('.world-spawn-card') || overlay.querySelector('.popup-close')
       });
       overlay.querySelector('.popup-close').addEventListener('click', close);
       overlay.querySelectorAll('.world-spawn-card').forEach((btn) => {
         btn.addEventListener('click', () => {
           const id = btn.getAttribute('data-id');
+          try { localStorage.setItem(SPAWN_PREF_KEY, id); } catch (_) {}
           settle(id);                  // beat the closeFn's settle(null)
           if (mode === 'respawn' && Playground3D.teleportToNode) Playground3D.teleportToNode(id);
           close();
@@ -1082,8 +1188,8 @@ const WorldView = (() => {
     const hint = document.createElement('div');
     hint.className = 'world-hint';
     hint.innerHTML = coarse
-      ? `<span class="world-hint-icon">🕹️</span> Joystick to move · ⤒ jump · 👊 punch · pinch to zoom · chat tabs for World / Project / Whisper`
-      : `<span class="world-hint-icon">⌨️</span> <b>WASD</b> to move · <b>Space</b> to jump · <b>F</b> to punch · drag to look · <b>/w name</b> to whisper`;
+      ? `<span class="world-hint-icon">🕹️</span> Joystick to move · ⤒ jump · 👊 punch · 🪑 sit / lie down near a chair or bed · pinch to zoom · chat tabs for World / Project / Whisper`
+      : `<span class="world-hint-icon">⌨️</span> <b>WASD</b> to move · <b>Space</b> to jump · <b>F</b> to punch · <b>E</b> to sit / lie down · drag to look · <b>/w name</b> to whisper (offline players get it in Messages)`;
     _stage.appendChild(hint);
     requestAnimationFrame(() => hint.classList.add('show'));
 

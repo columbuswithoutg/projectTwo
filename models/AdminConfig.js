@@ -32,7 +32,10 @@ const AdminConfigSchema = new mongoose.Schema({
   // 1 = Box (the original blocky body); mirrors Playground.BODY_TYPES. A hero
   // with no entry is Realistic. Global: every player sees the same NPCs.
   world: {
-    npcBodyTypes: { type: Map, of: { type: Number, min: 0, max: 1 }, default: {} }
+    npcBodyTypes: { type: Map, of: { type: Number, min: 0, max: 1 }, default: {} },
+    // How many props a keeper may place in one house (WorldHouseLogic
+    // C.MAX_PROPS is the fallback when no setting exists).
+    maxProps: { type: Number, default: 20, min: 1, max: 60 }
   },
   // Bumped on every save so the client can detect staleness. Currently
   // unused for cache busting (the boot-time fetch is fresh per page load),
@@ -50,7 +53,7 @@ AdminConfigSchema.statics.defaults = function () {
     encounter: { dist: 26, cooldown: 30000 },
     fight:     { spawnChance: 0.15 },
     flags:     { fightsEnabled: false, dialoguesEnabled: true, worldEventStonesEnabled: false },
-    world:     { npcBodyTypes: {} }
+    world:     { npcBodyTypes: {}, maxProps: 20 }
   };
 };
 

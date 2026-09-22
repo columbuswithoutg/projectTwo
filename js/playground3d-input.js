@@ -24,6 +24,7 @@
     // hold-space from auto-bouncing.
     let jumpRequested = false;
     let punchRequested = false;   // same one-shot edge-trigger pattern as jump
+    let interactRequested = false; // E / the 🪑 button: sit on a chair, lie in a bed, stand up
 
     function isTextField(el) {
       if (!el) return false;
@@ -46,6 +47,9 @@
           break;
         case 'f': case 'F':
           if (down) punchRequested = true;
+          break;
+        case 'e': case 'E':
+          if (down) interactRequested = true;
           break;
         default: handled = false;
       }
@@ -149,6 +153,27 @@
       punchRequested = true;
     });
     document.body.appendChild(punchEl);
+
+    // Touch interact button — stacked above punch, shown only while there is
+    // something to sit on / lie in nearby (setInteractLabel) or while seated.
+    const sitEl = document.createElement('button');
+    sitEl.type = 'button';
+    sitEl.className = 'pg-sit';
+    sitEl.setAttribute('aria-label', 'Sit');
+    sitEl.textContent = '🪑';
+    sitEl.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      interactRequested = true;
+    });
+    document.body.appendChild(sitEl);
+    let sitLabel = null;
+    function setInteractLabel(label) {
+      if (label === sitLabel) return;
+      sitLabel = label;
+      sitEl.classList.toggle('pg-sit--on', !!label);
+      if (label) { sitEl.setAttribute('aria-label', label); sitEl.title = label; }
+    }
 
     // Cooldown display: --pg-cd (1 → 0) drives a sweep that drains off the
     // button. Quantised so the DOM is only touched ~50 times per cooldown.
@@ -464,6 +489,12 @@
       return true;
     }
 
+    function consumeInteract() {
+      if (!interactRequested) return false;
+      interactRequested = false;
+      return true;
+    }
+
     function detach() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
@@ -490,9 +521,10 @@
       if (joyEl && joyEl.parentNode) joyEl.parentNode.removeChild(joyEl);
       if (jumpEl && jumpEl.parentNode) jumpEl.parentNode.removeChild(jumpEl);
       if (punchEl && punchEl.parentNode) punchEl.parentNode.removeChild(punchEl);
+      if (sitEl && sitEl.parentNode) sitEl.parentNode.removeChild(sitEl);
     }
 
-    return { getAxis, isOrbiting, consumeJump, consumePunch, setPunchCooldown, denyPunch, detach };
+    return { getAxis, isOrbiting, consumeJump, consumePunch, consumeInteract, setInteractLabel, setPunchCooldown, denyPunch, detach };
   }
 
   root.PG3DInput = { makeInput };

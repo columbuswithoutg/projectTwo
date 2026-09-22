@@ -219,6 +219,12 @@ const Playground3D = (() => {
   let _localPunchUntil = 0;        // jab animation window on the local rig
   let _lastPunchAt = 0;            // cooldown anchor
   let _localDownUntil = 0;         // local player knocked down — input dead
+  // Sitting on a chair / lying in a bed (see _sitOn / _standUp). `_seat`
+  // pins the player to the prop; `_seatCandidate` is the nearest one in
+  // reach (drives the "Sit (E)" pill + touch button).
+  let _seat = null;                // { nodeId, kind, gx, gy, x, z, rot, top, yaw, px, py, pz }
+  let _seatCandidate = null;       // a node.props record, or null
+  let _seatPromptEl = null;        // HUD pill element
   let _onPunch = null;             // view/socket callback: ({ target, npc }) on every local punch
   let _onNpcPunch = null;          // socket callback: (npcId) when a hero angry at US swings
   const _npcCombat = new Map();    // npcId → last server record; seeds heroes that materialise mid-fight
@@ -311,6 +317,7 @@ const Playground3D = (() => {
     _npcCombat.clear();
     _localPunchUntil = 0;
     _localDownUntil = 0;
+    _seat = null; _seatCandidate = null; _seatPromptEl = null;
     if (_rafId) cancelAnimationFrame(_rafId);
     _rafId = null;
     if (_onVisibility) { document.removeEventListener('visibilitychange', _onVisibility); _onVisibility = null; }
@@ -411,6 +418,7 @@ const Playground3D = (() => {
     _localPunchUntil = 0;
     _lastPunchAt = 0;
     _localDownUntil = 0;
+    _seat = null; _seatCandidate = null; _seatPromptEl = null;
     // Shared-stone state must not survive a remount (a stale holder map or an
     // orphaned mesh from a prior /world session would render wrong).
     clearStones();
@@ -1020,7 +1028,8 @@ const Playground3D = (() => {
       getupUntil: s.getupUntil || 0,
       hitUntil: s.hitUntil || 0,
       punchUntil: s.punchUntil || 0,
-      emoteUntil: s.emoteUntil || 0
+      emoteUntil: s.emoteUntil || 0,
+      pose: s.pose || null
     });
     // Overlays are keyed by name + a caller-bumped sequence, so two hits in a
     // row (or a jab straight into a cross) restart the clip instead of
@@ -1046,7 +1055,11 @@ const Playground3D = (() => {
   // with its origin at the feet, facing −Z, scaled by the build.
   function _buildPlayer(c) {
     // Box characters never load the rigged model — they keep the blocky body.
-    if (_isBoxBody(c)) return _buildBoxPlayer(c);
+    if (_isBoxBody(c)) {
+      const box = _buildBoxPlayer(c);
+      box.userData.boxBody = true;   // blocky proportions → see PREVIEW_REGIONS_BOX
+      return box;
+    }
     const root = _buildProceduralPlayer(c);
     if (!_humanoidUsable()) return root;
     // Already loaded → swap synchronously, so callers that render the very
@@ -1102,6 +1115,134 @@ const Playground3D = (() => {
     bones.rightArm.rotation.x = -(0.3 + 1.25 * extend);
     bones.rightArm.rotation.z = 0;
     if (bones.rightArmLower) bones.rightArmLower.rotation.x = 0;  // straight jab
+  }
+
+  // ── Sitting / lying ──
+  // One eased pose layer for every actor (local player, remote players).
+  // `pose` is 'sit' | 'lie' | null; the weight lives on root.userData so a
+  // pose eases in and back out (0.1 s) instead of snapping. Rigged bodies get
+  // their leg offsets from the humanoid handle (setPose); box / procedural
+  // bodies are hand-posed here. Lying tips the whole root onto its back —
+  // the same axis the knockdown uses, so both rig types work.
+  const POSE_EASE = 10;   // 1/s
+  function _applyPose(root, pose, dt) {
+    if (!root) return false;
+    const ud = root.userData;
+    if (pose) ud.poseKind = pose;
+    const target = pose ? 1 : 0;
+    let w = ud.poseW || 0;
+    w += (target - w) * (1 - Math.exp(-(dt || 0.016) * POSE_EASE));
+    if (w < 0.002 && !pose) w = 0;
+    ud.poseW = w;
+    const kind = ud.poseKind;
+    const inst = ud.humanoid;
+    if (inst && inst.setPose) inst.setPose(pose === 'sit' ? 'sit' : null);
+    // Lie: root onto its back, head toward local −z (the headboard).
+    root.rotation.x = (kind === 'lie') ? -Math.PI / 2 * w : 0;
+    const bones = ud.bones;
+    if (bones && kind === 'sit' && w > 0) {
+      const thigh = -Math.PI / 2 * w, shin = Math.PI / 2 * w;   // forward is local +z
+      bones.leftLeg.rotation.x = thigh;
+      bones.rightLeg.rotation.x = thigh;
+      if (bones.leftLegLower)  bones.leftLegLower.rotation.x  = shin;
+      if (bones.rightLegLower) bones.rightLegLower.rotation.x = shin;
+      bones.leftArm.rotation.x = -0.35 * w;
+      bones.rightArm.rotation.x = -0.35 * w;
+      if (bones.leftArmLower)  bones.leftArmLower.rotation.x  = -0.6 * w;
+      if (bones.rightArmLower) bones.rightArmLower.rotation.x = -0.6 * w;
+      bones.body.rotation.x = 0;
+      bones.body.position.y = 0;
+    }
+    return w > 0;
+  }
+
+  // Sit on a chair / lie in a bed. `pr` is a node.props record (kind, x, z,
+  // rot, top, nodeId). The seat transform is derived from the prop: a chair
+  // seats you at its centre facing the way it faces, hips at seat height; a
+  // bed lays you along it with your head at the headboard.
+  function _sitOn(pr) {
+    if (!_player || !pr) return;
+    const scale = _player.scale.y || 1;
+    const yaw = (pr.rot || 0) * Math.PI / 2;
+    let px = pr.x, pz = pr.z, py;
+    if (pr.kind === 'bed') {
+      px = pr.x + Math.sin(yaw) * 0.85;      // feet end (local +z)
+      pz = pr.z + Math.cos(yaw) * 0.85;
+      py = pr.top + 0.12 * scale;
+    } else {
+      const inst = _player.userData.humanoid;
+      const hipY = (inst && inst.hipsY > 0) ? inst.hipsY : 0.7;
+      py = pr.top - hipY * scale + 0.02;
+    }
+    _seat = { nodeId: pr.nodeId, kind: pr.kind, gx: pr.gx, gy: pr.gy, x: pr.x, z: pr.z, rot: pr.rot || 0, top: pr.top, yaw, px, py, pz };
+    _velY = 0; _falling = false;
+    _localWalking = false; _localBackward = false;
+    _player.position.set(px, py, pz);
+    _player.rotation.y = yaw;
+  }
+
+  // Is a player-sized box at (x, z) with feet at feetY inside anything solid?
+  function _blockedAt(x, z, feetY) {
+    const r = _playerR;
+    for (const w of _walls) {
+      if (!PG3DPhysics.blocksAt(w, feetY)) continue;
+      if (x + r <= w.minX || x - r >= w.maxX || z + r <= w.minZ || z - r >= w.maxZ) continue;
+      return true;
+    }
+    return false;
+  }
+
+  // Stand up: step off the prop to the first free side (front, left, right,
+  // back), never leaving the player embedded in the prop's collision box.
+  function _standUp() {
+    if (!_seat || !_player) return;
+    const s = _seat;
+    _seat = null;
+    const fp = (typeof PG3DProps !== 'undefined') ? PG3DProps.footprint(s.kind) : { hx: 0.5, hz: 0.5 };
+    const odd = (s.rot % 2) === 1;
+    const hx = odd ? fp.hz : fp.hx, hz = odd ? fp.hx : fp.hz;
+    const r = _playerR + 0.08;
+    const sy = Math.sin(s.yaw), cy = Math.cos(s.yaw);
+    const dirs = [[sy, cy], [cy, -sy], [-cy, sy], [-sy, -cy]];
+    let placed = null;
+    for (const [dx, dz] of dirs) {
+      const ext = Math.abs(dx) > Math.abs(dz) ? hx : hz;
+      const x = s.x + dx * (ext + r), z = s.z + dz * (ext + r);
+      if (_mode === 'world' && !_isInWalkable(x, z)) continue;
+      if (_blockedAt(x, z, 0)) continue;
+      placed = { x, z };
+      break;
+    }
+    if (!placed) placed = { x: s.x, z: s.z };
+    _player.rotation.x = 0;
+    _player.position.set(placed.x, _groundAt(placed.x, placed.z), placed.z);
+    _velY = 0;
+  }
+
+  function _groundAt(x, z) {
+    return PG3DPhysics.groundAt(x, z, _playerR || PHYSICS.PLAYER_RADIUS, _walls);
+  }
+
+  // Nearest chair / bed on the island the player stands on, within reach of
+  // its edge. Drives the "Sit (E)" pill and the touch button.
+  const SEAT_REACH = 0.9;
+  function _scanSeats() {
+    _seatCandidate = null;
+    if (!_player || _mode !== 'world') return;
+    const px = _player.position.x, pz = _player.position.z;
+    let best = null, bestD2 = SEAT_REACH * SEAT_REACH;
+    for (const node of _worldNodes.values()) {
+      if (!node.props || !node.props.length) continue;
+      if (Math.abs(px - node.mesh.position.x) > WORLD.PLATFORM_W / 2 + 1 || Math.abs(pz - node.mesh.position.z) > WORLD.PLATFORM_W / 2 + 1) continue;
+      for (const pr of node.props) {
+        if (!pr.aabb || (pr.kind !== 'chair' && pr.kind !== 'bed')) continue;
+        const dx = Math.max(pr.aabb.minX - px, 0, px - pr.aabb.maxX);
+        const dz = Math.max(pr.aabb.minZ - pz, 0, pz - pr.aabb.maxZ);
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestD2) { bestD2 = d2; best = pr; }
+      }
+    }
+    _seatCandidate = best;
   }
 
   // Knockdown — tip the whole rig backward while downUntil is in the future,
@@ -1162,14 +1303,30 @@ const Playground3D = (() => {
     // unchanged; only near-straight-back qualifies.
     const backpedal = ny > 0.35 && Math.abs(nx) <= Math.abs(ny) * 0.8;
 
+    // The surface under the feet: 0 on the floor, a prop's top when standing
+    // on a crate / table / chair / bookshelf / bed (PG3DPhysics.groundAt).
+    const g0 = PG3DPhysics.groundAt(_player.position.x, _player.position.z, _playerR, _walls);
     // Airborne (mid-jump or falling) frees XZ movement from the walkability
     // check — the landing branch below decides what happens on touchdown.
-    _airborne = _falling || _player.position.y > 0.01;
+    _airborne = _falling || _player.position.y > g0 + 0.01;
     // Knocked down = input dead until you get back up.
     const _down = _localDownUntil > now;
+    // One-shot requests, read once so the seat logic and the jump / punch
+    // code below agree on the same keypress.
+    const jumpReq = !!(_input && _input.consumeJump && _input.consumeJump());
+    const punchReq = !!(_input && _input.consumePunch && _input.consumePunch());
+    const interactReq = !!(_input && _input.consumeInteract && _input.consumeInteract());
+    // Sitting / lying: any intent to move (or a knockdown) stands you up;
+    // E toggles — sit on / lie in the nearest chair or bed, or get up.
+    if (_seat && (len > 0.05 || jumpReq || punchReq || _down)) _standUp();
+    if (interactReq) {
+      if (_seat) _standUp();
+      else if (_seatCandidate && !_falling && !_down && _player.position.y <= g0 + 0.01) _sitOn(_seatCandidate);
+    }
+    const seated = !!_seat;
 
     let moved = false;
-    if (len > 0.05 && !_falling && !_down) {   // input is dead while falling or down
+    if (len > 0.05 && !_falling && !_down && !seated) {   // input is dead while falling, down or seated
       moved = true;
       // Slight air-speed boost so a running jump clears the island gaps.
       // Backing up is slower than going forward, the way it is on foot.
@@ -1190,7 +1347,8 @@ const Playground3D = (() => {
     _localBackward = moved && backpedal;
 
     // Remember the last grounded, walkable spot — the fall-respawn target.
-    if (!_falling && _player.position.y <= 0.01 &&
+    // Never a spot on top of a prop: a respawn there would land inside it.
+    if (!_falling && !seated && _player.position.y <= 0.01 && g0 === 0 &&
         (_mode !== 'world' || _isInWalkable(_player.position.x, _player.position.z))) {
       _lastSafe.x = _player.position.x;
       _lastSafe.z = _player.position.z;
@@ -1198,16 +1356,17 @@ const Playground3D = (() => {
 
     // Jump physics — applies in both /home and /world. Space (or the
     // input adapter's consumeJump()) sets initial upward velocity if
-    // grounded; gravity decelerates each frame until we hit y=0 again.
-    if (_input && _input.consumeJump && _input.consumeJump()) {
-      if (_player.position.y <= 0.01 && !_falling && !_down) _velY = JUMP.INITIAL_V;
+    // grounded (on the floor or on a prop); gravity decelerates each frame
+    // until we come back down onto whatever is underneath.
+    if (jumpReq && !seated) {
+      if (_player.position.y <= g0 + 0.01 && !_falling && !_down) _velY = JUMP.INITIAL_V;
     }
 
     // Punch — quick jab; a remote player or NPC within reach gets knocked
     // down. Fires the _onPunch callback on EVERY punch (target or whiff) so
     // peers see the swing; the socket layer relays it (world mode only).
     const _punchCd = PG3DPhysics.punchCooldown(now, _lastPunchAt, PUNCH.COOLDOWN_MS);
-    if (_input && _input.consumePunch && _input.consumePunch()) {
+    if (punchReq && !seated) {
       // Pressed too early → a small shake on the button instead of a swing.
       if (!_punchCd.ready && _input.denyPunch) _input.denyPunch();
       if (!_falling && !_down && _punchCd.ready) {
@@ -1248,28 +1407,39 @@ const Playground3D = (() => {
     if (_input && _input.setPunchCooldown) {
       _input.setPunchCooldown(PG3DPhysics.punchCooldown(now, _lastPunchAt, PUNCH.COOLDOWN_MS).frac);
     }
-    if (_falling || _velY !== 0 || _player.position.y > 0) {
-      // Ceiling cap: under a building roof / in a doorway, keep the head below
-      // the lintel so a jump can't punch through. Outdoors cap is null → full hop.
-      const cap = (_mode === 'world' && !_falling)
-        ? _ceilingCap(_player.position.x, _player.position.z)
-        : null;
-      const s = PG3DPhysics.stepVertical(_player.position.y, _velY, dt, JUMP.GRAVITY, cap);
-      _player.position.y = s.y;
-      _velY = s.velY;
+    if (seated) {
+      // Pinned to the seat / mattress; the pose layer does the rest.
+      _player.position.set(_seat.px, _seat.py, _seat.pz);
+      _player.rotation.y = _seat.yaw;
+      _velY = 0;
+    } else {
+      // Ground under the feet after this frame's horizontal move. A lip
+      // shorter than PG3DPhysics.STEP is stepped up onto, not bumped into.
+      const g = PG3DPhysics.groundAt(_player.position.x, _player.position.z, _playerR, _walls);
+      if (!_falling && _velY === 0 && _player.position.y < g) _player.position.y = g;
+      if (_falling || _velY !== 0 || _player.position.y > g) {
+        // Ceiling cap: under a building roof / in a doorway, keep the head below
+        // the lintel so a jump can't punch through. Outdoors cap is null → full hop.
+        const cap = (_mode === 'world' && !_falling)
+          ? _ceilingCap(_player.position.x, _player.position.z)
+          : null;
+        const s = PG3DPhysics.stepVertical(_player.position.y, _velY, dt, JUMP.GRAVITY, cap, g);
+        _player.position.y = s.y;
+        _velY = s.velY;
 
-      if (_falling) {
-        // Sinking below the world — fade out and respawn at the last safe spot.
-        if (PG3DPhysics.shouldRespawn(now, _fallStart, _player.position.y, FALL)) _respawn();
-      } else if (s.landed) {
-        if (_mode !== 'world' || _isInWalkable(_player.position.x, _player.position.z)) {
-          _player.position.y = 0;
-          _velY = 0;
-          _landAt = now;           // trigger the landing-squash animation
-        } else {
-          // Landed on nothing — the gap won. Keep integrating below y=0.
-          _falling = true;
-          _fallStart = now;
+        if (_falling) {
+          // Sinking below the world — fade out and respawn at the last safe spot.
+          if (PG3DPhysics.shouldRespawn(now, _fallStart, _player.position.y, FALL)) _respawn();
+        } else if (s.landed) {
+          if (g > 0 || _mode !== 'world' || _isInWalkable(_player.position.x, _player.position.z)) {
+            _player.position.y = g;   // the floor, or the top of the prop we came down on
+            _velY = 0;
+            _landAt = now;           // trigger the landing-squash animation
+          } else {
+            // Landed on nothing — the gap won. Keep integrating below y=0.
+            _falling = true;
+            _fallStart = now;
+          }
         }
       }
     }
@@ -1295,7 +1465,8 @@ const Playground3D = (() => {
       downUntil: _localDownUntil,
       getupUntil: _localDownUntil ? _localDownUntil + PUNCH.GETUP_MS : 0,
       punchUntil: _localPunchUntil,
-      emoteUntil: _localEmoteUntil
+      emoteUntil: _localEmoteUntil,
+      pose: _seat ? (_seat.kind === 'bed' ? 'lie' : 'sit') : null
     }, dt, now);
 
     if (_rigged) {
@@ -1347,10 +1518,13 @@ const Playground3D = (() => {
       _rig.rightArm.rotation.z = 0;
     }
 
-    // Knockdown pose — falls backward while down, eases upright after.
-    // (Rigged characters play a knockdown clip instead; tipping the root too
-    // would make them fall over twice.)
-    if (!_rigged) _applyDownPose(_player, _localDownUntil, now);
+    // Sitting / lying pose (both rig types), else the knockdown pose — falls
+    // backward while down, eases upright after. (Rigged characters play a
+    // knockdown clip instead; tipping the root too would make them fall over
+    // twice.)
+    const localPose = _seat ? (_seat.kind === 'bed' ? 'lie' : 'sit') : null;
+    if (localPose || (_player.userData.poseW || 0) > 0) _applyPose(_player, localPose, dt);
+    else if (!_rigged) _applyDownPose(_player, _localDownUntil, now);
 
     // World-mode-only ticks (no-ops in home mode).
     if (_mode === 'world') {
@@ -1380,6 +1554,8 @@ const Playground3D = (() => {
     let x = startX + dx;
     let z = startZ + dz;
     for (const w of _walls) {
+      // A standable prop stops blocking once the feet are near its top.
+      if (!PG3DPhysics.blocksAt(w, _player.position.y)) continue;
       // Player AABB (approx capsule by box) overlaps wall AABB.
       const minX = x - r, maxX = x + r;
       const minZ = z - r, maxZ = z + r;
@@ -1479,6 +1655,7 @@ const Playground3D = (() => {
 
   // WE got hit — fall over, input dead until back up.
   function knockdownLocal() {
+    if (_seat) _standUp();
     _localDownUntil = performance.now() + PUNCH.DOWN_MS;
     _localWalking = false;
     _localBackward = false;
@@ -1594,7 +1771,8 @@ const Playground3D = (() => {
   function snapRespawnLocal() {
     if (!_player) return;
     _falling = false; _velY = 0; _localDownUntil = 0;
-    _player.position.set(_spawnPoint.x, 0, _spawnPoint.z);
+    _seat = null; _player.rotation.x = 0;
+    _player.position.set(_spawnPoint.x, _groundAt(_spawnPoint.x, _spawnPoint.z), _spawnPoint.z);
     _lastSafe.x = _spawnPoint.x; _lastSafe.z = _spawnPoint.z;
     if (_viewport) {
       let fade = _viewport.querySelector('.pg3d-fade');
@@ -1618,7 +1796,8 @@ const Playground3D = (() => {
   function _respawn() {
     _falling = false;
     _velY = 0;
-    _player.position.set(_lastSafe.x, 0, _lastSafe.z);
+    _seat = null; _player.rotation.x = 0;
+    _player.position.set(_lastSafe.x, _groundAt(_lastSafe.x, _lastSafe.z), _lastSafe.z);
     if (_viewport) {
       let fade = _viewport.querySelector('.pg3d-fade');
       if (!fade) {
@@ -1690,7 +1869,9 @@ const Playground3D = (() => {
       }
     }
     const targetX = _player.position.x;
-    const targetY = _player.position.y + 1.15 * (_player.scale.y || 1);   // chest level
+    // Chest level — lower while lying down so the bed stays in frame.
+    const lying = _seat && _seat.kind === 'bed';
+    const targetY = _player.position.y + (lying ? 0.45 : 1.15) * (_player.scale.y || 1);
     const targetZ = _player.position.z;
     const d = _orbit.distance;
     const e = _orbit.elevation;
@@ -1767,7 +1948,8 @@ const Playground3D = (() => {
     const pos = _projectPos(id);
     if (!pos) return;
     _falling = false; _velY = 0; _localDownUntil = 0;
-    _player.position.set(pos.x, 0, pos.z);
+    _seat = null; _player.rotation.x = 0;
+    _player.position.set(pos.x, _groundAt(pos.x, pos.z), pos.z);
     _lastSafe.x = pos.x; _lastSafe.z = pos.z;
     if (_viewport) {
       let fade = _viewport.querySelector('.pg3d-fade');
@@ -2054,8 +2236,10 @@ const Playground3D = (() => {
     // Wall finish texture — ONE per style, shared by the whole town. Each panel
     // gets its own material (so the per-wall material.dispose() teardown is
     // safe) but points at the shared map; material.dispose() never frees maps.
-    const wallTex = (typeof PG3DHouse !== 'undefined') ? PG3DHouse.wallTexture(THREE, wallStyle) : null;
+    const glassWall = wallStyle === 'glass';           // see-through walls: no texture, no windows carved
+    const wallTex = (typeof PG3DHouse !== 'undefined' && !glassWall) ? PG3DHouse.wallTexture(THREE, wallStyle) : null;
     const wallColor = _houseColor(node, 'wallColor', WORLD.WALL_COLOR);
+    const glassTint = (house && house.wallColor != null) ? wallColor : null;   // keeper tint, else pale glass
     const trimColor = _houseColor(node, 'trimColor', WORLD.WALL_TRIM_COLOR);
     const lampColor = _houseColor(node, 'lampColor', WORLD.LAMP_COLOR);
     const signText = (house && house.sign) ? String(house.sign) : '';
@@ -2149,6 +2333,7 @@ const Playground3D = (() => {
         // (engine default or the keeper's pick) at no extra texture cost.
         const mat = (plainColor != null)
           ? new THREE.MeshLambertMaterial({ color: plainColor })
+          : (glassWall && typeof PG3DHouse !== 'undefined') ? PG3DHouse.glassWallMaterial(THREE, glassTint)
           : (wallTex ? new THREE.MeshLambertMaterial({ map: wallTex, color: wallColor })
                      : new THREE.MeshLambertMaterial({ color: wallColor }));
         const geom = new THREE.BoxGeometry(gx, wh, gz);
@@ -2158,31 +2343,32 @@ const Playground3D = (() => {
         if (mat.map && typeof PG3DHouse !== 'undefined') _anchorWallUVs(geom, px, py, pz);
         const mesh = new THREE.Mesh(geom, mat);
         mesh.position.set(px, py, pz);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
+        mesh.castShadow = !mat.transparent;          // glass casts no solid shadow
+        mesh.receiveShadow = !mat.transparent;
         _scene.add(mesh);
         node.walls.push({ mesh });
       }
 
-      // Where the windows go on this side, as pane centres along the axis.
+      // Where the windows go on this side, as panes { c: centre, w: width, n: cells }.
       //   auto (windows: null)  — one centred pane per stretch ≥ WINDOW_MIN_SEG,
       //                           exactly the undecorated look;
-      //   keeper (array)        — the cells they picked, minus any pane that
-      //                           would touch a doorway (WorldHouseLogic.windowBlocked,
-      //                           the same test the editor runs) or a corner.
+      //   keeper (array)        — the cells they picked, minus any that would
+      //                           touch a doorway (WorldHouseLogic.windowBlocked,
+      //                           the same test the editor runs); adjacent cells
+      //                           merge into one wide pane (windowRuns);
+      //   glass walls           — none: the whole wall is already see-through.
       // The doorway itself is never moved for a window: the door wins.
       const WW = WORLD.WINDOW_W, WM = (typeof WorldHouseLogic !== 'undefined') ? WorldHouseLogic.C.WINDOW_MARGIN : 0.35;
       const winY = Math.min(H - WORLD.WINDOW_H / 2 - 0.25, H * 0.55);
       const sillTop = winY - WORLD.WINDOW_H / 2, headBot = winY + WORLD.WINDOW_H / 2;
       const outSign = (sideName === 'N' || sideName === 'W') ? -1 : 1;
       let picked = [];
-      if (houseWindows && typeof WorldHouseLogic !== 'undefined') {
+      if (houseWindows && !glassWall && typeof WorldHouseLogic !== 'undefined') {
         const offsetOpenings = openings.map(([a, b]) => [a - axisStart, b - axisStart]);
-        for (const w of houseWindows) {
-          if (w.side !== sideName || WorldHouseLogic.windowBlocked(w.pos, offsetOpenings)) continue;
-          picked.push(axisStart + w.pos + 0.5);
-        }
-        picked.sort((a, b) => a - b);
+        const cells = houseWindows
+          .filter(w => w.side === sideName && !WorldHouseLogic.windowBlocked(w.pos, offsetOpenings))
+          .map(w => w.pos);
+        picked = WorldHouseLogic.windowRuns(cells).map(r => ({ c: axisStart + r.centre, w: r.width, n: r.cells }));
       }
 
       for (const [s, e] of segs) {
@@ -2190,9 +2376,9 @@ const Playground3D = (() => {
         if (len <= 0.1) continue;
         const firstIdx = node.walls.length;
 
-        const wins = houseWindows
-          ? picked.filter(c => c - WW / 2 >= s + WM && c + WW / 2 <= e - WM)
-          : (len >= WORLD.WINDOW_MIN_SEG ? [(s + e) / 2] : []);
+        const wins = glassWall ? []
+          : houseWindows ? picked.filter(p => p.c - p.w / 2 >= s + WM && p.c + p.w / 2 <= e - WM)
+          : (len >= WORLD.WINDOW_MIN_SEG ? [{ c: (s + e) / 2, w: WW, n: 1 }] : []);
 
         if (!wins.length) {
           addWallPanel(s, e, 0, H);                       // plain solid segment
@@ -2200,14 +2386,14 @@ const Playground3D = (() => {
           // Carve each window: fillers between panes + a sill below + a header
           // above, leaving holes you can actually see through (glass below).
           let cursor = s;
-          for (const center of wins) {
-            const winL = center - WW / 2, winR = center + WW / 2;
+          for (const { c: center, w: pw, n: cellsN } of wins) {
+            const winL = center - pw / 2, winR = center + pw / 2;
             addWallPanel(cursor, winL, 0, H);             // filler up to this pane
             addWallPanel(winL, winR, 0, sillTop);         // sill — same finish as the wall
             addWallPanel(winL, winR, headBot, H);         // header — same finish as the wall
             cursor = winR;
             // Translucent glass pane sitting in the hole — see-through to the interior.
-            const glass = (typeof PG3DHouse !== 'undefined') ? PG3DHouse.windowGlass(THREE, windowStyle, WW, WORLD.WINDOW_H) : null;
+            const glass = (typeof PG3DHouse !== 'undefined') ? PG3DHouse.windowGlass(THREE, windowStyle, pw, WORLD.WINDOW_H, cellsN) : null;
             if (glass) {
               glass.position.set(horizontal ? center : perp, winY, horizontal ? perp : center);
               glass.rotation.y = (sideName === 'N') ? Math.PI
@@ -2596,9 +2782,11 @@ const Playground3D = (() => {
     if (!house || typeof PG3DHouse === 'undefined' || !_scene) return;
     const style = house.roofStyle || 'flat';
     if (style === 'flat' && !house.chimney) return;
-    // Gable ends wear the wall finish + colour so the house reads as one body.
-    const wallTex = PG3DHouse.wallTexture(THREE, house.wallStyle || 'plaster');
-    const wallMat = new THREE.MeshLambertMaterial({ color: _houseColor(node, 'wallColor', WORLD.WALL_COLOR), map: wallTex || null });
+    // Gable ends wear the wall finish + colour so the house reads as one body
+    // (see-through too when the walls are glass).
+    const wallMat = (house.wallStyle === 'glass')
+      ? PG3DHouse.glassWallMaterial(THREE, house.wallColor != null ? _houseColor(node, 'wallColor', WORLD.WALL_COLOR) : null)
+      : new THREE.MeshLambertMaterial({ color: _houseColor(node, 'wallColor', WORLD.WALL_COLOR), map: PG3DHouse.wallTexture(THREE, house.wallStyle || 'plaster') || null });
     node.roofWallMat = wallMat;
     const group = PG3DHouse.roofExtra(THREE, {
       style, dir: house.roofDir, chimney: !!house.chimney,
@@ -2676,9 +2864,71 @@ const Playground3D = (() => {
       roofColor: _houseColor(node, 'roofColor', _phaseRoofColor(node.project.phase)),
       hasPortrait: !!portrait
     };
-    for (const p of list) {
+    // Bookshelves standing side by side become ONE run of shelving that fills
+    // its cells edge to edge (one object, one collision box).
+    const runs = (WorldHouseLogic.propRuns ? WorldHouseLogic.propRuns(list, 'bookshelf') : []).filter(r => r.cells > 1);
+    const inRun = new Set();
+    for (const r of runs) for (const i of r.indices) inRun.add(i);
+
+    // Place one built object for a prop (or a run) and register its box.
+    const place = (obj, spec) => {
+      // spec: { kind, gx, gy (anchor, may be fractional for runs), rot, width }
+      const rot = spec.rot || 0;
+      const odd = rot % 2 === 1;
+      const fp = PG3DProps.footprint(spec.kind, spec.width);
+      const local = WorldHouseLogic.cellToLocal(spec.gx, spec.gy);
+      // Multi-cell props (bed) sit at the midpoint of their cells.
+      const off = WorldHouseLogic.propCentreOffset ? WorldHouseLogic.propCentreOffset(spec) : { dx: 0, dy: 0 };
+      let x = cx + local.x + off.dx, z = cz + local.z + off.dy;
+      if (spec.kind === 'frame') {
+        // Hang it on the wall's inner face (walls are inset T/2 from the
+        // platform edge, so the face is HALF - T from the centre), facing in.
+        const face = WORLD.PLATFORM_W / 2 - WORLD.WALL_THICKNESS - 0.01;
+        switch (WorldHouseLogic.frameWall(spec)) {
+          case 'N': z = cz - face; break;
+          case 'S': z = cz + face; break;
+          case 'W': x = cx - face; break;
+          default:  x = cx + face; break;   // 'E'
+        }
+      } else {
+        // Any solid prop on an edge cell hugs that wall: slide it from the
+        // cell centre until its side touches the wall's inner face. Wall-
+        // backed kinds (bookshelf / chair / bed) were already turned to face
+        // the room by validation, so it's their back that meets the wall.
+        const side = fp.solid && WorldHouseLogic.wallHug ? WorldHouseLogic.wallHug(spec.kind, spec.gx, spec.gy) : null;
+        if (side) {
+          const hxr = odd ? fp.hz : fp.hx, hzr = odd ? fp.hx : fp.hz;   // extents after rotation
+          const depth = (side === 'N' || side === 'S') ? hzr : hxr;
+          const flush = WORLD.PLATFORM_W / 2 - WORLD.WALL_THICKNESS - depth - 0.01;
+          switch (side) {
+            case 'N': z = cz - flush; break;
+            case 'S': z = cz + flush; break;
+            case 'W': x = cx - flush; break;
+            default:  x = cx + flush; break;   // 'E'
+          }
+        }
+      }
+      obj.position.set(x, 0, z);
+      obj.rotation.y = rot * Math.PI / 2;
+      _scene.add(obj);
+      let aabb = null;
+      if (fp.solid) {
+        const hx = odd ? fp.hz : fp.hx, hz = odd ? fp.hx : fp.hz;
+        aabb = { minX: x - hx, maxX: x + hx, minZ: z - hz, maxZ: z + hz };
+        if (fp.top != null) aabb.top = fp.top;     // standable
+        _walls.push(aabb);
+      }
+      node.props.push({ obj, aabb, kind: spec.kind, gx: spec.gx, gy: spec.gy, x, z, rot, top: fp.top, nodeId: node.project.id });
+    };
+
+    for (const r of runs) {
+      const obj = PG3DProps.make('bookshelf', { ...opts, width: r.cells });
+      if (obj) place(obj, { kind: 'bookshelf', gx: r.centre.gx, gy: r.centre.gy, rot: r.rot, width: r.cells });
+    }
+    list.forEach((p, i) => {
+      if (inRun.has(i)) return;
       const obj = PG3DProps.make(p.kind, opts);
-      if (!obj) continue;
+      if (!obj) return;
       // The keeper's portrait hangs in every frame. The texture comes from the
       // shared cache, so the material is flagged keepMap and _disposeDecor
       // leaves it alone on rebuild.
@@ -2691,44 +2941,15 @@ const Playground3D = (() => {
           mat.needsUpdate = true;
         });
       }
-      const local = WorldHouseLogic.cellToLocal(p.gx, p.gy);
-      let x = cx + local.x, z = cz + local.z;
-      const rot = p.rot || 0;
-      if (p.kind === 'frame') {
-        // Hang it on the wall's inner face (walls are inset T/2 from the
-        // platform edge, so the face is HALF - T from the centre), facing in.
-        const face = WORLD.PLATFORM_W / 2 - WORLD.WALL_THICKNESS - 0.01;
-        switch (WorldHouseLogic.frameWall(p)) {
-          case 'N': z = cz - face; break;
-          case 'S': z = cz + face; break;
-          case 'W': x = cx - face; break;
-          default:  x = cx + face; break;   // 'E'
-        }
-      } else if (WorldHouseLogic.wallBackedRot && WorldHouseLogic.wallBackedRot(p.kind, p.gx, p.gy) != null) {
-        // A wall-backed prop (bookshelf) on an edge cell: validation already
-        // turned its back to the wall; slide it from the cell centre until
-        // that back touches the wall's inner face.
-        const fp0 = PG3DProps.footprint(p.kind);
-        const flush = WORLD.PLATFORM_W / 2 - WORLD.WALL_THICKNESS - fp0.hz - 0.01;
-        switch (WorldHouseLogic.wallSideOfCell(p.gx, p.gy)) {
-          case 'N': z = cz - flush; break;
-          case 'S': z = cz + flush; break;
-          case 'W': x = cx - flush; break;
-          default:  x = cx + flush; break;   // 'E'
-        }
-      }
-      obj.position.set(x, 0, z);
-      obj.rotation.y = rot * Math.PI / 2;
-      _scene.add(obj);
-      let aabb = null;
-      const fp = PG3DProps.footprint(p.kind);
-      if (fp.solid) {
-        const odd = rot % 2 === 1;
-        const hx = odd ? fp.hz : fp.hx, hz = odd ? fp.hx : fp.hz;
-        aabb = { minX: x - hx, maxX: x + hx, minZ: z - hz, maxZ: z + hz };
-        _walls.push(aabb);
-      }
-      node.props.push({ obj, aabb });
+      place(obj, p);
+    });
+
+    // If the local player was sitting on this island and their seat is gone
+    // (editor preview rebuild / prop removed), stand them up cleanly.
+    if (_seat && _seat.nodeId === node.project.id) {
+      const still = node.props.find(pr => pr.kind === _seat.kind && pr.gx === _seat.gx && pr.gy === _seat.gy);
+      if (!still) _standUp();
+      else { _seat.x = still.x; _seat.z = still.z; }
     }
   }
 
@@ -3045,6 +3266,28 @@ const Playground3D = (() => {
         _hudAnchor.set(nx, (node.roofTopY || (node.wallHeight || WORLD.WALL_HEIGHT) + 0.18) + 0.5, nz);
         _placeHudEl(el, _hudAnchor, 0);
       }
+    }
+
+    // "Sit (E)" / "Lie down (E)" over the nearest chair / bed; hidden while
+    // seated. The touch button mirrors it (setInteractLabel).
+    _scanSeats();
+    const cand = (!_seat && _seatCandidate) ? _seatCandidate : null;
+    if (cand && _hudLayer) {
+      if (!_seatPromptEl) {
+        _seatPromptEl = document.createElement('div');
+        _seatPromptEl.className = 'pg3d-nodelabel pg3d-seatprompt';
+        _hudLayer.appendChild(_seatPromptEl);
+      }
+      const label = cand.kind === 'bed' ? 'Lie down' : 'Sit';
+      const text = _coarsePointer ? label : `${label} (E)`;
+      if (_seatPromptEl.textContent !== text) _seatPromptEl.textContent = text;
+      _hudAnchor.set(cand.x, (cand.top || 0.5) + 0.9, cand.z);
+      _placeHudEl(_seatPromptEl, _hudAnchor, 0);
+    } else if (_seatPromptEl) {
+      _seatPromptEl.style.display = 'none';
+    }
+    if (_input && _input.setInteractLabel) {
+      _input.setInteractLabel(_seat ? 'Stand up' : (cand ? (cand.kind === 'bed' ? 'Lie down' : 'Sit') : null));
     }
 
     // Local player's own chat bubbles, over the head.
@@ -3439,7 +3682,7 @@ const Playground3D = (() => {
 
   // ── remote player API ──
 
-  function addRemotePlayer(id, character, username, x, z, yaw, y) {
+  function addRemotePlayer(id, character, username, x, z, yaw, y, pose) {
     if (!_scene || !window.THREE) return;
     if (_remotePlayers.has(id)) return;
     const rig = _buildPlayer(character || defaultCharacter());
@@ -3455,7 +3698,7 @@ const Playground3D = (() => {
     _remotePlayers.set(id, {
       rig,
       radius: _actorRadiusFor(character || defaultCharacter()),
-      target: { x: x || 0, y: y || 0, z: z || 0, yaw: yaw || 0, walking: false },
+      target: { x: x || 0, y: y || 0, z: z || 0, yaw: yaw || 0, walking: false, pose: (pose === 'sit' || pose === 'lie') ? pose : null },
       current: { x: x || 0, y: y || 0, z: z || 0, yaw: yaw || 0 },
       stepClock: 0,
       nameEl,
@@ -3491,7 +3734,7 @@ const Playground3D = (() => {
     rp.nameEl.classList.toggle('speaking', !!isSpeaking);
   }
 
-  function updateRemotePlayer(id, x, z, yaw, walking, y, backward) {
+  function updateRemotePlayer(id, x, z, yaw, walking, y, backward, pose) {
     const rp = _remotePlayers.get(id);
     if (!rp) return;
     rp.target.x = x;
@@ -3500,6 +3743,7 @@ const Playground3D = (() => {
     rp.target.yaw = yaw;
     rp.target.walking = !!walking;
     rp.target.backward = !!walking && !!backward;
+    rp.target.pose = (pose === 'sit' || pose === 'lie') ? pose : null;
   }
 
   function removeRemotePlayer(id) {
@@ -3622,23 +3866,33 @@ const Playground3D = (() => {
       _applyRemoteOpacity(rp);
 
       // Rigged peers: speed/airborne come from the smoothed position, so the
-      // network protocol is unchanged.
+      // network protocol is unchanged. "Airborne" is measured from the ground
+      // under them (a peer standing on a crate is not falling), and a seated /
+      // lying peer is never walking or airborne.
       const rpVelY = ((rp.current.y || 0) - (rp.prevY || 0)) / Math.max(dt, 0.001);
       rp.prevY = rp.current.y || 0;
+      const pose = (rp.downUntil > now) ? null : (rp.target.pose || null);
+      const posing = !!pose || (rp.rig.userData.poseW || 0) > 0;
+      const rpGround = PG3DPhysics.groundAt(rp.current.x, rp.current.z, rp.radius || PHYSICS.PLAYER_RADIUS, _walls);
       if (_animateActor(rp.rig, {
-        speed: rp.target.walking ? PHYSICS.SPEED * (rp.target.backward ? PHYSICS.BACKPEDAL_MUL : 0.8) : 0,
-        backward: !!rp.target.backward,
-        airborne: (rp.current.y || 0) > 0.05,
+        speed: (rp.target.walking && !pose) ? PHYSICS.SPEED * (rp.target.backward ? PHYSICS.BACKPEDAL_MUL : 0.8) : 0,
+        backward: !!rp.target.backward && !pose,
+        airborne: !pose && (rp.current.y || 0) > rpGround + 0.05,
         velY: rpVelY,
         downUntil: rp.downUntil || 0,
         getupUntil: rp.downUntil ? rp.downUntil + PUNCH.GETUP_MS : 0,
         punchUntil: rp.punchUntil || 0,
-        emoteUntil: rp.emoteUntil || 0
-      }, dt, now)) continue;
+        emoteUntil: rp.emoteUntil || 0,
+        pose
+      }, dt, now)) {
+        if (posing) _applyPose(rp.rig, pose, dt);
+        else _applyDownPose(rp.rig, rp.downUntil || 0, now);
+        continue;
+      }
 
       const bones = rp.rig.userData.bones;
       if (!bones) continue;
-      if (rp.target.walking) {
+      if (rp.target.walking && !pose) {
         rp.stepClock += rp.target.backward ? -dt : dt;
         const phase = (rp.stepClock / PHYSICS.STEP_PERIOD) * Math.PI * 2;
         _walkPose(bones, phase, rp.target.backward);
@@ -3660,8 +3914,10 @@ const Playground3D = (() => {
       } else if (bones.rightArm) {
         bones.rightArm.rotation.z = 0;
       }
-      // Knockdown pose (set by a relayed world:punch or a local hit).
-      _applyDownPose(rp.rig, rp.downUntil || 0, now);
+      // Sitting / lying beats the knockdown tilt (a seated peer who is hit
+      // stands up first on their own client, so the two never overlap).
+      if (posing) _applyPose(rp.rig, pose, dt);
+      else _applyDownPose(rp.rig, rp.downUntil || 0, now);
     }
   }
 
@@ -3679,10 +3935,115 @@ const Playground3D = (() => {
       yaw: _player.rotation.y,
       // Walking = local stepClock advanced recently (set in the main tick).
       walking: !!_localWalking,
-      backward: !!_localBackward
+      backward: !!_localBackward,
+      // Seated on a chair / lying in a bed — persistent, so peers (and late
+      // joiners, via the server's snapshot) render the pose.
+      pose: _seat ? (_seat.kind === 'bed' ? 'lie' : 'sit') : null
     };
   }
 
+
+  // ── preview framing ──
+  //
+  // The customizer frames whichever body region the open tab edits (face,
+  // torso, feet…) instead of always showing the whole figure. Regions are
+  // fractions of the rig's measured height (0 = ground, 1 = crown), so they
+  // hold for the blocky body, the rigged humanoids and every build scale.
+  //   lo/hi  — vertical band of the body height to fit
+  //   w      — the band's width, as a fraction of the body height (the rig's
+  //            own width is useless here: rigged bodies measure in an A-pose)
+  //   elev   — camera height above the band's centre, in band-spans
+  //   pad    — extra breathing room around the band
+  const PREVIEW_REGIONS = {
+    full:  null,   // the classic pose (see _frameCamera)
+  // Measured on the rigged bodies: the head is ~13% of the height and ~13%
+  // wide, shoulders ~35% wide, hands hang around 40–50% up.
+    head:  { lo: 0.79, hi: 1.00, w: 0.16, elev: 0.05, pad: 1.40 },
+    chest: { lo: 0.55, hi: 0.84, w: 0.40, elev: 0.05, pad: 1.30 },
+    torso: { lo: 0.42, hi: 0.86, w: 0.42, elev: 0.05, pad: 1.25 },
+    waist: { lo: 0.38, hi: 0.60, w: 0.32, elev: 0.05, pad: 1.40 },
+    hands: { lo: 0.28, hi: 0.66, w: 0.55, elev: 0.02, pad: 1.25 },
+    legs:  { lo: 0.02, hi: 0.54, w: 0.36, elev: 0.02, pad: 1.25 },
+    feet:  { lo: 0.00, hi: 0.17, w: 0.28, elev: 0.28, pad: 1.35 }
+  };
+  // The blocky "Box" body: a cube head that is ~27% of the height and ~30%
+  // wide, legs ~34%, torso between. Same keys as PREVIEW_REGIONS.
+  const PREVIEW_REGIONS_BOX = {
+    full:  null,
+    head:  { lo: 0.70, hi: 1.00, w: 0.34, elev: 0.05, pad: 1.30 },
+    chest: { lo: 0.46, hi: 0.72, w: 0.50, elev: 0.05, pad: 1.30 },
+    torso: { lo: 0.34, hi: 0.72, w: 0.50, elev: 0.05, pad: 1.25 },
+    waist: { lo: 0.30, hi: 0.48, w: 0.45, elev: 0.05, pad: 1.40 },
+    hands: { lo: 0.22, hi: 0.62, w: 0.70, elev: 0.02, pad: 1.25 },
+    legs:  { lo: 0.02, hi: 0.40, w: 0.45, elev: 0.02, pad: 1.25 },
+    feet:  { lo: 0.00, hi: 0.14, w: 0.40, elev: 0.28, pad: 1.35 }
+  };
+  const PREVIEW_FULL = { pos: [0, 1.4, 5.8], look: [0, 1.0, 0] };
+
+  // Ground-to-crown height and widest horizontal reach of a rig, skipping
+  // subtrees tagged `userData.noFrame` (held props that can tower over the
+  // head). Only y-extents and radius are used, so the group's yaw is harmless.
+  const _frameBox = { minY: 0, maxY: 0, radius: 0, blocky: false };
+  function _measureRig(rig) {
+    const THREE = window.THREE;
+    const box = new THREE.Box3();
+    const tmp = new THREE.Box3();
+    let any = false;
+    _frameBox.blocky = !!(rig.userData && rig.userData.boxBody);
+    rig.updateMatrixWorld(true);
+    const walk = (o) => {
+      if (!o.visible || (o.userData && o.userData.noFrame)) return;
+      if (o.isMesh && o.geometry) {
+        if (o.isSkinnedMesh && typeof o.computeBoundingBox === 'function') {
+          // Posed bounds: the rigged bodies reshape through bone scales (big
+          // heads, Huge torsos) so the bind-pose geometry box runs ~15% short.
+          o.computeBoundingBox();
+          tmp.copy(o.boundingBox).applyMatrix4(o.matrixWorld);
+        } else {
+          if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+          tmp.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
+        }
+        if (isFinite(tmp.min.y) && isFinite(tmp.max.y)) { box.union(tmp); any = true; }
+      }
+      for (const ch of o.children) walk(ch);
+    };
+    walk(rig);
+    if (!any) { _frameBox.minY = 0; _frameBox.maxY = 2; _frameBox.radius = 0.6; return _frameBox; }
+    _frameBox.minY = Math.min(0, box.min.y);
+    _frameBox.maxY = box.max.y;
+    _frameBox.radius = Math.max(Math.abs(box.min.x), Math.abs(box.max.x), Math.abs(box.min.z), Math.abs(box.max.z), 0.2);
+    return _frameBox;
+  }
+
+  // Camera pose (position + look-at) that frames `region` of a rig measured by
+  // _measureRig, for a camera of the given vertical FOV and aspect. `zoom` > 1
+  // moves closer. The classic full-body pose is kept verbatim so nothing that
+  // showed the whole figure before looks different now.
+  function _frameCamera(region, fovDeg, aspect, zoom) {
+    zoom = zoom || 1;
+    const spec = (_frameBox.blocky ? PREVIEW_REGIONS_BOX : PREVIEW_REGIONS)[region];
+    if (!spec) {
+      const p = PREVIEW_FULL.pos, l = PREVIEW_FULL.look;
+      // Zoom toward the look-at point along the classic view line.
+      return {
+        pos: [l[0] + (p[0] - l[0]) / zoom, l[1] + (p[1] - l[1]) / zoom, l[2] + (p[2] - l[2]) / zoom],
+        look: l.slice()
+      };
+    }
+    const H = Math.max(0.5, _frameBox.maxY - _frameBox.minY);
+    const bandLo = _frameBox.minY + H * spec.lo;
+    const bandHi = _frameBox.minY + H * spec.hi;
+    const span = (bandHi - bandLo) * spec.pad;
+    const width = H * spec.w * spec.pad;
+    const halfV = Math.tan((fovDeg * Math.PI / 180) / 2);
+    const halfH = halfV * Math.max(0.3, aspect);
+    const dist = Math.max(span / 2 / halfV, width / 2 / halfH, 0.6) / zoom;
+    const cy = (bandLo + bandHi) / 2;
+    return {
+      pos: [0, cy + span * spec.elev, dist],
+      look: [0, cy, 0]
+    };
+  }
 
   // ── standalone 3D preview ──
   //
@@ -3690,12 +4051,25 @@ const Playground3D = (() => {
   // own WebGL renderer, scene, camera, lights, RAF loop and a single rig
   // group — does NOT touch any module-level engine state, so it can run
   // simultaneously with the main /home or /world scene without conflict.
+  //
+  // Handle: { setCharacter, focus(region), zoomBy(f), setZoom(z), getZoom,
+  //           destroy }. Drag spins the figure; the wheel and a two-finger
+  //           pinch zoom it; focus() glides the camera onto a body region.
   function createPreview(container, character) {
     let renderer = null, scene = null, camera = null;
     let rig = null, rotGroup = null, rafId = null;
     let dragging = false, lastX = 0, yaw = 0;
     const autoYawVel = 0.4; // rad/s when not being dragged
     let alive = false;
+    // Framing: which region is targeted, the user's zoom on top of it, and
+    // the pose the camera is gliding toward. Re-measured periodically because
+    // a rigged body arrives asynchronously and replaces the procedural one.
+    let region = 'full', zoom = 1, measureAt = 0, snapCam = true;
+    // Max keeps the camera (near plane 0.1) outside the head at full zoom.
+    const ZOOM_MIN = 0.5, ZOOM_MAX = 2.2;
+    const camLook = { x: 0, y: 1.0, z: 0 };
+    const pointers = new Map();     // active pointers (pinch tracking)
+    let pinchDist = 0;
     let pending = character;
 
     function _size() {
@@ -3763,37 +4137,115 @@ const Playground3D = (() => {
         // Rigged characters breathe/idle in the customiser preview.
         const inst = rig && rig.userData.humanoid;
         if (inst) inst.update(dt);
+        _updateCamera(now, dt);
         renderer.render(scene, camera);
         rafId = requestAnimationFrame(loop);
       };
       rafId = requestAnimationFrame(loop);
     }
 
+    // Glide the camera toward the pose that frames the current region at the
+    // current zoom. The rig is re-measured twice a second (cheap: a handful
+    // of bounding boxes) so the async procedural → rigged swap re-frames.
+    function _updateCamera(now, dt) {
+      if (!camera || !rig) return;
+      if (now >= measureAt) { _measureRig(rig); measureAt = now + 500; }
+      const t = _frameCamera(region, camera.fov, camera.aspect, zoom);
+      if (snapCam) {
+        camera.position.set(t.pos[0], t.pos[1], t.pos[2]);
+        camLook.x = t.look[0]; camLook.y = t.look[1]; camLook.z = t.look[2];
+        snapCam = false;
+      } else {
+        const k = 1 - Math.exp(-9 * dt);      // ~0.35 s settle
+        camera.position.x += (t.pos[0] - camera.position.x) * k;
+        camera.position.y += (t.pos[1] - camera.position.y) * k;
+        camera.position.z += (t.pos[2] - camera.position.z) * k;
+        camLook.x += (t.look[0] - camLook.x) * k;
+        camLook.y += (t.look[1] - camLook.y) * k;
+        camLook.z += (t.look[2] - camLook.z) * k;
+      }
+      camera.lookAt(camLook.x, camLook.y, camLook.z);
+    }
+
+    function setZoom(z) {
+      zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +z || 1));
+      return zoom;
+    }
+    function zoomBy(f) { return setZoom(zoom * (f || 1)); }
+    function getZoom() { return zoom; }
+
+    // Frame a body region ('full' | 'head' | 'chest' | 'torso' | 'waist' |
+    // 'hands' | 'legs' | 'feet'). Unknown names fall back to the full figure.
+    // Switching region resets the user's zoom so the new framing lands clean.
+    function focus(name) {
+      const next = PREVIEW_REGIONS.hasOwnProperty(name) ? name : 'full';
+      if (next === region) return;
+      region = next;
+      zoom = 1;
+      measureAt = 0;
+    }
+
     function _attachPointer() {
       const el = renderer.domElement;
+      const pinchGap = () => {
+        const pts = [...pointers.values()];
+        return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      };
       const onDown = (e) => {
-        dragging = true;
-        lastX = e.clientX;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         try { el.setPointerCapture(e.pointerId); } catch (_) {}
+        if (pointers.size === 2) {
+          // Second finger: switch from spinning to pinch-zooming.
+          dragging = false;
+          pinchDist = pinchGap();
+        } else {
+          dragging = true;
+          lastX = e.clientX;
+        }
         el.style.cursor = 'grabbing';
         e.preventDefault();
       };
       const onMove = (e) => {
+        if (!pointers.has(e.pointerId)) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size >= 2) {
+          const d = pinchGap();
+          if (pinchDist > 0) setZoom(zoom * (d / pinchDist));
+          pinchDist = d;
+          return;
+        }
         if (!dragging) return;
         yaw += (e.clientX - lastX) * 0.012;
         lastX = e.clientX;
       };
       const onUp = (e) => {
-        if (!dragging) return;
-        dragging = false;
-        el.style.cursor = 'grab';
+        if (!pointers.has(e.pointerId)) return;
+        pointers.delete(e.pointerId);
         try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+        if (pointers.size === 1) {
+          // Pinch ended with a finger still down → resume spinning from it.
+          const rest = [...pointers.values()][0];
+          dragging = true;
+          lastX = rest.x;
+          pinchDist = 0;
+        } else if (pointers.size === 0) {
+          dragging = false;
+          pinchDist = 0;
+          el.style.cursor = 'grab';
+        }
+      };
+      const onWheel = (e) => {
+        e.preventDefault();
+        // ~13% per mouse notch; trackpads send many small deltas.
+        const step = Math.exp(-e.deltaY * 0.0012);
+        setZoom(zoom * step);
       };
       el.addEventListener('pointerdown', onDown);
       el.addEventListener('pointermove', onMove);
       el.addEventListener('pointerup', onUp);
       el.addEventListener('pointercancel', onUp);
-      el.addEventListener('pointerleave', onUp);
+      el.addEventListener('lostpointercapture', onUp);
+      el.addEventListener('wheel', onWheel, { passive: false });
     }
 
     let resizeObs = null;
@@ -3816,6 +4268,7 @@ const Playground3D = (() => {
       _disposeRig(rig);
       rig = _buildPlayer(c);
       rotGroup.add(rig);
+      measureAt = 0;   // a new body may be a different height/build
     }
 
     function destroy() {
@@ -3849,7 +4302,12 @@ const Playground3D = (() => {
       window.addEventListener('three-ready', onReady);
     }
 
-    return { setCharacter, destroy };
+    // `_debug` — measurement + camera readback for verification scripts.
+    const _debug = () => ({
+      region, zoom, box: { ..._measureRig(rig) },
+      cam: camera ? camera.position.toArray() : null, look: { ...camLook }
+    });
+    return { setCharacter, focus, zoomBy, setZoom, getZoom, destroy, _debug };
   }
 
   // ── shared offscreen thumbnail renderer ──
@@ -3887,7 +4345,10 @@ const Playground3D = (() => {
   }
 
   // Render one character to a PNG data URL (null if THREE/WebGL unavailable).
-  // opts: { w, h, yaw }. Synchronous; callers spread batches across frames.
+  // opts: { w, h, yaw, focus }. `focus` names a body region (see
+  // PREVIEW_REGIONS) so an option tile shows the part it changes — a face
+  // tile fills with the head instead of a whole tiny figure. Synchronous;
+  // callers spread batches across frames.
   function renderThumbnail(character, opts) {
     opts = opts || {};
     const w = opts.w || 132, h = opts.h || 176;
@@ -3895,6 +4356,10 @@ const Playground3D = (() => {
     const rig = _buildPlayer(character);
     _thumbGroup.rotation.y = (opts.yaw != null) ? opts.yaw : 0.42;  // gentle 3/4 view
     _thumbGroup.add(rig);
+    _measureRig(rig);
+    const pose = _frameCamera(opts.focus || 'full', _thumbCam.fov, _thumbCam.aspect, 1);
+    _thumbCam.position.set(pose.pos[0], pose.pos[1], pose.pos[2]);
+    _thumbCam.lookAt(pose.look[0], pose.look[1], pose.look[2]);
     let url = null;
     try {
       _thumbR.render(_thumbScene, _thumbCam);
@@ -3951,7 +4416,9 @@ const Playground3D = (() => {
       orbit() { return _orbit ? { distance: _orbit.distance, azimuth: _orbit.azimuth, elevation: _orbit.elevation } : null; },
       camera() { return _camera ? { fov: _camera.fov, aspect: _camera.aspect } : null; },
       vicinity() { if (!_player) return null; const v = _computeVicinity(_player.position.x, _player.position.z); return { inside: v.inside, near: [...v.near], roads: v.roads.length }; },
-      teleport(x, z) { if (_player) { _player.position.set(x, 0, z); _lastSafe.x = x; _lastSafe.z = z; } },
+      teleport(x, z) { if (_player) { _seat = null; _player.rotation.x = 0; _player.position.set(x, _groundAt(x, z), z); _lastSafe.x = x; _lastSafe.z = z; } },
+      seat() { return _seat; },
+      seatCandidate() { return _seatCandidate; },
       // Advance one frame by hand when the tab is throttled (rAF frozen).
       // Cancels the queued frame first so the loop never doubles up.
       step() { if (!_running) return; if (_rafId) cancelAnimationFrame(_rafId); _tick(performance.now()); }

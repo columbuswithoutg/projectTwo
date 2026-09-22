@@ -12,6 +12,9 @@ const Project = require('../models/Project');
 const Character = require('../models/Character');
 const Location = require('../models/Location');
 const Dialogue = require('../models/Dialogue');
+const Report = require('../models/Report');
+const Messages = require('../server/messages');
+const MessagingLogic = require('../js/messaging-logic');
 const auth = require('../middleware/auth');
 
 // Cloudinary is already configured in routes/upload.js; the SDK is a
@@ -302,6 +305,92 @@ router.get('/audit', async (req, res) => {
     AuditLog.countDocuments(filter)
   ]);
   res.json({ items, total, page, limit });
+});
+
+// -----------------------------------------------------------------------
+// REPORTS — bug reports & suggestions filed by users (routes/reports.js is
+// the user side). Replies are pushed to the user's Messages inbox as the
+// reserved "Admin" sender so they notice them.
+// -----------------------------------------------------------------------
+
+function escapeRegexAdmin(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+router.get('/reports', async (req, res) => {
+  const { page, limit, skip } = clampPage(req);
+  const filter = {};
+  if (MessagingLogic.isKind(req.query.kind)) filter.kind = req.query.kind;
+  if (MessagingLogic.isStatus(req.query.status)) filter.status = req.query.status;
+  const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
+  if (q) {
+    const re = new RegExp(escapeRegexAdmin(q), 'i');
+    filter.$or = [{ title: re }, { username: re }];
+  }
+  const [items, total] = await Promise.all([
+    Report.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    Report.countDocuments(filter)
+  ]);
+  res.json({ items, total, page, limit });
+});
+
+router.get('/reports/:id', async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid report id' });
+  const doc = await Report.findById(req.params.id).lean();
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  res.json(doc);
+});
+
+router.patch('/reports/:id', async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid report id' });
+  const status = req.body && req.body.status;
+  if (!MessagingLogic.isStatus(status)) return res.status(400).json({ error: 'Invalid status' });
+  const doc = await Report.findById(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  const from = doc.status;
+  doc.status = status;
+  await doc.save();
+  logAudit(req, 'reportStatus', req.params.id, { from, to: status, username: doc.username, title: doc.title });
+  res.json(doc.toObject());
+});
+
+router.post('/reports/:id/replies', async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid report id' });
+  const v = MessagingLogic.validateReply(req.body);
+  if (!v.ok) return res.status(400).json({ error: MessagingLogic.errorText(v.error) });
+  const status = req.body && req.body.status;
+  if (status !== undefined && status !== '' && !MessagingLogic.isStatus(status)) {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+  const doc = await Report.findById(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  if (doc.replies.length >= MessagingLogic.C.REPLIES_MAX) return res.status(400).json({ error: 'Thread is full' });
+  doc.replies.push({ author: req.adminUser.id, authorUsername: req.adminUser.username, isAdmin: true, text: v.text });
+  doc.lastReplyAt = new Date();
+  if (status) doc.status = status;
+  await doc.save();
+
+  // Surface the reply in the user's inbox. Best-effort: a missing user
+  // (deleted since filing) or a Mongo blip must not fail the admin action.
+  const userExists = await User.exists({ _id: doc.user });
+  if (userExists) {
+    const label = doc.kind === 'bug' ? 'bug report' : 'suggestion';
+    Messages.sendSystem({
+      recipientId: doc.user,
+      reportId: doc._id,
+      text: `Re: your ${label} “${doc.title}” — ${v.text}`
+    }).catch(err => console.error('Report reply → inbox failed:', err && err.message));
+  }
+  logAudit(req, 'reportReply', req.params.id, { username: doc.username, title: doc.title, status: status || undefined });
+  res.json(doc.toObject());
+});
+
+router.delete('/reports/:id', async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid report id' });
+  const doc = await Report.findByIdAndDelete(req.params.id).lean();
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  logAudit(req, 'deleteReport', req.params.id, { username: doc.username, title: doc.title, kind: doc.kind });
+  res.json({ message: 'Report deleted' });
 });
 
 // -----------------------------------------------------------------------

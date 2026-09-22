@@ -105,7 +105,7 @@ app.use(express.json({ limit: '64kb' }));
 // SPA routes — BEFORE static middleware so they take priority over index.html
 const spaFile = path.join(DIST, 'spa.html');
 // '/spa.html' itself is the service worker's precached offline fallback.
-['/', '/spa.html', '/map', '/login', '/profile', '/characters', '/home', '/customize', '/admin', '/world', '/feed'].forEach(route => {
+['/', '/spa.html', '/map', '/login', '/profile', '/characters', '/home', '/customize', '/admin', '/world', '/feed', '/messages', '/reports'].forEach(route => {
   app.get(route, (req, res) => res.sendFile(spaFile));
 });
 // Parameterized SPA routes — `/friend/:username` and its sub-tabs all
@@ -224,6 +224,10 @@ app.use('/api/friends', apiLimiter, require('./routes/friends'));
 app.use('/api/feed', apiLimiter, require('./routes/feed'));
 app.use('/api/upload', uploadLimiter, require('./routes/upload'));
 app.use('/api/profile', apiLimiter, require('./routes/profile'));
+// Messages inbox (persisted whispers / DMs / admin replies) and bug &
+// suggestion reports (user side; the admin side is under /api/admin).
+app.use('/api/messages', apiLimiter, require('./routes/messages'));
+app.use('/api/reports', apiLimiter, require('./routes/reports'));
 // Keeper-editable /world houses (GET all + keepers, PUT by the island keeper).
 app.use('/api/world', apiLimiter, require('./routes/world'));
 app.use('/api/admin', adminLimiter, require('./middleware/requireAdmin'), require('./routes/admin'));

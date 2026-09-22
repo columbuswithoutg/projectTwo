@@ -175,20 +175,41 @@
       else ctx.fillRect(0, S * at - 3, S, 6);
     }
     tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;               // a wide pane repeats the pattern per cell
     _glassTex.set(key, tex);
     _shared.add(tex);
     return tex;
   }
 
   // A translucent pane for a carved window opening — mostly clear so the
-  // interior shows through the wall hole. Caller positions / orients it.
-  function windowGlass(THREE, style, w, h) {
+  // interior shows through the wall hole. `repeat` (default 1) tiles the
+  // mullion pattern that many times across the width, so a double window
+  // (two adjacent cells merged into one pane) shows two framed panes.
+  // Caller positions / orients it.
+  function windowGlass(THREE, style, w, h, repeat) {
     if (!THREE || !THREE.CanvasTexture || typeof document === 'undefined') return null;
     const mat = new THREE.MeshBasicMaterial({
       map: glassTexture(THREE, style), transparent: true, depthWrite: false, side: THREE.DoubleSide
     });
     mat.userData.keepMap = true;                    // texture is shared across the town
-    return new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    const geom = new THREE.PlaneGeometry(w, h);
+    const n = Math.max(1, Math.round(repeat || 1));
+    if (n > 1 && geom.attributes.uv) {
+      const uv = geom.attributes.uv;
+      for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * n);
+      uv.needsUpdate = true;
+    }
+    return new THREE.Mesh(geom, mat);
+  }
+
+  // See-through wall material for the 'glass' finish: a pale tint (or the
+  // keeper's wall colour) at low opacity. No shadows — glass casting a solid
+  // shadow reads wrong. Each panel gets its own instance like the others.
+  const GLASS_TINT = 0xcfe6f5;
+  function glassWallMaterial(THREE, color) {
+    return new THREE.MeshLambertMaterial({
+      color: color != null ? color : GLASS_TINT, transparent: true, opacity: 0.32
+    });
   }
 
   function isShared(tex) { return !!tex && _shared.has(tex); }
@@ -318,5 +339,5 @@
     if (group.parent) group.parent.remove(group);
   }
 
-  return { TILE_W, TILE_H, PITCH, OVERHANG, wallTexture, windowGlass, roofExtra, disposeRoofExtra, roofHeightAt, isShared };
+  return { TILE_W, TILE_H, PITCH, OVERHANG, GLASS_TINT, wallTexture, windowGlass, glassWallMaterial, roofExtra, disposeRoofExtra, roofHeightAt, isShared };
 });

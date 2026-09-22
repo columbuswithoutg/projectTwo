@@ -386,6 +386,29 @@
   // forward axis, expressed in each bone's PARENT rest frame and applied with
   // premultiply(). In the bone's own frame the offset would follow the bone —
   // once a punch swings the upper arm ~90° it becomes a twist along the arm.
+  // Sitting: thighs swung forward to horizontal, shins hanging from the knee,
+  // arms resting a little forward. Same parent-rest-frame construction as
+  // _postureOffsets so the offsets stay knee/hip hinges whatever the clip does.
+  function _sitOffsets(bones, rig) {
+    const THREE = T();
+    const out = [];
+    const X = new THREE.Vector3(1, 0, 0);
+    const add = (key, angle) => {
+      const nm = rig.cls[key] && rig.cls[key][0];
+      const i = nm != null ? rig.idx.get(nm) : null;
+      if (i == null) return;
+      const parent = bones[i].parent;
+      const inv = (parent ? parent.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion()).invert();
+      const ax = X.clone().applyQuaternion(inv).normalize();
+      out.push({ name: nm, q: new THREE.Quaternion().setFromAxisAngle(ax, angle) });
+    };
+    add('thigh.L', -Math.PI / 2); add('thigh.R', -Math.PI / 2);
+    add('shin.L', Math.PI / 2);   add('shin.R', Math.PI / 2);
+    add('upperArm.L', -0.3);      add('upperArm.R', -0.3);
+    add('forearm.L', -0.5);       add('forearm.R', -0.5);
+    return out;
+  }
+
   function _postureOffsets(bones, rig, posture) {
     const THREE = T();
     const out = [];
@@ -486,6 +509,7 @@
     }
     const posture = _postureOffsets(bones, rig, shape.posture);
     const lean = _postureOffsets(bones, rig, BACKPEDAL_POSE);
+    const sit = _sitOffsets(bones, rig);
     const strideRest = ['thigh.L', 'thigh.R', 'shin.L', 'shin.R']
       .map((k) => rig.cls[k] && rig.cls[k][0])
       .filter((nm) => nm != null && rig.idx.has(nm))
@@ -497,7 +521,7 @@
     const hipsY = jointY(rig.cls.hips);
     const waistY = hipsY + (jointY(rig.cls.spine[0]) - hipsY) * WAIST_K;
     const variant = {
-      key, model, build, shape, template: tpl, A, rig, posture, lean, strideRest, waistY,
+      key, model, build, shape, template: tpl, A, rig, posture, lean, sit, strideRest, waistY, hipsY,
       partBox: _partBoxes(body.geometry), hairGeo: new Map()
     };
     _variants.set(key, variant);
@@ -1089,6 +1113,24 @@
     let leanOn = false;
     function setBackpedal(on) { leanTarget = on ? 1 : 0; }
 
+    // Sit pose — a third offset layer (applied after lean, restored first).
+    const sit = (variant.sit || []).map((p) => ({ bone: boneBy(p.name), q: p.q, clean: new THREE.Quaternion() })).filter((p) => p.bone);
+    const poseQ = new THREE.Quaternion();
+    let poseTarget = 0;
+    let poseW = 0;
+    let poseOn = false;
+    function setPose(name) { poseTarget = name === 'sit' ? 1 : 0; }
+    function _applyPoseLayer(dt) {
+      if (!sit.length) return;
+      poseW += (poseTarget - poseW) * (1 - Math.exp(-dt * 10));
+      if (poseW < 0.001) { poseW = poseTarget ? poseW : 0; return; }
+      for (const p of sit) {
+        p.clean.copy(p.bone.quaternion);
+        p.bone.quaternion.premultiply(poseQ.identity().slerp(p.q, poseW));
+      }
+      poseOn = true;
+    }
+
     function _applyPosture(dt) {
       if (!posture.length) return;
       const down = currentState === 'down' || currentState === 'getup';
@@ -1217,7 +1259,7 @@
     applyLook(look);
     const handle = {
       object: pivot, body, mixer, shape: variant.shape, anchors,
-      setState, play, applyLook, setOpacity, setShadows, attachSlot, setFist, setHitFlash, setBackpedal, dispose,
+      setState, play, applyLook, setOpacity, setShadows, attachSlot, setFist, setHitFlash, setBackpedal, setPose, dispose,
       update(dt) {
         _decayFlash(dt);
         // Put the clean (animation-only) rotations back before the mixer runs.
@@ -1225,7 +1267,11 @@
         // when an action activates and lerps towards it at partial weight, so
         // leaving the offset on the bone made every clip change compound it —
         // the Hulk-type ended up tilted 75° mid-punch.
-        // Undo in reverse order of application: lean went on last.
+        // Undo in reverse order of application: pose went on last, then lean.
+        if (poseOn) {
+          for (let i = sit.length - 1; i >= 0; i--) sit[i].bone.quaternion.copy(sit[i].clean);
+          poseOn = false;
+        }
         if (leanOn) {
           for (let i = stride.length - 1; i >= 0; i--) stride[i].bone.quaternion.copy(stride[i].clean);
           for (let i = lean.length - 1; i >= 0; i--) lean[i].bone.quaternion.copy(lean[i].clean);
@@ -1239,8 +1285,11 @@
         _applyFists();
         _applyPosture(dt);
         _applyLean(dt);
+        _applyPoseLayer(dt);
       },
       get backpedal() { return leanW; },
+      get pose() { return poseW; },
+      get hipsY() { return variant.hipsY; },   // hip joint height in character units (seat placement)
       get state() { return currentState; }
     };
     _lastInstance = handle;          // debugging aid (PG3DHumanoid._debug.last)

@@ -33,20 +33,50 @@
     return false;
   }
 
+  // ── Standable props ──
+  // Collision boxes may carry a `top` (a crate, table, chair, bookshelf, bed):
+  // from the side they block like a wall, but a player whose feet are at or
+  // near the top stands on them. A box without `top` blocks at any height.
+  const STEP = 0.25;   // a lip this small is stepped up, not bumped into
+
+  // Highest standable surface under the player square [x±r, z±r], else 0.
+  function groundAt(x, z, r, boxes) {
+    let g = 0;
+    for (const b of boxes || []) {
+      if (b.top == null) continue;
+      if (x + r <= b.minX || x - r >= b.maxX || z + r <= b.minZ || z - r >= b.maxZ) continue;
+      if (b.top > g) g = b.top;
+    }
+    return g;
+  }
+
+  // Does this box stop horizontal movement for feet at `feetY`?
+  function blocksAt(box, feetY, step) {
+    if (box.top == null) return true;
+    return feetY < box.top - (step == null ? STEP : step);
+  }
+
   // One frame of vertical jump/fall integration.
   // ceilingCap: max feet-Y before the head hits a roof, or null outdoors.
-  // Returns { y, velY, landed, bonked }. `landed` means y crossed <= 0 this
-  // frame — the CALLER decides whether that's a landing (walkable ground)
-  // or the start of a fall (keep integrating below 0).
-  function stepVertical(y, velY, dt, gravity, ceilingCap) {
+  // floorY: the surface under the player (0 = the ground; a prop's top when
+  // standing on one). The cap never clamps below the floor — a low lintel
+  // must not push a player standing on a crate down into it.
+  // Returns { y, velY, landed, bonked }. `landed` means y crossed <= floorY
+  // this frame — the CALLER decides whether that's a landing (walkable
+  // ground) or the start of a fall (keep integrating below it).
+  function stepVertical(y, velY, dt, gravity, ceilingCap, floorY) {
+    const floor = floorY || 0;
     let bonked = false;
     velY -= gravity * dt;
     y += velY * dt;
-    if (ceilingCap != null && y > ceilingCap) {
-      y = ceilingCap;
-      if (velY > 0) { velY = 0; bonked = true; }
+    if (ceilingCap != null) {
+      const cap = Math.max(ceilingCap, floor);
+      if (y > cap) {
+        y = cap;
+        if (velY > 0) { velY = 0; bonked = true; }
+      }
     }
-    return { y, velY, landed: y <= 0, bonked };
+    return { y, velY, landed: y <= floor, bonked };
   }
 
   // Whether a fall in progress should give up and respawn this frame.
@@ -248,7 +278,7 @@
   }
 
   return {
-    isWalkable, stepVertical, shouldRespawn, airtime, airCarry, pickPunchTarget,
+    isWalkable, STEP, groundAt, blocksAt, stepVertical, shouldRespawn, airtime, airCarry, pickPunchTarget,
     actorRadius, spawnIslands, PUNCH_COOLDOWN_MS, punchCooldown, hash01, npcPatrol, npcPathPoint,
     pinchZoom, fovForAspect
   };

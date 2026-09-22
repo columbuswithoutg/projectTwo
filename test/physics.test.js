@@ -100,6 +100,36 @@ test('stepVertical: keeps integrating below zero during a fall', () => {
   assert.ok(y < -5, `after 1s of freefall y=${y} should be well below the world`);
 });
 
+test('standable props: groundAt / blocksAt / stepVertical onto a floor', () => {
+  const crate = { minX: 1, maxX: 2, minZ: 1, maxZ: 2, top: 0.8 };
+  const shelf = { minX: 1.5, maxX: 2.5, minZ: 1.5, maxZ: 2.5, top: 1.8 };
+  const wall = { minX: 5, maxX: 6, minZ: 0, maxZ: 10 };
+  const r = 0.45;
+  assert.equal(P.groundAt(1.5, 1.5, r, []), 0);
+  assert.equal(P.groundAt(1.5, 1.5, r, [crate]), 0.8);
+  assert.equal(P.groundAt(2.0, 2.0, r, [crate, shelf]), 1.8);          // highest wins
+  assert.equal(P.groundAt(2.4, 1.2, r, [crate]), 0.8);                 // partial overlap still counts
+  assert.equal(P.groundAt(4, 4, r, [crate, shelf]), 0);
+  assert.equal(P.groundAt(5.5, 5, r, [wall]), 0);                      // walls have no top
+  assert.equal(P.blocksAt(wall, 3), true);
+  assert.equal(P.blocksAt(crate, 0), true);
+  assert.equal(P.blocksAt(crate, 0.8 - P.STEP - 0.01), true);
+  assert.equal(P.blocksAt(crate, 0.8 - P.STEP), false);                // within a step of the top
+  assert.equal(P.blocksAt(crate, 1.2), false);
+  // landing from a jump onto a crate top
+  let y = 1.2, velY = -1;
+  let s;
+  for (let i = 0; i < 60; i++) { s = P.stepVertical(y, velY, 1 / 60, GRAVITY, null, 0.8); y = s.y; velY = s.velY; if (s.landed) break; }
+  assert.equal(s.landed, true);
+  assert.ok(y <= 0.8 && y > 0.6, `landed at ${y}`);
+  // a cap below the floor is ignored (never clamps you into your own platform)
+  const c = P.stepVertical(0.8, 0, 1 / 60, GRAVITY, 0.3, 0.8);
+  assert.ok(c.y <= 0.8 && c.y > 0.7);
+  assert.equal(c.bonked, false);
+  // default floor is still the ground
+  assert.equal(P.stepVertical(0.01, -1, 1 / 60, GRAVITY, null).landed, true);
+});
+
 test('shouldRespawn: fires on the timer OR the depth, not before', () => {
   assert.equal(P.shouldRespawn(1500, 1000, -3, FALL_OPTS), false); // 500ms in, above depth
   assert.equal(P.shouldRespawn(2000, 1000, -3, FALL_OPTS), true);  // timer elapsed

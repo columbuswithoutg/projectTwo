@@ -20,6 +20,7 @@ const ProjectStay = require('../models/ProjectStay');
 const WorldHouse = require('../models/WorldHouse');
 const User = require('../models/user');
 const HouseLogic = require('../js/world-house-logic');
+const AdminConfig = require('../models/AdminConfig');
 const WorldSocket = require('./world-socket');
 
 const HOUSE_FIELDS = 'projectId wallColor roofColor trimColor lampColor sign portrait props roofStyle roofDir chimney wallStyle windowStyle windows';
@@ -30,9 +31,45 @@ const HOUSE_FIELDS = 'projectId wallColor roofColor trimColor lampColor sign por
 const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
 const CLOUDINARY_PREFIX = CLOUD_NAME ? `https://res.cloudinary.com/${CLOUD_NAME}/` : '';
 
+// Reading never truncates: a stored house keeps every prop even if the
+// admin later lowered the cap (the keeper just can't add more). The grid
+// itself is the only ceiling here.
+const READ_CAP = HouseLogic.C.GRID_MAX * HouseLogic.C.GRID_MAX;
 function toHouse(doc) {
-  const { house } = HouseLogic.validateHouse(doc || {});
+  const { house } = HouseLogic.validateHouse(doc || {}, { maxProps: READ_CAP });
   return house;
+}
+
+// Admin-set prop cap (AdminConfig world.maxProps), cached like the flags in
+// world-socket.js so GET / PUT never wait on Mongo for it. Falls back to the
+// shared default when unset.
+const MAX_PROPS_TTL_MS = 15000;
+let _maxProps = AdminConfig.defaults().world.maxProps || HouseLogic.C.MAX_PROPS;
+let _maxPropsAt = 0;
+let _maxPropsRefreshing = false;
+function maxPropsSetting() {
+  if (Date.now() - _maxPropsAt >= MAX_PROPS_TTL_MS && !_maxPropsRefreshing) {
+    _maxPropsRefreshing = true;
+    AdminConfig.findOne({}).select('world.maxProps').lean()
+      .then((doc) => {
+        const v = doc && doc.world && doc.world.maxProps;
+        _maxProps = Number.isFinite(v) && v >= 1 ? v : (AdminConfig.defaults().world.maxProps || HouseLogic.C.MAX_PROPS);
+        _maxPropsAt = Date.now();
+      })
+      .catch(() => { /* keep the last known value */ })
+      .finally(() => { _maxPropsRefreshing = false; });
+  }
+  return _maxProps;
+}
+// Fresh read for the PUT: the keeper's save must respect a cap changed
+// seconds ago, so this one awaits Mongo (it is not a hot path).
+async function maxPropsNow() {
+  try {
+    const doc = await AdminConfig.findOne({}).select('world.maxProps').lean();
+    const v = doc && doc.world && doc.world.maxProps;
+    if (Number.isFinite(v) && v >= 1) { _maxProps = v; _maxPropsAt = Date.now(); }
+  } catch (_) { /* fall through to the cached value */ }
+  return maxPropsSetting();
 }
 
 // Top stay row per project, joined to the username. Returns
@@ -65,12 +102,12 @@ router.get('/houses', auth, async (req, res) => {
   ]);
   const mine = {};
   for (const r of myRows) if (r.ms > 0) mine[r.projectId] = r.ms;
-  res.json({ me: String(req.user.id), houses, keepers, mine });
+  res.json({ me: String(req.user.id), houses, keepers, mine, maxProps: maxPropsSetting() });
 });
 
 router.put('/houses/:projectId', auth, async (req, res) => {
   const projectId = String(req.params.projectId || '').slice(0, 64);
-  const v = HouseLogic.validateHouse(req.body);
+  const v = HouseLogic.validateHouse(req.body, { maxProps: await maxPropsNow() });
   if (!v.ok) return res.status(400).json({ error: v.error });
   if (v.house.portrait && (!CLOUDINARY_PREFIX || !v.house.portrait.startsWith(CLOUDINARY_PREFIX))) {
     return res.status(400).json({ error: 'portrait must be an image uploaded through this app' });

@@ -106,7 +106,8 @@
     switch (err) {
       case 'cooldown':   return `Slow down — you can chat in World again in ${Math.ceil(((info && info.retryInMs) || 0) / 1000)}s.`;
       case 'no-project': return 'You’re not on a project island — walk onto one to use Project chat.';
-      case 'not-found':  return `${(info && info.to) || 'That player'} isn’t in the world right now.`;
+      case 'not-found':  return `${(info && info.to) || 'That player'} isn’t a player here.`;
+      case 'not-sent':   return 'Couldn’t deliver that whisper — try again.';
       case 'self':       return 'You can’t whisper to yourself.';
       case 'no-target':  return 'Pick someone to whisper to.';
       case 'empty':      return 'Type a message first.';

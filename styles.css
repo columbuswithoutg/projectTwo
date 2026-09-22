@@ -4953,6 +4953,35 @@ body.fight-active .flow-wrapper {
   transition: opacity 0.5s ease;
 }
 .pg3d-bubble.fading { opacity: 0; }
+/* "Sit (E)" / "Lie down (E)" pill over the nearest chair / bed. */
+.pg3d-seatprompt { border: 1px solid rgba(255, 215, 64, 0.7); pointer-events: none; }
+/* Touch interact button — stacked above punch, only while a seat is near or taken. */
+.pg-sit {
+  position: fixed;
+  right: 24px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 212px);
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 215, 64, 0.8);
+  background: rgba(7, 8, 15, 0.7);
+  color: #fff;
+  font-size: 24px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.pg-sit:active { background: rgba(255, 215, 64, 0.35); }
+@media (pointer: coarse), (max-width: 768px) {
+  .pg-sit.pg-sit--on { display: flex; }
+}
+@media (orientation: landscape) and (max-height: 520px) {
+  .pg-sit { right: calc(24px + 76px + 76px); bottom: 24px; }
+}
+body.nav-open .pg-sit { display: none; }
 .pg3d-nodelabel {
   font-family: var(--font-display);
   font-size: 11px;
@@ -5436,6 +5465,7 @@ body.fight-active .flow-wrapper {
   background: rgba(255, 215, 64, 0.16);
 }
 .world-house-chip[hidden] { display: none; }
+.world-house-row.dimmed, .world-house-kind.dimmed { opacity: 0.45; }
 .world-house-chipsep { width: 1px; height: 18px; background: rgba(255, 255, 255, 0.18); margin: 0 2px; }
 .world-house-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 8px; }
 .world-house-kind-window { border-style: dashed; }
@@ -5480,6 +5510,15 @@ body.fight-active .flow-wrapper {
 .world-house-window rect { fill: rgba(200, 222, 240, 0.28); stroke: rgba(255, 255, 255, 0.5); stroke-width: 1; }
 .world-house-window.selected rect { stroke: #ffd740; stroke-width: 2; fill: rgba(255, 215, 64, 0.22); }
 .world-house-window.auto { opacity: 0.45; pointer-events: none; }
+/* A run of bookshelves: one joined outline behind the cells, no per-cell box. */
+.world-house-run { fill: rgba(122, 90, 58, 0.45); stroke: rgba(255, 255, 255, 0.5); stroke-width: 1.5; pointer-events: none; }
+.world-house-prop.in-run rect { fill: transparent; stroke: none; }
+.world-house-prop.in-run.selected rect { stroke: #ffd740; stroke-width: 2; }
+.world-house-count.over { color: #ff8a80; font-weight: 700; }
+/* Spawn picker: the houses you keep come first. */
+.world-spawn-section { margin: 12px 0 6px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.6); }
+.world-spawn-card.preselected { outline: 2px solid #ffd740; outline-offset: 2px; }
+.world-spawn-card.world-spawn-house .world-spawn-count { color: #ffd740; }
 .world-house-prop { cursor: pointer; }
 .world-house-prop rect { fill: rgba(255, 255, 255, 0.14); stroke: rgba(255, 255, 255, 0.35); stroke-width: 1; }
 .world-house-prop path { fill: #ffd740; }
@@ -6346,7 +6385,33 @@ body:has(#nav-drawer.open) .world-chat-row {
   background: radial-gradient(circle at 50% 38%, #1a1e34 0%, #07080f 72%);
   border-right: 1px solid rgba(255, 255, 255, 0.06);
 }
+/* The canvas host fills the preview; the zoom buttons float over it. */
+.cz-stage { position: absolute; inset: 0; }
 .cz-preview .pg-preview-canvas { width: 100%; height: 100%; }
+.cz-zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 2;
+}
+.cz-zoom-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(10, 12, 24, 0.72);
+  color: var(--color-text-warm, #eee);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: border-color 0.12s, background 0.12s;
+}
+.cz-zoom-btn:hover { border-color: rgba(237, 29, 36, 0.6); background: rgba(237, 29, 36, 0.18); }
+.cz-zoom-fit { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
 /* 2D fallback sprite centered + enlarged. */
 .cz-preview .pg-builder-sprite {
   position: absolute;
@@ -7644,4 +7709,457 @@ a.feed-name:hover { text-decoration: underline; }
   bottom: -4px;
   font-size: 15px;
   line-height: 1;
+}
+
+/* ==========================================
+   MESSAGES (/messages), MY REPORTS (/reports),
+   the "Report a bug" dialog and the drawer unread badge
+========================================== */
+
+/* Drawer / profile unread pill. Drawer buttons become flex rows so the
+   badge hugs the right edge; text-align:left is preserved by the flex
+   start alignment. */
+#nav-drawer-content nav button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--color-primary);
+  color: var(--text-on-accent);
+}
+.nav-badge[hidden] { display: none; }
+
+/* Report dialog — a left-aligned form inside the branded confirm box. */
+.report-box {
+  text-align: left;
+  max-width: 460px;
+}
+.report-box .confirm-title { text-align: center; }
+.report-box .confirm-message { text-align: center; margin-bottom: 16px; }
+.report-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.report-field label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.report-box input,
+.report-box select,
+.report-box textarea,
+.msg-compose input,
+.msg-compose textarea,
+.msg-form textarea,
+.report-form textarea {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-2);
+  background: rgba(var(--ink), 0.04);
+  color: var(--text-1);
+  font-size: 1rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+  resize: vertical;
+}
+.report-box input:focus,
+.report-box select:focus,
+.report-box textarea:focus,
+.msg-compose input:focus,
+.msg-compose textarea:focus,
+.msg-form textarea:focus,
+.report-form textarea:focus {
+  border-color: rgba(237, 29, 36, 0.55);
+  background: rgba(237, 29, 36, 0.04);
+}
+.report-counter {
+  align-self: flex-end;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.report-error {
+  margin: 0 0 10px;
+  color: var(--color-red-light);
+  font-size: 0.9rem;
+}
+.report-meta {
+  margin: 0 0 14px;
+  font-size: 0.78rem;
+  color: var(--text-3);
+}
+.report-meta code,
+.admin-report-detail code {
+  font-size: 0.78rem;
+  background: rgba(var(--ink), 0.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+/* Shared page shell for /messages and /reports (same scroll frame as /feed). */
+#messages-wrapper,
+#reports-wrapper {
+  position: fixed;
+  top: calc(var(--header-height) + env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow-y: auto;
+  background: var(--color-bg);
+  padding: var(--space-4) var(--space-3) var(--space-8);
+  padding-bottom: calc(var(--space-8) + env(safe-area-inset-bottom));
+}
+.msg-column {
+  max-width: 640px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.msg-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.msg-btn,
+.msg-new-btn {
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: var(--gold-gradient);
+  color: var(--text-on-accent);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.1s, background 0.15s;
+  white-space: nowrap;
+}
+.msg-btn:hover,
+.msg-new-btn:hover { transform: translateY(-1px); }
+.msg-btn:disabled { opacity: 0.6; cursor: default; transform: none; }
+.msg-btn-ghost {
+  background: rgba(var(--ink), 0.05);
+  border-color: var(--border-2);
+  color: var(--text-2);
+}
+.reports-inbox-link {
+  font-size: 0.85rem;
+  color: var(--accent-text);
+  text-decoration: none;
+}
+.reports-inbox-link:hover { text-decoration: underline; }
+
+.msg-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+}
+.msg-compose-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* These carry display:flex, which would otherwise beat the `hidden` attribute. */
+.msg-compose[hidden],
+.admin-pager[hidden],
+.report-card-body[hidden] { display: none; }
+
+.msg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.msg-empty {
+  padding: var(--space-5) var(--space-3);
+  text-align: center;
+  color: var(--text-3);
+  font-size: 0.95rem;
+}
+.msg-conv {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-lg);
+  color: var(--text-1);
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+.msg-conv:hover { border-color: var(--gold-035); }
+.msg-conv:disabled { opacity: 0.6; cursor: default; }
+.msg-conv.unread { border-color: rgba(237, 29, 36, 0.35); background: rgba(237, 29, 36, 0.03); }
+.msg-conv-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.msg-conv-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.msg-conv-name { font-weight: 700; }
+.msg-conv.unread .msg-conv-name { color: var(--accent-text); }
+.msg-conv-time { font-size: 0.75rem; color: var(--text-3); white-space: nowrap; }
+.msg-conv-preview {
+  font-size: 0.9rem;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-conv.unread .msg-conv-preview { color: var(--text-1); }
+.msg-avatar-system { background: linear-gradient(135deg, #1e293b, #475569); }
+.msg-unread {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--color-primary);
+  color: var(--text-on-accent);
+  flex-shrink: 0;
+}
+
+/* Thread */
+.msg-thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.msg-thread-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.msg-back {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border-1);
+  background: var(--surface-2);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-1);
+}
+.msg-thread-name {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.msg-thread-sub { font-size: 0.8rem; color: var(--text-3); width: 100%; padding-left: 46px; }
+.msg-earlier { align-self: center; }
+.msg-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-lg);
+  overflow-y: auto;
+  min-height: 200px;
+  max-height: 60vh;
+}
+.msg-bubble {
+  max-width: 78%;
+  align-self: flex-start;
+  padding: 9px 12px;
+  border-radius: 14px 14px 14px 4px;
+  background: var(--surface-2);
+  color: var(--text-1);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.msg-bubble.mine {
+  align-self: flex-end;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--color-primary);
+  color: var(--text-on-accent);
+}
+.msg-bubble.system {
+  background: linear-gradient(135deg, #1e293b, #334155);
+  color: #fff;
+}
+.msg-bubble-text { white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
+.msg-bubble-meta { font-size: 0.7rem; opacity: 0.75; }
+.msg-bubble-meta a { color: inherit; font-weight: 700; }
+.msg-form {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.msg-form textarea { flex: 1; }
+.msg-system-note { margin: 0; font-size: 0.85rem; color: var(--text-3); text-align: center; }
+.msg-system-note a { color: var(--accent-text); }
+
+/* My reports */
+.report-list { display: flex; flex-direction: column; gap: 8px; }
+.report-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+.report-card.open { border-color: var(--gold-035); }
+.report-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: 0;
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.report-title { flex: 1; min-width: 0; font-weight: 700; }
+.report-date { font-size: 0.75rem; color: var(--text-3); white-space: nowrap; }
+.report-pill {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 4px;
+  font-weight: 700;
+  background: rgba(var(--ink), 0.1);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.report-kind-bug { background: rgba(226, 54, 54, 0.18); color: var(--color-red-light); }
+.report-kind-suggestion { background: rgba(47, 127, 240, 0.18); color: #2f7ff0; }
+.report-status-open { background: rgba(201, 138, 0, 0.18); color: #c98a00; }
+.report-status-in-progress { background: rgba(47, 127, 240, 0.18); color: #2f7ff0; }
+.report-status-fixed { background: rgba(74, 222, 128, 0.2); color: var(--color-health-good, #22a35a); }
+.report-status-wontfix,
+.report-status-closed { background: rgba(var(--ink), 0.1); color: var(--text-3); }
+.report-card-body {
+  padding: 0 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border-1);
+}
+.report-desc { margin: 12px 0 0; white-space: pre-wrap; line-height: 1.5; color: var(--text-2); }
+.report-thread { display: flex; flex-direction: column; gap: 8px; }
+.report-reply {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  border-left: 3px solid var(--border-2);
+}
+.report-reply.admin { border-left-color: var(--color-primary); background: rgba(237, 29, 36, 0.05); }
+.report-reply-from { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); }
+.report-reply.admin .report-reply-from { color: var(--accent-text); }
+.report-reply-text { white-space: pre-wrap; line-height: 1.45; }
+.report-reply-time { font-size: 0.72rem; color: var(--text-3); }
+.report-noreply { margin: 0; font-size: 0.85rem; color: var(--text-3); }
+.report-form { display: flex; gap: 8px; align-items: flex-end; }
+.report-form textarea { flex: 1; }
+
+/* Profile → Support section */
+#profile-support { margin: 18px 0; width: 100%; max-width: 560px; }
+.profile-support-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.profile-support-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-2);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.profile-support-btn:hover { border-color: var(--gold-04); }
+.profile-support-btn.primary { background: var(--gold-gradient); color: var(--text-on-accent); border-color: transparent; }
+.profile-support-btn .nav-badge { margin-left: 0; }
+
+/* Admin → Reports tab */
+.admin-pill-bug,
+.admin-pill-deleteReport { background: rgba(226,54,54,0.25); color: var(--color-red-light); }
+.admin-pill-suggestion { background: rgba(47,127,240,0.2); color: #2f7ff0; }
+.admin-pill-reportReply,
+.admin-pill-reportStatus { background: rgba(74,222,128,0.2); color: var(--color-health-good); }
+.admin-pill-status-open { background: rgba(201,138,0,0.2); color: #c98a00; }
+.admin-pill-status-in-progress { background: rgba(47,127,240,0.2); color: #2f7ff0; }
+.admin-pill-status-fixed { background: rgba(74,222,128,0.2); color: var(--color-health-good); }
+.admin-pill-status-wontfix,
+.admin-pill-status-closed { background: rgba(var(--ink), 0.1); color: var(--text-3); }
+.admin-report-row { flex-direction: column; align-items: stretch; }
+.admin-report-row.open { border: 1px solid var(--gold-035); }
+.admin-report-title {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-1);
+  cursor: pointer;
+  text-align: left;
+}
+.admin-report-title:hover { color: var(--accent-text); }
+.admin-detail {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-1);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.admin-report-desc { margin: 0; white-space: pre-wrap; line-height: 1.5; }
+.admin-reports-thread { display: flex; flex-direction: column; gap: 6px; }
+textarea.admin-input { min-height: 80px; resize: vertical; font-family: inherit; }
+.admin-report-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.admin-report-actions .admin-input { flex: 0 1 180px; }
+
+@media (max-width: 768px) {
+  .msg-bubble { max-width: 90%; }
+  .msg-log { max-height: none; }
+  .msg-form, .report-form { flex-direction: column; align-items: stretch; }
+  .report-card-head { gap: 6px; }
+  .report-title { flex-basis: 100%; order: -1; }
 }

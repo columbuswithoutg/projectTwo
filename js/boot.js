@@ -70,6 +70,8 @@ Router.register('/feed', FeedView);
 Router.register('/login', LoginView);
 Router.register('/profile', ProfileView);
 Router.register('/characters', CharactersView);
+Router.register('/messages', MessagesView);
+Router.register('/reports', ReportsView);
 // Lazy routes. The 3D views, sockets and voice ride in the `world` chunk and
 // the admin panel in `admin` (chunk lists: scripts/build.mjs). Router.register
 // accepts a function that resolves to the view: Chunks.load injects the
@@ -88,6 +90,9 @@ Router.register('/friend/:username/map',     FriendMapView);
 Router.register('/friend/:username/home',    lazyRoute(['world'], () => FriendHomeView));
 Router.register('/friend/:username/profile', FriendProfileView);
 Router.init('app');
+// Unread-messages badge in the nav drawers — polls a cheap endpoint; each
+// view paints the cached count into its own drawer via MessagesBadge.apply().
+MessagesBadge.start();
 
 // First view is mounted — fade the static boot splash out and drop it.
 // The setTimeout is a safety net in case transitionend never fires

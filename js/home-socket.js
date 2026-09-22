@@ -92,7 +92,7 @@ const Multiplayer = (() => {
 
     const socket = io({ auth: { token: Auth.getToken() } });
     let posTimer = null;
-    let lastPosSent = { x: 0, y: 0, z: 0, yaw: 0, walking: false, backward: false };
+    let lastPosSent = { x: 0, y: 0, z: 0, yaw: 0, walking: false, backward: false, pose: null };
     let chatLog = [];
 
     const esc = (s) => String(s).replace(/[&<>"']/g, c =>
@@ -292,6 +292,10 @@ const Multiplayer = (() => {
           if (cmd) { setWhisperTarget(cmd.to); setTab('whisper'); }
           // Whispers are private — no speech bubble over our head.
           if (channel !== 'whisper' && Playground3D.showLocalChat) Playground3D.showLocalChat(text);
+          // The server stored it for a player who isn't in the world right now.
+          if (res.offline && typeof toast === 'function') {
+            toast(`${res.to || to} isn’t in the world — delivered to their Messages inbox.`, 'info');
+          }
           if (ChatL.hasCooldown(channel)) startCooldown(res.cooldownMs || ChatL.C.COOLDOWN_MS);
           else renderCooldown();
           return;
@@ -334,7 +338,7 @@ const Multiplayer = (() => {
         // position tick to go out (even standing still) so the server
         // re-derives our zone and the Project tab comes back.
         chan.projectId = null;
-        lastPosSent = { x: NaN, y: 0, z: NaN, yaw: 0, walking: false, backward: false };
+        lastPosSent = { x: NaN, y: 0, z: NaN, yaw: 0, walking: false, backward: false, pose: null };
         renderTabs();
         if (onZone) onZone(null);
       }
@@ -357,15 +361,15 @@ const Multiplayer = (() => {
         Playground3D.setWorldClockOffset(serverTime - Date.now());
       }
       for (const p of (players || [])) {
-        Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y);
+        Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y, p.pose);
       }
     });
     socket.on(events.joined, (p) => {
-      Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y);
+      Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y, p.pose);
       if (events.channels && chan.active === 'whisper') refreshWhisperPicker();
     });
     socket.on(events.pos, (p) => {
-      Playground3D.updateRemotePlayer(p.id, p.x, p.z, p.yaw, p.walking, p.y, p.backward);
+      Playground3D.updateRemotePlayer(p.id, p.x, p.z, p.yaw, p.walking, p.y, p.backward, p.pose);
     });
     socket.on(events.left, ({ id }) => {
       Playground3D.removeRemotePlayer(id);
@@ -581,9 +585,11 @@ const Multiplayer = (() => {
       const dy = Math.abs((s.y || 0) - (lastPosSent.y || 0));
       const dyaw = Math.abs(((s.yaw - lastPosSent.yaw) + Math.PI) % (2 * Math.PI) - Math.PI);
       const backward = !!s.backward;
+      const pose = s.pose || null;    // 'sit' | 'lie' | null — persistent, so a change always sends
       if (dx < POS_EPSILON && dz < POS_EPSILON && dy < POS_EPSILON && dyaw < YAW_EPSILON
-          && s.walking === lastPosSent.walking && backward === lastPosSent.backward) return;
-      lastPosSent = { x: s.x, y: s.y || 0, z: s.z, yaw: s.yaw, walking: s.walking, backward };
+          && s.walking === lastPosSent.walking && backward === lastPosSent.backward
+          && pose === lastPosSent.pose) return;
+      lastPosSent = { x: s.x, y: s.y || 0, z: s.z, yaw: s.yaw, walking: s.walking, backward, pose };
       socket.emit(events.pos, lastPosSent);
     }, POS_INTERVAL_MS);
 

@@ -218,7 +218,8 @@
   }
 
   // inp: { speed, maxSpeed, airborne, velY, falling, now, landAt,
-  //        downUntil, getupUntil, hitUntil, punchUntil, emoteUntil }
+  //        downUntil, getupUntil, hitUntil, punchUntil, emoteUntil,
+  //        pose ('sit' | 'lie' | null) }
   // → { base, overlay, timeScale }
   function selectAnimState(inp, opts) {
     const A = Object.assign({}, ANIM, opts || {});
@@ -228,6 +229,9 @@
 
     const down = downPhase(now, inp.downUntil, inp.getupUntil);
     if (down) return { base: down, overlay: null, timeScale: 1 };
+    // Sitting / lying: the pose layer owns the limbs over a plain idle, and
+    // no overlay (a punch from a chair would tear the pose apart).
+    if (inp.pose) return { base: 'idle', overlay: null, timeScale: 1 };
 
     let base;
     let timeScale = 1;

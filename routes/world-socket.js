@@ -2,7 +2,11 @@
  * WORLD SOCKET — Socket.IO handlers for /world
  *
  * Real-time presence + chat + emotes for the walkable universe map.
- * In-memory only; no persistence (chat is ephemeral by design).
+ * In-memory only; no persistence (World / Project chat is ephemeral by
+ * design). The one exception is whispers: every whisper is also written to
+ * the Message collection so it shows up in the /messages inbox, and a
+ * whisper to a player who is NOT in the world right now is stored for
+ * them instead of failing (see handleWhisper).
  *
  * Auth: JWT in socket.handshake.auth.token — same secret as the HTTP
  * auth middleware. Rejected sockets never reach the connection handler.
@@ -20,6 +24,8 @@ const ChatLogic = require('../js/world-chat-logic');
 const Stay = require('../js/world-stay-logic');
 const Project = require('../models/Project');
 const ProjectStay = require('../models/ProjectStay');
+const Message = require('../models/Message');
+const MessagingLogic = require('../js/messaging-logic');
 const { PUNCH_COOLDOWN_MS } = require('../js/playground3d-physics');
 
 // Whitelisted homeCharacter slots (mirrors models/user.js homeCharacter). The
@@ -120,6 +126,73 @@ function flushStays() {
 
 const MAX_USERNAME = 40;
 const MAX_CHAT_LEN = 200;
+
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Push a whisper-shaped chat line to every live /world socket of `userId`
+// (normally one). Used by the HTTP /api/messages route so a message sent
+// from the inbox page lands in the recipient's Whisper tab if they happen to
+// be standing in the world. Returns how many sockets received it.
+function deliverWhisper(userId, out) {
+  if (!_io) return 0;
+  const id = String(userId);
+  let n = 0;
+  for (const p of worldPlayers.values()) {
+    if (String(p.userId) === id) { _io.to(p.socketId).emit('world:chat', out); n++; }
+  }
+  return n;
+}
+
+// Whisper branch of 'world:chat'. Online target → live delivery exactly as
+// before, plus a best-effort Message row (readAt set: they saw it). Offline
+// target → look the username up in Mongo; a real user gets the message stored
+// (readAt null → counts as unread in their inbox) and the sender an echo
+// flagged `offline`; an unknown name is still 'not-found'.
+async function handleWhisper(io, socket, p, m, out, reply) {
+  let target = null;
+  for (const other of worldPlayers.values()) {
+    if (ChatLogic.sameName(other.username, m.to)) { target = other; break; }
+  }
+  if (target) {
+    if (target.userId === p.userId) return reply({ ok: false, error: 'self' });
+    out.to = target.username;
+    io.to(target.socketId).emit('world:chat', out);
+    socket.emit('world:chat', out);
+    Message.create({
+      sender: p.userId, recipient: target.userId,
+      pairKey: MessagingLogic.pairKey(p.userId, target.userId),
+      kind: 'whisper', text: m.text, readAt: new Date()
+    }).catch(err => console.error('[whisper] persist failed:', err && err.message));
+    return reply({ ok: true, cooldownMs: 0 });
+  }
+
+  let user = null;
+  try {
+    user = await User.findOne({ username: { $regex: '^' + escapeRegex(m.to) + '$', $options: 'i' } })
+      .select('_id username').lean();
+  } catch (err) {
+    console.error('[whisper] lookup failed:', err && err.message);
+    return reply({ ok: false, error: 'not-sent' });
+  }
+  if (!user) return reply({ ok: false, error: 'not-found', to: m.to });
+  if (String(user._id) === String(p.userId)) return reply({ ok: false, error: 'self' });
+  try {
+    await Message.create({
+      sender: p.userId, recipient: user._id,
+      pairKey: MessagingLogic.pairKey(p.userId, user._id),
+      kind: 'whisper', text: m.text, readAt: null
+    });
+  } catch (err) {
+    console.error('[whisper] store failed:', err && err.message);
+    return reply({ ok: false, error: 'not-sent' });
+  }
+  out.to = user.username;
+  out.offline = true;
+  socket.emit('world:chat', out);
+  reply({ ok: true, cooldownMs: 0, offline: true, to: user.username });
+}
 // /home chat keeps its 1s floor; /world chat uses ChatLogic.C.COOLDOWN_MS
 // (10s, shared across the world / project / whisper channels).
 const CHAT_INTERVAL_MS = 1000;
@@ -325,6 +398,7 @@ module.exports = (io) => {
         character,
         x: 0, y: 0, z: 0, yaw: 0,
         walking: false,
+        pose: null,         // 'sit' | 'lie' while on a chair / bed — in the snapshot so late joiners see it
         lastChat: 0,
         projectId: null,    // island the player stands on (Project chat / voice scope)
         stay: null          // js/world-stay-logic record while on an island
@@ -394,6 +468,7 @@ module.exports = (io) => {
       p.yaw = (typeof raw.yaw === 'number' && Number.isFinite(raw.yaw)) ? raw.yaw : 0;
       p.walking = !!raw.walking;
       p.backward = p.walking && !!raw.backward;
+      p.pose = (raw.pose === 'sit' || raw.pose === 'lie') ? raw.pose : null;
       // Track which project island they're on; tell the client when it
       // changes so its Project chat tab can relabel / enable itself. The
       // island is also the voice scope and the stay-credit bucket.
@@ -425,7 +500,7 @@ module.exports = (io) => {
         touchStay(p, nowPos);
       }
       socket.to('world').emit('world:pos', {
-        id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward
+        id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward, pose: p.pose
       });
     });
 
@@ -461,15 +536,9 @@ module.exports = (io) => {
           if (other.projectId === p.projectId) io.to(sid).emit('world:chat', out);
         }
       } else {
-        let target = null;
-        for (const other of worldPlayers.values()) {
-          if (ChatLogic.sameName(other.username, m.to)) { target = other; break; }
-        }
-        if (!target) return reply({ ok: false, error: 'not-found', to: m.to });
-        if (target.userId === p.userId) return reply({ ok: false, error: 'self' });
-        out.to = target.username;
-        io.to(target.socketId).emit('world:chat', out);
-        socket.emit('world:chat', out);
+        // Whisper has no cooldown, so nothing below this branch applies —
+        // handleWhisper owns the ack (it may need a Mongo round-trip).
+        return handleWhisper(io, socket, p, m, out, reply);
       }
       if (!limited) return reply({ ok: true, cooldownMs: 0 });
       p.lastChat = now;
@@ -654,8 +723,9 @@ module.exports = (io) => {
       p.yaw = (typeof raw.yaw === 'number' && Number.isFinite(raw.yaw)) ? raw.yaw : 0;
       p.walking = !!raw.walking;
       p.backward = p.walking && !!raw.backward;
+      p.pose = (raw.pose === 'sit' || raw.pose === 'lie') ? raw.pose : null;
       socket.to('home:' + p.ownerId).emit('home:pos', {
-        id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward
+        id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward, pose: p.pose
       });
     });
 
@@ -841,3 +911,6 @@ module.exports = (io) => {
 // force a stay flush so a just-crowned keeper is recognised immediately.
 module.exports.broadcastWorld = (event, payload) => { if (_io) _io.to('world').emit(event, payload); };
 module.exports.flushStays = flushStays;
+// For routes/messages.js (via server/messages.js): live-deliver an inbox
+// message to the recipient's Whisper tab when they're in /world.
+module.exports.deliverWhisper = deliverWhisper;

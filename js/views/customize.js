@@ -34,7 +34,14 @@ const CustomizeView = {
         <button id="cz-save" class="pg-btn pg-btn-save" type="button">Save</button>
       </header>
       <div class="cz-wrap">
-        <div class="cz-preview" id="cz-preview"></div>
+        <div class="cz-preview">
+          <div class="cz-stage" id="cz-preview"></div>
+          <div class="cz-zoom" id="cz-zoom" hidden>
+            <button type="button" class="cz-zoom-btn" data-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>
+            <button type="button" class="cz-zoom-btn" data-zoom="out" title="Zoom out" aria-label="Zoom out">−</button>
+            <button type="button" class="cz-zoom-btn cz-zoom-fit" data-zoom="fit" title="Reset zoom" aria-label="Reset zoom">Fit</button>
+          </div>
+        </div>
         <div class="cz-panel">
           <div class="cz-toolbar">
             <div class="cz-tools">
@@ -54,6 +61,17 @@ const CustomizeView = {
     document.getElementById('cz-save').addEventListener('click', () => CustomizeView._save());
     document.getElementById('cz-random').addEventListener('click', () => CustomizeView._randomize());
     document.getElementById('cz-reset').addEventListener('click', () => CustomizeView._reset());
+    // Zoom buttons complement the wheel / pinch zoom on the canvas itself.
+    document.querySelectorAll('#cz-zoom .cz-zoom-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const h = CustomizeView._previewHandle;
+        if (!h || !h.zoomBy) return;
+        const mode = btn.dataset.zoom;
+        if (mode === 'in') h.zoomBy(1.25);
+        else if (mode === 'out') h.zoomBy(0.8);
+        else h.setZoom(1);
+      });
+    });
 
     CustomizeView._overlayRoot = container;
     CustomizeView._previewHandle = null;
@@ -119,6 +137,35 @@ const CustomizeView = {
     return (CHARACTER_SCHEMA || []).filter(e => e.section === section);
   },
 
+  // ── preview framing ──
+  // Which body region the big preview (and the option tiles) should frame for
+  // a slot: editing the eyes zooms to the head, shoes to the feet, and so on.
+  // Slot-level entries win; otherwise the section decides; anything else shows
+  // the whole figure. Region names are Playground3D's PREVIEW_REGIONS.
+  _SLOT_REGION: {
+    mask: 'head', helmet: 'head', helmetColor: 'head',
+    gloves: 'hands', prop: 'hands', propColor: 'hands',
+    belt: 'waist',
+    emblem: 'chest', emblemColor: 'chest'
+  },
+  _SECTION_REGION: {
+    Face: 'head', Hair: 'head',
+    Top: 'torso', Outerwear: 'torso',
+    Bottom: 'legs', Footwear: 'feet'
+  },
+  _regionFor(key, section) {
+    if (key && CustomizeView._SLOT_REGION[key]) return CustomizeView._SLOT_REGION[key];
+    return CustomizeView._SECTION_REGION[section] || 'full';
+  },
+  _activeRegion() {
+    return CustomizeView._regionFor(CustomizeView._activeSlot, CustomizeView._activeSection);
+  },
+  // Point the big preview at the region of whatever is being edited.
+  _applyFocus() {
+    const h = CustomizeView._previewHandle;
+    if (h && h.focus) h.focus(CustomizeView._activeRegion());
+  },
+
   // Schema sections, plus a trailing "Presets" pseudo-tab (it has no slots —
   // its tab shows the full-look preset buttons instead of a slot editor).
   _tabList() {
@@ -151,6 +198,7 @@ const CustomizeView = {
         CustomizeView._renderTabs();
         CustomizeView._renderSlotPills();
         CustomizeView._renderOptions();
+        CustomizeView._applyFocus();
       });
     });
   },
@@ -179,6 +227,7 @@ const CustomizeView = {
         CustomizeView._activeSlot = btn.dataset.slot;
         CustomizeView._renderSlotPills();
         CustomizeView._renderOptions();
+        CustomizeView._applyFocus();
       });
     });
   },
@@ -292,6 +341,8 @@ const CustomizeView = {
     if (use3D && jobs.length) {
       const gen = CustomizeView._thumbGen;
       const base = { ...CustomizeView._current };
+      // Tiles frame the part this slot changes (eyes → head, shoes → feet).
+      const focus = CustomizeView._regionFor(key, entry.section);
       let i = 0;
       // A few per tick so the grid paints instantly. setTimeout (not rAF) so the
       // run still completes if the tab is backgrounded mid-render.
@@ -301,7 +352,7 @@ const CustomizeView = {
         for (; i < end; i++) {
           const j = jobs[i];
           try {
-            const url = Playground3D.renderThumbnail({ ...base, [key]: j.idx });
+            const url = Playground3D.renderThumbnail({ ...base, [key]: j.idx }, { focus });
             if (url) j.img.src = url;
           } catch (_) { /* skip a bad tile */ }
         }
@@ -444,9 +495,12 @@ const CustomizeView = {
       if (!CustomizeView._previewHandle) {
         host.innerHTML = '';
         CustomizeView._previewHandle = Playground3D.createPreview(host, CustomizeView._current);
+        const zoomUi = document.getElementById('cz-zoom');
+        if (zoomUi) zoomUi.hidden = false;
       } else {
         CustomizeView._previewHandle.setCharacter(CustomizeView._current);
       }
+      CustomizeView._applyFocus();
       return;
     }
     // 2D fallback.

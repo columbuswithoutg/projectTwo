@@ -12,7 +12,8 @@
     { path: 'walker.pauseMax',    label: 'Walker pause max (ms)',   min: 500,   max: 8000,   step: 50,   default: 2500 },
     { path: 'encounter.dist',     label: 'Encounter distance (px)', min: 10,    max: 80,     step: 1,    default: 26 },
     { path: 'encounter.cooldown', label: 'Encounter cooldown (ms)', min: 5000,  max: 120000, step: 1000, default: 30000 },
-    { path: 'fight.spawnChance',  label: 'Fight spawn chance',      min: 0,     max: 1,      step: 0.05, default: 0.15 }
+    { path: 'fight.spawnChance',  label: 'Fight spawn chance',      min: 0,     max: 1,      step: 0.05, default: 0.15 },
+    { path: 'world.maxProps',     label: 'Props per house (/world)', min: 1,     max: 60,     step: 1,    default: 20, section: 'world' }
   ];
 
   // Mirror of Playground.BODY_TYPES (index = stored value).
@@ -205,7 +206,10 @@
         encounter: cfg.encounter,
         fight:     cfg.fight,
         flags:     cfg.flags,
-        world:     { npcBodyTypes: { ...(cfg.world?.npcBodyTypes || {}) } }
+        world:     {
+          npcBodyTypes: { ...(cfg.world?.npcBodyTypes || {}) },
+          maxProps: Number.isFinite(cfg.world?.maxProps) ? cfg.world.maxProps : 20
+        }
       };
       try {
         const updated = await AdminView.api('/config', {

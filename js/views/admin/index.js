@@ -29,6 +29,7 @@ const AdminView = {
         <nav class="admin-tabs">
           <button class="admin-tab active" data-tab="users">Users</button>
           <button class="admin-tab" data-tab="moderation">Moderation</button>
+          <button class="admin-tab" data-tab="reports">Reports</button>
           <button class="admin-tab" data-tab="cms">CMS</button>
           <button class="admin-tab" data-tab="config">Config</button>
           <button class="admin-tab" data-tab="audit">Audit Log</button>

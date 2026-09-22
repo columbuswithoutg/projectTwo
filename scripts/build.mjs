@@ -50,12 +50,14 @@ const CHUNKS = {
     // boot.js can reassign window.projects etc. after the live fetch)
     'js/world-config.js', 'projects.js', 'characters.js', 'locations.js',
     'js/config.js', 'js/theme.js', 'js/auth.js', 'js/state.js', 'js/layout.js',
-    'js/utils.js', 'js/nodeFactory.js', 'js/renderer.js', 'js/orderRenderer.js',
+    'js/utils.js', 'js/messaging-logic.js', 'js/nodeFactory.js', 'js/renderer.js', 'js/orderRenderer.js',
     'js/popup.js', 'js/goals.js', 'js/friend-view.js', 'js/friends.js',
+    'js/messages.js', 'js/reports.js',
     'js/memory.js', 'js/walker-dialogues.js', 'js/walkerView.js', 'js/walkers.js',
     'js/chunk-loader.js', 'js/router.js',
     'js/views/login.js', 'js/views/app.js', 'js/views/watchorder.js',
     'js/views/profile.js', 'js/views/feed.js', 'js/views/characters.js',
+    'js/views/messages.js', 'js/views/reports.js',
     'js/views/home-builder.js', 'js/views/home-edit.js',
     'js/views/friend-watch.js', 'js/views/friend-map.js', 'js/views/friend-profile.js',
     'js/boot.js'
@@ -78,7 +80,7 @@ const CHUNKS = {
     'js/views/admin/config.js', 'js/views/admin/cms.js', 'js/views/admin/cms-projects.js',
     'js/views/admin/cms-projects-board.js', 'js/views/admin/cms-characters.js',
     'js/views/admin/cms-locations.js', 'js/views/admin/cms-dialogues.js',
-    'js/views/admin/audit.js', 'js/views/admin/overview.js'
+    'js/views/admin/reports.js', 'js/views/admin/audit.js', 'js/views/admin/overview.js'
   ]
 };
 
@@ -87,7 +89,8 @@ const CHUNKS = {
 // ReferenceErrors, so the build refuses to write such output.
 const EXPECT_GLOBALS = {
   core: ['Router', 'Auth', 'state', 'Chunks', 'CONFIG', 'API', 'Walkers', 'WALKER_DIALOGUES',
-         'FriendView', 'WatchOrderView', 'AppView', 'LoginView', 'HomeEditView', 'esc', 'toast'],
+         'FriendView', 'WatchOrderView', 'AppView', 'LoginView', 'HomeEditView', 'esc', 'toast',
+         'MessagesView', 'ReportsView', 'Messages', 'MessagesBadge', 'Reports', 'showReportDialog'],
   world: ['Playground', 'Playground3D', 'Multiplayer', 'VoiceManager', 'PG3DProps',
           'HomeView', 'CustomizeView', 'WorldView', 'FriendHomeView'],
   admin: ['AdminView']
@@ -95,6 +98,7 @@ const EXPECT_GLOBALS = {
 // Globals attached as properties (`root.PG3DPhysics = api` in the UMD-style
 // files) rather than declared — checked for a `.Name =` assignment instead.
 const EXPECT_ATTACHED = {
+  core: ['MessagingLogic'],
   world: ['PG3DPhysics', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid',
           'PG3DAvatar', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation']
 };

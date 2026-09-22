@@ -13,7 +13,8 @@ const AuditLogSchema = new mongoose.Schema({
     enum: [
       'ban', 'unban', 'deleteUser', 'deleteMemory',
       'resetPassword', 'configChange', 'contentEdit',
-      'deleteFriendRequest'
+      'deleteFriendRequest',
+      'reportStatus', 'reportReply', 'deleteReport'
     ]
   },
   // target is intentionally Mixed — userId for user-actions, {userId,

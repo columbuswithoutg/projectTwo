@@ -191,6 +191,16 @@ test('selectAnimState: idle / walk / run thresholds with speed-matched playback'
   assert.equal(H.selectAnimState({ ...base, speed: 50 }).timeScale, 1.4, 'playback speed is clamped');
 });
 
+test('selectAnimState: a sit / lie pose pins the base to idle with no overlay', () => {
+  const sit = H.selectAnimState({ ...base, speed: 3, pose: 'sit', punchUntil: 20000 });
+  assert.deepEqual(sit, { base: 'idle', overlay: null, timeScale: 1 });
+  const lie = H.selectAnimState({ ...base, airborne: true, velY: 5, pose: 'lie' });
+  assert.equal(lie.base, 'idle');
+  // knockdown still wins over a pose
+  assert.equal(H.selectAnimState({ ...base, pose: 'sit', downUntil: 20000 }).base, 'down');
+  assert.equal(H.selectAnimState({ ...base, speed: 1.5, pose: null }).base, 'walk');
+});
+
 test('selectAnimState: jump up vs fall by vertical velocity; landing window', () => {
   assert.equal(H.selectAnimState({ ...base, airborne: true, velY: 5 }).base, 'jumpUp');
   assert.equal(H.selectAnimState({ ...base, airborne: true, velY: -2 }).base, 'fall');
