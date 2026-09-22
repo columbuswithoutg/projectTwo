@@ -52,7 +52,7 @@ function validProfilePictureUrl(url) {
 
 // POST /api/profile/picture — update profile picture
 router.post('/picture', auth, async (req, res) => {
-  const { profilePicture } = req.body;
+  const { profilePicture } = req.body || {};
   if (!profilePicture) return res.status(400).json({ error: 'No picture provided' });
   if (!validProfilePictureUrl(profilePicture))
     return res.status(400).json({ error: 'Invalid picture URL' });

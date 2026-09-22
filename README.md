@@ -228,6 +228,7 @@ node scripts/seed-content.js --wipe   # drop collections then re-seed
 
 ### Deploy to Render
 - Push to the connected branch → Render rebuilds automatically.
+- Set the service's **Health Check Path** to `/api/health` — it returns 503 while Mongo is disconnected, so Render recycles a wedged process instead of leaving it serving 500s.
 - No new env vars required for Phase 2 / 3 — same `MONGO_URI`, `JWT_SECRET`, `CLOUDINARY_*`.
 - Render filesystem is ephemeral, so the static fallback JS files (which live in the repo) survive across deploys; the seed script needs to be run pointing at the production Mongo URI:
   ```powershell
@@ -277,6 +278,15 @@ Append new entries at the **top** of this section. Use the format:
 Brief summary of what changed and why.
 - file/path:line — what changed
 ```
+
+---
+
+### 2026-09-22 — req.body guards + /api/health
+
+Express 5 leaves `req.body` undefined when no body parser matched the request's Content-Type, so six handlers that destructured it bare threw a TypeError → 500 instead of the intended 400. They now use the `req.body || {}` pattern the rest of the routes already follow. Also adds a health endpoint so hosting can tell "process up" from "process up but database down".
+
+- `routes/progress.js` (delete memory, save walkers), `routes/profile.js` (picture), `routes/friends.js` (request, respond, watch-request) — `req.body || {}`.
+- `server.js` — `GET /api/health` → `200 { ok:true, db:'connected', uptime }` or `503` when Mongo's `readyState !== 1`. Not rate-limited. Set Render's Health Check Path to `/api/health`.
 
 ---
 

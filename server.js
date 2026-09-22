@@ -193,6 +193,19 @@ const publicConfigLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many config requests.' },
 });
+// Liveness + readiness. Point Render's Health Check Path at /api/health so a
+// process whose Mongo connection is down (readyState !== 1) fails the check
+// and gets recycled instead of serving 500s. No rate limiter: health probes
+// are frequent and the handler does no I/O.
+app.get('/api/health', (req, res) => {
+  const dbUp = mongoose.connection.readyState === 1;
+  res.set('Cache-Control', 'no-store');
+  res.status(dbUp ? 200 : 503).json({
+    ok: dbUp,
+    db: dbUp ? 'connected' : 'disconnected',
+    uptime: Math.round(process.uptime())
+  });
+});
 app.use('/api/auth', authLimiter, require('./routes/auth'));
 app.use('/api/progress', apiLimiter, require('./routes/progress'));
 app.use('/api/friends', apiLimiter, require('./routes/friends'));

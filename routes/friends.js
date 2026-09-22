@@ -64,7 +64,7 @@ router.get('/search', auth, async (req, res) => {
 
 // Send friend request
 router.post('/request', auth, async (req, res) => {
-    const { recipientId } = req.body;
+    const { recipientId } = req.body || {};
     if (!validId(recipientId))
         return res.status(400).json({ error: 'Invalid recipient' });
     if (recipientId === req.user.id)
@@ -107,7 +107,7 @@ router.get('/pending', auth, async (req, res) => {
 
 // Accept or reject a request
 router.post('/respond', auth, async (req, res) => {
-    const { requestId, action } = req.body;
+    const { requestId, action } = req.body || {};
     if (!validId(requestId))
         return res.status(400).json({ error: 'Invalid request id' });
     if (action !== 'accepted' && action !== 'rejected')
@@ -325,7 +325,7 @@ router.get('/progress/:friendId', auth, async (req, res) => {
 
 // Send a "watched with friend" request
 router.post('/watch-request', auth, async (req, res) => {
-    const { recipientId, projectId, projectTitle } = req.body;
+    const { recipientId, projectId, projectTitle } = req.body || {};
     if (!validId(recipientId))
         return res.status(400).json({ error: 'Invalid recipient' });
     if (typeof projectId !== 'string' || !projectId.trim())

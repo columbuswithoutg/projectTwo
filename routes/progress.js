@@ -145,7 +145,7 @@ router.post('/memory', auth, async (req, res) => {
 
 // Delete a memory
 router.delete('/memory', auth, async (req, res) => {
-  const { projectId, url } = req.body;
+  const { projectId, url } = req.body || {};
   const user = await User.findById(req.user.id);
   const entry = user.watchedProjects.find(e => e.projectId === projectId);
   if (!entry) return res.status(404).json({ error: 'Not found' });
@@ -163,7 +163,7 @@ router.get('/walkers', auth, async (req, res) => {
 
 // Save walker selections
 router.post('/walkers', auth, async (req, res) => {
-  const { walkers } = req.body;
+  const { walkers } = req.body || {};
   if (!Array.isArray(walkers)) return res.status(400).json({ error: 'walkers must be an array' });
   // Cap at 200 entries, accept strings or { id, stage } objects
   const clean = walkers.slice(0, 200).filter(w =>
