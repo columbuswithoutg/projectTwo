@@ -193,6 +193,10 @@ const Playground3D = (() => {
   // from GET /api/world/houses + live world:house pushes. Kept separately from
   // the nodes so a house that arrives before its island unlocks still applies.
   let _houses = new Map();        // projectId → { wallColor, roofColor, trimColor, lampColor, sign, props }
+  // Keeper tags floating over each house roof: projectId → { line1, line2, mine }.
+  // Set by the view (setHouseKeepers); rendered as HUD elements in _tickHUD.
+  let _keeperTags = new Map();
+  const KEEPER_TAG_MAX_DIST = 80;  // world units — tags beyond this are hidden
   let _worldRoads = new Map();    // "a→b" key (sorted) → mesh
   let _remotePlayers = new Map(); // socketId → { rig, target:{x,z,yaw,walking}, current, nameEl, bubbleEls[], emoteUntil }
   let _npcs = [];                 // local Avenger NPCs patrolling their debut nodes (NOT network/voice peers)
@@ -330,6 +334,7 @@ const Playground3D = (() => {
     _npcSpecs = [];
     _worldNodes.clear();
     _houses.clear();
+    _keeperTags.clear();           // tag DOM dies with the container below
     _worldRoads.clear();
     // Per-build shared materials were disposed by the _disposeRig sweep above;
     // drop the stale refs so the next mount recreates them. (_wallTex/_lampTex
@@ -1866,6 +1871,7 @@ const Playground3D = (() => {
       // inside _buildNodeWalls, so neighbour-triggered rebuilds keep them).
       node.house = _houses.get(p.id) || null;
       _worldNodes.set(p.id, node);
+      _syncKeeperTag(node);
 
       // Roads to any already-unlocked prereq.
       const prereqs = Array.isArray(p.prerequisites) ? p.prerequisites : [];
@@ -2539,19 +2545,44 @@ const Playground3D = (() => {
     const list = (node.house && Array.isArray(node.house.props)) ? node.house.props : [];
     if (!list.length || typeof PG3DProps === 'undefined' || typeof WorldHouseLogic === 'undefined') return;
     const cx = node.mesh.position.x, cz = node.mesh.position.z;
+    const portrait = (node.house && typeof node.house.portrait === 'string') ? node.house.portrait : '';
     const opts = {
       THREE,
       lampTex: _lampTexture(),
       lampColor: _houseColor(node, 'lampColor', WORLD.LAMP_COLOR),
       trimColor: _houseColor(node, 'trimColor', WORLD.WALL_TRIM_COLOR),
-      roofColor: _houseColor(node, 'roofColor', _phaseRoofColor(node.project.phase))
+      roofColor: _houseColor(node, 'roofColor', _phaseRoofColor(node.project.phase)),
+      hasPortrait: !!portrait
     };
     for (const p of list) {
       const obj = PG3DProps.make(p.kind, opts);
       if (!obj) continue;
+      // The keeper's portrait hangs in every frame. The texture comes from the
+      // shared cache, so the material is flagged keepMap and _disposeDecor
+      // leaves it alone on rebuild.
+      if (p.kind === 'frame' && portrait && obj.userData.picture) {
+        const mat = obj.userData.picture.material;
+        mat.userData.keepMap = true;
+        _loadTexture(portrait, (tex) => {
+          if (typeof THREE.SRGBColorSpace !== 'undefined') tex.colorSpace = THREE.SRGBColorSpace;
+          mat.map = tex;
+          mat.needsUpdate = true;
+        });
+      }
       const local = WorldHouseLogic.cellToLocal(p.gx, p.gy);
-      const x = cx + local.x, z = cz + local.z;
+      let x = cx + local.x, z = cz + local.z;
       const rot = p.rot || 0;
+      if (p.kind === 'frame') {
+        // Hang it on the wall's inner face (walls are inset T/2 from the
+        // platform edge, so the face is HALF - T from the centre), facing in.
+        const face = WORLD.PLATFORM_W / 2 - WORLD.WALL_THICKNESS - 0.01;
+        switch (WorldHouseLogic.frameWall(p)) {
+          case 'N': z = cz - face; break;
+          case 'S': z = cz + face; break;
+          case 'W': x = cx - face; break;
+          default:  x = cx + face; break;   // 'E'
+        }
+      }
       obj.position.set(x, 0, z);
       obj.rotation.y = rot * Math.PI / 2;
       _scene.add(obj);
@@ -2600,6 +2631,39 @@ const Playground3D = (() => {
     return _houses.get(projectId) || null;
   }
 
+  // Create / update / remove the HUD tag for one node from _keeperTags.
+  function _syncKeeperTag(node) {
+    if (!node || !_hudLayer) return;
+    const tag = _keeperTags.get(node.project.id);
+    if (!tag) {
+      if (node.keeperEl) { if (node.keeperEl.parentNode) node.keeperEl.parentNode.removeChild(node.keeperEl); node.keeperEl = null; }
+      return;
+    }
+    let el = node.keeperEl;
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'pg3d-nametag pg3d-keeper-tag';
+      el.innerHTML = '<span class="pg3d-keeper-line1"></span><span class="pg3d-keeper-line2"></span>';
+      el.style.display = 'none';
+      _hudLayer.appendChild(el);
+      node.keeperEl = el;
+    }
+    el.classList.toggle('mine', !!tag.mine);
+    el.classList.toggle('unclaimed', !!tag.unclaimed);
+    const l1 = el.querySelector('.pg3d-keeper-line1');
+    const l2 = el.querySelector('.pg3d-keeper-line2');
+    if (l1) l1.textContent = tag.line1 || '';
+    if (l2) { l2.textContent = tag.line2 || ''; l2.style.display = tag.line2 ? '' : 'none'; }
+  }
+
+  // Replace every keeper tag at once: { projectId: { line1, line2, mine, unclaimed } }.
+  // Text is set via textContent, so usernames never reach innerHTML.
+  function setHouseKeepers(tags) {
+    _keeperTags = new Map();
+    for (const [id, t] of Object.entries(tags || {})) if (t && t.line1) _keeperTags.set(id, t);
+    for (const node of _worldNodes.values()) _syncKeeperTag(node);
+  }
+
   // A small lamp beside a doorway: a thin post, an emissive head, and a soft
   // additive glow sprite so it reads as glowing in the fog. Intentionally uses
   // NO real PointLight — one dynamic light per doorway would wreck framerate and
@@ -2643,7 +2707,8 @@ const Playground3D = (() => {
       if (o.geometry) o.geometry.dispose();
       const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
       for (const m of mats) {
-        if (m.map && m.map !== _wallTex && m.map !== _lampTex) m.map.dispose();
+        const shared = m.map === _wallTex || m.map === _lampTex || (m.userData && m.userData.keepMap);
+        if (m.map && !shared) m.map.dispose();
         m.dispose();
       }
     });
@@ -2779,6 +2844,22 @@ const Playground3D = (() => {
           _placeHudEl(d.el, _hudAnchor, 0.35 + age * 0.7);
           d.el.style.opacity = String(1 - age * age);
         }
+      }
+    }
+
+    // Keeper tags over each house roof — who owns it and how far you are from
+    // taking it over. Hidden beyond KEEPER_TAG_MAX_DIST so the far skyline
+    // isn't littered with labels.
+    if (_player) {
+      const px = _player.position.x, pz = _player.position.z;
+      for (const node of _worldNodes.values()) {
+        const el = node.keeperEl;
+        if (!el) continue;
+        const nx = node.mesh.position.x, nz = node.mesh.position.z;
+        const dx = px - nx, dz = pz - nz;
+        if (dx * dx + dz * dz > KEEPER_TAG_MAX_DIST * KEEPER_TAG_MAX_DIST) { el.style.display = 'none'; continue; }
+        _hudAnchor.set(nx, (node.wallHeight || WORLD.WALL_HEIGHT) + 0.7, nz);
+        _placeHudEl(el, _hudAnchor, 0);
       }
     }
 
@@ -3674,7 +3755,7 @@ const Playground3D = (() => {
     // Voice-chat surface — distance attenuation + speaking indicator.
     getRemotePlayers, setRemotePlayerSpeaking,
     // Keeper-decorated houses (GET /api/world/houses + world:house pushes).
-    setHouses, applyHouse, getHouse,
+    setHouses, applyHouse, getHouse, setHouseKeepers,
     // Debugging aids for the browser preview (same idea as PG3DHumanoid._debug):
     // live NPC records, the local knockdown deadline, and a raw teleport so a
     // fight can be staged without steering the character by hand.

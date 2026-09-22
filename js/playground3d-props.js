@@ -20,7 +20,7 @@ const PG3DProps = (() => {
   const FOOTPRINTS = {
     chair:     { hx: 0.35, hz: 0.35, solid: true },
     table:     { hx: 0.70, hz: 0.40, solid: true },
-    frame:     { hx: 0.50, hz: 0.20, solid: true },
+    frame:     { hx: 0.70, hz: 0.05, solid: false },   // wall-hung; the wall itself collides
     plant:     { hx: 0.30, hz: 0.30, solid: true },
     lamp:      { hx: 0.18, hz: 0.18, solid: true },
     rug:       { hx: 1.00, hz: 0.70, solid: false },
@@ -64,15 +64,23 @@ const PG3DProps = (() => {
       return g;
     },
     frame(THREE, o) {
-      // A framed poster on an easel — the picture is a two-tone plane so it
-      // reads as art without a texture download.
+      // A framed picture hung on a wall: the group's origin sits ON the wall's
+      // inner face (z = 0) and the picture faces +z into the room; playground3d
+      // places it against the wall WorldHouseLogic.frameWall picks. With a
+      // keeper portrait (o.hasPortrait) the picture plane is left white for
+      // playground3d.js to texture once the image loads (g.userData.picture);
+      // otherwise a two-tone placeholder so it still reads as art.
       const g = new THREE.Group();
-      g.add(cyl(THREE, 0.03, 0.03, 1.5, WOOD_DARK, -0.4, 0.75, 0.12, 6));
-      g.add(cyl(THREE, 0.03, 0.03, 1.5, WOOD_DARK, 0.4, 0.75, 0.12, 6));
-      g.add(cyl(THREE, 0.03, 0.03, 1.4, WOOD_DARK, 0, 0.7, -0.14, 6));
-      g.add(box(THREE, 1.0, 0.8, 0.05, o.accent, 0, 1.0, 0));
-      g.add(box(THREE, 0.86, 0.66, 0.03, 0xf5f0e6, 0, 1.0, 0.03));
-      g.add(box(THREE, 0.6, 0.36, 0.02, o.roof, 0, 1.05, 0.05));
+      const y = 1.5;                                   // picture centre height
+      g.add(box(THREE, 1.4, 1.05, 0.06, o.accent, 0, y, 0.03));
+      const picture = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.24, 0.9),
+        new THREE.MeshBasicMaterial({ color: o.hasPortrait ? 0xffffff : 0xf5f0e6 })
+      );
+      picture.position.set(0, y, 0.065);
+      g.add(picture);
+      g.userData.picture = picture;
+      if (!o.hasPortrait) g.add(box(THREE, 0.8, 0.5, 0.02, o.roof, 0, y + 0.05, 0.08));
       return g;
     },
     plant(THREE, o) {
@@ -149,14 +157,15 @@ const PG3DProps = (() => {
     }
   };
 
-  // Build one prop. `opts`: { THREE, lampTex, lampColor, trimColor, roofColor }
-  // — house colours tint the accent parts so props match the room.
+  // Build one prop. `opts`: { THREE, lampTex, lampColor, trimColor, roofColor,
+  // hasPortrait } — house colours tint the accent parts so props match the room.
   function make(kind, opts) {
     const THREE = (opts && opts.THREE) || window.THREE;
     const build = BUILDERS[kind];
     if (!THREE || !build) return null;
     const o = {
       lampTex: opts && opts.lampTex,
+      hasPortrait: !!(opts && opts.hasPortrait),
       lamp:   (opts && opts.lampColor != null) ? opts.lampColor : 0xffd98a,
       accent: (opts && opts.trimColor != null) ? opts.trimColor : 0x9a8c6f,
       roof:   (opts && opts.roofColor != null) ? opts.roofColor : 0x6478a6

@@ -12,6 +12,7 @@ const WorldHouseSchema = new mongoose.Schema({
   trimColor: { type: Number, default: null },
   lampColor: { type: Number, default: null },
   sign:      { type: String, default: '', maxlength: 24 },
+  portrait:  { type: String, default: '', maxlength: 600 },   // Cloudinary image URL, shown in 'frame' props
   props: {
     type: [{
       kind: { type: String, required: true },

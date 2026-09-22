@@ -22,7 +22,13 @@ const User = require('../models/user');
 const HouseLogic = require('../js/world-house-logic');
 const WorldSocket = require('./world-socket');
 
-const HOUSE_FIELDS = 'projectId wallColor roofColor trimColor lampColor sign props';
+const HOUSE_FIELDS = 'projectId wallColor roofColor trimColor lampColor sign portrait props';
+
+// Same rule as memories (routes/progress.js): a portrait must live on the
+// app's own Cloudinary account, so a keeper can't hang a tracker/phishing
+// URL in a house every visitor's browser then fetches.
+const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
+const CLOUDINARY_PREFIX = CLOUD_NAME ? `https://res.cloudinary.com/${CLOUD_NAME}/` : '';
 
 function toHouse(doc) {
   const { house } = HouseLogic.validateHouse(doc || {});
@@ -47,18 +53,28 @@ async function keepersByProject() {
   return out;
 }
 
+// `mine` is the caller's own stay per island, so the client can show how much
+// longer they need to stay to take a house over from its keeper.
 router.get('/houses', auth, async (req, res) => {
   const docs = await WorldHouse.find({}).select(HOUSE_FIELDS).lean();
   const houses = {};
   for (const d of docs) houses[d.projectId] = toHouse(d);
-  const keepers = await keepersByProject();
-  res.json({ me: String(req.user.id), houses, keepers });
+  const [keepers, myRows] = await Promise.all([
+    keepersByProject(),
+    ProjectStay.find({ userId: req.user.id }).select('projectId ms').lean()
+  ]);
+  const mine = {};
+  for (const r of myRows) if (r.ms > 0) mine[r.projectId] = r.ms;
+  res.json({ me: String(req.user.id), houses, keepers, mine });
 });
 
 router.put('/houses/:projectId', auth, async (req, res) => {
   const projectId = String(req.params.projectId || '').slice(0, 64);
   const v = HouseLogic.validateHouse(req.body);
   if (!v.ok) return res.status(400).json({ error: v.error });
+  if (v.house.portrait && (!CLOUDINARY_PREFIX || !v.house.portrait.startsWith(CLOUDINARY_PREFIX))) {
+    return res.status(400).json({ error: 'portrait must be an image uploaded through this app' });
+  }
   if (!(await Project.exists({ id: projectId }))) return res.status(404).json({ error: 'Unknown project' });
 
   await WorldSocket.flushStays();

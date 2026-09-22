@@ -37,7 +37,10 @@ const WorldView = (() => {
   let _zone = null;
   let _houseMe = null;
   let _houseKeepers = {};
+  let _houseMine = {};             // projectId → my own stay ms (for "time to take over")
   let _housesAt = 0;
+  let _housePoll = null;           // 30 s refresh so keeper tags / take-over times stay current
+  const HOUSE_POLL_MS = 30000;
   let _houseBtnHandler = null;
   let _houseEditorClose = null;    // close fn of the open editor overlay, if any
   // Daily Infinity Stone hunt state.
@@ -384,10 +387,36 @@ const WorldView = (() => {
       if (myMount !== _mountSeq) return;
       _houseMe = data.me || null;
       _houseKeepers = data.keepers || {};
+      _houseMine = data.mine || {};
       _housesAt = Date.now();
       if (Playground3D.setHouses) Playground3D.setHouses(data.houses || {});
       _refreshHouseHud();
     } catch (_) { /* offline — houses stay default, HUD stays hidden */ }
+    if (!_housePoll && myMount === _mountSeq) {
+      _housePoll = setInterval(() => _loadHouses(_mountSeq), HOUSE_POLL_MS);
+    }
+  }
+
+  // In-world tags over every unlocked house: who keeps it (and their stay),
+  // plus my own stay there when I have one.
+  function _pushKeeperTags() {
+    if (!Playground3D.setHouseKeepers || typeof projects === 'undefined') return;
+    const tags = {};
+    for (const p of projects) {
+      if (!p || !p.id) continue;
+      const k = _houseKeepers[p.id];
+      const mineMs = _houseMine[p.id] || 0;
+      if (!k) {
+        tags[p.id] = { line1: '🔑 Unclaimed', line2: 'stay here to claim it', unclaimed: true };
+        continue;
+      }
+      const mine = !!(_houseMe && k.userId === _houseMe);
+      tags[p.id] = mine
+        ? { line1: `🔑 You · ${_fmtStay(k.ms)}`, line2: 'you keep this house', mine: true }
+        : { line1: `🔑 ${k.username} · ${_fmtStay(k.ms)}`,
+            line2: mineMs ? `you ${_fmtStay(mineMs)}` : '' };
+    }
+    Playground3D.setHouseKeepers(tags);
   }
 
   function _onZone(projectId) {
@@ -414,6 +443,7 @@ const WorldView = (() => {
   // On an island: the keeper sees "Edit house", everyone else sees who keeps
   // it (or that it's unclaimed). Off-island: nothing.
   function _refreshHouseHud() {
+    _pushKeeperTags();
     const btn = document.getElementById('world-house-btn');
     const label = document.getElementById('world-house-keeper');
     if (!btn || !label) return;
@@ -425,10 +455,11 @@ const WorldView = (() => {
     if (mine) {
       btn.title = `You keep ${_projectTitle(_zone)} (${_fmtStay(k.ms)} here) — decorate it`;
     } else if (k) {
-      label.textContent = `🔑 ${k.username} · ${_fmtStay(k.ms)}`;
-      label.title = `${k.username} keeps ${_projectTitle(_zone)} with the longest stay (${_fmtStay(k.ms)}). Outstay them to take over.`;
+      const you = _houseMine[_zone] ? ` · you ${_fmtStay(_houseMine[_zone])}` : '';
+      label.textContent = `🔑 ${k.username} · ${_fmtStay(k.ms)}${you}`;
+      label.title = `${k.username} keeps ${_projectTitle(_zone)} with ${_fmtStay(k.ms)} here${you}. The longest stay (moving or chatting) keeps the house.`;
     } else {
-      label.textContent = '🔑 Unclaimed';
+      label.textContent = '🔑 Unclaimed · stay to claim';
       label.title = `Nobody keeps ${_projectTitle(_zone)} yet — the longest stay here wins it.`;
     }
   }
@@ -440,7 +471,12 @@ const WorldView = (() => {
     if (_houseEditorClose) { _houseEditorClose(); }
     const L = WorldHouseLogic;
     const saved = (Playground3D.getHouse && Playground3D.getHouse(projectId)) || L.defaultHouse();
-    const draft = L.validateHouse(saved).house;
+    // A stored house that no longer validates (e.g. a portrait URL the rules
+    // now reject) must not break the editor: drop the offending field, and as
+    // a last resort start from defaults.
+    const v0 = L.validateHouse(saved);
+    const v1 = v0.ok ? v0 : L.validateHouse({ ...saved, portrait: '' });
+    const draft = v1.ok ? v1.house : L.defaultHouse();
     const hex = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
     const GLYPH = { chair: '🪑', table: '🛋️', frame: '🖼️', plant: '🪴', lamp: '💡', rug: '🟫', bookshelf: '📚', crate: '📦' };
     const SLOTS = [['wallColor', 'Walls'], ['roofColor', 'Roof'], ['trimColor', 'Trim'], ['lampColor', 'Lamps']];
@@ -471,6 +507,16 @@ const WorldView = (() => {
           <span class="world-house-label">Sign</span>
           <input type="text" id="world-house-sign" maxlength="${L.C.SIGN_MAX}" placeholder="Name over the door" autocomplete="off" />
         </label>
+        <div class="world-house-portraitrow">
+          <span class="world-house-label">Portrait</span>
+          <span class="world-house-portrait-thumb" id="world-house-portrait-thumb" aria-hidden="true"></span>
+          <label class="world-house-tool world-house-upload">
+            <span id="world-house-upload-text">Upload photo</span>
+            <input type="file" id="world-house-portrait-file" accept="image/*" hidden />
+          </label>
+          <button type="button" class="world-house-tool" id="world-house-portrait-remove" title="Remove the portrait">🗑</button>
+          <span class="world-house-portrait-hint" id="world-house-portrait-hint"></span>
+        </div>
         <div class="world-house-props">
           <div class="world-house-kinds">
             ${L.PROP_KINDS.map(k => `<button type="button" class="world-house-kind" data-kind="${k}" title="${k}">${GLYPH[k] || '▪'} ${k}</button>`).join('')}
@@ -480,7 +526,7 @@ const WorldView = (() => {
             <button type="button" class="world-house-tool" data-tool="remove" title="Remove the selected prop">🗑 Remove</button>
             <span class="world-house-count" id="world-house-count"></span>
           </div>
-          <p class="world-house-hint">Tap an empty cell to place the chosen prop; tap a prop to select it. Top of the grid is north.</p>
+          <p class="world-house-hint">Tap an empty cell to place the chosen prop; tap a prop to select it. Frames hang on the nearest wall. Top of the grid is north.</p>
           <svg class="world-house-grid" viewBox="0 0 ${N * CELL} ${N * CELL}" role="img" aria-label="House floor plan"></svg>
         </div>
         <div class="world-house-actions">
@@ -537,7 +583,57 @@ const WorldView = (() => {
       // Door side marker: south edge is where a lone island's sign hangs.
       grid.innerHTML = `<rect class="world-house-floor" x="0" y="0" width="${N * CELL}" height="${N * CELL}" />${cells.join('')}${props}`;
     }
-    function renderAll() { renderSwatches(); renderKinds(); renderGrid(); }
+    // Portrait: a photo the keeper uploads (same /upload route as memories),
+    // shown inside every Frame prop. Uploading auto-places a frame if there
+    // is none yet, so the picture is visible straight away.
+    const thumb = overlay.querySelector('#world-house-portrait-thumb');
+    const fileInput = overlay.querySelector('#world-house-portrait-file');
+    const uploadText = overlay.querySelector('#world-house-upload-text');
+    const removeBtn = overlay.querySelector('#world-house-portrait-remove');
+    const portraitHint = overlay.querySelector('#world-house-portrait-hint');
+    function renderPortrait() {
+      const url = draft.portrait || '';
+      thumb.style.backgroundImage = url ? `url("${url.replace(/"/g, '%22')}")` : '';
+      thumb.classList.toggle('empty', !url);
+      removeBtn.disabled = !url;
+      const frames = draft.props.filter(p => p.kind === 'frame').length;
+      portraitHint.textContent = !url ? 'Shown inside your Frame props.'
+        : (frames ? `Hanging in ${frames} frame${frames > 1 ? 's' : ''}.` : 'Place a Frame prop to hang it.');
+    }
+    function ensureFrame() {
+      if (draft.props.some(p => p.kind === 'frame') || draft.props.length >= L.C.MAX_PROPS) return;
+      const taken = new Set(draft.props.map(p => `${p.gx},${p.gy}`));
+      // Wall cells, north wall first (the picture then faces the room).
+      for (const [gx, gy] of [[4, 1], [7, 1], [3, 1], [8, 1], [1, 5], [10, 5], [4, 10], [7, 10]]) {
+        if (!taken.has(`${gx},${gy}`)) { draft.props.push({ kind: 'frame', ...L.snapFrameToWall(gx, gy) }); return; }
+      }
+    }
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = '';
+      if (!file) return;
+      if (!file.type.startsWith('image/')) { if (typeof toast === 'function') toast('Please choose an image.', 'warn'); return; }
+      uploadText.textContent = 'Uploading…';
+      fileInput.disabled = true;
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(`${API}/upload`, { method: 'POST', headers: { Authorization: `Bearer ${Auth.getToken()}` }, body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed');
+        draft.portrait = data.url;
+        ensureFrame();
+        renderPortrait(); renderKinds(); renderGrid(); preview();
+      } catch (e) {
+        if (typeof toast === 'function') toast(e.message || 'Upload failed', 'error');
+      } finally {
+        uploadText.textContent = 'Upload photo';
+        fileInput.disabled = false;
+      }
+    });
+    removeBtn.addEventListener('click', () => { draft.portrait = ''; renderPortrait(); preview(); });
+
+    function renderAll() { renderSwatches(); renderKinds(); renderGrid(); renderPortrait(); }
     renderAll();
     preview();
 
@@ -555,12 +651,17 @@ const WorldView = (() => {
       const tool = e.target.closest('.world-house-tool');
       if (tool && selectedProp >= 0 && draft.props[selectedProp]) {
         if (tool.getAttribute('data-tool') === 'rotate') {
+          // A frame's facing is fixed by the wall it hangs on.
+          if (draft.props[selectedProp].kind === 'frame') {
+            if (typeof toast === 'function') toast('Frames face into the room from their wall — move it to another wall instead.', 'info');
+            return;
+          }
           draft.props[selectedProp].rot = ((draft.props[selectedProp].rot || 0) + 1) % 4;
         } else {
           draft.props.splice(selectedProp, 1);
           selectedProp = -1;
         }
-        renderKinds(); renderGrid(); preview();
+        renderKinds(); renderGrid(); renderPortrait(); preview();
         return;
       }
       const propEl = e.target.closest('.world-house-prop');
@@ -572,9 +673,16 @@ const WorldView = (() => {
           if (typeof toast === 'function') toast(`That's the limit — ${L.C.MAX_PROPS} props per house.`, 'warn');
           return;
         }
-        draft.props.push({ kind: selectedKind, gx, gy, rot: 0 });
+        // Frames hang on the nearest wall, so an inside tap snaps to the edge;
+        // that wall cell may already be taken.
+        const placed = selectedKind === 'frame' ? L.snapFrameToWall(gx, gy) : { gx, gy, rot: 0 };
+        if (draft.props.some(p => p.gx === placed.gx && p.gy === placed.gy)) {
+          if (typeof toast === 'function') toast('That wall spot is taken — tap nearer a free stretch of wall.', 'warn');
+          return;
+        }
+        draft.props.push({ kind: selectedKind, ...placed });
         selectedProp = draft.props.length - 1;
-        renderKinds(); renderGrid(); preview();
+        renderKinds(); renderGrid(); renderPortrait(); preview();
       }
     });
     signInput.addEventListener('input', () => { draft.sign = L.sanitizeSign(signInput.value); preview(); });
@@ -930,7 +1038,8 @@ const WorldView = (() => {
     _houseBtnHandler = null;
     if (_houseEditorClose) { try { _houseEditorClose(); } catch (_) {} _houseEditorClose = null; }
     document.querySelector('.world-house')?.remove();
-    _zone = null; _houseMe = null; _houseKeepers = {}; _housesAt = 0;
+    if (_housePoll) { clearInterval(_housePoll); _housePoll = null; }
+    _zone = null; _houseMe = null; _houseKeepers = {}; _houseMine = {}; _housesAt = 0;
     // Stone contest teardown — engine stones die in Playground3D.destroy();
     // the chip/snap button/flash live inside the container and vanish with it.
     if (_snapKeyHandler) { window.removeEventListener('keydown', _snapKeyHandler); _snapKeyHandler = null; }

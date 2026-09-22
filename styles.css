@@ -4848,6 +4848,27 @@ body.fight-active .flow-wrapper {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
   transition: box-shadow 0.12s ease, border-color 0.12s ease;
 }
+/* Keeper tag over each house roof: who keeps it + how far you are from
+   taking it over. Gold border for the viewer's own houses. */
+.pg3d-keeper-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  border-color: rgba(255, 215, 64, 0.45);
+  background: rgba(20, 22, 36, 0.82);
+}
+.pg3d-keeper-tag.mine { border-color: rgba(255, 215, 64, 0.95); box-shadow: 0 0 10px rgba(255, 215, 64, 0.35); }
+.pg3d-keeper-tag.unclaimed { border-color: rgba(255, 255, 255, 0.25); opacity: 0.85; }
+.pg3d-keeper-line2 {
+  font-family: inherit;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.72);
+}
 .pg3d-nametag.speaking {
   border-color: rgba(120, 220, 140, 0.95);
   box-shadow: 0 0 0 2px rgba(120, 220, 140, 0.35),
@@ -5301,6 +5322,24 @@ body.fight-active .flow-wrapper {
   color: #fff;
   font-size: 0.9rem;
 }
+.world-house-portraitrow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.world-house-portrait-thumb {
+  width: 44px;
+  height: 34px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06) center / cover no-repeat;
+  flex-shrink: 0;
+}
+.world-house-portrait-thumb.empty { background-image: none; }
+.world-house-upload { cursor: pointer; }
+.world-house-portrait-hint { font-size: 0.74rem; color: rgba(255, 255, 255, 0.6); }
 .world-house-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 8px; }
 .world-house-kind, .world-house-tool {
   padding: 6px 10px;
