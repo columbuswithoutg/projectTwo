@@ -333,3 +333,15 @@ test('pinchZoom: spreading fingers zooms in, pinching zooms out, clamped like th
   assert.equal(pinchZoom(8, 0, 100, 3, 14), 8);       // degenerate gap → unchanged
   assert.equal(pinchZoom(8, 100, NaN, 3, 14), 8);
 });
+
+test('fovForAspect: landscape keeps 60°, portrait opens up, capped at 80°', () => {
+  const { fovForAspect } = require('../js/playground3d-physics.js');
+  assert.equal(fovForAspect(2), 60);                       // phone landscape
+  assert.equal(fovForAspect(1), 60);                       // square
+  assert.ok(Math.abs(fovForAspect(0.8) - 71.64) < 0.05, `0.8 → ${fovForAspect(0.8)}`);   // 2·atan(tan30°/0.8)
+  assert.equal(fovForAspect(0.46), 80);                    // phone portrait → cap
+  assert.equal(fovForAspect(NaN), 60);
+  assert.equal(fovForAspect(0), 60);
+  let prev = Infinity;                                     // never widens as the view gets wider
+  for (const a of [0.3, 0.46, 0.6, 0.8, 1, 1.5, 2.2]) { const f = fovForAspect(a); assert.ok(f <= prev); prev = f; }
+});

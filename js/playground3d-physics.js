@@ -234,9 +234,22 @@
     return Math.max(min, Math.min(max, distance * (prevGap / newGap)));
   }
 
+  // Vertical field of view for a viewport aspect (w/h). Three.js fov is
+  // vertical, so a fixed 60° gives ~100° side-to-side in phone landscape but
+  // only ~30° in portrait (tunnel vision). Landscape keeps `base`; portrait
+  // opens up so the horizontal FOV holds, capped at `maxV` before fish-eye.
+  function fovForAspect(aspect, base, maxV) {
+    base = base === undefined ? 60 : base;
+    maxV = maxV === undefined ? 80 : maxV;
+    if (!Number.isFinite(aspect) || aspect <= 0 || aspect >= 1) return base;
+    const halfH = Math.tan((base / 2) * Math.PI / 180);
+    const v = 2 * Math.atan(halfH / aspect) * 180 / Math.PI;
+    return Math.max(base, Math.min(maxV, v));
+  }
+
   return {
     isWalkable, stepVertical, shouldRespawn, airtime, airCarry, pickPunchTarget,
     actorRadius, spawnIslands, PUNCH_COOLDOWN_MS, punchCooldown, hash01, npcPatrol, npcPathPoint,
-    pinchZoom
+    pinchZoom, fovForAspect
   };
 });

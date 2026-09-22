@@ -41,8 +41,19 @@ const WorldView = (() => {
   let _housesAt = 0;
   let _housePoll = null;           // 30 s refresh so keeper tags / take-over times stay current
   const HOUSE_POLL_MS = 30000;
+  // Live estimate of my own stay on the island I'm standing on, so the tags
+  // tick up between polls. Mirrors the server's AFK rule
+  // (js/world-stay-logic.js): time counts while I've acted within the last
+  // minute. The next poll re-baselines it; shownMs keeps it from ticking back.
+  const STAY_AFK_MS = 60000;
+  let _liveStay = null;            // { projectId, extraMs, lastActiveAt, creditedUpTo, shownMs }
+  let _liveTick = null;
+  let _liveLabel = '';
+  let _lastInputAt = 0;
+  let _liveInputHandler = null;
   let _houseBtnHandler = null;
   let _houseEditorClose = null;    // close fn of the open editor overlay, if any
+  let _houseEditing = null;        // projectId whose editor is open (its preview survives the poll)
   // Daily Infinity Stone hunt state.
   let _snapKeyHandler = null;      // 'G' → snap when holding all six
   // Pending spawn-picker resolver, so unmount() can settle the awaited promise
@@ -389,7 +400,15 @@ const WorldView = (() => {
       _houseKeepers = data.keepers || {};
       _houseMine = data.mine || {};
       _housesAt = Date.now();
-      if (Playground3D.setHouses) Playground3D.setHouses(data.houses || {});
+      if (_liveStay) { _liveSettle(_housesAt); _liveStay.extraMs = 0; }
+      // Keep the editor's live preview: the island being edited stays on its
+      // draft (setHouses only rebuilds nodes whose house object changed).
+      const houses = data.houses || {};
+      if (_houseEditing && Playground3D.getHouse) {
+        const live = Playground3D.getHouse(_houseEditing);
+        if (live) houses[_houseEditing] = live;
+      }
+      if (Playground3D.setHouses) Playground3D.setHouses(houses);
       _refreshHouseHud();
     } catch (_) { /* offline — houses stay default, HUD stays hidden */ }
     if (!_housePoll && myMount === _mountSeq) {
@@ -398,29 +417,84 @@ const WorldView = (() => {
   }
 
   // In-world tags over every unlocked house: who keeps it (and their stay),
-  // plus my own stay there when I have one.
+  // plus my own stay there so I can compare. "Unclaimed" only shows on the
+  // island I'm standing on — elsewhere it's just skyline clutter.
   function _pushKeeperTags() {
     if (!Playground3D.setHouseKeepers || typeof projects === 'undefined') return;
     const tags = {};
     for (const p of projects) {
       if (!p || !p.id) continue;
       const k = _houseKeepers[p.id];
-      const mineMs = _houseMine[p.id] || 0;
+      const here = p.id === _zone;
+      const mineMs = _myStay(p.id);
       if (!k) {
-        tags[p.id] = { line1: '🔑 Unclaimed', line2: 'stay here to claim it', unclaimed: true };
+        if (here) tags[p.id] = { line1: '🔑 Unclaimed', line2: `you ${_fmtStay(mineMs)} · stay to claim it`, unclaimed: true };
         continue;
       }
       const mine = !!(_houseMe && k.userId === _houseMe);
       tags[p.id] = mine
-        ? { line1: `🔑 You · ${_fmtStay(k.ms)}`, line2: 'you keep this house', mine: true }
+        ? { line1: `🔑 You · ${_fmtStay(Math.max(k.ms, mineMs))}`, line2: 'you keep this house', mine: true }
         : { line1: `🔑 ${k.username} · ${_fmtStay(k.ms)}`,
-            line2: mineMs ? `you ${_fmtStay(mineMs)}` : '' };
+            line2: (here || mineMs) ? `you ${_fmtStay(mineMs)}` : '' };
     }
     Playground3D.setHouseKeepers(tags);
   }
 
+  // My stay on `projectId`: last polled total, plus live credit while I'm there.
+  function _myStay(projectId) {
+    const base = _houseMine[projectId] || 0;
+    const s = _liveStay;
+    if (!s || s.projectId !== projectId) return base;
+    s.shownMs = Math.max(s.shownMs, base + s.extraMs);
+    return s.shownMs;
+  }
+
+  // Credit time up to `now`, capped at the AFK limit past my last action.
+  function _liveSettle(now) {
+    const s = _liveStay;
+    if (!s) return;
+    const cap = Math.min(now, s.lastActiveAt + STAY_AFK_MS);
+    if (cap > s.creditedUpTo) { s.extraMs += cap - s.creditedUpTo; s.creditedUpTo = cap; }
+  }
+
+  // Once a second: count walking / key / pointer input as activity, then
+  // repaint the tags only when the shown minute actually changes.
+  function _liveStep() {
+    const s = _liveStay;
+    if (!s) return;
+    const now = Date.now();
+    const st = Playground3D.getLocalState && Playground3D.getLocalState();
+    if ((st && st.walking) || now - _lastInputAt < 1500) {
+      _liveSettle(now);
+      s.lastActiveAt = now;
+      s.creditedUpTo = Math.max(s.creditedUpTo, now);
+    }
+    _liveSettle(now);
+    const label = _fmtStay(_myStay(s.projectId));
+    if (label !== _liveLabel) { _liveLabel = label; _refreshHouseHud(); }
+  }
+
   function _onZone(projectId) {
-    _zone = projectId || null;
+    const next = projectId || null;
+    if (_liveStay && _liveStay.projectId !== next) {
+      // Leaving: keep what I earned on that island's tag until the next poll.
+      _liveSettle(Date.now());
+      const id = _liveStay.projectId;
+      _houseMine[id] = Math.max(_houseMine[id] || 0, _myStay(id));
+      _liveStay = null;
+    }
+    if (next && !_liveStay) {
+      const now = Date.now();
+      _liveStay = { projectId: next, extraMs: 0, lastActiveAt: now, creditedUpTo: now, shownMs: 0 };
+      _liveLabel = '';
+    }
+    if (!_liveTick) _liveTick = setInterval(_liveStep, 1000);
+    if (!_liveInputHandler) {
+      _liveInputHandler = () => { _lastInputAt = Date.now(); };
+      window.addEventListener('keydown', _liveInputHandler, true);
+      window.addEventListener('pointerdown', _liveInputHandler, true);
+    }
+    _zone = next;
     if (_zone && Date.now() - _housesAt > 30000) _loadHouses(_mountSeq);
     _refreshHouseHud();
     if (_voice) _voiceVisual(_voiceState, _voiceMsg);
@@ -453,13 +527,18 @@ const WorldView = (() => {
     btn.hidden = !mine;
     label.hidden = mine;
     if (mine) {
-      btn.title = `You keep ${_projectTitle(_zone)} (${_fmtStay(k.ms)} here) — decorate it`;
+      btn.title = `You keep ${_projectTitle(_zone)} (${_fmtStay(Math.max(k.ms, _myStay(_zone)))} here) — decorate it`;
     } else if (k) {
-      const you = _houseMine[_zone] ? ` · you ${_fmtStay(_houseMine[_zone])}` : '';
-      label.textContent = `🔑 ${k.username} · ${_fmtStay(k.ms)}${you}`;
-      label.title = `${k.username} keeps ${_projectTitle(_zone)} with ${_fmtStay(k.ms)} here${you}. The longest stay (moving or chatting) keeps the house.`;
+      // Two spans: the keeper's name may ellipsise, my own stay (my progress
+      // toward taking the house) never does — with a fill showing how close.
+      const my = _myStay(_zone);
+      const pct = Math.min(1, my / Math.max(1, k.ms));
+      label.innerHTML = `<span class="world-house-keeper-name">🔑 ${esc(k.username)} · ${_fmtStay(k.ms)}</span>`
+        + `<span class="world-house-keeper-you" style="--pct:${pct.toFixed(3)}">you ${_fmtStay(my)}</span>`;
+      label.title = `${k.username} keeps ${_projectTitle(_zone)} with ${_fmtStay(k.ms)} here · you ${_fmtStay(my)}. The longest stay (moving or chatting) keeps the house.`;
     } else {
-      label.textContent = '🔑 Unclaimed · stay to claim';
+      label.innerHTML = `<span class="world-house-keeper-name">🔑 Unclaimed</span>`
+        + `<span class="world-house-keeper-you" style="--pct:0">you ${_fmtStay(_myStay(_zone))}</span>`;
       label.title = `Nobody keeps ${_projectTitle(_zone)} yet — the longest stay here wins it.`;
     }
   }
@@ -478,11 +557,38 @@ const WorldView = (() => {
     const v1 = v0.ok ? v0 : L.validateHouse({ ...saved, portrait: '' });
     const draft = v1.ok ? v1.house : L.defaultHouse();
     const hex = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
-    const GLYPH = { chair: '🪑', table: '🛋️', frame: '🖼️', plant: '🪴', lamp: '💡', rug: '🟫', bookshelf: '📚', crate: '📦' };
+    const GLYPH = { chair: '🪑', table: '🛋️', frame: '🖼️', plant: '🪴', lamp: '💡', rug: '🟫', bookshelf: '📚', crate: '📦', window: '🪟' };
     const SLOTS = [['wallColor', 'Walls'], ['roofColor', 'Roof'], ['trimColor', 'Trim'], ['lampColor', 'Lamps']];
-    const CELL = 32, N = L.C.GRID_MAX;
-    let selectedKind = 'chair';
+    // Shape / finish rows: [field, label, [[value, caption, title], …]].
+    const STYLE_ROWS = [
+      ['roofStyle', 'Roof', [['flat', 'Flat', 'A flat slab roof'], ['gable', 'Gable', 'A pitched roof with a ridge'], ['hip', 'Hip', 'A pyramid roof sloping on all four sides']]],
+      ['wallStyle', 'Walls', [['plaster', 'Plaster', 'Smooth stucco'], ['brick', 'Brick', 'Brick courses'], ['stone', 'Stone', 'Rough stone blocks'], ['timber', 'Timber', 'Wooden planks']]],
+      ['windowStyle', 'Windows', [['cross', 'Cross', 'Four panes'], ['grid', 'Grid', 'Six small panes'], ['plain', 'Plain', 'One clear pane'], ['shutters', 'Shutters', 'A plain pane with trim-coloured shutters']]]
+    ];
+    const CELL = 32, N = L.C.GRID_MAX, RING = N + 2;   // 12×12: interior 1..10 + the wall ring
+    // The fixed door: openings per side straight from the engine (roads decide
+    // them, never the house). Drawn as locked wall cells; a window can't go there.
+    const layout = (Playground3D.getHouseLayout && Playground3D.getHouseLayout(projectId)) || null;
+    const doorCells = {};
+    for (const side of L.SIDES) doorCells[side] = layout ? L.openingsToCells(layout[side]) : [];
+    const isDoorCell = (side, pos) => doorCells[side].some(([a, b]) => pos >= a && pos <= b);
+    // Wall-ring cell → which wall and how far along it (top row is north).
+    const ringCell = (gx, gy) => {
+      if (gy === 0 && gx >= 1 && gx <= N) return { side: 'N', pos: gx };
+      if (gy === RING - 1 && gx >= 1 && gx <= N) return { side: 'S', pos: gx };
+      if (gx === 0 && gy >= 1 && gy <= N) return { side: 'W', pos: gy };
+      if (gx === RING - 1 && gy >= 1 && gy <= N) return { side: 'E', pos: gy };
+      return null;
+    };
+    const ringXY = (side, along) => {   // (side, offset along the wall) → SVG centre
+      if (side === 'N') return [along * CELL, CELL / 2];
+      if (side === 'S') return [along * CELL, (RING - 0.5) * CELL];
+      if (side === 'W') return [CELL / 2, along * CELL];
+      return [(RING - 0.5) * CELL, along * CELL];
+    };
+    let selectedKind = 'chair';     // a prop kind, or 'window'
     let selectedProp = -1;          // index into draft.props
+    let selectedWindow = -1;        // index into draft.windows (explicit mode only)
 
     const overlay = document.createElement('div');
     overlay.className = 'world-house';
@@ -497,11 +603,28 @@ const WorldView = (() => {
           ${L.PALETTE.map((c, i) => `<button type="button" class="world-house-swatch" data-idx="${i}" style="background:${hex(c)}" title="Colour ${i + 1}"></button>`).join('')}
         </div>
       </div>`).join('');
+    const styleRows = STYLE_ROWS.map(([field, name, opts]) => `
+      <div class="world-house-row" data-style="${field}">
+        <span class="world-house-label">${name}</span>
+        <div class="world-house-chips">
+          ${opts.map(([v, cap, title]) => `<button type="button" class="world-house-chip" data-value="${v}" title="${esc(title)}">${cap}</button>`).join('')}
+          ${field === 'roofStyle' ? `
+            <span class="world-house-chipsep" aria-hidden="true"></span>
+            <button type="button" class="world-house-chip" data-dir="0" title="Ridge runs east–west">Ridge E–W</button>
+            <button type="button" class="world-house-chip" data-dir="1" title="Ridge runs north–south">Ridge N–S</button>
+            <button type="button" class="world-house-chip" data-chimney title="A brick chimney on the roof">Chimney</button>` : ''}
+          ${field === 'windowStyle' ? `
+            <span class="world-house-chipsep" aria-hidden="true"></span>
+            <button type="button" class="world-house-chip" data-winauto title="Let the house pick: one window on each long stretch of wall">Auto</button>` : ''}
+        </div>
+      </div>`).join('');
     overlay.innerHTML = `
       <div class="world-house-panel">
         <button class="popup-close" aria-label="Close">✕</button>
         <h3>🏠 ${esc(_projectTitle(projectId))}</h3>
-        <p class="world-house-sub">You keep this house (longest stay). Everyone in the world sees what you save.</p>
+        <p class="world-house-sub">You keep this house (longest stay). Everyone in the world sees what you save. While this panel is open the camera circles your house from outside, so every change shows as you make it. The door stays where the road meets the house.</p>
+        <button type="button" class="world-house-tool world-house-peek" data-peek="on" title="Hide the panel to look at the house">👁 Look at the house</button>
+        <div class="world-house-styles">${styleRows}</div>
         <div class="world-house-colors">${swatchRows}</div>
         <label class="world-house-signrow">
           <span class="world-house-label">Sign</span>
@@ -520,14 +643,15 @@ const WorldView = (() => {
         <div class="world-house-props">
           <div class="world-house-kinds">
             ${L.PROP_KINDS.map(k => `<button type="button" class="world-house-kind" data-kind="${k}" title="${k}">${GLYPH[k] || '▪'} ${k}</button>`).join('')}
+            <button type="button" class="world-house-kind world-house-kind-window" data-kind="window" title="Place a window on the wall ring">${GLYPH.window} window</button>
           </div>
           <div class="world-house-tools">
             <button type="button" class="world-house-tool" data-tool="rotate" title="Rotate the selected prop">↻ Rotate</button>
-            <button type="button" class="world-house-tool" data-tool="remove" title="Remove the selected prop">Remove</button>
+            <button type="button" class="world-house-tool" data-tool="remove" title="Remove the selected prop or window">Remove</button>
             <span class="world-house-count" id="world-house-count"></span>
           </div>
-          <p class="world-house-hint">Tap an empty cell to place the chosen prop; tap a prop to select it. Frames hang on the nearest wall. Top of the grid is north.</p>
-          <svg class="world-house-grid" viewBox="0 0 ${N * CELL} ${N * CELL}" role="img" aria-label="House floor plan"></svg>
+          <p class="world-house-hint">Tap an empty floor cell to place the chosen prop; tap a prop to select it. Frames hang on the nearest wall. The outer ring is the wall: pick 🪟 and tap it to place windows. 🚪 is the door — it's fixed. Top of the plan is north.</p>
+          <svg class="world-house-grid" viewBox="0 0 ${RING * CELL} ${RING * CELL}" role="img" aria-label="House floor plan with walls"></svg>
         </div>
         <div class="world-house-actions">
           <button type="button" class="world-house-cancel">Cancel</button>
@@ -535,7 +659,16 @@ const WorldView = (() => {
         </div>
       </div>
     `;
+    const peekPill = document.createElement('button');
+    peekPill.type = 'button';
+    peekPill.className = 'world-house-peekpill';
+    peekPill.setAttribute('data-peek', 'off');
+    peekPill.textContent = '✏️ Back to editing';
+    overlay.appendChild(peekPill);
     document.body.appendChild(overlay);
+    // Show the house from outside while editing (the keeper is standing
+    // inside it, where its roof is hidden). Cleared on close.
+    if (Playground3D.setHouseShowcase) Playground3D.setHouseShowcase(projectId);
 
     const grid = overlay.querySelector('.world-house-grid');
     const signInput = overlay.querySelector('#world-house-sign');
@@ -556,23 +689,80 @@ const WorldView = (() => {
         });
       });
     }
+    function renderChips() {
+      overlay.querySelectorAll('.world-house-row[data-style]').forEach((row) => {
+        const field = row.getAttribute('data-style');
+        row.querySelectorAll('.world-house-chip[data-value]').forEach((b) => {
+          b.classList.toggle('active', b.getAttribute('data-value') === draft[field]);
+        });
+      });
+      const gable = draft.roofStyle === 'gable';
+      overlay.querySelectorAll('.world-house-chip[data-dir]').forEach((b) => {
+        b.hidden = !gable;
+        b.classList.toggle('active', gable && Number(b.getAttribute('data-dir')) === (draft.roofDir || 0));
+      });
+      const chimney = overlay.querySelector('.world-house-chip[data-chimney]');
+      if (chimney) chimney.classList.toggle('active', !!draft.chimney);
+      const auto = overlay.querySelector('.world-house-chip[data-winauto]');
+      if (auto) auto.classList.toggle('active', draft.windows == null);
+    }
     function renderKinds() {
       overlay.querySelectorAll('.world-house-kind').forEach((b) => {
         b.classList.toggle('active', b.getAttribute('data-kind') === selectedKind);
       });
       const n = draft.props.length;
-      countEl.textContent = `${n}/${L.C.MAX_PROPS}`;
-      overlay.querySelectorAll('.world-house-tool').forEach((b) => { b.disabled = selectedProp < 0; });
+      const w = draft.windows == null ? 'auto' : `${draft.windows.length}/${L.C.MAX_WINDOWS}`;
+      countEl.textContent = `${n}/${L.C.MAX_PROPS} props · ${w} windows`;
+      const hasSel = selectedProp >= 0 || selectedWindow >= 0;
+      overlay.querySelectorAll('.world-house-tool').forEach((b) => { b.disabled = !hasSel; });
     }
     function renderGrid() {
       const cells = [];
-      for (let gy = 1; gy <= N; gy++) {
-        for (let gx = 1; gx <= N; gx++) {
-          cells.push(`<rect class="world-house-cell" data-gx="${gx}" data-gy="${gy}" x="${(gx - 1) * CELL}" y="${(gy - 1) * CELL}" width="${CELL}" height="${CELL}" />`);
+      // Wall ring (12×12 outer cells): the fixed door, then free wall / corners.
+      for (let gy = 0; gy < RING; gy++) {
+        for (let gx = 0; gx < RING; gx++) {
+          const inner = gx >= 1 && gx <= N && gy >= 1 && gy <= N;
+          const x = gx * CELL, y = gy * CELL;
+          if (inner) {
+            cells.push(`<rect class="world-house-cell" data-gx="${gx}" data-gy="${gy}" x="${x}" y="${y}" width="${CELL}" height="${CELL}" />`);
+            continue;
+          }
+          const rc = ringCell(gx, gy);
+          if (!rc) { cells.push(`<rect class="world-house-corner" x="${x}" y="${y}" width="${CELL}" height="${CELL}" />`); continue; }
+          if (isDoorCell(rc.side, rc.pos)) {
+            cells.push(`<g class="world-house-wall locked" data-side="${rc.side}" data-pos="${rc.pos}">
+              <title>Door — fixed by the road</title>
+              <rect x="${x}" y="${y}" width="${CELL}" height="${CELL}" />
+              <text x="${x + CELL / 2}" y="${y + CELL / 2 + 1}" text-anchor="middle" dominant-baseline="middle" font-size="16">🚪</text>
+            </g>`);
+          } else {
+            cells.push(`<rect class="world-house-wall" data-side="${rc.side}" data-pos="${rc.pos}" x="${x}" y="${y}" width="${CELL}" height="${CELL}" />`);
+          }
+        }
+      }
+      // Windows: the keeper's own (selectable) or, in auto mode, a greyed
+      // preview of where the house puts them by itself.
+      let windows = '';
+      if (draft.windows != null) {
+        windows = draft.windows.map((w, i) => {
+          const [wx, wy] = ringXY(w.side, w.pos + 0.5);
+          const sel = i === selectedWindow ? ' selected' : '';
+          return `<g class="world-house-window${sel}" data-w="${i}" transform="translate(${wx} ${wy})">
+            <rect x="${-CELL / 2 + 2}" y="${-CELL / 2 + 2}" width="${CELL - 4}" height="${CELL - 4}" rx="5" />
+            <text x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-size="16">🪟</text>
+          </g>`;
+        }).join('');
+      } else if (layout) {
+        for (const side of L.SIDES) {
+          for (const c of L.autoWindowCentres(layout[side])) {
+            const [wx, wy] = ringXY(side, c);
+            windows += `<g class="world-house-window auto" transform="translate(${wx} ${wy})"><title>Auto window</title>
+              <text x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-size="16">🪟</text></g>`;
+          }
         }
       }
       const props = draft.props.map((p, i) => {
-        const cx = (p.gx - 0.5) * CELL, cy = (p.gy - 0.5) * CELL;
+        const cx = (p.gx + 0.5) * CELL, cy = (p.gy + 0.5) * CELL;
         const sel = i === selectedProp ? ' selected' : '';
         return `<g class="world-house-prop${sel}" data-i="${i}" transform="translate(${cx} ${cy})">
           <rect x="${-CELL / 2 + 2}" y="${-CELL / 2 + 2}" width="${CELL - 4}" height="${CELL - 4}" rx="5" />
@@ -580,8 +770,7 @@ const WorldView = (() => {
           <path d="M0,-${CELL / 2 - 3} l4,5 h-8 z" transform="rotate(${(p.rot || 0) * 90})" />
         </g>`;
       }).join('');
-      // Door side marker: south edge is where a lone island's sign hangs.
-      grid.innerHTML = `<rect class="world-house-floor" x="0" y="0" width="${N * CELL}" height="${N * CELL}" />${cells.join('')}${props}`;
+      grid.innerHTML = `<rect class="world-house-floor" x="${CELL}" y="${CELL}" width="${N * CELL}" height="${N * CELL}" />${cells.join('')}${windows}${props}`;
     }
     // Portrait: a photo the keeper uploads (same /upload route as memories),
     // shown inside every Frame prop. Uploading auto-places a frame if there
@@ -633,11 +822,15 @@ const WorldView = (() => {
     });
     removeBtn.addEventListener('click', () => { draft.portrait = ''; renderPortrait(); preview(); });
 
-    function renderAll() { renderSwatches(); renderKinds(); renderGrid(); renderPortrait(); }
+    function renderAll() { renderSwatches(); renderChips(); renderKinds(); renderGrid(); renderPortrait(); }
     renderAll();
     preview();
 
     overlay.addEventListener('click', (e) => {
+      // Peek: hide the panel (and the dark backdrop) so the whole house is
+      // visible; the pill brings the panel back. Nothing else is dismissed.
+      const peek = e.target.closest('[data-peek]');
+      if (peek) { overlay.classList.toggle('peeking', peek.getAttribute('data-peek') === 'on'); return; }
       const sw = e.target.closest('.world-house-swatch');
       if (sw) {
         const slot = sw.closest('.world-house-row').getAttribute('data-slot');
@@ -646,9 +839,35 @@ const WorldView = (() => {
         renderSwatches(); preview();
         return;
       }
+      // Shape / finish chips.
+      const chip = e.target.closest('.world-house-chip');
+      if (chip) {
+        if (chip.hasAttribute('data-value')) {
+          draft[chip.closest('.world-house-row').getAttribute('data-style')] = chip.getAttribute('data-value');
+        } else if (chip.hasAttribute('data-dir')) {
+          draft.roofDir = Number(chip.getAttribute('data-dir'));
+        } else if (chip.hasAttribute('data-chimney')) {
+          draft.chimney = !draft.chimney;
+        } else if (chip.hasAttribute('data-winauto')) {
+          draft.windows = null;
+          selectedWindow = -1;
+        }
+        renderChips(); renderKinds(); renderGrid(); preview();
+        return;
+      }
       const kind = e.target.closest('.world-house-kind');
-      if (kind) { selectedKind = kind.getAttribute('data-kind'); selectedProp = -1; renderKinds(); renderGrid(); return; }
+      if (kind) { selectedKind = kind.getAttribute('data-kind'); selectedProp = -1; selectedWindow = -1; renderKinds(); renderGrid(); return; }
       const tool = e.target.closest('.world-house-tool');
+      if (tool && selectedWindow >= 0 && draft.windows && draft.windows[selectedWindow]) {
+        if (tool.getAttribute('data-tool') === 'rotate') {
+          if (typeof toast === 'function') toast('Windows face out from their wall — move it to another spot instead.', 'info');
+          return;
+        }
+        draft.windows.splice(selectedWindow, 1);
+        selectedWindow = -1;
+        renderKinds(); renderGrid(); preview();
+        return;
+      }
       if (tool && selectedProp >= 0 && draft.props[selectedProp]) {
         if (tool.getAttribute('data-tool') === 'rotate') {
           // A frame's facing is fixed by the wall it hangs on.
@@ -665,10 +884,37 @@ const WorldView = (() => {
         return;
       }
       const propEl = e.target.closest('.world-house-prop');
-      if (propEl) { selectedProp = Number(propEl.getAttribute('data-i')); renderKinds(); renderGrid(); return; }
+      if (propEl) { selectedProp = Number(propEl.getAttribute('data-i')); selectedWindow = -1; renderKinds(); renderGrid(); return; }
+      const winEl = e.target.closest('.world-house-window');
+      if (winEl && winEl.hasAttribute('data-w')) { selectedWindow = Number(winEl.getAttribute('data-w')); selectedProp = -1; renderKinds(); renderGrid(); return; }
+      // The wall ring: windows only (and never on the door).
+      const wall = e.target.closest('.world-house-wall');
+      if (wall) {
+        const side = wall.getAttribute('data-side'), pos = Number(wall.getAttribute('data-pos'));
+        if (wall.classList.contains('locked')) {
+          if (typeof toast === 'function') toast('The door is fixed — it sits where the road comes in.', 'info');
+          return;
+        }
+        if (selectedKind !== 'window') {
+          if (typeof toast === 'function') toast('That\'s the wall — pick 🪟 window to put a window there.', 'info');
+          return;
+        }
+        const current = draft.windows == null ? [] : draft.windows;
+        const can = L.canPlaceWindow(current, side, pos, layout ? layout[side] : []);
+        if (!can.ok) { if (typeof toast === 'function') toast(can.error, 'warn'); return; }
+        draft.windows = [...current, { side, pos }];   // leaving auto mode keeps only what you place
+        selectedWindow = draft.windows.length - 1;
+        selectedProp = -1;
+        renderChips(); renderKinds(); renderGrid(); preview();
+        return;
+      }
       const cell = e.target.closest('.world-house-cell');
       if (cell) {
         const gx = Number(cell.getAttribute('data-gx')), gy = Number(cell.getAttribute('data-gy'));
+        if (selectedKind === 'window') {
+          if (typeof toast === 'function') toast('Windows go on the wall — tap the outer ring.', 'info');
+          return;
+        }
         if (draft.props.length >= L.C.MAX_PROPS) {
           if (typeof toast === 'function') toast(`That's the limit — ${L.C.MAX_PROPS} props per house.`, 'warn');
           return;
@@ -694,7 +940,10 @@ const WorldView = (() => {
       closed = true;
       overlay.remove();
       _houseEditorClose = null;
+      _houseEditing = null;
+      if (Playground3D.clearHouseShowcase) Playground3D.clearHouseShowcase();
     }, { initialFocus: overlay.querySelector('.popup-close') });
+    _houseEditing = projectId;
     _houseEditorClose = () => { restore(); close(); };
     overlay.querySelector('.popup-close').addEventListener('click', () => { restore(); close(); });
     overlay.querySelector('.world-house-cancel').addEventListener('click', () => { restore(); close(); });
@@ -1040,6 +1289,13 @@ const WorldView = (() => {
     document.querySelector('.world-house')?.remove();
     if (_housePoll) { clearInterval(_housePoll); _housePoll = null; }
     _zone = null; _houseMe = null; _houseKeepers = {}; _houseMine = {}; _housesAt = 0;
+    if (_liveTick) { clearInterval(_liveTick); _liveTick = null; }
+    if (_liveInputHandler) {
+      window.removeEventListener('keydown', _liveInputHandler, true);
+      window.removeEventListener('pointerdown', _liveInputHandler, true);
+      _liveInputHandler = null;
+    }
+    _liveStay = null; _liveLabel = ''; _lastInputAt = 0;
     // Stone contest teardown — engine stones die in Playground3D.destroy();
     // the chip/snap button/flash live inside the container and vanish with it.
     if (_snapKeyHandler) { window.removeEventListener('keydown', _snapKeyHandler); _snapKeyHandler = null; }

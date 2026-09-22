@@ -22,7 +22,7 @@ const User = require('../models/user');
 const HouseLogic = require('../js/world-house-logic');
 const WorldSocket = require('./world-socket');
 
-const HOUSE_FIELDS = 'projectId wallColor roofColor trimColor lampColor sign portrait props';
+const HOUSE_FIELDS = 'projectId wallColor roofColor trimColor lampColor sign portrait props roofStyle roofDir chimney wallStyle windowStyle windows';
 
 // Same rule as memories (routes/progress.js): a portrait must live on the
 // app's own Cloudinary account, so a keeper can't hang a tracker/phishing

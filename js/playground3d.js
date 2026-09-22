@@ -84,11 +84,11 @@ const Playground3D = (() => {
     ROAD_COLOR: 0xc2a878,        // warm stone path
     APRON_COLOR: 0xc7bca2,       // light stone pad around each building base
     APRON_MARGIN: 4,             // apron extends this far beyond the platform (walkable)
-    // Wall fence around each platform — room-height (3.0u, above the ~2.2u
-    // player head) so each node reads as an enclosed room and the full-height
-    // doorway clears the character. You can't walk off the platform except
+    // Wall fence around each platform — tall rooms (4.5u, well above the
+    // ~2.2u player head and a Huge build's ~3.1u) so each node reads as an
+    // enclosed room with headroom and the full-height doorway clears everyone. You can't walk off the platform except
     // through a doorway that lines up with a connecting road.
-    WALL_HEIGHT: 3.0,
+    WALL_HEIGHT: 4.5,
     WALL_THICKNESS: 0.3,
     WALL_COLOR: 0xd9cbb0,        // light stone (plaster body)
     WALL_TRIM_COLOR: 0x9a8c6f,   // baseboard / door-frame trim (darker stone)
@@ -106,7 +106,7 @@ const Playground3D = (() => {
       'Phase 6': 0xb98a3f        // clay / amber
     },
     HEIGHT_VAR_MIN: 0.82,        // wall height = WALL_HEIGHT * lerp(min,max, rand)
-    HEIGHT_VAR_MAX: 1.24,        // ~2.5u .. 3.7u
+    HEIGHT_VAR_MAX: 1.24,        // ~3.7u .. 5.6u
     WINDOW_W: 1.5, WINDOW_H: 1.4, // window decal size; placed on long wall segments
     WINDOW_MIN_SEG: 3.2,         // only segments at least this long get a window
     LAMP_COLOR: 0xffd98a         // warm lamp glow
@@ -174,6 +174,7 @@ const Playground3D = (() => {
   let _rig = null;               // bones we animate (head, arms, legs, torso)
   let _walls = [];               // [{ minX, maxX, minZ, maxZ }] for collision
   let _input = null;
+  let _orient = null;            // PGOrientation handle: fullscreen / lock button + rotate hint
   let _orbit = null;             // { azimuth, elevation, distance }
   let _resizeObs = null;
   let _rafId = null;
@@ -206,7 +207,7 @@ const Playground3D = (() => {
   let _localBubbleEls = [];        // chat bubbles floating over the LOCAL player
   let _localWalking = false;       // set each tick; read by getLocalState() for MP broadcast
   let _localBackward = false;      // walking while backpedalling — peers lean the avatar back too
-  let _walkableRoads = [];         // [{ cx, cz, cos, sin, halfW, halfL }] for point-in-rotated-rect tests
+  let _walkableRoads = [];         // [{ a, b, cx, cz, cosA, sinA, halfW, halfL }] for point-in-rotated-rect tests
   let _velY = 0;                   // vertical velocity for jump physics
   // ── gap-jump / fall state ──
   let _airborne = false;           // mid-jump or falling — frees XZ movement from walkability
@@ -316,6 +317,7 @@ const Playground3D = (() => {
     if (_threeReadyHandler) { window.removeEventListener('three-ready', _threeReadyHandler); _threeReadyHandler = null; }
     if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
     if (_input) { _input.detach(); _input = null; }
+    if (_orient) { _orient.detach(); _orient = null; }   // exits fullscreen + unlocks if we locked
     if (_worldStateUnsub) { try { _worldStateUnsub(); } catch (_) {} _worldStateUnsub = null; }
     if (_renderer) {
       try { _renderer.dispose(); } catch (_) {}
@@ -337,7 +339,7 @@ const Playground3D = (() => {
     _keeperTags.clear();           // tag DOM dies with the container below
     _worldRoads.clear();
     // Per-build shared materials were disposed by the _disposeRig sweep above;
-    // drop the stale refs so the next mount recreates them. (_wallTex/_lampTex
+    // drop the stale refs so the next mount recreates them. (PG3DHouse textures/_lampTex
     // are textures, not disposed by _disposeRig, and persist across mounts.)
     _matPlatformSide = null;
     _matApron = null;
@@ -350,6 +352,7 @@ const Playground3D = (() => {
     _localWalking = false;
     _localBackward = false;
     _velY = 0;
+    _showcase = null;
     _mode = 'home';
     if (_container) _container.innerHTML = '';
     _container = _viewport = _renderer = _scene = _camera = null;
@@ -500,6 +503,11 @@ const Playground3D = (() => {
 
     // Input.
     _input = PG3DInput.makeInput(_viewport, { orbit: _orbit, CAMERA, minElev: _minElev });
+    // Landscape affordances (shared by /home, /world, friend homes). Attached
+    // to the container, after the innerHTML wipe above, so its hint survives.
+    _orient = (typeof PGOrientation !== 'undefined')
+      ? PGOrientation.attach(_container, { onResize: _resizeRenderer })
+      : null;
 
     // Initial size + resize handling.
     _resizeRenderer();
@@ -532,6 +540,14 @@ const Playground3D = (() => {
     const h = _viewport.clientHeight || 1;
     _renderer.setSize(w, h, false);
     _camera.aspect = w / h;
+    // Vertical FOV follows the aspect: 60° in landscape, opening to 80° in
+    // phone portrait so the side-to-side view doesn't collapse to ~30°.
+    // Trade-off: the wider portrait view draws the character a little
+    // smaller — if that ever reads too small, scale _orbit.distance by
+    // 60 / fov in _updateCamera rather than touching the FOV again.
+    if (typeof PG3DPhysics !== 'undefined' && PG3DPhysics.fovForAspect) {
+      _camera.fov = PG3DPhysics.fovForAspect(_camera.aspect);
+    }
     _camera.updateProjectionMatrix();
   }
 
@@ -1346,7 +1362,9 @@ const Playground3D = (() => {
     }
 
     _updateCamera();
-    _occlusion.tick(dt, now, _scene, _camera, _player);
+    // No see-through fading while a house is showcased: the player is inside
+    // it, so every wall between the outside camera and them would fade away.
+    if (!_showcase) _occlusion.tick(dt, now, _scene, _camera, _player);
     _renderer.render(_scene, _camera);
     _rafId = requestAnimationFrame(_tick);
   }
@@ -1640,8 +1658,37 @@ const Playground3D = (() => {
     return _mode === 'world' ? CAMERA.WORLD_MIN_ELEV : CAMERA.MIN_ELEV;
   }
 
+  // House showcase (the keeper's editor is open): instead of following the
+  // player — who is standing INSIDE the house, under a roof that is hidden
+  // for them — the camera circles the house slowly from outside so every
+  // roof / wall / window change is visible as it is made. Cleared when the
+  // editor closes; the normal orbit resumes untouched.
+  let _showcase = null;            // { projectId, since }
+  const SHOWCASE = { RADIUS: 24, ABOVE_ROOF: 4, TURN: 0.22 /* rad/s */, START: Math.PI * 0.8 };
+
+  function setHouseShowcase(projectId) {
+    const node = _worldNodes.get(projectId);
+    if (!node || _mode !== 'world') { _showcase = null; return false; }
+    _showcase = { projectId, since: performance.now() };
+    _occlusion.reset();            // nothing stays faded from the follow camera
+    return true;
+  }
+  function clearHouseShowcase() { _showcase = null; }
+
   function _updateCamera() {
     if (!_camera || !_player || !_orbit) return;
+    if (_showcase) {
+      const node = _worldNodes.get(_showcase.projectId);
+      if (node && node.mesh) {
+        const cx = node.mesh.position.x, cz = node.mesh.position.z;
+        const t = (performance.now() - _showcase.since) / 1000;
+        const a = SHOWCASE.START + t * SHOWCASE.TURN;
+        const topY = node.roofTopY || ((node.wallHeight || WORLD.WALL_HEIGHT) + 0.2);
+        _camera.position.set(cx + Math.sin(a) * SHOWCASE.RADIUS, topY + SHOWCASE.ABOVE_ROOF, cz + Math.cos(a) * SHOWCASE.RADIUS);
+        _camera.lookAt(cx, (node.wallHeight || WORLD.WALL_HEIGHT) * 0.45, cz);
+        return;
+      }
+    }
     const targetX = _player.position.x;
     const targetY = _player.position.y + 1.15 * (_player.scale.y || 1);   // chest level
     const targetZ = _player.position.z;
@@ -1866,7 +1913,7 @@ const Playground3D = (() => {
       // The 'anchor' is still used by the active-node prompt placement
       // tick — kept even though we no longer render a floating title.
       const anchor = new THREE.Vector3(x, WORLD.PLATFORM_RAISE + WORLD.PLATFORM_H / 2 + 1.6, z);
-      const node = { mesh, project: p, anchor, walls: [], ceiling, apron, wallHeight, decor: [], props: [], house: null };
+      const node = { mesh, project: p, anchor, walls: [], ceiling, apron, wallHeight, decor: [], props: [], house: null, roofExtra: null, roofTopY: 0 };
       // Keeper decorations, if this island already has some (colours are read
       // inside _buildNodeWalls, so neighbour-triggered rebuilds keep them).
       node.house = _houses.get(p.id) || null;
@@ -1983,37 +2030,35 @@ const Playground3D = (() => {
     }
     node.decor = [];
 
-    const connections = _getConnectedNodes(node.project.id);
     // We always build the four-sided fence (even with no unlocked
     // connections) so that sides facing a still-locked neighbor read as a
     // solid wall we can hang a lock icon on. Doorways are cut only at
-    // unlocked connections below; the player is confined to platforms/roads
-    // by _isInWalkable regardless, so a fully-walled lone platform is fine.
-    const sides = { N: [], S: [], E: [], W: [] };
-    for (const other of connections) {
-      const { side, coord } = _doorwayOnSide(node, other);
-      sides[side].push(coord);
-    }
+    // unlocked connections; the player is confined to platforms/roads by
+    // _isInWalkable regardless, so a fully-walled lone platform is fine.
+    // Openings come from the roads alone (never from the keeper's house), so
+    // the door stays put no matter how the house is decorated.
+    const openingsBySide = _sideOpenings(node);
 
     const cx = node.mesh.position.x, cz = node.mesh.position.z;
     const HALF = WORLD.PLATFORM_W / 2;
     const T = WORLD.WALL_THICKNESS;
     const H = node.wallHeight || WORLD.WALL_HEIGHT;   // per-house jittered height
-    const D = WORLD.DOORWAY_WIDTH;
     const wallY = WORLD.PLATFORM_RAISE + WORLD.PLATFORM_H / 2 + H / 2;
-    // Plaster wall texture with a baked baseboard/trim — ONE texture shared by the
-    // whole town. Each segment gets its own material (so the existing per-wall
-    // material.dispose() teardown is safe) but points at the shared texture map;
-    // material.dispose() does not free the map, so the shared texture survives.
-    const wallTex = _wallTexture();
-
-    // Keeper colours (WorldHouseLogic palette indices on node.house) with the
+    // Keeper finishes / colours (WorldHouseLogic fields on node.house) with the
     // engine defaults as fallback — so an undecorated house looks exactly as
     // before and a decorated one survives every wall rebuild.
+    const house = node.house || null;
+    const wallStyle = (house && house.wallStyle) || 'plaster';
+    const windowStyle = (house && house.windowStyle) || 'cross';
+    const houseWindows = (house && Array.isArray(house.windows)) ? house.windows : null;   // null = auto
+    // Wall finish texture — ONE per style, shared by the whole town. Each panel
+    // gets its own material (so the per-wall material.dispose() teardown is
+    // safe) but points at the shared map; material.dispose() never frees maps.
+    const wallTex = (typeof PG3DHouse !== 'undefined') ? PG3DHouse.wallTexture(THREE, wallStyle) : null;
     const wallColor = _houseColor(node, 'wallColor', WORLD.WALL_COLOR);
     const trimColor = _houseColor(node, 'trimColor', WORLD.WALL_TRIM_COLOR);
     const lampColor = _houseColor(node, 'lampColor', WORLD.LAMP_COLOR);
-    const signText = (node.house && node.house.sign) ? String(node.house.sign) : '';
+    const signText = (house && house.sign) ? String(house.sign) : '';
     let signPlaced = false;
 
     // Decor (trim/stoop/lamp) helpers — non-colliding, tracked in node.decor.
@@ -2070,26 +2115,7 @@ const Playground3D = (() => {
     // build a thin box per segment. Walls are inset by T/2 so they sit
     // visibly ON the platform rather than at its edge.
     function buildSide(sideName, axisStart, axisEnd, fixed, horizontal) {
-      const sorted = [...sides[sideName]].sort((a, b) => a - b);
-      // Build clipped opening intervals, then collapse any that overlap or are
-      // separated by only a thin wall sliver (< DOORWAY_MERGE_GAP) into one
-      // opening — so two roads converging on a side become a single doorway with
-      // one frame instead of overlapping frames / a lone thin post. Centers are
-      // sorted and clamping preserves order, so a single left-to-right merge is
-      // correct. Operates only on unlocked doorways, so a side with one path
-      // still yields exactly one opening.
-      const openings = [];
-      for (const dCenter of sorted) {
-        const a = Math.max(axisStart, dCenter - D / 2);
-        const b = Math.min(axisEnd,   dCenter + D / 2);
-        if (b - a < 0.1) continue;
-        const last = openings[openings.length - 1];
-        if (last && a - last[1] < WORLD.DOORWAY_MERGE_GAP) {
-          last[1] = Math.max(last[1], b);   // overlap or thin sliver → merge
-        } else {
-          openings.push([a, b]);
-        }
-      }
+      const openings = openingsBySide[sideName];
 
       // Solid wall segments = the complement of the merged openings.
       let segs = [], cursor = axisStart;
@@ -2115,21 +2141,48 @@ const Playground3D = (() => {
         if (wlen <= 0.02 || wh <= 0.02) return;
         const px = horizontal ? (aStart + aEnd) / 2 : perp;
         const pz = horizontal ? perp : (aStart + aEnd) / 2;
+        const py = (y0 + y1) / 2;                    // platform top is y=0
         const gx = horizontal ? wlen : T;
         const gz = horizontal ? T : wlen;
-        // Lambert output is map × color: the shared plaster texture is painted
+        // Lambert output is map × color: the shared finish texture is painted
         // on a white base, so the per-panel `color` carries the wall colour
         // (engine default or the keeper's pick) at no extra texture cost.
         const mat = (plainColor != null)
           ? new THREE.MeshLambertMaterial({ color: plainColor })
           : (wallTex ? new THREE.MeshLambertMaterial({ map: wallTex, color: wallColor })
                      : new THREE.MeshLambertMaterial({ color: wallColor }));
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(gx, wh, gz), mat);
-        mesh.position.set(px, (y0 + y1) / 2, pz);   // platform top is y=0
+        const geom = new THREE.BoxGeometry(gx, wh, gz);
+        // World-anchored UVs: every panel samples ONE continuous tile grid, so
+        // brick courses run straight through the fillers / sill / header around
+        // a window instead of restarting (and stretching) per box.
+        if (mat.map && typeof PG3DHouse !== 'undefined') _anchorWallUVs(geom, px, py, pz);
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.position.set(px, py, pz);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         _scene.add(mesh);
         node.walls.push({ mesh });
+      }
+
+      // Where the windows go on this side, as pane centres along the axis.
+      //   auto (windows: null)  — one centred pane per stretch ≥ WINDOW_MIN_SEG,
+      //                           exactly the undecorated look;
+      //   keeper (array)        — the cells they picked, minus any pane that
+      //                           would touch a doorway (WorldHouseLogic.windowBlocked,
+      //                           the same test the editor runs) or a corner.
+      // The doorway itself is never moved for a window: the door wins.
+      const WW = WORLD.WINDOW_W, WM = (typeof WorldHouseLogic !== 'undefined') ? WorldHouseLogic.C.WINDOW_MARGIN : 0.35;
+      const winY = Math.min(H - WORLD.WINDOW_H / 2 - 0.25, H * 0.55);
+      const sillTop = winY - WORLD.WINDOW_H / 2, headBot = winY + WORLD.WINDOW_H / 2;
+      const outSign = (sideName === 'N' || sideName === 'W') ? -1 : 1;
+      let picked = [];
+      if (houseWindows && typeof WorldHouseLogic !== 'undefined') {
+        const offsetOpenings = openings.map(([a, b]) => [a - axisStart, b - axisStart]);
+        for (const w of houseWindows) {
+          if (w.side !== sideName || WorldHouseLogic.windowBlocked(w.pos, offsetOpenings)) continue;
+          picked.push(axisStart + w.pos + 0.5);
+        }
+        picked.sort((a, b) => a - b);
       }
 
       for (const [s, e] of segs) {
@@ -2137,29 +2190,46 @@ const Playground3D = (() => {
         if (len <= 0.1) continue;
         const firstIdx = node.walls.length;
 
-        if (len < WORLD.WINDOW_MIN_SEG) {
+        const wins = houseWindows
+          ? picked.filter(c => c - WW / 2 >= s + WM && c + WW / 2 <= e - WM)
+          : (len >= WORLD.WINDOW_MIN_SEG ? [(s + e) / 2] : []);
+
+        if (!wins.length) {
           addWallPanel(s, e, 0, H);                       // plain solid segment
         } else {
-          // Carve a real window: side fillers + a sill below + a header above,
-          // leaving a hole you can actually see through (filled with glass below).
-          const center = (s + e) / 2;
-          const winY = Math.min(H - WORLD.WINDOW_H / 2 - 0.25, H * 0.55);
-          const winL = center - WORLD.WINDOW_W / 2, winR = center + WORLD.WINDOW_W / 2;
-          const sillTop = winY - WORLD.WINDOW_H / 2, headBot = winY + WORLD.WINDOW_H / 2;
-          addWallPanel(s, winL, 0, H);                    // left filler
-          addWallPanel(winR, e, 0, H);                    // right filler
-          addWallPanel(winL, winR, 0, sillTop);           // sill — same plaster as the wall
-          addWallPanel(winL, winR, headBot, H);           // header — same plaster as the wall
-          // Translucent glass pane sitting in the hole — see-through to the interior.
-          const glass = _makeWindowGlass();
-          if (glass) {
-            glass.position.set(horizontal ? center : perp, winY, horizontal ? perp : center);
-            glass.rotation.y = (sideName === 'N') ? Math.PI
-                             : (sideName === 'S') ? 0
-                             : (sideName === 'W') ? -Math.PI / 2 : Math.PI / 2;
-            _scene.add(glass);
-            node.decor.push(glass);
+          // Carve each window: fillers between panes + a sill below + a header
+          // above, leaving holes you can actually see through (glass below).
+          let cursor = s;
+          for (const center of wins) {
+            const winL = center - WW / 2, winR = center + WW / 2;
+            addWallPanel(cursor, winL, 0, H);             // filler up to this pane
+            addWallPanel(winL, winR, 0, sillTop);         // sill — same finish as the wall
+            addWallPanel(winL, winR, headBot, H);         // header — same finish as the wall
+            cursor = winR;
+            // Translucent glass pane sitting in the hole — see-through to the interior.
+            const glass = (typeof PG3DHouse !== 'undefined') ? PG3DHouse.windowGlass(THREE, windowStyle, WW, WORLD.WINDOW_H) : null;
+            if (glass) {
+              glass.position.set(horizontal ? center : perp, winY, horizontal ? perp : center);
+              glass.rotation.y = (sideName === 'N') ? Math.PI
+                               : (sideName === 'S') ? 0
+                               : (sideName === 'W') ? -Math.PI / 2 : Math.PI / 2;
+              _scene.add(glass);
+              node.decor.push(glass);
+            }
+            // Shutters: two trim-coloured boards on the outer face, either side.
+            if (windowStyle === 'shutters') {
+              const SW = 0.22, SD = 0.08;
+              const face = perp + outSign * (T / 2 + SD / 2);
+              for (const sx of [winL - SW / 2 - 0.02, winR + SW / 2 + 0.02]) {
+                const board = new THREE.Mesh(
+                  new THREE.BoxGeometry(horizontal ? SW : SD, WORLD.WINDOW_H, horizontal ? SD : SW),
+                  trimMat()
+                );
+                addDecor(board, horizontal ? sx : face, winY, horizontal ? face : sx);
+              }
+            }
           }
+          addWallPanel(cursor, e, 0, H);                  // filler after the last pane
         }
 
         // Collision: the whole segment blocks movement (a window has a sill, so you
@@ -2183,6 +2253,80 @@ const Playground3D = (() => {
     buildSide('N', cx - HALF, cx + HALF, cz - HALF, true);
     buildSide('S', cx - HALF, cx + HALF, cz + HALF, true);
     _buildSideRest(node, cx, cz, HALF, T, H, buildSide, placeSign);
+  }
+
+  // Door openings per side, in world coordinates along that side's axis.
+  // Derived from the roads alone: for every unlocked neighbour, the side and
+  // point where its road leaves the platform (_doorwayOnSide), clipped to the
+  // platform and merged when two openings overlap or leave only a thin sliver
+  // (< DOORWAY_MERGE_GAP) — so two roads converging on a side become a single
+  // doorway with one frame instead of overlapping frames / a lone thin post.
+  // Centres are sorted and clamping preserves order, so a single left-to-right
+  // merge is correct. Shared by _buildNodeWalls and getHouseLayout so the
+  // editor's picture of the fixed door is exactly what gets built.
+  function _sideOpenings(node) {
+    const sides = { N: [], S: [], E: [], W: [] };
+    for (const other of _getConnectedNodes(node.project.id)) {
+      const { side, coord } = _doorwayOnSide(node, other);
+      sides[side].push(coord);
+    }
+    const cx = node.mesh.position.x, cz = node.mesh.position.z;
+    const HALF = WORLD.PLATFORM_W / 2, D = WORLD.DOORWAY_WIDTH;
+    const out = {};
+    for (const s of ['N', 'S', 'E', 'W']) {
+      const axisStart = (s === 'N' || s === 'S') ? cx - HALF : cz - HALF;
+      const axisEnd = axisStart + 2 * HALF;
+      const openings = [];
+      for (const dCenter of [...sides[s]].sort((a, b) => a - b)) {
+        const a = Math.max(axisStart, dCenter - D / 2);
+        const b = Math.min(axisEnd,   dCenter + D / 2);
+        if (b - a < 0.1) continue;
+        const last = openings[openings.length - 1];
+        if (last && a - last[1] < WORLD.DOORWAY_MERGE_GAP) {
+          last[1] = Math.max(last[1], b);   // overlap or thin sliver → merge
+        } else {
+          openings.push([a, b]);
+        }
+      }
+      out[s] = openings;
+    }
+    return out;
+  }
+
+  // The fixed door layout of one house for the editor: openings per side in
+  // edge-offset units (0..PLATFORM_W from the side's start corner), the same
+  // units WorldHouseLogic.windowBlocked / openingsToCells work in. Null until
+  // the node exists (the editor then treats every wall cell as free).
+  function getHouseLayout(projectId) {
+    const node = _worldNodes.get(projectId);
+    if (!node || !node.mesh) return null;
+    const cx = node.mesh.position.x, cz = node.mesh.position.z;
+    const HALF = WORLD.PLATFORM_W / 2;
+    const world = _sideOpenings(node);
+    const out = {};
+    for (const s of ['N', 'S', 'E', 'W']) {
+      const axisStart = (s === 'N' || s === 'S') ? cx - HALF : cz - HALF;
+      out[s] = world[s].map(([a, b]) => [a - axisStart, b - axisStart]);
+    }
+    return out;
+  }
+
+  // Rewrite a wall panel box's UVs from world position so the shared finish
+  // texture tiles continuously across every panel of the town (PG3DHouse
+  // TILE_W × TILE_H world units per tile). Vertical faces map their along-wall
+  // axis to u and height to v; the thin top/bottom faces just take x/z.
+  function _anchorWallUVs(geom, px, py, pz) {
+    const pos = geom.attributes.position, nrm = geom.attributes.normal, uv = geom.attributes.uv;
+    if (!pos || !nrm || !uv) return;
+    const TW = PG3DHouse.TILE_W, TH = PG3DHouse.TILE_H;
+    for (let i = 0; i < uv.count; i++) {
+      const wx = px + pos.getX(i), wy = py + pos.getY(i), wz = pz + pos.getZ(i);
+      const nx = Math.abs(nrm.getX(i)), nz = Math.abs(nrm.getZ(i));
+      if (nz > 0.5)      uv.setXY(i, wx / TW, wy / TH);
+      else if (nx > 0.5) uv.setXY(i, wz / TW, wy / TH);
+      else               uv.setXY(i, wx / TW, wz / TH);
+    }
+    uv.needsUpdate = true;
   }
 
   // Second half of _buildNodeWalls, split only to keep the door-frame closure
@@ -2247,8 +2391,16 @@ const Playground3D = (() => {
     const halfP = WORLD.PLATFORM_W / 2;
     const MARGIN = 0.75;   // hysteresis dead-band (world units)
     const px = _player.position.x, pz = _player.position.z;
+    const showcased = _showcase ? _showcase.projectId : null;
     for (const node of _worldNodes.values()) {
       if (!node.ceiling) continue;
+      // A showcased house (its editor is open) keeps its roof on: the camera
+      // is circling it from outside so the keeper can see the roof change.
+      if (node.project.id === showcased) {
+        node.ceiling.visible = true;
+        if (node.roofExtra) node.roofExtra.visible = true;
+        continue;
+      }
       // Hide the solid roof of the room the player is inside so they can see in;
       // every other building keeps its roof. Opaque visibility toggle avoids the
       // flicker that transparent opacity-fading caused. A hysteresis dead-band
@@ -2262,6 +2414,8 @@ const Playground3D = (() => {
       } else if (dx > halfP + MARGIN || dz > halfP + MARGIN) {
         node.ceiling.visible = true;            // clearly outside → solid roof
       }                                         // in-between → keep current state
+      // The pitched part (gable / hip / chimney) follows the slab.
+      if (node.roofExtra) node.roofExtra.visible = node.ceiling.visible;
     }
   }
 
@@ -2340,41 +2494,6 @@ const Playground3D = (() => {
     return (typeof c === 'number') ? c : WORLD.CEILING_COLOR;
   }
 
-  // One shared plaster/stucco wall texture, drawn once and cached. Just a faint,
-  // uniform speckle over the stone wall color — no baked baseboard/trim lines, so
-  // every wall panel (full segments plus the fillers/sill/header around a carved
-  // window) looks identical and the window reads as a clean hole, not a patch.
-  let _wallTex = null;
-  function _wallTexture() {
-    const THREE = window.THREE;
-    if (!THREE || !THREE.CanvasTexture) return null;
-    if (_wallTex) return _wallTex;
-    const W = 64, H = 128;
-    const canvas = document.createElement('canvas');
-    canvas.width = W; canvas.height = H;
-    const ctx = canvas.getContext('2d');
-    const hex = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
-    // Plaster body — painted WHITE: the actual wall colour is the panel
-    // material's `color` (map × color), so keepers can recolour a house
-    // without a texture per house. Default WALL_COLOR gives the old look.
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, W, H);
-    // Faint stucco speckle (deterministic so the cache is stable; no Math.random).
-    let seed = 0x1234567;
-    const rnd = () => { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
-    for (let i = 0; i < 900; i++) {
-      const a = 0.05 + rnd() * 0.06;
-      ctx.fillStyle = (rnd() > 0.5) ? `rgba(255,255,255,${a})` : `rgba(80,66,44,${a})`;
-      ctx.fillRect(rnd() * W, rnd() * H, 1, 1);
-    }
-
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.wrapT = THREE.ClampToEdgeWrapping;
-    _wallTex = tex;
-    return tex;
-  }
-
   // ── per-build shared world materials ──
   // Hoisted out of the per-node loop so a fully-unlocked town allocates ONE
   // platform-side and ONE apron material, plus one ceiling material per phase,
@@ -2412,7 +2531,7 @@ const Playground3D = (() => {
     return m;
   }
 
-  // One shared lamp-glow texture for the whole town (like _wallTex). Each lamp
+  // One shared lamp-glow texture for the whole town (like the PG3DHouse wall textures). Each lamp
   // keeps its own cheap SpriteMaterial pointing at it; _disposeDecor skips this
   // map on teardown so it survives wall rebuilds.
   let _lampTex = null;
@@ -2433,37 +2552,6 @@ const Playground3D = (() => {
     return _lampTex;
   }
 
-  // A translucent glass pane for a carved window opening. The panes are mostly
-  // clear (low-alpha tint) so you can see the interior through the wall hole,
-  // with an opaque frame + mullion cross so it still reads as a window. Caller
-  // positions/orients it in the hole.
-  function _makeWindowGlass() {
-    const THREE = window.THREE;
-    if (!THREE || !THREE.CanvasTexture) return null;
-    const S = 128;
-    const canvas = document.createElement('canvas');
-    canvas.width = S; canvas.height = S;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, S, S);                      // start fully transparent
-    // Faint glass tint + a soft sheen across the top so it reads as glass.
-    ctx.fillStyle = 'rgba(200,222,240,0.12)';
-    ctx.fillRect(0, 0, S, S);
-    ctx.fillStyle = 'rgba(255,255,255,0.10)';
-    ctx.fillRect(0, 0, S, S * 0.42);
-    // Opaque frame + mullion cross.
-    ctx.fillStyle = '#6e5a3a';
-    const fr = 8;
-    ctx.fillRect(0, 0, S, fr); ctx.fillRect(0, S - fr, S, fr);
-    ctx.fillRect(0, 0, fr, S); ctx.fillRect(S - fr, 0, fr, S);
-    ctx.fillRect(S / 2 - 3, 0, 6, S); ctx.fillRect(0, S / 2 - 3, S, 6);
-
-    const tex = new THREE.CanvasTexture(canvas);
-    const mat = new THREE.MeshBasicMaterial({
-      map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide
-    });
-    return new THREE.Mesh(new THREE.PlaneGeometry(WORLD.WINDOW_W, WORLD.WINDOW_H), mat);
-  }
-
   // ── Keeper-decorated houses (WorldHouseLogic) ──
 
   // Palette colour for one of the house's slots, or the engine default.
@@ -2476,7 +2564,11 @@ const Playground3D = (() => {
   }
 
   // Roof: the shared per-phase material by default; a per-node material the
-  // node owns (and disposes) when the keeper picked a roof colour.
+  // node owns (and disposes) when the keeper picked a roof colour. Then the
+  // shape on top of the slab — gable / hip / chimney (PG3DHouse.roofExtra) —
+  // sharing the slab's material so one roof colour covers all of it. The slab
+  // itself always stays: it is the ceiling _tickRoomCeilings hides when you
+  // walk in, and the pitched group follows its visibility.
   function _applyRoof(node) {
     const THREE = window.THREE;
     if (!THREE || !node || !node.ceiling) return;
@@ -2484,13 +2576,43 @@ const Playground3D = (() => {
       try { node.ceiling.material.dispose(); } catch (_) {}
       node.ownsRoofMat = false;
     }
-    const idx = node.house ? node.house.roofColor : null;
+    const house = node.house || null;
+    const idx = house ? house.roofColor : null;
     if (idx != null && typeof WorldHouseLogic !== 'undefined' && typeof WorldHouseLogic.PALETTE[idx] === 'number') {
       node.ceiling.material = new THREE.MeshLambertMaterial({ color: WorldHouseLogic.PALETTE[idx] });
       node.ownsRoofMat = true;
     } else {
       node.ceiling.material = _ceilingMat(node.project.phase);
     }
+
+    const H = node.wallHeight || WORLD.WALL_HEIGHT;
+    const slabTop = H + 0.18;                  // slab centre H + 0.08, thickness 0.2
+    if (node.roofExtra) {
+      if (typeof PG3DHouse !== 'undefined') PG3DHouse.disposeRoofExtra(node.roofExtra);
+      if (node.roofWallMat) { try { node.roofWallMat.dispose(); } catch (_) {} node.roofWallMat = null; }
+      node.roofExtra = null;
+    }
+    node.roofTopY = slabTop;
+    if (!house || typeof PG3DHouse === 'undefined' || !_scene) return;
+    const style = house.roofStyle || 'flat';
+    if (style === 'flat' && !house.chimney) return;
+    // Gable ends wear the wall finish + colour so the house reads as one body.
+    const wallTex = PG3DHouse.wallTexture(THREE, house.wallStyle || 'plaster');
+    const wallMat = new THREE.MeshLambertMaterial({ color: _houseColor(node, 'wallColor', WORLD.WALL_COLOR), map: wallTex || null });
+    node.roofWallMat = wallMat;
+    const group = PG3DHouse.roofExtra(THREE, {
+      style, dir: house.roofDir, chimney: !!house.chimney,
+      roofMat: node.ceiling.material, wallMat,
+      trimColor: _houseColor(node, 'trimColor', WORLD.WALL_TRIM_COLOR),
+      baseY: slabTop - 0.02,
+      centreX: node.mesh.position.x, centreZ: node.mesh.position.z
+    });
+    if (!group) return;
+    group.position.set(node.mesh.position.x, 0, node.mesh.position.z);
+    group.visible = node.ceiling.visible;
+    _scene.add(group);
+    node.roofExtra = group;
+    node.roofTopY = group.userData.topY || slabTop;
   }
 
   // A wooden name plank: canvas text (never HTML, so any characters are safe)
@@ -2707,7 +2829,8 @@ const Playground3D = (() => {
       if (o.geometry) o.geometry.dispose();
       const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
       for (const m of mats) {
-        const shared = m.map === _wallTex || m.map === _lampTex || (m.userData && m.userData.keepMap);
+        const shared = m.map === _lampTex || (m.userData && m.userData.keepMap)
+          || (typeof PG3DHouse !== 'undefined' && PG3DHouse.isShared(m.map));
         if (m.map && !shared) m.map.dispose();
         m.dispose();
       }
@@ -2746,6 +2869,7 @@ const Playground3D = (() => {
     // Walkable corridor is the full center-to-center rectangle so stepping
     // from inside a platform onto its connecting road is continuous.
     _walkableRoads.push({
+      a: aId, b: bId,                 // node ids at each end (HUD vicinity)
       cx: (ax + bx) / 2,
       cz: (az + bz) / 2,
       cosA: Math.cos(angle),
@@ -2807,8 +2931,52 @@ const Playground3D = (() => {
     el.style.transform = `translate(-50%, -100%) translate(${Math.round(p.x)}px, ${Math.round(p.y)}px)`;
   }
 
+  // Where the player is, for deciding which world labels to show:
+  //   inside  — node id whose platform (walls) contains (x, z), else null
+  //   near    — node ids "one road away": when inside, just that house; on a
+  //             house's apron, that house plus every house one road from it;
+  //             on a road, the two houses at its ends
+  //   roads   — the road rects the player is standing on
+  // Reuses module-scoped containers so the per-frame call allocates nothing.
+  const _vic = { inside: null, near: new Set(), roads: [] };
+  function _roadHas(r, x, z) {
+    const dx = x - r.cx, dz = z - r.cz;
+    return Math.abs(dx * r.cosA - dz * r.sinA) <= r.halfW &&
+           Math.abs(dx * r.sinA + dz * r.cosA) <= r.halfL;
+  }
+  function _nodeAt(x, z, half) {
+    for (const [id, node] of _worldNodes) {
+      if (Math.abs(x - node.mesh.position.x) <= half && Math.abs(z - node.mesh.position.z) <= half) return id;
+    }
+    return null;
+  }
+  function _computeVicinity(x, z) {
+    _vic.near.clear();
+    _vic.roads.length = 0;
+    _vic.inside = _nodeAt(x, z, WORLD.PLATFORM_W / 2);
+    if (_vic.inside) { _vic.near.add(_vic.inside); return _vic; }
+    const onApron = _nodeAt(x, z, (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2);
+    if (onApron) _vic.near.add(onApron);
+    for (const r of _walkableRoads) {
+      if (onApron && (r.a === onApron || r.b === onApron)) { _vic.near.add(r.a); _vic.near.add(r.b); }
+      if (_roadHas(r, x, z)) { _vic.roads.push(r); _vic.near.add(r.a); _vic.near.add(r.b); }
+    }
+    return _vic;
+  }
+  // Should a label for something standing at (x, z) show? Inside a house,
+  // only things in that same house; outside, things on a nearby house's
+  // platform/apron or on the road I'm on.
+  function _inVicinity(v, x, z) {
+    if (v.inside) return _nodeAt(x, z, WORLD.PLATFORM_W / 2) === v.inside;
+    const at = _nodeAt(x, z, (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2);
+    if (at) return v.near.has(at);
+    for (const r of v.roads) if (_roadHas(r, x, z)) return true;
+    return false;
+  }
+
   function _tickHUD(now) {
     if (_mode !== 'world' || !_hudLayer) return;
+    const vic = _player ? _computeVicinity(_player.position.x, _player.position.z) : null;
 
     // Remote-player tags + bubbles. _hudAnchor is module-scoped and reused
     // each frame to avoid per-tick GC churn — set() instead of new.
@@ -2833,7 +3001,10 @@ const Playground3D = (() => {
       if (npc.tagY == null) npc.tagY = npc.headY;
       npc.tagY += (tagTarget - npc.tagY) * 0.04;
       _hudAnchor.set(npc.x, npc.tagY, npc.z);
-      if (npc.nameEl) _placeHudEl(npc.nameEl, _hudAnchor, 0);
+      if (npc.nameEl) {
+        if (!vic || _inVicinity(vic, npc.x, npc.z)) _placeHudEl(npc.nameEl, _hudAnchor, 0);
+        else npc.nameEl.style.display = 'none';
+      }
       // Floating "−1"s rise and fade over NPC_DMG_MS.
       const dmg = npc.dmgEls;
       if (dmg && dmg.length) {
@@ -2848,17 +3019,18 @@ const Playground3D = (() => {
     }
 
     // Keeper tags over each house roof — who owns it and how far you are from
-    // taking it over. Hidden beyond KEEPER_TAG_MAX_DIST so the far skyline
-    // isn't littered with labels.
+    // taking it over. Only for houses one road away (just your own house while
+    // you're inside one), and never beyond KEEPER_TAG_MAX_DIST.
     if (_player) {
       const px = _player.position.x, pz = _player.position.z;
-      for (const node of _worldNodes.values()) {
+      for (const [id, node] of _worldNodes) {
         const el = node.keeperEl;
         if (!el) continue;
         const nx = node.mesh.position.x, nz = node.mesh.position.z;
         const dx = px - nx, dz = pz - nz;
-        if (dx * dx + dz * dz > KEEPER_TAG_MAX_DIST * KEEPER_TAG_MAX_DIST) { el.style.display = 'none'; continue; }
-        _hudAnchor.set(nx, (node.wallHeight || WORLD.WALL_HEIGHT) + 0.7, nz);
+        if (!vic.near.has(id) || dx * dx + dz * dz > KEEPER_TAG_MAX_DIST * KEEPER_TAG_MAX_DIST) { el.style.display = 'none'; continue; }
+        // Above the roof's highest point, so a gable / chimney never swallows it.
+        _hudAnchor.set(nx, (node.roofTopY || (node.wallHeight || WORLD.WALL_HEIGHT) + 0.18) + 0.5, nz);
         _placeHudEl(el, _hudAnchor, 0);
       }
     }
@@ -3755,7 +3927,8 @@ const Playground3D = (() => {
     // Voice-chat surface — distance attenuation + speaking indicator.
     getRemotePlayers, setRemotePlayerSpeaking,
     // Keeper-decorated houses (GET /api/world/houses + world:house pushes).
-    setHouses, applyHouse, getHouse, setHouseKeepers,
+    setHouses, applyHouse, getHouse, getHouseLayout, setHouseKeepers,
+    setHouseShowcase, clearHouseShowcase,
     // Debugging aids for the browser preview (same idea as PG3DHumanoid._debug):
     // live NPC records, the local knockdown deadline, and a raw teleport so a
     // fight can be staged without steering the character by hand.
@@ -3764,6 +3937,8 @@ const Playground3D = (() => {
       player() { return _player; },
       localDownUntil() { return _localDownUntil; },
       orbit() { return _orbit ? { distance: _orbit.distance, azimuth: _orbit.azimuth, elevation: _orbit.elevation } : null; },
+      camera() { return _camera ? { fov: _camera.fov, aspect: _camera.aspect } : null; },
+      vicinity() { if (!_player) return null; const v = _computeVicinity(_player.position.x, _player.position.z); return { inside: v.inside, near: [...v.near], roads: v.roads.length }; },
       teleport(x, z) { if (_player) { _player.position.set(x, 0, z); _lastSafe.x = x; _lastSafe.z = z; } },
       // Advance one frame by hand when the tab is throttled (rAF frozen).
       // Cancels the queued frame first so the loop never doubles up.

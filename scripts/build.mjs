@@ -68,7 +68,7 @@ const CHUNKS = {
     'js/world-house-logic.js',
     'js/playground3d-humanoid-logic.js', 'js/playground3d-humanoid.js',
     'js/playground3d-avatar.js', 'js/playground3d-input.js', 'js/playground3d-occlusion.js',
-    'js/playground3d-props.js',
+    'js/playground3d-props.js', 'js/playground3d-house.js', 'js/pg-orientation.js',
     'js/playground3d.js',
     'js/home-socket.js', 'js/voice-chat.js',
     'js/views/customize.js', 'js/views/home.js', 'js/views/world.js', 'js/views/friend-home.js'
@@ -95,8 +95,8 @@ const EXPECT_GLOBALS = {
 // Globals attached as properties (`root.PG3DPhysics = api` in the UMD-style
 // files) rather than declared — checked for a `.Name =` assignment instead.
 const EXPECT_ATTACHED = {
-  world: ['PG3DPhysics', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHumanoidLogic', 'PG3DHumanoid',
-          'PG3DAvatar', 'PG3DInput', 'PG3DOcclusion']
+  world: ['PG3DPhysics', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid',
+          'PG3DAvatar', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation']
 };
 // Must stay `var` (window properties): js/boot.js does window[key] = items.
 const VAR_GLOBALS = ['projects', 'characters', 'LOCATIONS'];
