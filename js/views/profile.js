@@ -57,9 +57,9 @@ const ProfileView = {
         <div id="profile-appearance">
           <p class="profile-section-label">Appearance</p>
           <div id="theme-toggle" role="radiogroup" aria-label="Theme">
-            <button type="button" class="theme-option" data-mode="light">☀️ Light</button>
-            <button type="button" class="theme-option" data-mode="dark">🌙 Dark</button>
-            <button type="button" class="theme-option" data-mode="system">🖥️ System</button>
+            <button type="button" class="theme-option" data-mode="light">Light</button>
+            <button type="button" class="theme-option" data-mode="dark">Dark</button>
+            <button type="button" class="theme-option" data-mode="system">System</button>
           </div>
         </div>
 

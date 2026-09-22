@@ -158,7 +158,7 @@ const FeedView = (() => {
       return `<p class="feed-post-caption">${esc(post.caption)}</p>`;
     }
     return post.mine
-      ? `<button type="button" class="feed-caption-add">✎ Add a caption…</button>`
+      ? `<button type="button" class="feed-caption-add">Add a caption…</button>`
       : '';
   }
 
@@ -288,7 +288,7 @@ const FeedView = (() => {
             </div>
           </div>
           <button type="button" class="feed-comment-toggle" aria-expanded="${n ? 'true' : 'false'}">
-            💬 Comment
+            Comment
           </button>
         </div>
         <section class="feed-comments" ${n ? '' : 'hidden'}>

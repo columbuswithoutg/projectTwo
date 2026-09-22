@@ -38,7 +38,7 @@ const CustomizeView = {
         <div class="cz-panel">
           <div class="cz-toolbar">
             <div class="cz-tools">
-              <button class="pg-btn" type="button" id="cz-random">🎲 Randomize</button>
+              <button class="pg-btn" type="button" id="cz-random">Randomize</button>
               <button class="pg-btn" type="button" id="cz-reset">↺ Reset</button>
             </div>
           </div>

@@ -303,8 +303,8 @@ const HomeView = {
     const menu = document.createElement('div');
     menu.className = 'pg-menu';
     menu.innerHTML = `
-      <button type="button" class="pg-menu-item" data-action="character">🧑 Edit character</button>
-      <button type="button" class="pg-menu-item" data-action="rooms">🏠 Edit rooms</button>
+      <button type="button" class="pg-menu-item" data-action="character">Edit character</button>
+      <button type="button" class="pg-menu-item" data-action="rooms">Edit rooms</button>
     `;
     document.body.appendChild(menu);
     HomeView._menuEl = menu;

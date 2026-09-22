@@ -63,7 +63,7 @@ const WorldView = (() => {
         <div class="world-header-spacer">
           <span class="world-house-keeper" id="world-house-keeper" hidden></span>
           <button class="world-house-btn" id="world-house-btn" type="button" hidden
-                  title="You keep this house — decorate it">🏠 Edit house</button>
+                  title="You keep this house — decorate it">Edit house</button>
           <button class="world-snap-btn" id="world-snap-btn" type="button" hidden
                   title="Snap! (G)">✊ SNAP</button>
           <button class="world-stone-chip" id="world-stone-chip" type="button" hidden
@@ -78,9 +78,9 @@ const WorldView = (() => {
       </div>
       <div class="world-chat-row" data-channel="world">
         <div class="world-chat-tabs" role="tablist" aria-label="Chat channel">
-          <button class="world-chat-tab active" type="button" role="tab" aria-selected="true" data-channel="world" title="Everyone in the world">🌍 World</button>
-          <button class="world-chat-tab off-island" type="button" role="tab" aria-selected="false" data-channel="project" title="Not on a project island">🎬 <span id="world-chat-project-label">Project</span></button>
-          <button class="world-chat-tab" type="button" role="tab" aria-selected="false" data-channel="whisper" title="Private message to one player">🤫 Whisper</button>
+          <button class="world-chat-tab active" type="button" role="tab" aria-selected="true" data-channel="world" title="Everyone in the world">World</button>
+          <button class="world-chat-tab off-island" type="button" role="tab" aria-selected="false" data-channel="project" title="Not on a project island"><span id="world-chat-project-label">Project</span></button>
+          <button class="world-chat-tab" type="button" role="tab" aria-selected="false" data-channel="whisper" title="Private message to one player">Whisper</button>
         </div>
         <div class="world-chat-log" id="world-chat-log" aria-live="polite"></div>
         <div class="world-chat-cooldown" id="world-chat-cooldown" hidden></div>
@@ -523,7 +523,7 @@ const WorldView = (() => {
           </div>
           <div class="world-house-tools">
             <button type="button" class="world-house-tool" data-tool="rotate" title="Rotate the selected prop">↻ Rotate</button>
-            <button type="button" class="world-house-tool" data-tool="remove" title="Remove the selected prop">🗑 Remove</button>
+            <button type="button" class="world-house-tool" data-tool="remove" title="Remove the selected prop">Remove</button>
             <span class="world-house-count" id="world-house-count"></span>
           </div>
           <p class="world-house-hint">Tap an empty cell to place the chosen prop; tap a prop to select it. Frames hang on the nearest wall. Top of the grid is north.</p>

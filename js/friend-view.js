@@ -96,9 +96,9 @@ const FriendView = (() => {
           <a class="friend-header-name" href="/friend/${enc}/profile" data-link>${_esc(u)}</a>'s progress
         </div>
         <nav class="friend-header-tabs">
-          ${tab('watch',   '/friend/' + enc,            '📋 Watch order')}
-          ${tab('map',     '/friend/' + enc + '/map',   '🗺 Map')}
-          ${tab('home',    '/friend/' + enc + '/home',  '🏠 Home')}
+          ${tab('watch',   '/friend/' + enc,            'Watch order')}
+          ${tab('map',     '/friend/' + enc + '/map',   'Map')}
+          ${tab('home',    '/friend/' + enc + '/home',  'Home')}
         </nav>
         <button type="button" class="friend-header-back" id="friend-header-back">← Back to mine</button>
       </header>
