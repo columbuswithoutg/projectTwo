@@ -75,7 +75,10 @@ projectOne/
 │
 ├── scripts/
 │   ├── seed-content.js        Idempotent seed: JS files → Mongo (run once)
-│   └── export-content.js      Inverse: Mongo → static fallback files (--dry-run)
+│   ├── export-content.js      Inverse: Mongo → static fallback files (--dry-run)
+│   ├── optimize-images.mjs    Shrink assets/characters + assets/images in place (--dry-run)
+│   ├── build-humanoid-assets.mjs  Raw Quaternius glTF → assets/models/humanoid/v1
+│   └── audit-humanoid-assets.mjs  Report on the built humanoid assets
 │
 ├── test/                      node --test unit tests (npm test) — no Mongo needed
 │   ├── physics.test.js        3D physics helpers
@@ -234,6 +237,13 @@ node scripts/seed-content.js          # upsert (safe to re-run)
 node scripts/seed-content.js --wipe   # drop collections then re-seed
 ```
 
+### Adding a character or poster image
+Drop the file into `assets/characters/` or `assets/images/`, reference it by filename in `characters.js` / `projects.js` (or the CMS), then run:
+```bash
+node scripts/optimize-images.mjs
+```
+It rewrites only files that get at least 10% smaller (characters ≤600px, posters ≤800px on the long edge, JPEG q82) and keeps names and extensions, so nothing else changes. `--dry-run` reports without writing.
+
 ### Deploy to Render
 - Push to the connected branch → Render rebuilds automatically.
 - Set the service's **Health Check Path** to `/api/health` — it returns 503 while Mongo is disconnected, so Render recycles a wedged process instead of leaving it serving 500s.
@@ -287,6 +297,15 @@ Append new entries at the **top** of this section. Use the format:
 Brief summary of what changed and why.
 - file/path:line — what changed
 ```
+
+---
+
+### 2026-09-22 — character and poster images optimised in place
+
+`assets/` was 42 MB, with single character portraits up to 3.2 MB for an 80px avatar. Every file under `assets/characters` (103) and `assets/images` (71) is now a real JPEG (q82, mozjpeg) capped at 600px / 800px on the long edge. Filenames and extensions are unchanged so `projects.js`, `characters.js` and the Mongo CMS copies needed no edits (the posters were already JPEG bytes under `.png` names; that status quo is kept rather than introducing renames).
+
+- `scripts/optimize-images.mjs` (new) — idempotent, only rewrites when at least 10% smaller so re-runs don't re-compress already-optimised files; `--dry-run`. Decodes from a Buffer because on Windows libvips holding the source path open blocks overwriting it.
+- `assets/characters` 20.6 MB → ~2 MB, `assets/images` 9.6 MB → ~5 MB.
 
 ---
 
