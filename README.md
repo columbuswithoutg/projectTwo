@@ -99,6 +99,9 @@ projectOne/
     ├── auth.js                Auth helper (token, isAdmin via JWT decode)
     ├── theme.js               Light/Dark/System theme manager (see profile toggle)
     ├── playground3d-physics.js Pure jump/fall/walkability math (unit-tested)
+    ├── playground3d-avatar.js  Avatar mesh builders + shared geometry cache + hero-gear material
+    ├── playground3d-input.js   Keyboard / mouse / touch / joystick input for the 3D views
+    ├── playground3d-occlusion.js See-through walls/roofs between the camera and the player
     ├── config.js              Frontend-only app config (CONFIG)
     ├── world-config.js        CONFIG_WORLD — display geometry (NOT content)
     ├── state.js               Watch-progress in-memory store + persist
@@ -297,6 +300,18 @@ Append new entries at the **top** of this section. Use the format:
 Brief summary of what changed and why.
 - file/path:line — what changed
 ```
+
+---
+
+### 2026-09-22 — playground3d.js split: avatar builders, input, occlusion
+
+`js/playground3d.js` was 5,837 lines in one closure. The three regions that touch little or no engine state now live in their own files, loaded just before it; the engine aliases their exports back to the old underscore names so the remaining ~3,500 lines are byte-for-byte unchanged. No behaviour change intended.
+
+- `js/playground3d-avatar.js` (new, ~1,800 lines) — `PG3DAvatar`: box + procedural body builders, hair/facial hair/glasses/hat/helmet/prop/emblem/clothing/footwear/outerwear/suit/accessories, plus `sharedGeom` (the page-lifetime geometry cache), `gearMat` and `palette`. Pure: reads `window.THREE`, `Playground` and its arguments only.
+- `js/playground3d-input.js` (new) — `PG3DInput.makeInput(viewport, { orbit, CAMERA, minElev })`; same return shape as the old `_makeInput`.
+- `js/playground3d-occlusion.js` (new) — `PG3DOcclusion.create()` → `{ tick(dt, now, scene, camera, player), reset() }`; occluder boxes and faded materials are per-instance closure state.
+- `js/playground3d.js` — aliases at the top of the character-rig section; `_initInternal` calls `PG3DInput.makeInput`; `_tick`/`destroy` call `_occlusion.tick`/`reset`.
+- `spa.html` — three script tags before `playground3d.js`.
 
 ---
 

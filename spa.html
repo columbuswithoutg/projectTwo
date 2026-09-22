@@ -150,6 +150,12 @@
        from _buildPlayer. -->
   <script defer src="js/playground3d-humanoid-logic.js"></script>
   <script defer src="js/playground3d-humanoid.js"></script>
+  <!-- Engine pieces split out of playground3d.js (2026-09-22): avatar mesh
+       builders, input handling, see-through occluders. All three must load
+       before playground3d.js, which aliases their exports. -->
+  <script defer src="js/playground3d-avatar.js"></script>
+  <script defer src="js/playground3d-input.js"></script>
+  <script defer src="js/playground3d-occlusion.js"></script>
   <script defer src="js/playground3d.js"></script>
 
   <!-- Router + Views -->
