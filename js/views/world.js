@@ -30,6 +30,16 @@ const WorldView = (() => {
   let _voiceLongPressTimer = null;
   let _voiceLongPressFired = false;
   let _peerFailToastAt = 0;        // throttle the "voice trouble" hint toast
+  let _voiceState = 'off';         // last _voiceVisual state, re-painted when the island changes
+  let _voiceMsg = '';
+  // Keeper-editable houses. `_zone` mirrors the server's world:zone (the
+  // island we stand on); keepers/me come from GET /api/world/houses.
+  let _zone = null;
+  let _houseMe = null;
+  let _houseKeepers = {};
+  let _housesAt = 0;
+  let _houseBtnHandler = null;
+  let _houseEditorClose = null;    // close fn of the open editor overlay, if any
   // Daily Infinity Stone hunt state.
   let _snapKeyHandler = null;      // 'G' → snap when holding all six
   // Pending spawn-picker resolver, so unmount() can settle the awaited promise
@@ -48,6 +58,9 @@ const WorldView = (() => {
         <button id="world-back" type="button" title="Back">← Back</button>
         <h1 class="world-title">World</h1>
         <div class="world-header-spacer">
+          <span class="world-house-keeper" id="world-house-keeper" hidden></span>
+          <button class="world-house-btn" id="world-house-btn" type="button" hidden
+                  title="You keep this house — decorate it">🏠 Edit house</button>
           <button class="world-snap-btn" id="world-snap-btn" type="button" hidden
                   title="Snap! (G)">✊ SNAP</button>
           <button class="world-stone-chip" id="world-stone-chip" type="button" hidden
@@ -149,6 +162,7 @@ const WorldView = (() => {
       if (myMount !== _mountSeq) return;   // unmounted while the picker was open
     }
     Playground3D.initWorld(_stage, character, chosenSpawnId);
+    _loadHouses(myMount);
 
     // Avenger NPCs — each preset model roams the apron around its debut node.
     // Map preset → roster character (via charId) to resolve the debut project;
@@ -187,11 +201,18 @@ const WorldView = (() => {
         joinPayload: {},
         character,
         onStoneChange: stonesOn ? _refreshStoneHud : undefined,
-        onSnapped: stonesOn ? _onSnapped : undefined
+        onSnapped: stonesOn ? _onSnapped : undefined,
+        onZone: _onZone,
+        onHouse: _onHouse
       });
     }
 
     _wireVoiceToggle('world');
+    const houseBtn = document.getElementById('world-house-btn');
+    if (houseBtn) {
+      _houseBtnHandler = () => { if (_zone) _openHouseEditor(_zone); };
+      houseBtn.addEventListener('click', _houseBtnHandler);
+    }
     _maybeShowControlsHint();
     if (stonesOn) _initStones();
   }
@@ -348,6 +369,258 @@ const WorldView = (() => {
     }
   }
 
+  /* ── Keeper houses ── */
+
+  // Load every decorated house + each island's keeper. Called once after
+  // the engine boots, and again (throttled) when we step onto an island so
+  // a player who just overtook the keeper sees the Edit button.
+  async function _loadHouses(myMount) {
+    try {
+      const res = await fetch(`${API}/world/houses`, {
+        headers: { Authorization: `Bearer ${Auth.getToken()}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (myMount !== _mountSeq) return;
+      _houseMe = data.me || null;
+      _houseKeepers = data.keepers || {};
+      _housesAt = Date.now();
+      if (Playground3D.setHouses) Playground3D.setHouses(data.houses || {});
+      _refreshHouseHud();
+    } catch (_) { /* offline — houses stay default, HUD stays hidden */ }
+  }
+
+  function _onZone(projectId) {
+    _zone = projectId || null;
+    if (_zone && Date.now() - _housesAt > 30000) _loadHouses(_mountSeq);
+    _refreshHouseHud();
+    if (_voice) _voiceVisual(_voiceState, _voiceMsg);
+  }
+
+  function _onHouse(p) {
+    if (p && p.projectId && p.keeper) _houseKeepers[p.projectId] = p.keeper;
+    _refreshHouseHud();
+  }
+
+  function _fmtStay(ms) {
+    return (typeof WorldHouseLogic !== 'undefined') ? WorldHouseLogic.formatStay(ms) : '';
+  }
+
+  function _projectTitle(id) {
+    const p = (typeof projects !== 'undefined' && Array.isArray(projects)) ? projects.find(q => q.id === id) : null;
+    return (p && p.title) || id;
+  }
+
+  // On an island: the keeper sees "Edit house", everyone else sees who keeps
+  // it (or that it's unclaimed). Off-island: nothing.
+  function _refreshHouseHud() {
+    const btn = document.getElementById('world-house-btn');
+    const label = document.getElementById('world-house-keeper');
+    if (!btn || !label) return;
+    if (!_zone) { btn.hidden = true; label.hidden = true; return; }
+    const k = _houseKeepers[_zone];
+    const mine = !!(k && _houseMe && k.userId === _houseMe);
+    btn.hidden = !mine;
+    label.hidden = mine;
+    if (mine) {
+      btn.title = `You keep ${_projectTitle(_zone)} (${_fmtStay(k.ms)} here) — decorate it`;
+    } else if (k) {
+      label.textContent = `🔑 ${k.username} · ${_fmtStay(k.ms)}`;
+      label.title = `${k.username} keeps ${_projectTitle(_zone)} with the longest stay (${_fmtStay(k.ms)}). Outstay them to take over.`;
+    } else {
+      label.textContent = '🔑 Unclaimed';
+      label.title = `Nobody keeps ${_projectTitle(_zone)} yet — the longest stay here wins it.`;
+    }
+  }
+
+  // Colour swatches + sign + a top-down prop grid. Every change previews
+  // live in the engine (only locally); Save PUTs, Cancel restores.
+  function _openHouseEditor(projectId) {
+    if (typeof WorldHouseLogic === 'undefined') return;
+    if (_houseEditorClose) { _houseEditorClose(); }
+    const L = WorldHouseLogic;
+    const saved = (Playground3D.getHouse && Playground3D.getHouse(projectId)) || L.defaultHouse();
+    const draft = L.validateHouse(saved).house;
+    const hex = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
+    const GLYPH = { chair: '🪑', table: '🛋️', frame: '🖼️', plant: '🪴', lamp: '💡', rug: '🟫', bookshelf: '📚', crate: '📦' };
+    const SLOTS = [['wallColor', 'Walls'], ['roofColor', 'Roof'], ['trimColor', 'Trim'], ['lampColor', 'Lamps']];
+    const CELL = 32, N = L.C.GRID_MAX;
+    let selectedKind = 'chair';
+    let selectedProp = -1;          // index into draft.props
+
+    const overlay = document.createElement('div');
+    overlay.className = 'world-house';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Edit house');
+    const swatchRows = SLOTS.map(([slot, name]) => `
+      <div class="world-house-row" data-slot="${slot}">
+        <span class="world-house-label">${name}</span>
+        <div class="world-house-swatches">
+          <button type="button" class="world-house-swatch default" data-idx="" title="Default">Auto</button>
+          ${L.PALETTE.map((c, i) => `<button type="button" class="world-house-swatch" data-idx="${i}" style="background:${hex(c)}" title="Colour ${i + 1}"></button>`).join('')}
+        </div>
+      </div>`).join('');
+    overlay.innerHTML = `
+      <div class="world-house-panel">
+        <button class="popup-close" aria-label="Close">✕</button>
+        <h3>🏠 ${esc(_projectTitle(projectId))}</h3>
+        <p class="world-house-sub">You keep this house (longest stay). Everyone in the world sees what you save.</p>
+        <div class="world-house-colors">${swatchRows}</div>
+        <label class="world-house-signrow">
+          <span class="world-house-label">Sign</span>
+          <input type="text" id="world-house-sign" maxlength="${L.C.SIGN_MAX}" placeholder="Name over the door" autocomplete="off" />
+        </label>
+        <div class="world-house-props">
+          <div class="world-house-kinds">
+            ${L.PROP_KINDS.map(k => `<button type="button" class="world-house-kind" data-kind="${k}" title="${k}">${GLYPH[k] || '▪'} ${k}</button>`).join('')}
+          </div>
+          <div class="world-house-tools">
+            <button type="button" class="world-house-tool" data-tool="rotate" title="Rotate the selected prop">↻ Rotate</button>
+            <button type="button" class="world-house-tool" data-tool="remove" title="Remove the selected prop">🗑 Remove</button>
+            <span class="world-house-count" id="world-house-count"></span>
+          </div>
+          <p class="world-house-hint">Tap an empty cell to place the chosen prop; tap a prop to select it. Top of the grid is north.</p>
+          <svg class="world-house-grid" viewBox="0 0 ${N * CELL} ${N * CELL}" role="img" aria-label="House floor plan"></svg>
+        </div>
+        <div class="world-house-actions">
+          <button type="button" class="world-house-cancel">Cancel</button>
+          <button type="button" class="world-house-save">Save</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const grid = overlay.querySelector('.world-house-grid');
+    const signInput = overlay.querySelector('#world-house-sign');
+    const countEl = overlay.querySelector('#world-house-count');
+    signInput.value = draft.sign || '';
+
+    function preview() {
+      const v = L.validateHouse(draft);
+      if (v.ok && Playground3D.applyHouse) Playground3D.applyHouse(projectId, v.house);
+    }
+    function renderSwatches() {
+      overlay.querySelectorAll('.world-house-row').forEach((row) => {
+        const slot = row.getAttribute('data-slot');
+        const cur = draft[slot];
+        row.querySelectorAll('.world-house-swatch').forEach((b) => {
+          const idx = b.getAttribute('data-idx');
+          b.classList.toggle('active', (idx === '' && cur == null) || (idx !== '' && Number(idx) === cur));
+        });
+      });
+    }
+    function renderKinds() {
+      overlay.querySelectorAll('.world-house-kind').forEach((b) => {
+        b.classList.toggle('active', b.getAttribute('data-kind') === selectedKind);
+      });
+      const n = draft.props.length;
+      countEl.textContent = `${n}/${L.C.MAX_PROPS}`;
+      overlay.querySelectorAll('.world-house-tool').forEach((b) => { b.disabled = selectedProp < 0; });
+    }
+    function renderGrid() {
+      const cells = [];
+      for (let gy = 1; gy <= N; gy++) {
+        for (let gx = 1; gx <= N; gx++) {
+          cells.push(`<rect class="world-house-cell" data-gx="${gx}" data-gy="${gy}" x="${(gx - 1) * CELL}" y="${(gy - 1) * CELL}" width="${CELL}" height="${CELL}" />`);
+        }
+      }
+      const props = draft.props.map((p, i) => {
+        const cx = (p.gx - 0.5) * CELL, cy = (p.gy - 0.5) * CELL;
+        const sel = i === selectedProp ? ' selected' : '';
+        return `<g class="world-house-prop${sel}" data-i="${i}" transform="translate(${cx} ${cy})">
+          <rect x="${-CELL / 2 + 2}" y="${-CELL / 2 + 2}" width="${CELL - 4}" height="${CELL - 4}" rx="5" />
+          <text x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-size="18">${GLYPH[p.kind] || '▪'}</text>
+          <path d="M0,-${CELL / 2 - 3} l4,5 h-8 z" transform="rotate(${(p.rot || 0) * 90})" />
+        </g>`;
+      }).join('');
+      // Door side marker: south edge is where a lone island's sign hangs.
+      grid.innerHTML = `<rect class="world-house-floor" x="0" y="0" width="${N * CELL}" height="${N * CELL}" />${cells.join('')}${props}`;
+    }
+    function renderAll() { renderSwatches(); renderKinds(); renderGrid(); }
+    renderAll();
+    preview();
+
+    overlay.addEventListener('click', (e) => {
+      const sw = e.target.closest('.world-house-swatch');
+      if (sw) {
+        const slot = sw.closest('.world-house-row').getAttribute('data-slot');
+        const idx = sw.getAttribute('data-idx');
+        draft[slot] = idx === '' ? null : Number(idx);
+        renderSwatches(); preview();
+        return;
+      }
+      const kind = e.target.closest('.world-house-kind');
+      if (kind) { selectedKind = kind.getAttribute('data-kind'); selectedProp = -1; renderKinds(); renderGrid(); return; }
+      const tool = e.target.closest('.world-house-tool');
+      if (tool && selectedProp >= 0 && draft.props[selectedProp]) {
+        if (tool.getAttribute('data-tool') === 'rotate') {
+          draft.props[selectedProp].rot = ((draft.props[selectedProp].rot || 0) + 1) % 4;
+        } else {
+          draft.props.splice(selectedProp, 1);
+          selectedProp = -1;
+        }
+        renderKinds(); renderGrid(); preview();
+        return;
+      }
+      const propEl = e.target.closest('.world-house-prop');
+      if (propEl) { selectedProp = Number(propEl.getAttribute('data-i')); renderKinds(); renderGrid(); return; }
+      const cell = e.target.closest('.world-house-cell');
+      if (cell) {
+        const gx = Number(cell.getAttribute('data-gx')), gy = Number(cell.getAttribute('data-gy'));
+        if (draft.props.length >= L.C.MAX_PROPS) {
+          if (typeof toast === 'function') toast(`That's the limit — ${L.C.MAX_PROPS} props per house.`, 'warn');
+          return;
+        }
+        draft.props.push({ kind: selectedKind, gx, gy, rot: 0 });
+        selectedProp = draft.props.length - 1;
+        renderKinds(); renderGrid(); preview();
+      }
+    });
+    signInput.addEventListener('input', () => { draft.sign = L.sanitizeSign(signInput.value); preview(); });
+
+    let closed = false;
+    const restore = () => { if (Playground3D.applyHouse) Playground3D.applyHouse(projectId, saved); };
+    const close = wireModalDismiss(overlay, () => {
+      if (closed) return;
+      closed = true;
+      overlay.remove();
+      _houseEditorClose = null;
+    }, { initialFocus: overlay.querySelector('.popup-close') });
+    _houseEditorClose = () => { restore(); close(); };
+    overlay.querySelector('.popup-close').addEventListener('click', () => { restore(); close(); });
+    overlay.querySelector('.world-house-cancel').addEventListener('click', () => { restore(); close(); });
+    overlay.querySelector('.world-house-save').addEventListener('click', async () => {
+      const v = L.validateHouse(draft);
+      if (!v.ok) { if (typeof toast === 'function') toast(v.error, 'warn'); return; }
+      const btn = overlay.querySelector('.world-house-save');
+      btn.disabled = true;
+      try {
+        const res = await fetch(`${API}/world/houses/${encodeURIComponent(projectId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${Auth.getToken()}` },
+          body: JSON.stringify(v.house)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (data && data.keeper) { _houseKeepers[projectId] = data.keeper; _refreshHouseHud(); }
+          if (typeof toast === 'function') toast(data.error || 'Couldn’t save the house.', 'error');
+          restore();
+          close();
+          return;
+        }
+        if (Playground3D.applyHouse) Playground3D.applyHouse(projectId, data.house || v.house);
+        if (data.keeper) _houseKeepers[projectId] = data.keeper;
+        _refreshHouseHud();
+        if (typeof toast === 'function') toast('House saved — everyone can see it now.', 'success');
+        close();
+      } catch (_) {
+        if (typeof toast === 'function') toast('Couldn’t save the house — check your connection.', 'error');
+        btn.disabled = false;
+      }
+    });
+  }
+
   /* ── Spawn picker (disconnected islands) ── */
 
   // Group the visible nodes into disconnected "islands". Delegates to the
@@ -469,19 +742,26 @@ const WorldView = (() => {
   // state, so users thought they were heard when they weren't.
   function _voiceVisual(stateName, msg) {
     if (!_voiceBtn) return;
-    _voiceBtn.classList.remove('listen-only', 'voice-error');
+    _voiceState = stateName;
+    _voiceMsg = msg || '';
+    _voiceBtn.classList.remove('listen-only', 'voice-error', 'idle');
+    // /world voice is island-scoped: "on" but off-island means nobody can be
+    // heard until you step onto an island — dim the button and say so.
+    const where = _zone ? `talking to players on ${_projectTitle(_zone)}` : 'walk onto a project island to talk';
     switch (stateName) {
       case 'on':
         _voiceBtn.setAttribute('aria-pressed', 'true');
-        _voiceBtn.setAttribute('aria-label', 'Voice on — others can hear you. Click to mute; right-click or long-press for diagnostics.');
-        _voiceBtn.title = 'Voice on — click to mute · right-click for diagnostics';
+        _voiceBtn.classList.toggle('idle', !_zone);
+        _voiceBtn.setAttribute('aria-label', `Voice on — ${where}. Click to mute; right-click or long-press for diagnostics.`);
+        _voiceBtn.title = `Voice on — ${where} · click to mute · right-click for diagnostics`;
         _voiceBtn.textContent = '🎙️';
         break;
       case 'listen-only':
         _voiceBtn.setAttribute('aria-pressed', 'true');
         _voiceBtn.classList.add('listen-only');
-        _voiceBtn.setAttribute('aria-label', 'Listen-only — mic blocked, others can’t hear you. Right-click or long-press for diagnostics.');
-        _voiceBtn.title = msg || 'Listen-only — mic blocked · right-click for diagnostics';
+        _voiceBtn.classList.toggle('idle', !_zone);
+        _voiceBtn.setAttribute('aria-label', `Listen-only — mic blocked, others can’t hear you (${where}). Right-click or long-press for diagnostics.`);
+        _voiceBtn.title = (msg || 'Listen-only — mic blocked') + ` · ${where} · right-click for diagnostics`;
         _voiceBtn.textContent = '🎧';
         break;
       case 'error':
@@ -534,6 +814,7 @@ const WorldView = (() => {
         scope,
         getLocalState: () => Playground3D.getLocalState && Playground3D.getLocalState(),
         getRemotePlayers: () => Playground3D.getRemotePlayers && Playground3D.getRemotePlayers(),
+        getZone: () => _zone,
         onError: (msg) => {
           sawError = true;
           _voice = null;
@@ -551,9 +832,13 @@ const WorldView = (() => {
           if (Playground3D.setRemotePlayerSpeaking) {
             Playground3D.setRemotePlayerSpeaking(peerId, !!st.speaking);
           }
-          // One-line snapshot on connection failure so users have an
-          // actionable artifact even without the debug panel open.
-          if (st && st.connected === false && _voice && _voice._diag) {
+          // One-line snapshot on connection FAILURE so users have an
+          // actionable artifact even without the debug panel open. Routine
+          // teardowns (a peer left, we walked off the island, voice stopped)
+          // also report connected:false — those carry a different `reason`
+          // and must not raise the alarm.
+          const trouble = st && st.connected === false && (st.reason === 'failed' || st.reason === 'disconnected');
+          if (trouble && _voice && _voice._diag) {
             const d = _voice._diag();
             const peer = d.peers.find(p => p.id === peerId);
             if (peer) {
@@ -637,6 +922,15 @@ const WorldView = (() => {
     if (_voiceLongPressTimer) { clearTimeout(_voiceLongPressTimer); _voiceLongPressTimer = null; }
     _voiceBtn = null; _voiceBtnHandler = null; _voiceCtxHandler = null;
     _voiceTouchStart = null; _voiceTouchEnd = null;
+    _voiceState = 'off'; _voiceMsg = '';
+    // Keeper-house teardown — the HUD button lives inside the container; the
+    // editor overlay is on document.body so it needs an explicit remove.
+    const houseBtn = document.getElementById('world-house-btn');
+    if (houseBtn && _houseBtnHandler) houseBtn.removeEventListener('click', _houseBtnHandler);
+    _houseBtnHandler = null;
+    if (_houseEditorClose) { try { _houseEditorClose(); } catch (_) {} _houseEditorClose = null; }
+    document.querySelector('.world-house')?.remove();
+    _zone = null; _houseMe = null; _houseKeepers = {}; _housesAt = 0;
     // Stone contest teardown — engine stones die in Playground3D.destroy();
     // the chip/snap button/flash live inside the container and vanish with it.
     if (_snapKeyHandler) { window.removeEventListener('keydown', _snapKeyHandler); _snapKeyHandler = null; }

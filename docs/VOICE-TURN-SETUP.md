@@ -2,8 +2,10 @@
 
 ## Why you need this
 
-Proximity voice chat in `/world` and `/home` is peer-to-peer WebRTC. Two
-players on friendly networks (home Wi-Fi) connect directly using the free
+Voice chat in `/world` and `/home` is peer-to-peer WebRTC. In `/world` it is
+**island-scoped** (the same membership as the Project chat tab): only players
+standing on the same project island connect, and the mic idles on the roads.
+Two players on friendly networks (home Wi-Fi) connect directly using the free
 Google STUN servers — no setup needed. But when either player is on
 **cellular data, a strict/symmetric NAT, or a corporate firewall**, direct
 connection is impossible and the pair needs a **TURN relay** to forward
@@ -48,9 +50,10 @@ you configured. Only worth it if you outgrow free tiers.
 1. Restart the server after setting the env vars.
 2. Open `/world`, enable the mic (🎙️), open the voice diagnostics panel —
    it should now read **"TURN configured"** instead of "STUN only".
-3. Real-world test: one player on Wi-Fi + one on cellular data should hear
-   each other; the diagnostics' candidate types will include `relay` when
-   TURN is actually carrying the audio.
+3. Real-world test: one player on Wi-Fi + one on cellular data, **both
+   standing on the same project island**, should hear each other; the
+   diagnostics' candidate types will include `relay` when TURN is actually
+   carrying the audio.
 
 ## Notes
 

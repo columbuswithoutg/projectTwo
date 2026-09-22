@@ -65,8 +65,10 @@ const CHUNKS = {
     // pure logic (also unit-tested) — must precede playground3d.js, which
     // reads PG3DPhysics / WorldNpcLogic constants when its IIFE runs
     'js/playground3d-physics.js', 'js/world-npc-logic.js', 'js/world-chat-logic.js',
+    'js/world-house-logic.js',
     'js/playground3d-humanoid-logic.js', 'js/playground3d-humanoid.js',
     'js/playground3d-avatar.js', 'js/playground3d-input.js', 'js/playground3d-occlusion.js',
+    'js/playground3d-props.js',
     'js/playground3d.js',
     'js/home-socket.js', 'js/voice-chat.js',
     'js/views/customize.js', 'js/views/home.js', 'js/views/world.js', 'js/views/friend-home.js'
@@ -86,14 +88,14 @@ const CHUNKS = {
 const EXPECT_GLOBALS = {
   core: ['Router', 'Auth', 'state', 'Chunks', 'CONFIG', 'API', 'Walkers', 'WALKER_DIALOGUES',
          'FriendView', 'WatchOrderView', 'AppView', 'LoginView', 'HomeEditView', 'esc', 'toast'],
-  world: ['Playground', 'Playground3D', 'Multiplayer', 'VoiceManager',
+  world: ['Playground', 'Playground3D', 'Multiplayer', 'VoiceManager', 'PG3DProps',
           'HomeView', 'CustomizeView', 'WorldView', 'FriendHomeView'],
   admin: ['AdminView']
 };
 // Globals attached as properties (`root.PG3DPhysics = api` in the UMD-style
 // files) rather than declared — checked for a `.Name =` assignment instead.
 const EXPECT_ATTACHED = {
-  world: ['PG3DPhysics', 'WorldNpcLogic', 'WorldChatLogic', 'PG3DHumanoidLogic', 'PG3DHumanoid',
+  world: ['PG3DPhysics', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHumanoidLogic', 'PG3DHumanoid',
           'PG3DAvatar', 'PG3DInput', 'PG3DOcclusion']
 };
 // Must stay `var` (window properties): js/boot.js does window[key] = items.

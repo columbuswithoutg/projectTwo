@@ -224,6 +224,8 @@ app.use('/api/friends', apiLimiter, require('./routes/friends'));
 app.use('/api/feed', apiLimiter, require('./routes/feed'));
 app.use('/api/upload', uploadLimiter, require('./routes/upload'));
 app.use('/api/profile', apiLimiter, require('./routes/profile'));
+// Keeper-editable /world houses (GET all + keepers, PUT by the island keeper).
+app.use('/api/world', apiLimiter, require('./routes/world'));
 app.use('/api/admin', adminLimiter, require('./middleware/requireAdmin'), require('./routes/admin'));
 app.use('/api/config', publicConfigLimiter, require('./routes/config'));
 // Public content (projects, characters, locations, dialogues). Reuses the

@@ -17,7 +17,9 @@ const User = require('../models/user');
 const AdminConfig = require('../models/AdminConfig');
 const NpcLogic = require('../js/world-npc-logic');
 const ChatLogic = require('../js/world-chat-logic');
+const Stay = require('../js/world-stay-logic');
 const Project = require('../models/Project');
+const ProjectStay = require('../models/ProjectStay');
 const { PUNCH_COOLDOWN_MS } = require('../js/playground3d-physics');
 
 // Whitelisted homeCharacter slots (mirrors models/user.js homeCharacter). The
@@ -60,10 +62,61 @@ const homePlayers = new Map();
 
 // Voice-chat mesh membership (WebRTC P2P). Independent of position presence:
 // a socket can be in worldPlayers/homePlayers without being voice-enabled.
-// voiceWorld holds socketIds that opted into voice in the world room.
-// voiceHomes maps ownerId → Set<socketId> for per-home voice meshes.
+// voiceWorld holds socketIds that opted into voice in /world; a socket's
+// actual PEERS are the members standing on the SAME project island
+// (ChatLogic.islandPeers over worldPlayers[].projectId) — the same scope as
+// Project chat — so off-island (roads) a voice-enabled socket has no peers.
+// voiceHomes maps ownerId → Set<socketId> for per-home voice meshes (room-wide).
 const voiceWorld = new Set();
 const voiceHomes = new Map();
+
+// ── Island stay accounting (keeper of each project house) ──
+// Every world player carries `stay` (js/world-stay-logic.js) while standing
+// on an island; it is touched by every accepted action and drained into
+// pendingCredits on island exit / disconnect / the periodic flush, which then
+// $inc's ProjectStay in one bulkWrite. The top ProjectStay row per project is
+// that house's keeper (routes/world.js). `_io` is captured at startup so the
+// HTTP route can broadcast a saved house to the room without a require cycle.
+let _io = null;
+const pendingCredits = new Map();      // "userId|projectId" → ms
+let _flushing = null;                  // in-flight flush promise (PUT awaits it)
+
+function queueCredit(userId, projectId, ms) {
+  if (!userId || !projectId || !(ms > 0)) return;
+  const key = `${userId}|${projectId}`;
+  pendingCredits.set(key, (pendingCredits.get(key) || 0) + ms);
+}
+function touchStay(p, now) {
+  if (p && p.stay) Stay.touch(p.stay, now || Date.now());
+}
+function drainStay(p, now) {
+  if (!p || !p.stay) return;
+  queueCredit(p.userId, p.stay.projectId, Stay.drain(p.stay, now || Date.now()));
+}
+// Credit every live stay, then write the whole pending map. On a DB error the
+// credits stay queued for the next flush (at most one interval is at risk).
+function flushStays() {
+  if (_flushing) return _flushing;
+  const now = Date.now();
+  for (const p of worldPlayers.values()) drainStay(p, now);
+  if (!pendingCredits.size) return Promise.resolve();
+  const ops = [];
+  for (const [key, ms] of pendingCredits) {
+    const i = key.indexOf('|');
+    ops.push({ updateOne: {
+      filter: { userId: key.slice(0, i), projectId: key.slice(i + 1) },
+      update: { $inc: { ms } },
+      upsert: true
+    } });
+  }
+  pendingCredits.clear();
+  _flushing = ProjectStay.bulkWrite(ops, { ordered: false })
+    .catch(() => {
+      for (const op of ops) queueCredit(op.updateOne.filter.userId, op.updateOne.filter.projectId, op.updateOne.update.$inc.ms);
+    })
+    .finally(() => { _flushing = null; });
+  return _flushing;
+}
 
 const MAX_USERNAME = 40;
 const MAX_CHAT_LEN = 200;
@@ -179,8 +232,13 @@ function npcUpdatePayload(id, event, by) {
 }
 
 module.exports = (io) => {
+  _io = io;
   stonesEventEnabled();   // prime the cached event flag at startup
   projectGrid();          // prime the island grid for Project chat
+  // Persist island stays once a minute; unref'd so it never keeps the
+  // process alive on its own.
+  const stayTimer = setInterval(() => { flushStays(); }, Stay.C.FLUSH_INTERVAL_MS);
+  if (stayTimer.unref) stayTimer.unref();
 
   // Handshake auth — verify the JWT AND enforce the same ban / tokenVersion
   // checks the HTTP layer does (validateToken). Without this, a banned or
@@ -268,7 +326,8 @@ module.exports = (io) => {
         x: 0, y: 0, z: 0, yaw: 0,
         walking: false,
         lastChat: 0,
-        projectId: null     // island the player stands on (Project chat scope)
+        projectId: null,    // island the player stands on (Project chat / voice scope)
+        stay: null          // js/world-stay-logic record while on an island
       };
       worldPlayers.set(socket.id, player);
 
@@ -279,6 +338,19 @@ module.exports = (io) => {
       // retire its avatar from the room).
       for (const [sid, other] of worldPlayers) {
         if (sid !== socket.id && other.userId === socket.data.userId) {
+          drainStay(other);    // bank the retired socket's island time
+          // Retire it from the voice mesh too, or its island peers would keep
+          // a dead RTCPeerConnection open until it finally disconnects.
+          if (voiceWorld.has(sid)) {
+            const peers = ChatLogic.islandPeers(sid, worldPlayers, voiceWorld);
+            voiceWorld.delete(sid);
+            for (const pid of peers) {
+              io.to(pid).emit('voice:peer-left', { id: sid });
+              io.to(sid).emit('voice:peer-left', { id: pid });
+            }
+            const old = io.sockets.sockets.get(sid);
+            if (old && old.data) old.data.voiceScope = null;
+          }
           worldPlayers.delete(sid);
           io.to('world').emit('world:left', { id: sid });
           freeStonesOf(sid);   // don't strand this user's stones on the retired socket
@@ -323,11 +395,34 @@ module.exports = (io) => {
       p.walking = !!raw.walking;
       p.backward = p.walking && !!raw.backward;
       // Track which project island they're on; tell the client when it
-      // changes so its Project chat tab can relabel / enable itself.
+      // changes so its Project chat tab can relabel / enable itself. The
+      // island is also the voice scope and the stay-credit bucket.
       const zone = ChatLogic.projectAt(p.x, p.z, projectGrid());
       if (zone !== p.projectId) {
+        // Voice: peers are computed from projectId, so snapshot the OLD
+        // island's peers before mutating it. Both sides tear down, then the
+        // mover gets a fresh snapshot of the new island and its residents get
+        // a peer-joined. Per-socket emit order is preserved by Socket.IO, so
+        // the client always destroys before it dials.
+        const inVoice = voiceWorld.has(socket.id);
+        const oldPeers = inVoice ? islandVoicePeers() : [];
+        drainStay(p, nowPos);
+        p.stay = zone ? Stay.enter(zone, nowPos) : null;
         p.projectId = zone;
         socket.emit('world:zone', { projectId: zone });
+        if (inVoice) {
+          for (const id of oldPeers) {
+            io.to(id).emit('voice:peer-left', { id: socket.id });
+            socket.emit('voice:peer-left', { id });
+          }
+          if (zone) {
+            const newPeers = islandVoicePeers();
+            socket.emit('voice:peers', { scope: 'world', peers: newPeers });
+            for (const id of newPeers) io.to(id).emit('voice:peer-joined', { id: socket.id });
+          }
+        }
+      } else {
+        touchStay(p, nowPos);
       }
       socket.to('world').emit('world:pos', {
         id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward
@@ -352,6 +447,9 @@ module.exports = (io) => {
         if (retryInMs > 0) return reply({ ok: false, error: 'cooldown', retryInMs });
       }
 
+      // An accepted message counts as island activity (people chatting stand
+      // still) — rejected sends above never reach this line.
+      touchStay(p, now);
       // Sender always gets its own copy (so its log shows what went out).
       const out = { channel: m.channel, id: socket.id, username: p.username, text: m.text };
       if (m.channel === 'world') {
@@ -383,6 +481,7 @@ module.exports = (io) => {
       if (!p) return;
       const kind = raw && raw.kind;
       if (kind !== 'wave') return;
+      touchStay(p);
       socket.to('world').emit('world:emote', { id: socket.id, kind });
     });
 
@@ -403,6 +502,7 @@ module.exports = (io) => {
       let npc = raw && raw.npc;
       if (npc != null && (typeof npc !== 'string' || !NPC_IDS.has(npc))) return;
       if (target && npc) return;
+      touchStay(p, now);
       socket.to('world').emit('world:punch', { id: socket.id, target: target || null });
       if (npc) {
         const r = NpcLogic.applyHit(worldNpcs[npc], socket.id, now);
@@ -446,6 +546,7 @@ module.exports = (io) => {
       const stone = raw && raw.stone;
       if (typeof stone !== 'string' || !STONE_IDS.includes(stone)) return;
       if (worldStones[stone].holder !== null) return;   // already taken
+      touchStay(worldPlayers.get(socket.id));
       worldStones[stone].holder = socket.id;
       io.to('world').emit('world:stone-update', { stone, holder: socket.id });
     });
@@ -461,6 +562,7 @@ module.exports = (io) => {
       if (now - (p.lastSnap || 0) < SNAP_INTERVAL_MS) return;
       if (stonesHeldBy(socket.id).length < STONE_IDS.length) return;   // authority
       p.lastSnap = now;
+      touchStay(p, now);
 
       const others = [...worldPlayers.keys()].filter(id => id !== socket.id);
       // Unbiased random half via a partial Fisher–Yates shuffle.
@@ -589,16 +691,23 @@ module.exports = (io) => {
     //
     // WebRTC signaling relay. The server never touches media — it only
     // forwards SDP offer/answer/ICE between in-voice peers in the same
-    // room. Each signal is validated to be a single-target relay within
-    // the sender's room (no cross-room leaks, no broadcasts).
+    // scope. Each signal is validated to be a single-target relay within
+    // the sender's scope (no cross-scope leaks, no broadcasts).
     //
-    // socket.data.lastVoiceSignal tracks the per-sender signaling cadence.
+    // /world scope is the sender's ISLAND (same membership as Project chat):
+    // voice-enabled sockets standing on the same project island. Off-island
+    // there are no peers. Island changes are handled in world:pos above.
+    // /home scope is the whole home room, unchanged.
+    //
+    // socket.data.voiceSignalLog tracks the per-sender signaling budget.
+
+    function islandVoicePeers() {
+      return ChatLogic.islandPeers(socket.id, worldPlayers, voiceWorld);
+    }
 
     function voicePeersInSameRoom(scope) {
       if (scope === 'world') {
-        return voiceWorld.has(socket.id)
-          ? [...voiceWorld].filter(id => id !== socket.id)
-          : [];
+        return voiceWorld.has(socket.id) ? islandVoicePeers() : [];
       }
       if (scope === 'home') {
         const home = homePlayers.get(socket.id);
@@ -612,7 +721,9 @@ module.exports = (io) => {
 
     function emitVoicePeerEvent(scope, event, payload) {
       if (scope === 'world') {
-        socket.to('world').emit(event, payload);
+        // Targeted, not room-wide: a room-wide peer-joined would make every
+        // voice client in the town dial the newcomer regardless of island.
+        for (const id of islandVoicePeers()) io.to(id).emit(event, payload);
       } else if (scope === 'home') {
         const home = homePlayers.get(socket.id);
         if (home) socket.to('home:' + home.ownerId).emit(event, payload);
@@ -698,6 +809,7 @@ module.exports = (io) => {
 
     socket.on('disconnect', () => {
       if (worldPlayers.has(socket.id)) {
+        drainStay(worldPlayers.get(socket.id));   // banked on the next flush
         worldPlayers.delete(socket.id);
         socket.to('world').emit('world:left', { id: socket.id });
         freeStonesOf(socket.id);   // drop any stones this player was carrying
@@ -708,7 +820,9 @@ module.exports = (io) => {
         homePlayers.delete(socket.id);
         socket.to('home:' + home.ownerId).emit('home:left', { id: socket.id });
       }
-      // Voice mesh cleanup — broadcast peer-left to surviving voice peers.
+      // Voice mesh cleanup. The world player record is already gone, so the
+      // island peers can't be computed here; a room-wide peer-left is safe
+      // because clients ignore peer-left for ids they never dialled.
       if (voiceWorld.delete(socket.id)) {
         socket.to('world').emit('voice:peer-left', { id: socket.id });
       }
@@ -722,3 +836,8 @@ module.exports = (io) => {
     });
   });
 };
+
+// For routes/world.js: push a keeper's saved house to everyone in /world, and
+// force a stay flush so a just-crowned keeper is recognised immediately.
+module.exports.broadcastWorld = (event, payload) => { if (_io) _io.to('world').emit(event, payload); };
+module.exports.flushStays = flushStays;

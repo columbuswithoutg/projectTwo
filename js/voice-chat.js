@@ -6,10 +6,18 @@
  *   - js/views/home.js        → scope: 'home'
  *   - js/views/friend-home.js → scope: 'home'
  *
- * Architecture: P2P mesh. Every voice-enabled peer in the same room
+ * Architecture: P2P mesh. Every voice-enabled peer in the same scope
  * opens an RTCPeerConnection with every other voice-enabled peer.
  * Audio never touches the server — only signaling (SDP offer/answer,
  * ICE candidates) is relayed through Socket.IO `voice:signal` events.
+ *
+ * Scope: in /world the mesh is ISLAND-scoped — the same membership as the
+ * Project chat channel. You only connect to players standing on the same
+ * project island, and off-island (roads) you have no peers. The server
+ * (routes/world-socket.js) drives island changes with the ordinary
+ * voice:peer-left / voice:peers / voice:peer-joined events, so nothing
+ * here needs to know about islands beyond reporting the current one in
+ * the diagnostics (opts.getZone). /home voice is room-wide as before.
  *
  * Distance-based volume: a 100ms loop reads the local player's position
  * from Playground3D.getLocalState() and each remote's interpolated
@@ -65,12 +73,18 @@ const VoiceManager = (() => {
   //   onError(msg)         Optional — called on fatal failure (no WebRTC)
   //   onMicUnavailable(msg) Optional — mic missing/denied; session continues
   //                        in listen-only mode (hear others, can't speak)
-  //   onPeerStateChange(peerId, {speaking, muted, connected})
+  //   onPeerStateChange(peerId, {speaking, muted, connected, reason})
+  //                        `reason` accompanies connected:false — 'failed' |
+  //                        'disconnected' | 'closed' | 'left' | 'stop' |
+  //                        'reconnect' | 'rebuild' — so the view can tell a
+  //                        real connection problem from a routine teardown.
+  //   getZone              Optional () → projectId | null (the island we stand
+  //                        on, /world only) — shown in the diagnostics panel.
   //
   // Returns { stop, mutePeer, isMuted, _diag, scope }.
   function start(opts) {
     const { socket, scope, getLocalState, getRemotePlayers,
-            onError, onMicUnavailable, onPeerStateChange } = opts || {};
+            onError, onMicUnavailable, onPeerStateChange, getZone } = opts || {};
     if (!socket || !scope || !getLocalState || !getRemotePlayers) {
       console.warn('[VoiceManager] missing required option');
       return noopHandle();
@@ -260,7 +274,7 @@ const VoiceManager = (() => {
           // (or via its own 'failed' handler). ICE timeouts make any
           // fail→rebuild loop self-limiting.
           _log(peerId, 'connection failed — rebuilding');
-          destroyPeer(peerId);
+          destroyPeer(peerId, 'failed');
           if (!stopped && String(socket.id) < String(peerId)) {
             createPeer(peerId, true);
           }
@@ -268,7 +282,7 @@ const VoiceManager = (() => {
         }
         if (s === 'closed' || s === 'disconnected') {
           if (onPeerStateChange) {
-            onPeerStateChange(peerId, { connected: false, speaking: false });
+            onPeerStateChange(peerId, { connected: false, speaking: false, reason: s });
           }
         } else if (s === 'connected' && onPeerStateChange) {
           onPeerStateChange(peerId, { connected: true });
@@ -330,7 +344,7 @@ const VoiceManager = (() => {
         if (entry && (entry.pc.signalingState !== 'stable' || isDeadPc(entry.pc))) {
           _log(from, 'recreating PC (signalingState=' + entry.pc.signalingState +
             ', connState=' + entry.pc.connectionState + ')');
-          destroyPeer(from);
+          destroyPeer(from, 'rebuild');
           entry = null;
         }
         if (!entry) entry = createPeer(from, false);
@@ -378,7 +392,7 @@ const VoiceManager = (() => {
       }
     }
 
-    function destroyPeer(peerId) {
+    function destroyPeer(peerId, reason) {
       const entry = peers.get(peerId);
       if (!entry) return;
       try { entry.pc.close(); } catch (_) {}
@@ -391,7 +405,7 @@ const VoiceManager = (() => {
       try { if (entry.analyser) entry.analyser.disconnect(); } catch (_) {}
       peers.delete(peerId);
       if (onPeerStateChange) {
-        onPeerStateChange(peerId, { connected: false, speaking: false });
+        onPeerStateChange(peerId, { connected: false, speaking: false, reason: reason || 'closed' });
       }
     }
 
@@ -536,7 +550,7 @@ const VoiceManager = (() => {
       // deadlocking the handshake. Rebuild from scratch.
       if (peers.has(id)) {
         _log(id, 'stale entry for rejoining peer — rebuilding');
-        destroyPeer(id);
+        destroyPeer(id, 'rebuild');
       }
       // Same deterministic rule as onVoicePeers (lower socket.id
       // initiates) — unconditional initiation here would cause
@@ -547,7 +561,7 @@ const VoiceManager = (() => {
 
     function onPeerLeft({ id }) {
       _log(id, 'voice:peer-left');
-      destroyPeer(id);
+      destroyPeer(id, 'left');
     }
 
     // Announce membership, retrying until the server's voice:peers reply
@@ -578,7 +592,7 @@ const VoiceManager = (() => {
     function onReconnect() {
       if (stopped) return;
       _log(null, 'socket reconnected (id=' + shortId(socket.id) + ') — rebuilding voice session');
-      [...peers.keys()].forEach(destroyPeer);
+      [...peers.keys()].forEach(id => destroyPeer(id, 'reconnect'));
       announce();
     }
 
@@ -685,7 +699,7 @@ const VoiceManager = (() => {
       socket.off('voice:peer-left', onPeerLeft);
       socket.off('voice:signal', handleSignal);
       socket.off('connect', onReconnect);
-      [...peers.keys()].forEach(destroyPeer);
+      [...peers.keys()].forEach(id => destroyPeer(id, 'stop'));
       if (localStream) {
         localStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
         localStream = null;
@@ -744,6 +758,7 @@ const VoiceManager = (() => {
       });
       return {
         scope,
+        zone: getZone ? (getZone() || null) : undefined,
         micState,
         audioState: audioCtx ? audioCtx.state : 'none',
         localLevel,
@@ -825,6 +840,11 @@ const VoiceManager = (() => {
       // Audio output state — 'suspended' (iOS autoplay) means peers are
       // inaudible even when connected, so flag it.
       const audioCls = (d.audioState === 'running') ? 'ok' : (d.audioState === 'suspended' ? 'bad' : 'warn');
+      // /world voice is island-scoped: say which island (if any) we're on.
+      const islandKnown = d.scope === 'world' && d.zone !== undefined;
+      const islandRow = islandKnown
+        ? `<div class="pg3d-voice-debug-meta">island: ${d.zone ? escapeHtml(projectTitle(d.zone)) : 'none (roads)'}</div>`
+        : '';
       rows.push(`
         <div class="pg3d-voice-debug-row mic">
           <div class="pg3d-voice-debug-name">🎙 You <span class="pg3d-voice-badge ${micCls}">${escapeHtml(d.micState)}</span></div>
@@ -833,10 +853,15 @@ const VoiceManager = (() => {
             audio: <span class="pg3d-voice-badge ${audioCls}">${escapeHtml(d.audioState || '?')}</span>
             · ICE: ${d.iceServerCount} server(s) · <span class="pg3d-voice-badge ${turnCls}">${escapeHtml(turnLabel)}</span>
           </div>
+          ${islandRow}
         </div>
       `);
       if (!d.peers.length) {
-        rows.push(`<div class="pg3d-voice-debug-empty">No peers connected yet — waiting for someone else to join voice.</div>`);
+        const empty = (islandKnown && !d.zone)
+          ? 'Not on a project island — walk onto one to talk.'
+          : (islandKnown ? 'No one else on this island has voice on.'
+                         : 'No peers connected yet — waiting for someone else to join voice.');
+        rows.push(`<div class="pg3d-voice-debug-empty">${empty}</div>`);
       } else {
         for (const p of d.peers) {
           const kb = Math.round((p.bytesReceived || 0) / 1024);
@@ -903,6 +928,12 @@ const VoiceManager = (() => {
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // Project title for an island id (same lookup home-socket.js uses).
+  function projectTitle(id) {
+    const p = (typeof projects !== 'undefined' && Array.isArray(projects)) ? projects.find(q => q.id === id) : null;
+    return (p && p.title) || id;
   }
 
   return {

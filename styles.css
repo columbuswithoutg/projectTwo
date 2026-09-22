@@ -5185,6 +5185,177 @@ body.fight-active .flow-wrapper {
   .world-spawn-card:focus-visible { transform: none; }
 }
 
+/* ── Keeper houses: header HUD + editor overlay ── */
+.world-house-btn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 215, 64, 0.8);
+  background: rgba(7, 8, 15, 0.7);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.world-house-btn:hover { box-shadow: 0 0 10px rgba(255, 215, 64, 0.45); }
+.world-house-keeper {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(7, 8, 15, 0.55);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+@media (max-width: 400px) {
+  .world-house-btn { padding: 5px 9px; font-size: 0.75rem; }
+  .world-house-keeper { max-width: 110px; padding: 5px 8px; font-size: 0.7rem; }
+}
+
+.world-house {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 16px;
+}
+.world-house-panel {
+  position: relative;
+  width: min(520px, calc(100vw - 32px));
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 20px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 215, 64, 0.35);
+  background: rgba(13, 16, 32, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: #fff;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+}
+.world-house-panel h3 {
+  margin: 0 0 4px;
+  font-family: var(--font-display);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.world-house-sub, .world-house-hint {
+  margin: 0 0 12px;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+.world-house-hint { margin: 6px 0 8px; }
+.world-house-row, .world-house-signrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.world-house-label {
+  flex: 0 0 48px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.7);
+}
+.world-house-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.world-house-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  padding: 0;
+  cursor: pointer;
+  font-size: 0.6rem;
+  color: #fff;
+}
+.world-house-swatch.default {
+  width: auto;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: 700;
+}
+.world-house-swatch.active {
+  border-color: #ffd740;
+  box-shadow: 0 0 0 2px rgba(255, 215, 64, 0.4);
+}
+.world-house-signrow input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 0.9rem;
+}
+.world-house-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 8px; }
+.world-house-kind, .world-house-tool {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-transform: capitalize;
+}
+.world-house-kind.active {
+  border-color: #ffd740;
+  background: rgba(255, 215, 64, 0.16);
+}
+.world-house-tool:disabled { opacity: 0.4; cursor: not-allowed; }
+.world-house-tools { display: flex; align-items: center; gap: 8px; }
+.world-house-count { margin-left: auto; font-size: 0.78rem; color: rgba(255, 255, 255, 0.65); }
+.world-house-grid {
+  display: block;
+  width: min(320px, calc(100vw - 72px));
+  height: auto;
+  margin: 0 auto;
+  border-radius: 8px;
+  background: #2a2418;
+  touch-action: manipulation;
+}
+.world-house-floor { fill: #4a3f2c; }
+.world-house-cell { fill: transparent; stroke: rgba(255, 255, 255, 0.12); stroke-width: 1; cursor: pointer; }
+.world-house-cell:hover { fill: rgba(255, 215, 64, 0.14); }
+.world-house-prop { cursor: pointer; }
+.world-house-prop rect { fill: rgba(255, 255, 255, 0.14); stroke: rgba(255, 255, 255, 0.35); stroke-width: 1; }
+.world-house-prop path { fill: #ffd740; }
+.world-house-prop.selected rect { stroke: #ffd740; stroke-width: 2; fill: rgba(255, 215, 64, 0.22); }
+.world-house-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.world-house-cancel, .world-house-save {
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+.world-house-save {
+  border-color: rgba(255, 215, 64, 0.9);
+  background: linear-gradient(135deg, #b8860b, #7a1fa2);
+}
+.world-house-save:disabled { opacity: 0.5; cursor: wait; }
+
 .world-chat-row {
   position: fixed;
   left: 50%;
@@ -5446,6 +5617,12 @@ button.world-chat-name[data-whisper]:focus-visible { text-decoration: underline;
   border-color: rgba(255, 200, 80, 0.85);
   box-shadow: 0 0 0 2px rgba(255, 200, 80, 0.22),
               0 0 14px rgba(255, 200, 80, 0.4);
+}
+/* Voice is on but we're off-island (roads): /world voice is island-scoped,
+   so nobody can hear us until we step onto an island. Dimmed, not red. */
+.pg3d-voice[aria-pressed="true"].idle {
+  opacity: 0.6;
+  box-shadow: none;
 }
 /* Voice failed to start — red, unpressed. */
 .pg3d-voice.voice-error {

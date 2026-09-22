@@ -48,6 +48,24 @@
     return null;
   }
 
+  // Socket ids of the OTHER players standing on selfId's island. `players` is
+  // the server's socketId → player Map (each with a `projectId`); `members`
+  // (optional Set) restricts the result — e.g. to voice-enabled sockets — but
+  // is deliberately NOT applied to selfId, so leave/eviction paths can call
+  // this after removing themselves. Off-island or unknown self → [].
+  function islandPeers(selfId, players, members) {
+    if (!players || typeof players.get !== 'function') return [];
+    const me = players.get(selfId);
+    if (!me || !me.projectId) return [];
+    const out = [];
+    for (const [sid, p] of players) {
+      if (sid === selfId || !p || p.projectId !== me.projectId) continue;
+      if (members && !members.has(sid)) continue;
+      out.push(sid);
+    }
+    return out;
+  }
+
   // Only the room-wide World channel is rate limited — Project reaches a
   // handful of players and Whisper reaches one, so neither needs it.
   function hasCooldown(channel) {
@@ -96,5 +114,5 @@
     }
   }
 
-  return { CHANNELS, C, projectAt, hasCooldown, cooldownLeft, normalizeMessage, parseWhisperCommand, sameName, errorText };
+  return { CHANNELS, C, projectAt, islandPeers, hasCooldown, cooldownLeft, normalizeMessage, parseWhisperCommand, sameName, errorText };
 });

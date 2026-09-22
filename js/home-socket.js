@@ -38,6 +38,7 @@ const Multiplayer = (() => {
     left:        'world:left',
     leave:       null,             // /world auto-cleans on disconnect; no explicit leave
     zone:        'world:zone',     // server: the project island we're standing on changed
+    house:       'world:house',    // server: a keeper saved an island's house decorations
     channels:    true              // World / Project / Whisper chat tabs + 10s cooldown
   };
   const HOME_EVENTS = {
@@ -59,6 +60,7 @@ const Multiplayer = (() => {
     left:        'home:left',
     leave:       'home:leave',     // emitted before disconnect so the room's owner gets prompt notice
     zone:        null,             // homes have one shared chat — no channels
+    house:       null,             // no keeper houses in /home
     channels:    false
   };
 
@@ -74,14 +76,18 @@ const Multiplayer = (() => {
   //   joinPayload extra fields merged with { username, character } on join.
   //               For home, this is { ownerUsername }.
   //   character   the local player's saved homeCharacter (or default).
+  //   onZone(projectId|null)  /world only — the island we stand on changed
+  //               (also fired with null on reconnect until the server re-derives it).
+  //   onHouse({ projectId, house, keeper })  /world only — a keeper saved a house;
+  //               the engine is restyled here, the callback updates the HUD.
   //
-  // Returns { stop } — call stop() in the view's unmount(), BEFORE
-  // Playground3D.destroy(), so the leave event reaches the room while
-  // the socket is still open.
-  function start({ events, joinPayload, character, onStoneChange, onSnapped }) {
+  // Returns { stop, getSocket, sendSnap, getProjectId } — call stop() in the
+  // view's unmount(), BEFORE Playground3D.destroy(), so the leave event
+  // reaches the room while the socket is still open.
+  function start({ events, joinPayload, character, onStoneChange, onSnapped, onZone, onHouse }) {
     if (typeof io !== 'function') {
       console.warn('[Multiplayer] socket.io client not loaded');
-      return { stop() {}, getSocket: () => null, sendSnap() {} };
+      return { stop() {}, getSocket: () => null, sendSnap() {}, getProjectId: () => null };
     }
 
     const socket = io({ auth: { token: Auth.getToken() } });
@@ -330,6 +336,7 @@ const Multiplayer = (() => {
         chan.projectId = null;
         lastPosSent = { x: NaN, y: 0, z: NaN, yaw: 0, walking: false, backward: false };
         renderTabs();
+        if (onZone) onZone(null);
       }
       // Tell the engine our (possibly new-on-reconnect) socket id so it can
       // tell "held by me" from "held by a remote" for the shared stones, and
@@ -379,6 +386,16 @@ const Multiplayer = (() => {
       socket.on(events.zone, ({ projectId }) => {
         chan.projectId = projectId || null;
         renderTabs();
+        if (onZone) onZone(chan.projectId);
+      });
+    }
+    // A keeper saved an island's decorations: restyle that house for
+    // everyone, then let the view refresh its keeper HUD.
+    if (events.house) {
+      socket.on(events.house, (p) => {
+        if (!p || !p.projectId) return;
+        if (Playground3D.applyHouse) Playground3D.applyHouse(p.projectId, p.house || null);
+        if (onHouse) onHouse(p);
       });
     }
     socket.on(events.emote, ({ id, kind }) => {
@@ -604,7 +621,7 @@ const Multiplayer = (() => {
       if (events.snap && socket.connected) socket.emit(events.snap);
     }
 
-    return { stop, getSocket: () => socket, sendSnap };
+    return { stop, getSocket: () => socket, sendSnap, getProjectId: () => chan.projectId };
   }
 
   return { start, WORLD_EVENTS, HOME_EVENTS };

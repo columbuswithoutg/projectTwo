@@ -188,7 +188,11 @@ const Playground3D = (() => {
   // ── world-mode state ──
   let _mode = 'home';             // 'home' | 'world'
   let _hudLayer = null;            // HTMLDivElement overlay for nametags/bubbles/prompts
-  let _worldNodes = new Map();    // projectId → { mesh, project, anchor: Vector3, walls }
+  let _worldNodes = new Map();    // projectId → { mesh, project, anchor: Vector3, walls, house, props }
+  // Keeper decorations per project (WorldHouseLogic shape), fed by the view
+  // from GET /api/world/houses + live world:house pushes. Kept separately from
+  // the nodes so a house that arrives before its island unlocks still applies.
+  let _houses = new Map();        // projectId → { wallColor, roofColor, trimColor, lampColor, sign, props }
   let _worldRoads = new Map();    // "a→b" key (sorted) → mesh
   let _remotePlayers = new Map(); // socketId → { rig, target:{x,z,yaw,walking}, current, nameEl, bubbleEls[], emoteUntil }
   let _npcs = [];                 // local Avenger NPCs patrolling their debut nodes (NOT network/voice peers)
@@ -325,6 +329,7 @@ const Playground3D = (() => {
     _clearNpcs();          // removes NPC name-tag DOM nodes + clears _npcs
     _npcSpecs = [];
     _worldNodes.clear();
+    _houses.clear();
     _worldRoads.clear();
     // Per-build shared materials were disposed by the _disposeRig sweep above;
     // drop the stale refs so the next mount recreates them. (_wallTex/_lampTex
@@ -1856,7 +1861,10 @@ const Playground3D = (() => {
       // The 'anchor' is still used by the active-node prompt placement
       // tick — kept even though we no longer render a floating title.
       const anchor = new THREE.Vector3(x, WORLD.PLATFORM_RAISE + WORLD.PLATFORM_H / 2 + 1.6, z);
-      const node = { mesh, project: p, anchor, walls: [], ceiling, apron, wallHeight, decor: [] };
+      const node = { mesh, project: p, anchor, walls: [], ceiling, apron, wallHeight, decor: [], props: [], house: null };
+      // Keeper decorations, if this island already has some (colours are read
+      // inside _buildNodeWalls, so neighbour-triggered rebuilds keep them).
+      node.house = _houses.get(p.id) || null;
       _worldNodes.set(p.id, node);
 
       // Roads to any already-unlocked prereq.
@@ -1878,6 +1886,8 @@ const Playground3D = (() => {
       // neighbor that just gained a road to us, so their fence has a
       // fresh doorway facing this node.
       _buildNodeWalls(node);
+      _applyRoof(node);
+      _buildProps(node);
       for (const neighbor of _getConnectedNodes(p.id)) {
         if (neighbor.project.id !== p.id) _buildNodeWalls(neighbor);
       }
@@ -1991,10 +2001,29 @@ const Playground3D = (() => {
     // material.dispose() does not free the map, so the shared texture survives.
     const wallTex = _wallTexture();
 
+    // Keeper colours (WorldHouseLogic palette indices on node.house) with the
+    // engine defaults as fallback — so an undecorated house looks exactly as
+    // before and a decorated one survives every wall rebuild.
+    const wallColor = _houseColor(node, 'wallColor', WORLD.WALL_COLOR);
+    const trimColor = _houseColor(node, 'trimColor', WORLD.WALL_TRIM_COLOR);
+    const lampColor = _houseColor(node, 'lampColor', WORLD.LAMP_COLOR);
+    const signText = (node.house && node.house.sign) ? String(node.house.sign) : '';
+    let signPlaced = false;
+
     // Decor (trim/stoop/lamp) helpers — non-colliding, tracked in node.decor.
-    const trimMat = () => new THREE.MeshLambertMaterial({ color: WORLD.WALL_TRIM_COLOR });
+    const trimMat = () => new THREE.MeshLambertMaterial({ color: trimColor });
     const stoopMat = () => new THREE.MeshLambertMaterial({ color: WORLD.APRON_COLOR });
     const addDecor = (mesh, x, y, z) => { mesh.position.set(x, y, z); mesh.castShadow = true; _scene.add(mesh); node.decor.push(mesh); };
+    // The keeper's sign hangs on the first door lintel (or, for a doorless
+    // island, centred on the south wall — see after buildSide below).
+    const placeSign = (x, y, z, rotY, maxW) => {
+      if (signPlaced || !signText) return;
+      const sign = _makeSign(signText, trimColor, maxW);
+      if (!sign) return;
+      sign.rotation.y = rotY;
+      addDecor(sign, x, y, z);
+      signPlaced = true;
+    };
 
     // Frame a doorway's ACTUAL opening [gStart, gEnd] (already clipped to the
     // platform edge by the caller) with trim jambs + a lintel, a stoop step on
@@ -2015,15 +2044,19 @@ const Playground3D = (() => {
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(jW, H, jD), trimMat()), gEnd,   wallY, line);
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(w + jW, 0.45, jD), trimMat()), mid, lintelY, line);
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(w, 0.16, 1.2), stoopMat()), mid, 0.06, line + outSign * 0.7);
-        const lamp = _makeLamp(gEnd + 0.4, line + outSign * 0.5);
+        const lamp = _makeLamp(gEnd + 0.4, line + outSign * 0.5, lampColor);
         if (lamp) { _scene.add(lamp); node.decor.push(lamp); }
+        // Sign on the lintel's outer face; N faces -z (π), S faces +z (0).
+        placeSign(mid, lintelY, line + outSign * (jD / 2 + 0.02), outSign < 0 ? Math.PI : 0, w);
       } else {
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(jD, H, jW), trimMat()), line, wallY, gStart);
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(jD, H, jW), trimMat()), line, wallY, gEnd);
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(jD, 0.45, w + jW), trimMat()), line, lintelY, mid);
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, w), stoopMat()), line + outSign * 0.7, 0.06, mid);
-        const lamp = _makeLamp(line + outSign * 0.5, gEnd + 0.4);
+        const lamp = _makeLamp(line + outSign * 0.5, gEnd + 0.4, lampColor);
         if (lamp) { _scene.add(lamp); node.decor.push(lamp); }
+        // W faces -x (-π/2), E faces +x (π/2).
+        placeSign(line + outSign * (jD / 2 + 0.02), lintelY, mid, outSign < 0 ? -Math.PI / 2 : Math.PI / 2, w);
       }
     }
 
@@ -2078,10 +2111,13 @@ const Playground3D = (() => {
         const pz = horizontal ? perp : (aStart + aEnd) / 2;
         const gx = horizontal ? wlen : T;
         const gz = horizontal ? T : wlen;
+        // Lambert output is map × color: the shared plaster texture is painted
+        // on a white base, so the per-panel `color` carries the wall colour
+        // (engine default or the keeper's pick) at no extra texture cost.
         const mat = (plainColor != null)
           ? new THREE.MeshLambertMaterial({ color: plainColor })
-          : (wallTex ? new THREE.MeshLambertMaterial({ map: wallTex, color: 0xffffff })
-                     : new THREE.MeshLambertMaterial({ color: WORLD.WALL_COLOR }));
+          : (wallTex ? new THREE.MeshLambertMaterial({ map: wallTex, color: wallColor })
+                     : new THREE.MeshLambertMaterial({ color: wallColor }));
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(gx, wh, gz), mat);
         mesh.position.set(px, (y0 + y1) / 2, pz);   // platform top is y=0
         mesh.castShadow = true;
@@ -2140,8 +2176,18 @@ const Playground3D = (() => {
 
     buildSide('N', cx - HALF, cx + HALF, cz - HALF, true);
     buildSide('S', cx - HALF, cx + HALF, cz + HALF, true);
+    _buildSideRest(node, cx, cz, HALF, T, H, buildSide, placeSign);
+  }
+
+  // Second half of _buildNodeWalls, split only to keep the door-frame closure
+  // readable: the E/W fences, the doorless-island sign fallback, and the lock
+  // decals for still-locked neighbours.
+  function _buildSideRest(node, cx, cz, HALF, T, H, buildSide, placeSign) {
     buildSide('W', cz - HALF, cz + HALF, cx - HALF, false);
     buildSide('E', cz - HALF, cz + HALF, cx + HALF, false);
+    // No doorway to hang the sign on (lone island): centre it high on the
+    // south wall's outer face instead.
+    placeSign(cx, H - 0.6, cz + HALF + 0.03, 0, 3.2);
 
     // Hang a lock icon on the wall facing each still-locked neighbor — at the
     // spot where the road WOULD exit once that neighbor is unlocked. This hints
@@ -2302,8 +2348,10 @@ const Playground3D = (() => {
     canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d');
     const hex = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
-    // Plaster body.
-    ctx.fillStyle = hex(WORLD.WALL_COLOR);
+    // Plaster body — painted WHITE: the actual wall colour is the panel
+    // material's `color` (map × color), so keepers can recolour a house
+    // without a texture per house. Default WALL_COLOR gives the old look.
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, W, H);
     // Faint stucco speckle (deterministic so the cache is stable; no Math.random).
     let seed = 0x1234567;
@@ -2410,13 +2458,156 @@ const Playground3D = (() => {
     return new THREE.Mesh(new THREE.PlaneGeometry(WORLD.WINDOW_W, WORLD.WINDOW_H), mat);
   }
 
+  // ── Keeper-decorated houses (WorldHouseLogic) ──
+
+  // Palette colour for one of the house's slots, or the engine default.
+  function _houseColor(node, slot, fallback) {
+    const h = node && node.house;
+    const idx = h ? h[slot] : null;
+    if (idx == null || typeof WorldHouseLogic === 'undefined') return fallback;
+    const c = WorldHouseLogic.PALETTE[idx];
+    return (typeof c === 'number') ? c : fallback;
+  }
+
+  // Roof: the shared per-phase material by default; a per-node material the
+  // node owns (and disposes) when the keeper picked a roof colour.
+  function _applyRoof(node) {
+    const THREE = window.THREE;
+    if (!THREE || !node || !node.ceiling) return;
+    if (node.ownsRoofMat) {
+      try { node.ceiling.material.dispose(); } catch (_) {}
+      node.ownsRoofMat = false;
+    }
+    const idx = node.house ? node.house.roofColor : null;
+    if (idx != null && typeof WorldHouseLogic !== 'undefined' && typeof WorldHouseLogic.PALETTE[idx] === 'number') {
+      node.ceiling.material = new THREE.MeshLambertMaterial({ color: WorldHouseLogic.PALETTE[idx] });
+      node.ownsRoofMat = true;
+    } else {
+      node.ceiling.material = _ceilingMat(node.project.phase);
+    }
+  }
+
+  // A wooden name plank: canvas text (never HTML, so any characters are safe)
+  // on a plane sized to the doorway. Disposed with the rest of node.decor.
+  function _makeSign(text, trimColor, maxW) {
+    const THREE = window.THREE;
+    if (!THREE || !THREE.CanvasTexture) return null;
+    const W = 512, H = 96;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    const hex = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
+    ctx.fillStyle = '#3a2e20';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = hex(trimColor != null ? trimColor : WORLD.WALL_TRIM_COLOR);
+    ctx.lineWidth = 8;
+    ctx.strokeRect(6, 6, W - 12, H - 12);
+    ctx.fillStyle = '#f5e9c8';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    let size = 54;
+    ctx.font = `bold ${size}px sans-serif`;
+    while (size > 22 && ctx.measureText(text).width > W - 48) {
+      size -= 4;
+      ctx.font = `bold ${size}px sans-serif`;
+    }
+    ctx.fillText(text, W / 2, H / 2 + 2);
+    const tex = new THREE.CanvasTexture(canvas);
+    const width = Math.min(3.2, Math.max(1.2, (maxW || 3.2) - 0.4));
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, width * (H / W)),
+      new THREE.MeshBasicMaterial({ map: tex })
+    );
+    return mesh;
+  }
+
+  // (Re)place the keeper's interior props: dispose the old ones, drop their
+  // collision boxes, build the new set on the inner 10×10 grid. Solid props
+  // register an AABB in _walls exactly like wall segments do.
+  function _buildProps(node) {
+    const THREE = window.THREE;
+    if (!THREE || !node || !_scene) return;
+    if (node.props && node.props.length) {
+      const drop = new Set();
+      for (const pr of node.props) {
+        _disposeDecor(pr.obj);
+        if (pr.aabb) drop.add(pr.aabb);
+      }
+      if (drop.size) _walls = _walls.filter(a => !drop.has(a));
+    }
+    node.props = [];
+    const list = (node.house && Array.isArray(node.house.props)) ? node.house.props : [];
+    if (!list.length || typeof PG3DProps === 'undefined' || typeof WorldHouseLogic === 'undefined') return;
+    const cx = node.mesh.position.x, cz = node.mesh.position.z;
+    const opts = {
+      THREE,
+      lampTex: _lampTexture(),
+      lampColor: _houseColor(node, 'lampColor', WORLD.LAMP_COLOR),
+      trimColor: _houseColor(node, 'trimColor', WORLD.WALL_TRIM_COLOR),
+      roofColor: _houseColor(node, 'roofColor', _phaseRoofColor(node.project.phase))
+    };
+    for (const p of list) {
+      const obj = PG3DProps.make(p.kind, opts);
+      if (!obj) continue;
+      const local = WorldHouseLogic.cellToLocal(p.gx, p.gy);
+      const x = cx + local.x, z = cz + local.z;
+      const rot = p.rot || 0;
+      obj.position.set(x, 0, z);
+      obj.rotation.y = rot * Math.PI / 2;
+      _scene.add(obj);
+      let aabb = null;
+      const fp = PG3DProps.footprint(p.kind);
+      if (fp.solid) {
+        const odd = rot % 2 === 1;
+        const hx = odd ? fp.hz : fp.hx, hz = odd ? fp.hx : fp.hz;
+        aabb = { minX: x - hx, maxX: x + hx, minZ: z - hz, maxZ: z + hz };
+        _walls.push(aabb);
+      }
+      node.props.push({ obj, aabb });
+    }
+  }
+
+  function _applyHouseToNode(node, house) {
+    node.house = house || null;
+    _applyRoof(node);
+    _buildNodeWalls(node);
+    _buildProps(node);
+  }
+
+  // Replace every known house at once (initial GET). Only nodes whose house
+  // actually changed are rebuilt, so an undecorated town costs nothing.
+  function setHouses(map) {
+    const next = new Map();
+    for (const [id, h] of Object.entries(map || {})) if (h) next.set(id, h);
+    _houses = next;
+    if (_mode !== 'world' || !_scene) return;
+    for (const node of _worldNodes.values()) {
+      const prev = node.house || null;
+      const now = _houses.get(node.project.id) || null;
+      if (prev === now || (!prev && !now)) continue;
+      _applyHouseToNode(node, now);
+    }
+  }
+
+  // One house changed (keeper saved it, or the local editor is previewing).
+  function applyHouse(projectId, house) {
+    if (house) _houses.set(projectId, house); else _houses.delete(projectId);
+    const node = _worldNodes.get(projectId);
+    if (node && _mode === 'world' && _scene) _applyHouseToNode(node, house || null);
+  }
+
+  function getHouse(projectId) {
+    return _houses.get(projectId) || null;
+  }
+
   // A small lamp beside a doorway: a thin post, an emissive head, and a soft
   // additive glow sprite so it reads as glowing in the fog. Intentionally uses
   // NO real PointLight — one dynamic light per doorway would wreck framerate and
   // the single-shadow budget; the emissive head + sprite fake it cheaply.
-  function _makeLamp(x, z) {
+  function _makeLamp(x, z, color) {
     const THREE = window.THREE;
     if (!THREE) return null;
+    const lampColor = (color != null) ? color : WORLD.LAMP_COLOR;
     const group = new THREE.Group();
     const postH = 2.2;
     const post = new THREE.Mesh(
@@ -2428,14 +2619,14 @@ const Playground3D = (() => {
     group.add(post);
     const head = new THREE.Mesh(
       new THREE.BoxGeometry(0.34, 0.34, 0.34),
-      new THREE.MeshBasicMaterial({ color: WORLD.LAMP_COLOR })
+      new THREE.MeshBasicMaterial({ color: lampColor })
     );
     head.position.set(x, postH + 0.12, z);
     group.add(head);
     const lampTex = _lampTexture();
     if (lampTex && THREE.Sprite) {
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: lampTex,
+        map: lampTex, color: lampColor,
         blending: THREE.AdditiveBlending, depthWrite: false, transparent: true
       }));
       sprite.scale.set(1.6, 1.6, 1);
@@ -3482,6 +3673,8 @@ const Playground3D = (() => {
     setWorldNpcState, applyNpcUpdate, playNpcPunch, setNpcPunchHandler, resetNpcCombat,
     // Voice-chat surface — distance attenuation + speaking indicator.
     getRemotePlayers, setRemotePlayerSpeaking,
+    // Keeper-decorated houses (GET /api/world/houses + world:house pushes).
+    setHouses, applyHouse, getHouse,
     // Debugging aids for the browser preview (same idea as PG3DHumanoid._debug):
     // live NPC records, the local knockdown deadline, and a raw teleport so a
     // fight can be staged without steering the character by hand.

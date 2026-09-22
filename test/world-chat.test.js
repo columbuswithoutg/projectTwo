@@ -78,3 +78,31 @@ test('sameName is case-insensitive; errorText covers every rejection', () => {
   assert.match(L.errorText('not-found', { to: 'bob' }), /bob/);
   for (const e of ['no-project', 'self', 'no-target', 'empty', 'weird']) assert.ok(L.errorText(e).length > 0);
 });
+
+// ── islandPeers: who shares my island (voice mesh / project scope) ──
+
+function playersMap() {
+  return new Map([
+    ['s1', { projectId: 'ironman1' }],
+    ['s2', { projectId: 'ironman1' }],
+    ['s3', { projectId: 'hulk' }],
+    ['s4', { projectId: null }],
+    ['s5', { projectId: 'ironman1' }]
+  ]);
+}
+
+test('islandPeers: others on the same island, never self, never other islands or roads', () => {
+  assert.deepEqual(L.islandPeers('s1', playersMap()).sort(), ['s2', 's5']);
+  assert.deepEqual(L.islandPeers('s3', playersMap()), []);
+});
+
+test('islandPeers: off-island or unknown self is empty', () => {
+  assert.deepEqual(L.islandPeers('s4', playersMap()), []);
+  assert.deepEqual(L.islandPeers('nope', playersMap()), []);
+  assert.deepEqual(L.islandPeers('s1', null), []);
+});
+
+test('islandPeers: members filter applies to others but not to self', () => {
+  const members = new Set(['s2']);            // s1 already removed from the voice set
+  assert.deepEqual(L.islandPeers('s1', playersMap(), members), ['s2']);
+});

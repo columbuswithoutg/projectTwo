@@ -311,6 +311,26 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-09-22 — Keeper-decorated houses, island stay tracking, island-scoped voice
+
+Every project house in `/world` is now editable — by exactly one person: the **keeper**, the user with the longest all-time *active* stay on that island. Stay time accrues while connected and pauses after one minute without any action (movement, a chat message on any channel, an emote, a punch, a stone grab), so chatting while standing still counts and a parked tab does not. The keeper picks wall / roof / trim / lamp colours from a palette, hangs a sign over the door, and places up to 8 interior props on a 10×10 grid; everyone sees the result live. Voice in `/world` now uses the same island scope as Project chat: you only connect to players standing on your island and the mic idles on the roads (`/home` voice unchanged).
+
+- `js/world-stay-logic.js` (new, server-only, tested) — `enter` / `touch` / `drain` credit math with the 60 s AFK cap (`creditedUpTo` prevents double credit across flushes), `keeperOf`, `formatStay`.
+- `js/world-house-logic.js` (new, shared, tested) — 14-swatch `PALETTE`, `PROP_KINDS`, `validateHouse` (palette bounds, sign sanitising to 24 chars, ≤ 8 props on cells 1..10, no duplicate cells, rot wrap), `cellToLocal`.
+- `models/ProjectStay.js`, `models/WorldHouse.js` (new) — per-user-per-project ms totals (unique `(userId, projectId)`, keeper index) and per-project decorations. Kept off `Project` so the CMS export / reseed never touch player edits.
+- `routes/world-socket.js` — `stay` on the player record; touched by every accepted `world:*` action, drained on island change / disconnect / eviction; `flushStays()` bulk-`$inc`s once a minute (`unref`'d timer) and is exported with `broadcastWorld` for the HTTP route. Voice: `voicePeersInSameRoom('world')` and `voice:peer-joined` fan-out are now `ChatLogic.islandPeers(...)`; the `world:pos` zone transition sends `voice:peer-left` both ways, then `voice:peers` / `voice:peer-joined` for the new island; the single-presence eviction also retires the old socket from the voice mesh (it used to linger with a dead mesh).
+- `routes/world.js` (new), mounted at `/api/world` in `server.js` — `GET /houses` (all houses + `{ userId, username, ms }` keeper per island) and `PUT /houses/:projectId` (validates, forces a stay flush, 403 unless the caller is the keeper, upserts, broadcasts `world:house`).
+- `js/world-chat-logic.js` — `islandPeers(selfId, players, members)`.
+- `js/playground3d-props.js` (new) — primitive builders for chair / table / frame / plant / lamp / rug / bookshelf / crate with collision footprints (rug walk-over).
+- `js/playground3d.js` — the plaster texture is painted on a white base and each wall panel's `material.color` carries the wall colour (default look unchanged); `_buildNodeWalls` reads `node.house` for wall / trim / lamp colours and hangs a canvas sign on the first door lintel (or the south wall of a lone island); `_applyRoof` (per-node material only when customised), `_buildProps` (AABBs in `_walls`), exports `setHouses` / `applyHouse` / `getHouse`.
+- `js/home-socket.js` — `world:house` event, `onZone` / `onHouse` callbacks, `getProjectId()` on the handle.
+- `js/views/world.js` — header HUD (`🏠 Edit house` for the keeper, `🔑 <name> · <stay>` for others, hidden off-island), `_loadHouses`, the editor overlay (swatch rows, sign input, prop chips, rotate / remove, SVG grid, live local preview, Save → PUT / Cancel → restore). Voice button title / `.idle` state reflect the island; the "voice trouble" toast now fires only on a real `failed` / `disconnected` (it used to fire on every routine teardown).
+- `js/voice-chat.js` — `getZone` option and `zone` in `_diag()` / the diagnostics panel ("island: …", island-aware empty states); `onPeerStateChange` carries a `reason`.
+- `styles.css` — `.world-house-*` HUD + editor, `.pg3d-voice.idle`. `scripts/build.mjs` — new files in the `world` chunk; `PG3DProps`, `WorldHouseLogic` globals.
+- Tests: `test/world-stay.test.js`, `test/world-house.test.js` (new), `islandPeers` cases in `test/world-chat.test.js`. Docs: `docs/VOICE-TURN-SETUP.md` notes the island scope.
+
+---
+
 ### 2026-09-22 — esbuild build: hashed core/world/admin chunks, lazy 3D + admin, generated sw.js
 
 The shell used to load 62 separate unminified scripts (~1.1 MB) on every route, plus the Three.js module from unpkg — and because a parser-inserted module script shares the deferred execution list, `/login` could not run `boot.js` until unpkg answered. There is now a build step. `npm install` / `npm run build` writes `dist/`; `npm run dev` builds, watches and starts the server.
