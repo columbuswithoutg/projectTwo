@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const router = express.Router();
 const User = require('../models/user');
 const Friend = require('../models/Friend');
+const { friendFilter, getFriendIds } = require('../server/friendship');
 const auth = require('../middleware/auth');
 const feed = require('../server/feed');
 
@@ -73,23 +74,7 @@ router.post('/request', auth, async (req, res) => {
     if (!recipientExists)
         return res.status(404).json({ error: 'User not found' });
 
-    const existing = await Friend.findOne({
-        $and: [
-            {
-                $or: [
-                    { requester: req.user.id, recipient: recipientId },
-                    { requester: recipientId, recipient: req.user.id }
-                ]
-            },
-            {
-                $or: [
-                    { type: 'friend' },
-                    { type: { $exists: false } },
-                    { type: null }
-                ]
-            }
-        ]
-    });
+    const existing = await Friend.findOne(friendFilter(req.user.id, recipientId, { accepted: false }));
     if (existing) return res.status(400).json({ error: 'Request already exists' });
 
     const request = await Friend.create({ requester: req.user.id, recipient: recipientId });
@@ -155,21 +140,8 @@ router.post('/respond', auth, async (req, res) => {
 
 // Get accepted friends list
 router.get('/list', auth, async (req, res) => {
-    const friends = await Friend.find({
-        $and: [
-            {
-                $or: [{ requester: req.user.id }, { recipient: req.user.id }]
-            },
-            { status: 'accepted' },
-            {
-                $or: [
-                    { type: 'friend' },
-                    { type: { $exists: false } },
-                    { type: null }
-                ]
-            }
-        ]
-    }).populate('requester recipient', 'username');
+    const friends = await Friend.find(friendFilter(req.user.id))
+        .populate('requester recipient', 'username');
 
     const list = friends.map(f => {
         const friend = f.requester._id.toString() === req.user.id
@@ -184,19 +156,7 @@ router.get('/list', auth, async (req, res) => {
 // lifetime snaps performed in the shared /world contest. One Friend query
 // + one User projection query.
 router.get('/stones', auth, async (req, res) => {
-    const friendDocs = await Friend.find({
-        $and: [
-            { $or: [{ requester: req.user.id }, { recipient: req.user.id }] },
-            { status: 'accepted' },
-            { $or: [{ type: 'friend' }, { type: { $exists: false } }, { type: null }] }
-        ]
-    }).select('requester recipient');
-
-    const ids = new Set([req.user.id]);
-    for (const f of friendDocs) {
-        ids.add(String(f.requester));
-        ids.add(String(f.recipient));
-    }
+    const ids = await getFriendIds(req.user.id);
 
     const users = await User.find({ _id: { $in: [...ids] } })
         .select('username stoneSnaps');
@@ -226,20 +186,7 @@ router.get('/by-username/:username', auth, async (req, res) => {
             .select('_id username profilePicture watchedProjects walkers homeLayout homeCharacter');
         if (!friend) return res.status(404).json({ error: 'User not found' });
 
-        const friendship = await Friend.findOne({
-            $and: [
-                { $or: [
-                    { requester: req.user.id, recipient: friend._id },
-                    { requester: friend._id, recipient: req.user.id }
-                ] },
-                { status: 'accepted' },
-                { $or: [
-                    { type: 'friend' },
-                    { type: { $exists: false } },
-                    { type: null }
-                ] }
-            ]
-        });
+        const friendship = await Friend.findOne(friendFilter(req.user.id, friend._id));
         if (!friendship) return res.status(403).json({ error: 'Not friends' });
 
         const watchedProjects = (friend.watchedProjects || []).map(entry => {
@@ -273,24 +220,7 @@ router.get('/progress/:friendId', auth, async (req, res) => {
     if (!validId(req.params.friendId))
         return res.status(400).json({ error: 'Invalid friend id' });
     try {
-        const friendship = await Friend.findOne({
-            $and: [
-                {
-                    $or: [
-                        { requester: req.user.id, recipient: req.params.friendId },
-                        { requester: req.params.friendId, recipient: req.user.id }
-                    ]
-                },
-                { status: 'accepted' },
-                {
-                    $or: [
-                        { type: 'friend' },
-                        { type: { $exists: false } },
-                        { type: null }
-                    ]
-                }
-            ]
-        });
+        const friendship = await Friend.findOne(friendFilter(req.user.id, req.params.friendId));
         if (!friendship) return res.status(403).json({ error: 'Not friends' });
 
         const friend = await User.findById(req.params.friendId)
@@ -333,24 +263,7 @@ router.post('/watch-request', auth, async (req, res) => {
     if (projectTitle != null && typeof projectTitle !== 'string')
         return res.status(400).json({ error: 'Invalid project title' });
 
-    const friendship = await Friend.findOne({
-        $and: [
-            {
-                $or: [
-                    { requester: req.user.id, recipient: recipientId },
-                    { requester: recipientId, recipient: req.user.id }
-                ]
-            },
-            { status: 'accepted' },
-            {
-                $or: [
-                    { type: 'friend' },
-                    { type: { $exists: false } },
-                    { type: null }
-                ]
-            }
-        ]
-    });
+    const friendship = await Friend.findOne(friendFilter(req.user.id, recipientId));
 
     if (!friendship) return res.status(403).json({ error: 'Not friends' });
 
@@ -387,23 +300,7 @@ router.delete('/remove/:friendId', auth, async (req, res) => {
     if (!validId(req.params.friendId))
         return res.status(400).json({ error: 'Invalid friend id' });
     try {
-        const result = await Friend.findOneAndDelete({
-            $and: [
-                {
-                    $or: [
-                        { requester: req.user.id, recipient: req.params.friendId },
-                        { requester: req.params.friendId, recipient: req.user.id }
-                    ]
-                },
-                {
-                    $or: [
-                        { type: 'friend' },
-                        { type: { $exists: false } },
-                        { type: null }
-                    ]
-                }
-            ]
-        });
+        const result = await Friend.findOneAndDelete(friendFilter(req.user.id, req.params.friendId, { accepted: false }));
         if (!result) return res.status(404).json({ error: 'Friendship not found' });
         res.json({ message: 'Friend removed' });
     } catch (e) {

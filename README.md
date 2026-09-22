@@ -67,15 +67,23 @@ projectOne/
 │   └── content.js             /api/content/* — projects/chars/locs/dialogues
 │
 ├── server/
-│   └── contentLoader.js       vm.runInNewContext loader of static JS files,
-│                              used as the Mongo-down fallback for /api/content/*
+│   ├── contentLoader.js       vm.runInNewContext loader of static JS files,
+│   │                          used as the Mongo-down fallback for /api/content/*
+│   ├── feed.js                Feed post creation/merge helpers (server-side only)
+│   └── friendship.js          friendFilter() / getFriendIds() — the ONE place the
+│                              "accepted friend incl. legacy type-less docs" query lives
 │
 ├── scripts/
 │   ├── seed-content.js        Idempotent seed: JS files → Mongo (run once)
 │   └── export-content.js      Inverse: Mongo → static fallback files (--dry-run)
 │
-├── test/
-│   └── physics.test.js        node --test unit tests for the 3D physics helpers
+├── test/                      node --test unit tests (npm test) — no Mongo needed
+│   ├── physics.test.js        3D physics helpers
+│   ├── humanoid.test.js       humanoid rig logic
+│   ├── npc.test.js            /world NPC patrol logic
+│   ├── world-chat.test.js     /world chat channels
+│   ├── friendship.test.js     server/friendship.js filter shapes + getFriendIds
+│   └── auth-middleware.test.js middleware/auth.js (JWT, tokenVersion, ban, cache)
 │
 ├── docs/
 │   └── VOICE-TURN-SETUP.md    5-minute TURN relay setup for cross-NAT voice
@@ -264,8 +272,9 @@ node scripts/seed-content.js --wipe   # drop collections then re-seed
 - TURN credentials for cross-NAT voice: the code is fully wired; create a
   provider account and set `TURN_URLS`/`TURN_USERNAME`/`TURN_CREDENTIAL`
   (see `docs/VOICE-TURN-SETUP.md`).
-- Broader test coverage — `test/physics.test.js` covers the 3D physics
-  helpers; auth middleware and home-layout validation are good next targets.
+- Broader test coverage — client logic modules, auth middleware and the
+  friendship helper are covered; home-layout validation and the admin
+  sanitisers are the next targets.
 
 ---
 
@@ -278,6 +287,17 @@ Append new entries at the **top** of this section. Use the format:
 Brief summary of what changed and why.
 - file/path:line — what changed
 ```
+
+---
+
+### 2026-09-22 — friendship helper + first backend tests
+
+The "are these two users friends?" Mongo filter (pair-or-either-side, status accepted, and the three-way `type: 'friend' | missing | null` clause for pre-`type` docs) was copy-pasted seven times across two route files. It now lives in one module, and the backend has its first unit tests (previously only client logic modules were tested).
+
+- `server/friendship.js` (new) — `friendFilter(userId, otherId?, { accepted })` and `getFriendIds(userId)` (Set of self + accepted friends, as strings).
+- `routes/friends.js` — request-exists, list, stones, profile-by-username, progress-by-id, watch-request, remove all use the helper. Behaviour preserved: request-exists and remove still match any status; list still populates usernames.
+- `routes/feed.js` — `circleIds` is now an alias of `getFriendIds`; unused `Friend` import dropped.
+- `test/friendship.test.js`, `test/auth-middleware.test.js` (new) — 14 tests, run by `npm test` / CI. Mongoose models register without a connection, so `User.findById` / `Friend.find` are stubbed on the model; no database needed.
 
 ---
 

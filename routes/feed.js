@@ -2,7 +2,6 @@ const express = require('express');
 const mongoose = require('mongoose');
 const router = express.Router();
 const FeedPost = require('../models/FeedPost');
-const Friend = require('../models/Friend');
 const auth = require('../middleware/auth');
 
 const PAGE_SIZE = 15;
@@ -14,22 +13,8 @@ function validId(id) {
     return typeof id === 'string' && mongoose.isValidObjectId(id);
 }
 
-// Self + accepted friends, as strings.
-async function circleIds(userId) {
-    const docs = await Friend.find({
-        $and: [
-            { $or: [{ requester: userId }, { recipient: userId }] },
-            { status: 'accepted' },
-            { $or: [{ type: 'friend' }, { type: { $exists: false } }, { type: null }] }
-        ]
-    }).select('requester recipient').lean();
-    const ids = new Set([String(userId)]);
-    for (const f of docs) {
-        ids.add(String(f.requester));
-        ids.add(String(f.recipient));
-    }
-    return ids;
-}
+// Self + accepted friends, as strings (shared with /api/friends/stones).
+const { getFriendIds: circleIds } = require('../server/friendship');
 
 const canSee = (post, circle) => post.participants.some(p => circle.has(String(p)));
 
