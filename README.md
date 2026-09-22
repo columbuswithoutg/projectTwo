@@ -252,6 +252,7 @@ node scripts/seed-content.js --wipe   # drop collections then re-seed
 - **MongoDB SRV lookup fails on default Windows DNS.** Both `server.js` and `scripts/seed-content.js` force Google DNS (`8.8.8.8`) at startup to work around this.
 - **`isAdmin` is set manually in MongoDB.** No promote-from-UI flow exists by design — there's no public path to admin.
 - **Service worker cache invalidation.** `sw.js` precaches the SPA shell + static fallback data and serves stale-while-revalidate for `/js/*` and `/assets/*`. `/api/*` and `/socket.io/*` are never cached. When a deploy must invalidate the precache (precache list changed, shell shape changed), bump `CACHE_VERSION` in `sw.js`; the `activate` handler deletes old caches.
+- **`trust proxy` is set to 1** (one hop: Render's load balancer). `req.ip` and every rate limiter key off `X-Forwarded-For`. If another proxy layer (e.g. Cloudflare) is ever added in front of Render, raise the hop count in `server.js` or the limiters collapse back into one shared bucket.
 - **Helmet CSP is ENFORCED** (since 2026-07-07) with an allowlist covering the inline importmap, unpkg.com (Three.js), Cloudinary, Google Fonts, websockets, and data:/blob: images. **Adding any new external source requires extending the allowlist in server.js first** or first paint will brick. Other security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS, COOP, CORP=cross-origin) are on.
 - **`index.html` + root `auth.js` are a stale legacy login page** (since 2026-08-06). The in-app router rewrites `/index.html` → `/` and `/login` always serves `spa.html`, so nothing in normal navigation reaches them — but a direct request for `/index.html` still gets served statically (`server.js` `ROOT_FILES`) and runs the old, un-animated register/login script. `js/views/login.js` is the live implementation; keep new auth UX changes there, not in the legacy file.
 
@@ -276,6 +277,15 @@ Append new entries at the **top** of this section. Use the format:
 Brief summary of what changed and why.
 - file/path:line — what changed
 ```
+
+---
+
+### 2026-09-22 — trust proxy + service worker revalidate fix
+
+Two production bugs. Behind Render's proxy every request reported the proxy's IP, so all rate limiters shared one bucket (20 login attempts per 15 min for the whole site) and the audit log recorded the proxy address. Separately, the service worker's background revalidate was not held open with `waitUntil`, so when a cached file was served the browser could kill the worker before the cache updated — the root cause of the recurring "old scripts on reopen" bug that the manual `CACHE_VERSION` bumps were papering over.
+
+- `server.js` — `app.set('trust proxy', 1)` right after the app is created. One hop = Render's load balancer.
+- `sw.js` — stale-while-revalidate branch now wraps both the revalidate fetch and `cache.put` in `event.waitUntil`.
 
 ---
 

@@ -67,10 +67,18 @@ self.addEventListener('fetch', (event) => {
       caches.open(CACHE_VERSION).then(async (cache) => {
         const cached = await cache.match(req);
         const networkFetch = fetch(req).then((res) => {
-          if (res && res.status === 200) cache.put(req, res.clone());
+          // waitUntil keeps the worker alive until the write lands. Without
+          // it, when a cached copy is returned immediately the browser may
+          // terminate the worker before cache.put resolves, so the cache
+          // never updated and a returning phone ran the OLD scripts again.
+          if (res && res.status === 200) event.waitUntil(cache.put(req, res.clone()));
           return res;
-        }).catch(() => cached);
-        return cached || networkFetch;
+        });
+        if (cached) {
+          event.waitUntil(networkFetch.catch(() => {}));
+          return cached;
+        }
+        return networkFetch;
       })
     );
   }

@@ -31,6 +31,15 @@ const { Server: SocketIOServer } = require('socket.io');
 
 const app = express();
 
+// Render terminates TLS at a single proxy hop and forwards the client
+// address in X-Forwarded-For. Without this, req.ip is the proxy address, so
+// every rate limiter below collapses into ONE shared bucket for all users
+// (20 login attempts per 15 min for the whole site) and AuditLog.ip records
+// the proxy. 1 = trust exactly one hop; express-rate-limit v8 refuses the
+// permissive true. Raise the hop count if another proxy (e.g. Cloudflare)
+// is ever put in front of Render.
+app.set('trust proxy', 1);
+
 // Compress JSON + HTML responses. Cuts response sizes ~70% on text payloads.
 // Already-compressed binaries in /assets are skipped automatically by content-type.
 app.use(compression());
