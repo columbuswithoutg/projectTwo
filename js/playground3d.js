@@ -2704,6 +2704,18 @@ const Playground3D = (() => {
           case 'W': x = cx - face; break;
           default:  x = cx + face; break;   // 'E'
         }
+      } else if (WorldHouseLogic.wallBackedRot && WorldHouseLogic.wallBackedRot(p.kind, p.gx, p.gy) != null) {
+        // A wall-backed prop (bookshelf) on an edge cell: validation already
+        // turned its back to the wall; slide it from the cell centre until
+        // that back touches the wall's inner face.
+        const fp0 = PG3DProps.footprint(p.kind);
+        const flush = WORLD.PLATFORM_W / 2 - WORLD.WALL_THICKNESS - fp0.hz - 0.01;
+        switch (WorldHouseLogic.wallSideOfCell(p.gx, p.gy)) {
+          case 'N': z = cz - flush; break;
+          case 'S': z = cz + flush; break;
+          case 'W': x = cx - flush; break;
+          default:  x = cx + flush; break;   // 'E'
+        }
       }
       obj.position.set(x, 0, z);
       obj.rotation.y = rot * Math.PI / 2;

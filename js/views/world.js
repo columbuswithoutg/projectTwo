@@ -650,7 +650,7 @@ const WorldView = (() => {
             <button type="button" class="world-house-tool" data-tool="remove" title="Remove the selected prop or window">Remove</button>
             <span class="world-house-count" id="world-house-count"></span>
           </div>
-          <p class="world-house-hint">Tap an empty floor cell to place the chosen prop; tap a prop to select it. Frames hang on the nearest wall. The outer ring is the wall: pick 🪟 and tap it to place windows. 🚪 is the door — it's fixed. Top of the plan is north.</p>
+          <p class="world-house-hint">Tap an empty floor cell to place the chosen prop; tap a prop to select it. Frames hang on the nearest wall; a bookshelf on an edge cell stands against that wall. The outer ring is the wall: pick 🪟 and tap it to place windows. 🚪 is the door — it's fixed. Top of the plan is north.</p>
           <svg class="world-house-grid" viewBox="0 0 ${RING * CELL} ${RING * CELL}" role="img" aria-label="House floor plan with walls"></svg>
         </div>
         <div class="world-house-actions">
@@ -871,8 +871,14 @@ const WorldView = (() => {
       if (tool && selectedProp >= 0 && draft.props[selectedProp]) {
         if (tool.getAttribute('data-tool') === 'rotate') {
           // A frame's facing is fixed by the wall it hangs on.
-          if (draft.props[selectedProp].kind === 'frame') {
+          const sp = draft.props[selectedProp];
+          if (sp.kind === 'frame') {
             if (typeof toast === 'function') toast('Frames face into the room from their wall — move it to another wall instead.', 'info');
+            return;
+          }
+          // A bookshelf on an edge cell keeps its back to that wall.
+          if (L.wallBackedRot(sp.kind, sp.gx, sp.gy) != null) {
+            if (typeof toast === 'function') toast(`A ${sp.kind} against the wall keeps its back to it — place it a cell further in to turn it.`, 'info');
             return;
           }
           draft.props[selectedProp].rot = ((draft.props[selectedProp].rot || 0) + 1) % 4;
@@ -922,6 +928,9 @@ const WorldView = (() => {
         // Frames hang on the nearest wall, so an inside tap snaps to the edge;
         // that wall cell may already be taken.
         const placed = selectedKind === 'frame' ? L.snapFrameToWall(gx, gy) : { gx, gy, rot: 0 };
+        // Wall-backed props (bookshelf) placed on an edge cell turn to face the room.
+        const forced = L.wallBackedRot(selectedKind, placed.gx, placed.gy);
+        if (forced != null) placed.rot = forced;
         if (draft.props.some(p => p.gx === placed.gx && p.gy === placed.gy)) {
           if (typeof toast === 'function') toast('That wall spot is taken — tap nearer a free stretch of wall.', 'warn');
           return;
