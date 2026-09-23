@@ -16,6 +16,7 @@ const FriendView = (() => {
 
   let _active = null;        // { id, username, profilePicture, watchedProjects, walkers, homeLayout, homeCharacter }
   let _origData = null;      // saved state.data Map prior to swap
+  let _enterSeq = 0;         // bumped by exit() / each enter() to cancel stale loads
 
   function isActive()  { return !!_active; }
   function getActive() { return _active; }
@@ -27,12 +28,17 @@ const FriendView = (() => {
     if (_active && _active.username === username) return _active;
     if (_active) exit();
 
+    // exit() (or a newer enter()) bumps _enterSeq while we await, so a late
+    // response for a page the user already left never swaps the friend's
+    // data into their own view.
+    const seq = ++_enterSeq;
     let data;
     try {
       data = await Friends.getByUsername(username);
     } catch (_) {
       return null;
     }
+    if (seq !== _enterSeq) return null;
     if (!data || data.error) return null;
 
     // Snapshot current state so exit() can restore.
@@ -61,6 +67,7 @@ const FriendView = (() => {
   }
 
   function exit() {
+    _enterSeq++;   // cancel any enter() still waiting on the network
     if (!_active) return;
     state.data.clear();
     if (_origData) _origData.forEach((v, k) => state.data.set(k, v));

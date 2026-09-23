@@ -74,7 +74,11 @@ router.post('/request', auth, async (req, res) => {
     if (!recipientExists)
         return res.status(404).json({ error: 'User not found' });
 
-    const existing = await Friend.findOne(friendFilter(req.user.id, recipientId, { accepted: false }));
+    // A rejected request doesn't count — otherwise one "no" blocks the pair forever.
+    const existing = await Friend.findOne({
+        ...friendFilter(req.user.id, recipientId, { accepted: false }),
+        status: { $ne: 'rejected' }
+    });
     if (existing) return res.status(400).json({ error: 'Request already exists' });
 
     const request = await Friend.create({ requester: req.user.id, recipient: recipientId });

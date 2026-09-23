@@ -13,7 +13,9 @@ const Character = require('../models/Character');
 const Location = require('../models/Location');
 const Dialogue = require('../models/Dialogue');
 const Report = require('../models/Report');
+const ProjectStay = require('../models/ProjectStay');
 const Messages = require('../server/messages');
+const feed = require('../server/feed');
 const MessagingLogic = require('../js/messaging-logic');
 const auth = require('../middleware/auth');
 
@@ -121,7 +123,10 @@ router.delete('/users/:id', async (req, res) => {
 
   await Promise.all([
     User.deleteOne({ _id: req.params.id }),
-    Friend.deleteMany({ $or: [{ requester: req.params.id }, { recipient: req.params.id }] })
+    Friend.deleteMany({ $or: [{ requester: req.params.id }, { recipient: req.params.id }] }),
+    // Island stay time — otherwise a deleted user stays "keeper" of a house
+    // and nobody can edit it until someone out-stays them.
+    ProjectStay.deleteMany({ userId: req.params.id })
   ]);
   auth.invalidateUser(req.params.id);
   logAudit(req, 'deleteUser', req.params.id, { username: user.username });
@@ -253,9 +258,11 @@ router.delete('/memories', async (req, res) => {
   // of truth for visibility, the cloud delete just reclaims storage.
   const parsed = parseCloudinary(url);
   if (parsed) {
-    cloudinary.uploader.destroy(parsed.public_id, { resource_type: parsed.resource_type })
+    cloudinary.uploader.destroy(parsed.public_id, { resource_type: parsed.resource_type, invalidate: true })
       .catch(err => console.error('Cloudinary destroy failed:', err && err.message));
   }
+  // Same cleanup the user's own delete does — pull it out of friends' feeds.
+  feed.removeMemory(userId, projectId, url);
   logAudit(req, 'deleteMemory', { userId, projectId, url }, null);
   res.json({ message: 'Memory deleted' });
 });

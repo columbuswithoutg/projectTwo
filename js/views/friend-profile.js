@@ -16,7 +16,11 @@ const FriendProfileView = {
     const username = params && params.username;
     if (!username) { Router.go('/'); return; }
 
+    // Mount token: unmount() bumps it so a late await never draws over the
+    // next page (same pattern as world.js _mountSeq).
+    const myMount = FriendProfileView._mountSeq = (FriendProfileView._mountSeq || 0) + 1;
     const friend = await FriendView.enter(username);
+    if (myMount !== FriendProfileView._mountSeq) return;
     if (!friend) {
       FriendView.render404(container, username);
       return;
@@ -52,5 +56,8 @@ const FriendProfileView = {
     FriendView.wireHeader(container);
   },
 
-  unmount() { /* no renderers/walkers to tear down */ }
+  unmount() {
+    // No renderers/walkers to tear down; just cancel an in-flight mount.
+    FriendProfileView._mountSeq = (FriendProfileView._mountSeq || 0) + 1;
+  }
 };

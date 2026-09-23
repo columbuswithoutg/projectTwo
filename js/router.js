@@ -99,8 +99,9 @@ const Router = (() => {
     // Auto-exit FriendView when leaving any /friend/* route. This catches
     // address-bar navigation, browser back/forward, and clicks on
     // non-friend links — without it, friend state.data + walker overrides
-    // would leak into the user's own views.
-    if (typeof FriendView !== 'undefined' && FriendView.isActive() && !path.startsWith('/friend/')) {
+    // would leak into the user's own views. Called even when not yet active
+    // so a friend load still in flight is cancelled too.
+    if (typeof FriendView !== 'undefined' && !path.startsWith('/friend/')) {
       FriendView.exit();
     }
 

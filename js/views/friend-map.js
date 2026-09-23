@@ -16,7 +16,11 @@ const FriendMapView = {
     const username = params && params.username;
     if (!username) { Router.go('/'); return; }
 
+    // Mount token: unmount() bumps it so a late await never draws over the
+    // next page (same pattern as world.js _mountSeq).
+    const myMount = FriendMapView._mountSeq = (FriendMapView._mountSeq || 0) + 1;
     const friend = await FriendView.enter(username);
+    if (myMount !== FriendMapView._mountSeq) return;
     if (!friend) {
       FriendView.render404(container, username);
       return;
@@ -49,6 +53,7 @@ const FriendMapView = {
 
     WalkerView.set(MapWalkerAdapter);
     await Walkers.init();
+    if (myMount !== FriendMapView._mountSeq) return;
     FriendMapView._deployTimer = setTimeout(() => {
       FriendMapView._deployTimer = null;
       Walkers.deploy();
@@ -56,6 +61,7 @@ const FriendMapView = {
   },
 
   unmount() {
+    FriendMapView._mountSeq = (FriendMapView._mountSeq || 0) + 1;
     if (FriendMapView._deployTimer) {
       clearTimeout(FriendMapView._deployTimer);
       FriendMapView._deployTimer = null;

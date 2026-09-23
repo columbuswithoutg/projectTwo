@@ -17,7 +17,11 @@ const FriendWatchView = {
     const username = params && params.username;
     if (!username) { Router.go('/'); return; }
 
+    // Mount token: unmount() bumps it so a late await never draws over the
+    // next page (same pattern as world.js _mountSeq).
+    const myMount = FriendWatchView._mountSeq = (FriendWatchView._mountSeq || 0) + 1;
     const friend = await FriendView.enter(username);
+    if (myMount !== FriendWatchView._mountSeq) return;
     if (!friend) {
       FriendView.render404(container, username);
       return;
@@ -41,6 +45,7 @@ const FriendWatchView = {
 
     WalkerView.set(FlowWalkerAdapter);
     await Walkers.init();
+    if (myMount !== FriendWatchView._mountSeq) return;
     FriendWatchView._deployTimer = setTimeout(() => {
       FriendWatchView._deployTimer = null;
       Walkers.deploy();
@@ -48,6 +53,7 @@ const FriendWatchView = {
   },
 
   unmount() {
+    FriendWatchView._mountSeq = (FriendWatchView._mountSeq || 0) + 1;
     if (FriendWatchView._deployTimer) {
       clearTimeout(FriendWatchView._deployTimer);
       FriendWatchView._deployTimer = null;

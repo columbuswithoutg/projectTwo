@@ -20,6 +20,7 @@ const FriendHomeView = (() => {
   let _voiceTouchEnd = null;
   let _voiceLongPressTimer = null;
   let _voiceLongPressFired = false;
+  let _mountSeq = 0;   // bumped by unmount(); stale awaits bail (see world.js)
 
   async function mount(container, params) {
     if (!Auth.isLoggedIn()) {
@@ -29,7 +30,9 @@ const FriendHomeView = (() => {
     const username = params && params.username;
     if (!username) { Router.go('/'); return; }
 
+    const myMount = ++_mountSeq;
     const friend = await FriendView.enter(username);
+    if (myMount !== _mountSeq) return;
     if (!friend) {
       FriendView.render404(container, username);
       return;
@@ -77,6 +80,7 @@ const FriendHomeView = (() => {
         if (data.homeCharacter && data.homeCharacter.skin != null) character = data.homeCharacter;
       }
     } catch (_) { /* fall through to default */ }
+    if (myMount !== _mountSeq) return;
     if (!character) character = Playground3D.defaultCharacter();
 
     Playground3D.init(stage, character, layout);
@@ -191,6 +195,7 @@ const FriendHomeView = (() => {
   }
 
   function unmount() {
+    _mountSeq++;
     if (_voice) { try { _voice.stop(); } catch (_) {} _voice = null; }
     if (_voiceBtn) {
       if (_voiceBtnHandler)  _voiceBtn.removeEventListener('click', _voiceBtnHandler);

@@ -92,6 +92,10 @@ const HomeView = {
   },
 
   async _loadAndStart() {
+    // Mount token (same idea as world.js _mountSeq): unmount() bumps it, so
+    // if the user leaves /home while the fetches are in flight we stop here
+    // instead of starting the 3D engine and a home socket on another page.
+    const seq = HomeView._loadSeq = (HomeView._loadSeq || 0) + 1;
     // Fetch character + layout in parallel so the first render isn't gated
     // on the slower of the two.
     let character = null;
@@ -117,6 +121,7 @@ const HomeView = {
       // Network/server issue — fall through with empty layout and defaults
       // so the user still sees a reasonable page rather than a blank.
     }
+    if (seq !== HomeView._loadSeq || !HomeView._stage) return;
 
     const isFresh = !character || character.skin == null;
     HomeView._character = character && character.skin != null ? character : null;
@@ -356,6 +361,7 @@ const HomeView = {
   },
 
   unmount() {
+    HomeView._loadSeq = (HomeView._loadSeq || 0) + 1;   // cancel an in-flight _loadAndStart
     HomeView._closeEditMenu();
     if (HomeView._onDocClick) {
       document.removeEventListener('click', HomeView._onDocClick);

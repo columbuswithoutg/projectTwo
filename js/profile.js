@@ -40,6 +40,7 @@ async function loadProfile() {
   const res = await fetch(`${API}/profile`, {
     headers: { Authorization: `Bearer ${Auth.getToken()}` }
   });
+  if (!res.ok) return;
   const data = await res.json();
   if (data.error) return;
 

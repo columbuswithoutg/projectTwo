@@ -22,8 +22,14 @@ router.post('/register', async (req, res) => {
   const err = validateCredentials(username, password);
   if (err) return res.status(400).json({ error: err });
   try {
+    // The unique index is case-sensitive, but DM / whisper lookups are not,
+    // so "bob" must not be able to register next to "Bob". The character
+    // whitelist above means the name has no regex metacharacters except '-'.
+    const clean = username.trim();
+    const taken = await User.exists({ username: { $regex: '^' + clean.replace(/-/g, '\\-') + '$', $options: 'i' } });
+    if (taken) return res.status(400).json({ error: 'Username already exists' });
     const hashed = await bcrypt.hash(password, 10);
-    await User.create({ username: username.trim(), password: hashed });
+    await User.create({ username: clean, password: hashed });
     res.json({ message: 'User created' });
   } catch (e) {
     // Distinguish duplicate-key from real errors — previously every failure

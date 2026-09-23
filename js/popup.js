@@ -105,14 +105,24 @@ ${!isReadonly ? `
     popup.querySelectorAll('.memory-delete').forEach(btn => {
       btn.onclick = async () => {
         const url = btn.dataset.url;
-        await fetch(`${API}/progress/memory`, {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${Auth.getToken()}`
-          },
-          body: JSON.stringify({ projectId: project.id, url })
-        });
+        // Only remove it on screen once the server confirms — otherwise a
+        // failed delete looks done and the memory reappears on reload.
+        let ok = false;
+        try {
+          const res = await fetch(`${API}/progress/memory`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${Auth.getToken()}`
+            },
+            body: JSON.stringify({ projectId: project.id, url })
+          });
+          ok = res.ok;
+        } catch (_) { /* network error → ok stays false */ }
+        if (!ok) {
+          toast("Couldn't delete that memory. Please try again.", 'error');
+          return;
+        }
         const entry = state.data.get(project.id);
         if (entry) entry.memories = entry.memories.filter(m => m.url !== url);
         btn.closest('.memory-item').remove();
