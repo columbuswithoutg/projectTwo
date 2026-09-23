@@ -790,6 +790,37 @@ const Playground3D = (() => {
       if (garments.shell && garments.shell.accent && garments.shell.accentParts) {
         garments.shell.accentHex = hexOf(garments.shell.accent);
       }
+      // Detail layers: the first colour in the list that resolves. Accent
+      // slots on Auto (0) resolve to null, so the Box body's default follows.
+      const accent = (pal, field) => (field ?? 0) > 0 ? _palette(pal, field - 1) : null;
+      const shade = (hex, k) => {
+        const r = Math.round(((hex >> 16) & 255) * k), g = Math.round(((hex >> 8) & 255) * k), b = Math.round((hex & 255) * k);
+        return (r << 16) | (g << 8) | b;
+      };
+      const detailHex = {
+        shoe: () => _palette('SHOE_COLORS', c.shoeColor),
+        shoeAccent: () => accent('SHOE_COLORS', c.shoeColor2),
+        shirt: () => _palette('SHIRT_COLORS', c.shirtColor),
+        shirtAccent: () => accent('SHIRT_COLORS', c.shirtColor2),
+        shirtShade: () => shade(_palette('SHIRT_COLORS', c.shirtColor), 0.78),
+        pants: () => _palette('PANTS_COLORS', c.pantsColor),
+        pantsAccent: () => accent('PANTS_COLORS', c.pantsColor2),
+        pantsShade: () => shade(_palette('PANTS_COLORS', c.pantsColor), 0.85),
+        outer: () => _palette('SHIRT_COLORS', c.outerwearColor),
+        outerAccent: () => accent('SHIRT_COLORS', c.outerwearColor2),
+        accessory: () => _palette('ACCESSORY_COLORS', c.accessoryColor),
+        skin: () => _palette('SKIN_TONES', c.skin),
+        white: () => 0xf0f0f0,
+        dark: () => 0x1a1a1a,
+        seamDark: () => 0x111111
+      };
+      for (const d of garments.details || []) {
+        d.hex = null;
+        for (const slot of [].concat(d.color)) {
+          const hex = detailHex[slot] ? detailHex[slot]() : null;
+          if (hex != null) { d.hex = hex; break; }
+        }
+      }
     }
     // A Ripped top (no suit) means the whole outfit is torn — bare chest and
     // arms, bare feet, and long trousers ripped off at mid-shin (the Hulk).
@@ -801,8 +832,11 @@ const Playground3D = (() => {
       skin: _palette('SKIN_TONES', c.skin),
       top: ripped ? null : (suitHex || _palette('SHIRT_COLORS', c.shirtColor)),
       bottom: suitHex || _palette('PANTS_COLORS', c.pantsColor),
-      shoes: ripped ? null : _palette('SHOE_COLORS', c.shoeColor),
+      // Sandals leave the foot bare (the sole + strap are detail layers).
+      shoes: (ripped || (c.shoeStyle ?? 0) === 6) ? null : _palette('SHOE_COLORS', c.shoeColor),
       gloves: (c.gloves ?? 0) > 0 ? accessoryHex : null,
+      // Fingerless gloves stop at the knuckles.
+      glovesCut: (c.gloves ?? 0) === 1 ? 0.5 : 2,
       // Gauntlets run up the forearm: Thor's vambraces, Widow's bracers.
       bracers: (c.gloves ?? 0) === 3 ? accessoryHex : null,
       hair: _palette('HAIR_COLORS', c.hairColor),
@@ -810,7 +844,8 @@ const Playground3D = (() => {
       sleeves: suit > 0 ? 'long' : (_SLEEVES[c.shirtStyle ?? 0] || 'short'),
       // A skirt / dress / robe hangs as real geometry, so the legs under it
       // stay bare; otherwise the trouser style decides how far the cloth runs.
-      legs: (garments && garments.skirt) ? 'bare'
+      // Coat tails are over trousers, so only a real skirt bares the legs.
+      legs: (garments && garments.skirt && garments.skirt.kind !== 'coat') ? 'bare'
         : suit > 0 ? ((suit === 2 || suit === 3) ? 'short' : 'long')
         : (ripped && (_LEGS[c.pantsStyle ?? 0] || 'long') === 'long') ? 'torn'
         : (_LEGS[c.pantsStyle ?? 0] || 'long'),
@@ -929,6 +964,67 @@ const Playground3D = (() => {
       const chestSlot = inst.attachSlot('chest', { center: true, y: 0.04, fit: 0.85 });
       const emblem = chestSlot && _buildEmblem(c.emblem, mat('SHIRT_COLORS', c.emblemColor), { TORSO_D: 0.30 });
       if (emblem) chestSlot.add(emblem); else if (chestSlot) chestSlot.removeFromParent();
+    }
+
+    // Heels (shoe style 5): a tapered heel block behind each heel. The rigged
+    // foot stands flat, so it reads from the side, like the Box body's nub.
+    const suitOn = (c.suit ?? 0) > 0;
+    const rippedTop = !suitOn && (c.shirtStyle ?? 0) === 8;
+    const footBox = inst.partBox && inst.partBox('foot');
+    if ((c.shoeStyle ?? 0) === 5 && !rippedTop && footBox && inst.anchors) {
+      const heelMat = _gearMat(_palette('SHOE_COLORS', c.shoeColor), { rough: 0.4 });
+      for (const side of ['L', 'R']) {
+        const bone = inst.anchors['foot.' + side];
+        const slot = bone && inst.attachSlot('foot.' + side, { scale: 1 });
+        if (!slot) continue;
+        const ankle = inst.body.worldToLocal(bone.getWorldPosition(new THREE.Vector3()));
+        const h = 0.1;
+        const heel = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.014, h, 14), heelMat);
+        heel.name = 'gear:heel';
+        heel.castShadow = true;
+        // Centred just behind the heel so most of it shows (inside the foot it vanished).
+        heel.position.set(0, footBox.min[1] + h / 2 - ankle.y, footBox.min[2] - 0.006 - ankle.z);
+        slot.add(heel);
+      }
+    }
+
+    // Hoodie (top style or outerwear): a smooth hood lying at the back of the
+    // neck — a bowl opening forward, the Box body's hood block made round.
+    const outerHood = (c.outerwear ?? 0) === 4;
+    const hoodHex = outerHood ? _palette('SHIRT_COLORS', c.outerwearColor)
+      : (!suitOn && (c.shirtStyle ?? 0) === 3) ? _palette('SHIRT_COLORS', c.shirtColor) : null;
+    const torsoBox = inst.partBox && inst.partBox('torso');
+    if (hoodHex != null && torsoBox) {
+      const slot = inst.attachSlot('chest', { center: true, scale: 1 });
+      if (slot) {
+        const w = torsoBox.size[0];
+        const hood = new THREE.Mesh(
+          new THREE.SphereGeometry(1, 22, 12, Math.PI, Math.PI, 0, Math.PI * 0.72),
+          new THREE.MeshStandardMaterial({ color: hoodHex, roughness: 0.85, side: THREE.DoubleSide })
+        );
+        hood.name = 'gear:hood';
+        hood.castShadow = true;
+        hood.scale.set(w * 0.4, w * 0.38, w * 0.36);
+        hood.position.set(0, torsoBox.size[1] * 0.5 - 0.09, -torsoBox.size[2] * 0.5 + 0.02);
+        hood.rotation.x = 0.35;                         // tip back so it lies on the shoulders
+        slot.add(hood);
+      }
+    }
+
+    // Polo with an accent colour: a bow tie at the collar (as on the Box body).
+    if (!suitOn && (c.shirtStyle ?? 0) === 4 && (c.shirtColor2 ?? 0) > 0 && torsoBox) {
+      const slot = inst.attachSlot('chest', { center: true, scale: 1 });
+      if (slot) {
+        const tieMat = _gearMat(_palette('SHIRT_COLORS', c.shirtColor2 - 1), { rough: 0.6 });
+        const y = torsoBox.size[1] * 0.5 - 0.06, z = torsoBox.size[2] * 0.5 + 0.005;
+        for (const s of [-1, 1]) {
+          const wing = new THREE.Mesh(new THREE.ConeGeometry(0.026, 0.05, 10), tieMat);
+          wing.name = 'gear:bowtie';
+          wing.rotation.z = s * Math.PI / 2;          // point inward to the knot
+          wing.position.set(s * 0.025, y, z);
+          slot.add(wing);
+        }
+      }
     }
 
     // Iron Man helmet ⇒ powered armour: repulsor glow in each palm.
@@ -1137,7 +1233,11 @@ const Playground3D = (() => {
     const kind = ud.poseKind;
     const inst = ud.humanoid;
     if (inst && inst.setPose) inst.setPose(pose === 'sit' ? 'sit' : null);
-    // Lie: root onto its back, head toward local −z (the headboard).
+    // Lie: root onto its back, head toward local −z (the headboard). The tilt
+    // must happen about the body's own sideways axis (after yaw), not world
+    // X — with three.js's default 'XYZ' order a bed turned 90° laid the body
+    // across it.
+    root.rotation.order = 'YXZ';
     root.rotation.x = (kind === 'lie') ? -Math.PI / 2 * w : 0;
     const bones = ud.bones;
     if (bones && kind === 'sit' && w > 0) {
@@ -1166,8 +1266,10 @@ const Playground3D = (() => {
     const yaw = (pr.rot || 0) * Math.PI / 2;
     let px = pr.x, pz = pr.z, py;
     if (pr.kind === 'bed') {
-      px = pr.x + Math.sin(yaw) * 0.85;      // feet end (local +z)
-      pz = pr.z + Math.cos(yaw) * 0.85;
+      // Feet at the foot edge (local +z; the bed is 2 long, centred on pr).
+      // 0.85 left the head ~0.2 past the headboard on both body types.
+      px = pr.x + Math.sin(yaw) * 1.0;
+      pz = pr.z + Math.cos(yaw) * 1.0;
       py = pr.top + 0.12 * scale;
     } else {
       const inst = _player.userData.humanoid;
@@ -1255,6 +1357,7 @@ const Playground3D = (() => {
     const cur = rootObj.rotation.x;
     if (cur === target) return;
     const next = cur + (target - cur) * 0.22;
+    rootObj.rotation.order = 'YXZ';   // fall backward relative to facing (see _applyPose)
     rootObj.rotation.x = (target === 0 && Math.abs(next) < 0.01) ? 0 : next;
   }
 
