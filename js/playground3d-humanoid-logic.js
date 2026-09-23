@@ -288,7 +288,7 @@
   //   tint        → recolours a body region or material (target)
   //   mesh        → toggles a model part (hair, outfits)
   //   attach      → existing procedural piece mounted on a bone anchor
-  //   unsupported → kept in storage, greyed out in the customizer
+  //   shape       → reshapes part of the body (eye shape)
   //   deprecated  → legacy key, ignored
   const SLOT_MAP = {
     gender:          { kind: 'body' },
@@ -296,7 +296,7 @@
     bodyType:        { kind: 'body' },   // 1 = Box skips the rigged body entirely
     skin:            { kind: 'tint', target: 'skin' },
     eyeColor:        { kind: 'tint', target: 'eyes' },
-    eyeShape:        { kind: 'unsupported' },
+    eyeShape:        { kind: 'shape', target: 'eyes' },   // lids reshaped (PG3DHumanoid EYE_SHAPE_VERT)
     hairStyle:       { kind: 'mesh', target: 'hair' },
     hairColor:       { kind: 'tint', target: 'hair' },
     facialHairStyle: { kind: 'mesh', target: 'beard' },
@@ -441,6 +441,51 @@
     return d;
   }
 
+  // ── Hair, facial hair, eye shape ──
+  // Indexed like Playground hair styles (character-schema.js): Pixie, Bob,
+  // Spiky, Long, Bald, Cap, Ponytail, Mohawk, Afro, Curly, Buzz, Side-part,
+  // Topknot, Undercut. `mesh` is one of the pack's hair meshes, `clip` a region
+  // of the head's bind-pose box (see PG3DHumanoid _regionPlanes) that keeps
+  // only part of it, `extras` smooth procedural pieces built by the engine.
+  const HAIR = [
+    { mesh: 'Hair_BuzzedFemale' },                                            // Pixie
+    { mesh: 'Hair_Long', clip: { ref: 'head', y: [0.3, null] } },             // Bob — cut at the jaw
+    { mesh: 'Hair_Buzzed', extras: ['spikes'] },                              // Spiky
+    { mesh: 'Hair_Long' },                                                    // Long
+    null,                                                                     // Bald
+    { extras: ['bowl'] },                                                     // Cap — dome cut at the brow
+    { mesh: 'Hair_BuzzedFemale', extras: ['ponytail'] },                      // Ponytail
+    { extras: ['crest'] },                                                    // Mohawk — shaved sides
+    { extras: ['afro'] },                                                     // Afro
+    { mesh: 'Hair_Buzzed', extras: ['curls'] },                               // Curly
+    { mesh: 'Hair_Buzzed' },                                                  // Buzz
+    { mesh: 'Hair_SimpleParted' },                                            // Side-part
+    { mesh: 'Hair_BuzzedFemale', extras: ['topknot'] },                       // Topknot
+    { mesh: 'Hair_SimpleParted', clip: { ref: 'head', y: [0.7, null] } }      // Undercut — top only
+  ];
+  function hairSpec(idx) {
+    const s = HAIR[idx ?? 0];
+    return s === undefined ? HAIR[0] : s;
+  }
+
+  // Facial hair: None, Stubble, Mustache, Goatee, Beard, Chinstrap — all cut
+  // from the pack's one beard mesh (one mesh per clip region; null = whole).
+  const BEARDS = [
+    null,
+    { clips: [null], opacity: 0.4 },                                                            // Stubble — a faint shadow
+    { clips: [{ ref: 'head', y: [0.13, 0.3], xAbs: [null, 0.45], z: [0.55, null] }] },          // Mustache — above the lip
+    { clips: [{ ref: 'head', y: [null, 0.2], xAbs: [null, 0.36] }] },                           // Goatee — chin
+    { clips: [null] },                                                                          // Beard
+    { clips: [{ ref: 'head', under: { y: 0.08, slope: 0.75 } }] }                                 // Chinstrap — along the jawline
+  ];
+  function beardSpec(idx) { return BEARDS[idx ?? 0] || null; }
+
+  // Eye shape: Round, Narrow, Wide, Sharp, Soft → [horizontal scale, vertical
+  // scale, outer-corner tilt] about each eye (null = the sculpted eye).
+  // Proportions follow the Box body's eye boxes (js/playground3d-avatar.js).
+  const EYE_SHAPES = [null, [1.08, 0.6, 0], [1.1, 1.35, 0], [1.12, 0.7, 0.35], [1.04, 1.12, -0.12]];
+  function eyeShapeFor(idx) { return EYE_SHAPES[idx ?? 0] || null; }
+
   function garmentsFor(c) {
     c = c || {};
     const suit = c.suit ?? 0;
@@ -494,6 +539,6 @@
   return {
     ASSET_BASE, BODY_FILES, BUILD_SHAPE, ANIM, SLOT_MAP,
     bodyShapeFor, parseBoneName, classifySkeleton, missingParts,
-    downPhase, selectAnimState, lodTier, garmentsFor
+    downPhase, selectAnimState, lodTier, garmentsFor, hairSpec, beardSpec, eyeShapeFor
   };
 });

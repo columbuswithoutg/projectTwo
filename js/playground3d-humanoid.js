@@ -507,6 +507,24 @@
       m.castShadow = true;
       m.receiveShadow = true;
     }
+    // Eye centres + radius (bind pose, body units) for the eye-shape layer.
+    const eyes = { c: [null, null], r: 0.012 };
+    {
+      const acc = [[0, 0, 0, 0, Infinity, -Infinity], [0, 0, 0, 0, Infinity, -Infinity]];
+      for (const m of meshes) {
+        if (!/eye/i.test(m.name) || /brow/i.test(m.name)) continue;
+        const pos = m.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          const a = acc[pos.getX(i) < 0 ? 0 : 1];
+          a[0] += pos.getX(i); a[1] += pos.getY(i); a[2] += pos.getZ(i); a[3]++;
+          a[4] = Math.min(a[4], pos.getY(i)); a[5] = Math.max(a[5], pos.getY(i));
+        }
+      }
+      if (acc[0][3] && acc[1][3]) {
+        eyes.c = acc.map((a) => [a[0] / a[3], a[1] / a[3], a[2] / a[3]]);
+        eyes.r = Math.max(0.006, (acc[0][5] - acc[0][4]) / 2);
+      }
+    }
     const posture = _postureOffsets(bones, rig, shape.posture);
     const lean = _postureOffsets(bones, rig, BACKPEDAL_POSE);
     const sit = _sitOffsets(bones, rig);
@@ -521,7 +539,7 @@
     const hipsY = jointY(rig.cls.hips);
     const waistY = hipsY + (jointY(rig.cls.spine[0]) - hipsY) * WAIST_K;
     const variant = {
-      key, model, build, shape, template: tpl, A, rig, posture, lean, sit, strideRest, waistY, hipsY,
+      key, model, build, shape, template: tpl, A, rig, posture, lean, sit, strideRest, waistY, hipsY, eyes,
       partBox: _partBoxes(body.geometry), hairGeo: new Map()
     };
     _variants.set(key, variant);
@@ -622,6 +640,83 @@
     mat.customProgramCacheKey = () => 'pg3d-humanoid-eyes';
     mat.needsUpdate = true;
     return u;
+  }
+
+  // ── Eye shape ──
+  // The rigged faces are sculpted, so eye shape (Narrow / Wide / Sharp / Soft)
+  // reshapes the lids, eyeballs and brows around each eye in the vertex shader:
+  // scale about the eye centre (uEyeK.x horizontal, .y vertical) and tilt the
+  // outer corner (.z; + = up). The brows above are mostly left alone. Bind-pose space, before skinning, fading out
+  // over a few eye radii (and behind the eye, so the back of the head is
+  // never touched). uEyeK.w = 0 → Round, the model as sculpted.
+  const EYE_SHAPE_VERT = [
+    'uniform vec3 uEyeC[ 2 ];',
+    'uniform float uEyeR;',
+    'uniform vec4 uEyeK;',
+    'vec3 pgEyeShape( vec3 p ) {',
+    '  if ( uEyeK.w < 0.5 ) return p;',
+    '  for ( int i = 0; i < 2; i++ ) {',
+    '    vec3 d = p - uEyeC[ i ];',
+    '    float dist = length( vec2( d.x / 1.6, d.y ) );',
+    '    float w = ( 1.0 - smoothstep( uEyeR * 1.3, uEyeR * 3.4, dist ) )',
+    '            * ( 1.0 - smoothstep( uEyeR, uEyeR * 3.0, -d.z ) )',
+    '            * ( 1.0 - 0.85 * smoothstep( uEyeR * 1.4, uEyeR * 2.8, d.y ) );',   // brows mostly stay put
+    '    if ( w <= 0.0 ) continue;',
+    '    float out_ = max( d.x * sign( uEyeC[ i ].x ), 0.0 );',   // only the outer corner tilts
+    '    p.x = uEyeC[ i ].x + d.x * mix( 1.0, uEyeK.x, w );',
+    '    p.y = uEyeC[ i ].y + d.y * mix( 1.0, uEyeK.y, w ) + uEyeK.z * out_ * w;',
+    '  }',
+    '  return p;',
+    '}'
+  ].join('\n') + '\n';
+
+  // Chain the eye-shape displacement onto a material's existing tint shader.
+  function _addEyeShape(mat) {
+    const THREE = T();
+    const u = {
+      uEyeC: { value: [new THREE.Vector3(), new THREE.Vector3()] },
+      uEyeR: { value: 0.012 },
+      uEyeK: { value: new THREE.Vector4(1, 1, 0, 0) }
+    };
+    const prev = mat.onBeforeCompile;
+    const prevKey = mat.customProgramCacheKey ? mat.customProgramCacheKey() : '';
+    mat.onBeforeCompile = (shader, renderer) => {
+      if (prev) prev(shader, renderer);
+      Object.assign(shader.uniforms, u);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\n' + EYE_SHAPE_VERT)
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed = pgEyeShape( transformed );');
+    };
+    mat.customProgramCacheKey = () => prevKey + '-eyeshape';
+    mat.needsUpdate = true;
+    return u;
+  }
+
+  // Clip a hair / beard mesh to a region of bind-pose space (Bob, Undercut,
+  // mustache, goatee, chinstrap). `planes` as from _regionPlanes: kept where
+  // dot(n, (|x|, y, z)) >= d; unused slots can never discard.
+  function _addHairClip(mat, planes) {
+    const THREE = T();
+    const u = { uClip: { value: Array.from({ length: MAX_PLANES }, (_, i) => {
+      const p = planes[i];
+      return p ? new THREE.Vector4(p[0], p[1], p[2], p[3]) : new THREE.Vector4(0, 0, 0, -1e3);
+    }) } };
+    const prev = mat.onBeforeCompile;
+    const prevKey = mat.customProgramCacheKey ? mat.customProgramCacheKey() : '';
+    mat.onBeforeCompile = (shader, renderer) => {
+      if (prev) prev(shader, renderer);
+      Object.assign(shader.uniforms, u);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vClipP;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvClipP = position;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>\nvarying vec3 vClipP;\nuniform vec4 uClip[${MAX_PLANES}];`)
+        .replace('#include <clipping_planes_fragment>',
+          '#include <clipping_planes_fragment>\n' +
+          `{ vec3 cp = vec3( abs( vClipP.x ), vClipP.y, vClipP.z ); for ( int i = 0; i < ${MAX_PLANES}; i++ ) { if ( dot( uClip[ i ].xyz, cp ) < uClip[ i ].w ) discard; } }`);
+    };
+    mat.customProgramCacheKey = () => prevKey + '-clip';
+    mat.needsUpdate = true;
   }
 
   function _installTint(mat, avg) {
@@ -853,29 +948,186 @@
       else tints.hair.push(_installTint(m.material, _hair.avg));
     }
     tints.body.uWaistY.value = variant.waistY;
+    // Eye shape moves the lids (body), the eyeballs and the brows together.
+    const eyeShapes = meshes.map((m) => _addEyeShape(m.material));
+    function setEyeShape(k) {
+      const on = !!(k && variant.eyes.c[0]);
+      for (const u of eyeShapes) {
+        u.uEyeK.value.set(on ? k[0] : 1, on ? k[1] : 1, on ? k[2] : 0, on ? 1 : 0);
+        if (!on) continue;
+        u.uEyeR.value = variant.eyes.r;
+        variant.eyes.c.forEach((c, i) => u.uEyeC.value[i].set(c[0], c[1], c[2]));
+      }
+    }
 
+    // ── hair + facial hair ──
+    // A style is { mesh, clip, extras } (see PG3DHumanoidLogic.hairSpec): one
+    // of the pack's hair meshes, optionally clipped to a region (Bob, Undercut),
+    // plus smooth procedural pieces (spikes, crest, afro, curls, ponytail,
+    // topknot, bowl). A beard is { clips: [region | null…], opacity }: the
+    // pack's one beard mesh, once per clip region (mustache, goatee, chinstrap).
     const hairMeshes = [];
-    function setHair(styles) {
+    let _opacity = 1;                          // last setOpacity (fades keep faint stubble faint)
+    function _hairMesh(style, hex, region, opacity) {
+      const g = style && _hairGeometry(variant, style);
+      if (!g) return;
+      const mat = _hair.meshes.get(style).material.clone();
+      _setAll(_installTint(mat, _hair.avg), hex);
+      const planes = _regionPlanes(region);
+      if (planes.length) _addHairClip(mat, planes);
+      if (opacity != null && opacity < 1) mat.userData.baseOpacity = opacity;
+      const hm = new THREE.SkinnedMesh(g, mat);
+      hm.name = style;
+      hm.frustumCulled = false;
+      hm.castShadow = opacity == null || opacity >= 1;
+      body.add(hm);
+      hm.bind(skeleton, new THREE.Matrix4());
+      hairMeshes.push(hm);
+      mats.push(mat);
+    }
+    function setHair(spec, beard) {
+      const drop = (mat) => {
+        const i = mats.indexOf(mat);
+        if (i >= 0) mats.splice(i, 1);
+        mat.dispose();
+      };
       for (const h of hairMeshes.splice(0)) {
         h.removeFromParent();
-        const i = mats.indexOf(h.material);
-        if (i >= 0) mats.splice(i, 1);
-        h.material.dispose();
+        if (h.userData.sharedMat) {               // a slot of procedural pieces
+          h.traverse((o) => { if (o.userData.ownGeometry && o.geometry) o.geometry.dispose(); });
+          drop(h.userData.sharedMat);
+        } else if (h.material) {
+          drop(h.material);
+        }
       }
       const hex = look.hair != null ? look.hair : 0x3b2a20;
-      for (const style of styles) {
-        const g = style && _hairGeometry(variant, style);
-        if (!g) continue;
-        const mat = _hair.meshes.get(style).material.clone();
-        _setAll(_installTint(mat, _hair.avg), hex);
-        const hm = new THREE.SkinnedMesh(g, mat);
-        hm.name = style;
-        hm.frustumCulled = false;
-        hm.castShadow = true;
-        body.add(hm);
-        hm.bind(skeleton, new THREE.Matrix4());
-        hairMeshes.push(hm);
-        mats.push(mat);
+      if (typeof spec === 'string') spec = { mesh: spec };
+      if (spec) {
+        if (spec.mesh) _hairMesh(spec.mesh, hex, spec.clip, null);
+        if (spec.extras && spec.extras.length) _hairExtras(spec.extras, hex);
+      }
+      if (beard === true) beard = { clips: [null] };
+      if (beard) {
+        const bHex = look.beardColor != null ? look.beardColor : hex;
+        for (const clip of (beard.clips || [null])) _hairMesh('Hair_Beard', bHex, clip, beard.opacity);
+      }
+      setOpacity(_opacity);
+    }
+
+    // Procedural hair on a head slot, laid out on an ellipsoid fitted to the
+    // skull (fractions of the head's bind-pose box, measured on both bodies).
+    function _hairExtras(kinds, hex) {
+      const hb = variant.partBox[PART.head];
+      const slot = hb && attachSlot('head', { center: true, scale: 1 });
+      if (!slot) return;
+      hairMeshes.push(slot);                      // removed with the hair
+      // Skull ellipsoid fitted to the head's own vertices above eye level
+      // (centre at eye height), in slot space (the slot sits on the box centre).
+      if (!variant.skull) {
+        const pos = bodyMesh.geometry.attributes.position, part = bodyMesh.geometry.attributes.aPart;
+        const eyeY = variant.eyes.c[0] ? variant.eyes.c[0][1] : hb.center[1];
+        let xMax = 0, yMax = -Infinity, zMin = Infinity, zMax = -Infinity;
+        for (let i = 0; i < pos.count; i++) {
+          if (Math.round(part.getX(i)) !== PART.head || pos.getY(i) < eyeY) continue;
+          xMax = Math.max(xMax, Math.abs(pos.getX(i)));
+          yMax = Math.max(yMax, pos.getY(i));
+          zMin = Math.min(zMin, pos.getZ(i)); zMax = Math.max(zMax, pos.getZ(i));
+        }
+        variant.skull = {
+          c: [0, eyeY - hb.center[1], (zMin + zMax) / 2 - hb.center[2]],
+          r: [xMax, yMax - eyeY, (zMax - zMin) / 2]
+        };
+      }
+      const C = new THREE.Vector3().fromArray(variant.skull.c);     // skull centre
+      const R = new THREE.Vector3().fromArray(variant.skull.r);     // skull radii
+      // Point on the scalp: theta from the crown (0) down, phi round from the
+      // face (0) to the left side (+π/2) and the back (π).
+      const scalp = (theta, phi, lift) => {
+        const n = new THREE.Vector3(Math.sin(theta) * Math.sin(phi), Math.cos(theta), Math.sin(theta) * Math.cos(phi));
+        const p = new THREE.Vector3(n.x * R.x, n.y * R.y, n.z * R.z).add(C);
+        const nrm = new THREE.Vector3(n.x / R.x, n.y / R.y, n.z / R.z).normalize();
+        return { p: p.addScaledVector(nrm, lift || 0), n: nrm };
+      };
+      const mat = new THREE.MeshStandardMaterial({ color: hex, roughness: 0.85 });
+      const add = (geom, pos, quat, scale) => {
+        const m = new THREE.Mesh(geom, mat);
+        m.castShadow = true;
+        m.userData.ownGeometry = true;
+        if (pos) m.position.copy(pos);
+        if (quat) m.quaternion.copy(quat);
+        if (scale) m.scale.copy(scale);
+        slot.add(m);
+        return m;
+      };
+      const UP = new THREE.Vector3(0, 1, 0);
+      mats.push(mat);
+      slot.userData.sharedMat = mat;
+
+      for (const kind of kinds) {
+        if (kind === 'spikes') {
+          // Tufts over the crown and sides, leaning with the scalp.
+          const spots = [[0.15, 0], [0.35, 0.3], [0.35, -0.3], [0.45, 1.3], [0.45, -1.3], [0.55, 2.2],
+            [0.55, -2.2], [0.5, Math.PI], [0.25, 2.8], [0.25, -2.8], [0.6, 0.5], [0.6, -0.5]];
+          for (const [t, ph] of spots) {
+            const s = scalp(t, ph, -0.004);
+            const cone = new THREE.ConeGeometry(0.022, 0.075, 10);
+            cone.translate(0, 0.0375, 0);
+            add(cone, s.p, new THREE.Quaternion().setFromUnitVectors(UP, s.n));
+          }
+        } else if (kind === 'crest') {
+          // Mohawk: a flattened tube along the scalp's centre line, forehead to nape.
+          const pts = [];
+          for (let i = 0; i <= 10; i++) pts.push(scalp(-1.3 + i * 0.21, 0, 0).p.setX(0));   // nape → hairline
+          const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 40, 0.04, 12, false);
+          add(tube, null, null, new THREE.Vector3(0.32, 1, 1));
+        } else if (kind === 'afro') {
+          // A big rounded halo with a soft, bumpy surface.
+          const g = new THREE.IcosahedronGeometry(1, 4);
+          const pos = g.attributes.position;
+          for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+            const k = 1 + 0.045 * Math.sin(x * 17 + y * 5) * Math.sin(y * 13 + z * 7) + 0.03 * Math.sin(z * 23 + x * 11);
+            pos.setXYZ(i, x * k, y * k, z * k);
+          }
+          g.computeVertexNormals();
+          // Set back so the face stays clear below the hairline.
+          add(g, new THREE.Vector3(0, C.y + R.y * 0.35, C.z - R.z * 0.35), null, new THREE.Vector3(R.x * 1.65, R.y * 1.35, R.z * 1.25));
+        } else if (kind === 'curls') {
+          // Ringlets all over the scalp (the hairline stays clear of the face).
+          for (let t = 0.05; t < 1.5; t += 0.26) {
+            const ring = Math.max(1, Math.round(Math.sin(t) * 12));
+            for (let j = 0; j < ring; j++) {
+              const ph = (j / ring) * Math.PI * 2 + t * 1.7;
+              if (Math.cos(ph) > 0.35 && t > 0.75) continue;     // keep the forehead clear
+              const s = scalp(t, ph, 0.006);
+              add(new THREE.SphereGeometry(0.026, 10, 8), s.p);
+            }
+          }
+        } else if (kind === 'ponytail') {
+          // A tapered tail tied at the back of the head, hanging down the neck.
+          const tie = scalp(1.2, Math.PI, 0.01);
+          const prof = [];
+          for (let i = 0; i <= 10; i++) {
+            const t = i / 10;
+            prof.push(new THREE.Vector2(0.004 + 0.034 * Math.sin(Math.min(1, t * 1.6 + 0.15) * Math.PI * 0.5) * (1 - t * 0.75), -0.3 * t));
+          }
+          const tail = new THREE.LatheGeometry(prof, 14);
+          const dir = new THREE.Vector3(0, -1, -0.18).normalize();
+          add(tail, tie.p, new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir));
+          const band = new THREE.TorusGeometry(0.02, 0.007, 8, 16);
+          add(band, tie.p.clone().addScaledVector(dir, 0.012), new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir));
+        } else if (kind === 'topknot') {
+          const crown = scalp(0.3, Math.PI, 0);
+          add(new THREE.SphereGeometry(0.048, 16, 12), crown.p.clone().addScaledVector(crown.n, 0.038));
+          add(new THREE.TorusGeometry(0.026, 0.008, 8, 16), crown.p.clone().addScaledVector(crown.n, 0.006),
+            new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), crown.n));
+        } else if (kind === 'bowl') {
+          // The "Cap": a smooth dome over the skull cut level at the brow.
+          const rimY = R.y * 0.3;                                  // just above the brows
+          const thetaLen = Math.acos(Math.max(-1, Math.min(1, rimY / (R.y * 1.08))));
+          const dome = new THREE.SphereGeometry(1, 28, 14, 0, Math.PI * 2, 0, thetaLen);
+          add(dome, C, null, new THREE.Vector3(R.x * 1.1, R.y * 1.08, R.z * 1.08)).material.side = THREE.DoubleSide;
+        }
       }
     }
 
@@ -912,6 +1164,9 @@
         const v = region.vee;
         push(-v.slope, 1, 0, at(1, v.top) - v.depth * (b.max[1] - b.min[1]));
       }
+      // Below a line rising from the centre out to the sides (a jawline):
+      // y <= at(y) + slope * |x|.
+      if (region.under) push(region.under.slope, -1, 0, -at(1, region.under.y));
       if (region.y) {
         if (region.y[0] != null) push(0, 1, 0, at(1, region.y[0]));
         if (region.y[1] != null) push(0, -1, 0, -at(1, region.y[1]));
@@ -1079,7 +1334,8 @@
       _paintBody(tints.body, look);
       for (const u of tints.hair) _setAll(u, look.hair != null ? look.hair : 0x3b2a20);
       if (tints.eyes && look.eyes != null) tints.eyes.uEyeColor.value.set(look.eyes);
-      setHair([look.hairStyle, look.beard ? 'Hair_Beard' : null]);
+      setHair(look.hairStyle, look.beard);
+      setEyeShape(look.eyeShape);
       setGarments(look.garments);
     }
 
@@ -1126,10 +1382,12 @@
     }
 
     function setOpacity(o) {
+      _opacity = o;
       for (const m of mats) {
-        m.transparent = o < 1;
-        m.opacity = o;
-        m.depthWrite = o >= 1;
+        const a = o * (m.userData.baseOpacity != null ? m.userData.baseOpacity : 1);
+        m.transparent = a < 1;
+        m.opacity = a;
+        m.depthWrite = a >= 1;
       }
     }
 

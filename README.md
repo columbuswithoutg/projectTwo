@@ -311,6 +311,16 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-09-23 — Realistic body: every hair style, facial-hair style and eye shape
+
+The second parity pass. The realistic body squeezed 14 hair styles onto 5 pack meshes (Spiky, Curly and Side-part looked the same; so did Cap, Mohawk and Buzz), drew one full beard for all five facial-hair styles (in the hair colour, ignoring `facialHairColor`), and ignored eye shape. Now every option has its own look:
+- **Hair** (`hairSpec` in `js/playground3d-humanoid-logic.js`): each style is a pack mesh, optionally clipped to part of the head (Bob = Long cut at the jaw, Undercut = Side-part top only, bare sides), plus smooth procedural pieces built by `_hairExtras` in `js/playground3d-humanoid.js`: spikes, a mohawk crest along the scalp's centre line, a bumpy afro set back from the face, ringlet curls, a tapered ponytail with a tie, a topknot bun, and the "Cap" as a smooth bowl cut at the brow. They sit on a skull ellipsoid fitted to each body's own head vertices above eye level (`variant.skull`): an estimate from the head's bounding box floated the mohawk off the back of the head.
+- **Facial hair** (`beardSpec`): Stubble is the beard mesh at 40% opacity, Mustache / Goatee are clipped regions of it, Chinstrap keeps what lies below a line rising from the chin to the ears (the new `under` region), Beard is whole. It takes `facialHairColor` like the Box body. Hair clipping is `_addHairClip` (the same bind-pose planes as the clothing shells); `setOpacity` now multiplies a material's `baseOpacity`, so a fade-in doesn't make stubble solid.
+- **Eye shape** (`eyeShapeFor`, `EYE_SHAPE_VERT`): the faces are sculpted, so Narrow / Wide / Sharp / Soft reshape the lids and eyeballs in the vertex shader around each eye (centres measured per body in `variant.eyes`): scale about the eye centre and, for Sharp / Soft, lift or drop the outer corner only. The brows are mostly left alone (tilting them read as a frown). Round is the model as sculpted. The schema's `realistic: 'unsupported'` flag and SLOT_MAP's `unsupported` kind are gone.
+- Checked on the male, female and Huge bodies in /customize thumbnails and in /world.
+- Tests: `test/humanoid.test.js`: 14 distinct hair specs (Bald = none), 5 distinct beard specs, eye-shape directions.
+- **Still different from Box:** the Neutral and Masculine genders share the male model on Realistic.
+
 ### 2026-09-23 — Props alignment, realistic body gets every Box clothing style
 
 **Sit / lie alignment.** Lying in a bed turned 90° laid the body across it (the old known bug below): `_applyPose` and `_applyDownPose` in `js/playground3d.js` now set `root.rotation.order = 'YXZ'`, so the tilt is about the body's own sideways axis after the yaw. The body also lies from the bed's foot edge (`_sitOn`, offset 0.85 → 1.0); at 0.85 the head poked ~0.2 past the headboard on both body types. Verified in /world on beds and chairs at all four facings, Realistic and Box.

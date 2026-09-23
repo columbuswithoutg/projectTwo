@@ -31,9 +31,7 @@ const CHARACTER_SCHEMA = [
 
   // ── Face ──
   { section: 'Face',  key: 'eyeColor',        label: 'Eye color',  control: 'swatch', palette: 'EYE_COLORS' },
-  // `realistic: 'unsupported'` — the rigged glTF bodies (js/playground3d-humanoid.js)
-  // have sculpted faces, so eye SHAPE can't be swapped; the value is still stored.
-  { section: 'Face',  key: 'eyeShape',        label: 'Eye shape',  control: 'label',  options: ['Round', 'Narrow', 'Wide', 'Sharp', 'Soft'], realistic: 'unsupported' },
+  { section: 'Face',  key: 'eyeShape',        label: 'Eye shape',  control: 'label',  options: ['Round', 'Narrow', 'Wide', 'Sharp', 'Soft'] },
   { section: 'Face',  key: 'facialHairStyle', label: 'Facial hair',control: 'label',  options: ['Clean', 'Stubble', 'Mustache', 'Goatee', 'Beard', 'Chinstrap'] },
   { section: 'Face',  key: 'facialHairColor', label: 'Beard color',control: 'swatch', palette: 'HAIR_COLORS' },
   { section: 'Face',  key: 'glasses',         label: 'Glasses',    control: 'label',  options: ['None', 'Round', 'Square', 'Aviator', 'Half-rim'] },

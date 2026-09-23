@@ -429,3 +429,29 @@ test('slot map covers bodyType, and the schema offers Realistic / Box', () => {
   assert.equal(entry.optionsFrom, 'BODY_TYPES');
   assert.ok(entry.noRandom, 'Randomize leaves the body type alone');
 });
+
+// ── Hair, facial hair, eye shape: every style has its own look ──
+
+test('hairSpec: all 14 styles are distinct; Bald is nothing', () => {
+  const specs = Array.from({ length: 14 }, (_, i) => H.hairSpec(i));
+  assert.equal(specs[4], null, 'Bald');
+  const keys = specs.map((s) => JSON.stringify(s));
+  assert.equal(new Set(keys).size, 14, 'no two styles share a look');
+  assert.ok(specs[1].clip && specs[13].clip, 'Bob and Undercut are clipped pack meshes');
+  assert.deepEqual(H.hairSpec(undefined), H.hairSpec(0));
+});
+
+test('beardSpec: five distinct facial-hair styles cut from the beard mesh', () => {
+  assert.equal(H.beardSpec(0), null);
+  const specs = [1, 2, 3, 4, 5].map(H.beardSpec);
+  assert.equal(new Set(specs.map((s) => JSON.stringify(s))).size, 5);
+  assert.ok(specs[0].opacity < 1, 'stubble is faint');
+  assert.ok(specs[4].clips[0].under, 'chinstrap follows the jawline');
+});
+
+test('eyeShapeFor: Round keeps the sculpted eye; Narrow is flatter and Wide taller', () => {
+  assert.equal(H.eyeShapeFor(0), null);
+  assert.ok(H.eyeShapeFor(1)[1] < 1 && H.eyeShapeFor(2)[1] > 1);
+  assert.ok(H.eyeShapeFor(3)[2] > 0, 'Sharp lifts the outer corner');
+  assert.equal(H.SLOT_MAP.eyeShape.kind, 'shape');
+});

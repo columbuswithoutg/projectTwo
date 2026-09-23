@@ -755,12 +755,6 @@ const Playground3D = (() => {
   }
   let _playerR = PHYSICS.PLAYER_RADIUS;      // local player's footprint (build-scaled)
 
-  // Playground.HAIR styles → the 6 hair meshes the pack ships (nearest match).
-  const _HAIR_MESH = [
-    'Hair_BuzzedFemale', 'Hair_Long', 'Hair_SimpleParted', 'Hair_Long', null, 'Hair_Buzzed',
-    'Hair_Buns', 'Hair_Buzzed', 'Hair_Buns', 'Hair_SimpleParted', 'Hair_Buzzed', 'Hair_SimpleParted',
-    'Hair_Buns', 'Hair_Buzzed'
-  ];
   // Playground.SHIRT_STYLES / PANTS_STYLES → how far the cloth runs down the limb.
   const _SLEEVES = ['short', 'none', 'long', 'long', 'short', 'short', 'long', 'short', 'none'];
   const _LEGS = ['long', 'long', 'long', 'short', 'short', 'long', 'long'];
@@ -850,8 +844,12 @@ const Playground3D = (() => {
         : (ripped && (_LEGS[c.pantsStyle ?? 0] || 'long') === 'long') ? 'torn'
         : (_LEGS[c.pantsStyle ?? 0] || 'long'),
       garments,
-      hairStyle: hidden.hairStyle ? null : (_HAIR_MESH[c.hairStyle ?? 0] || null),
-      beard: !hidden.facialHairStyle && (c.facialHairStyle ?? 0) > 0
+      // Hair, facial hair and eye shape: see PG3DHumanoidLogic.hairSpec / beardSpec /
+      // eyeShapeFor (pack meshes, clipped or topped up with procedural pieces).
+      hairStyle: hidden.hairStyle ? null : PG3DHumanoidLogic.hairSpec(c.hairStyle),
+      beard: hidden.facialHairStyle ? null : PG3DHumanoidLogic.beardSpec(c.facialHairStyle),
+      beardColor: _palette('HAIR_COLORS', c.facialHairColor ?? c.hairColor),
+      eyeShape: hidden.eyeShape ? null : PG3DHumanoidLogic.eyeShapeFor(c.eyeShape)
     };
   }
 
