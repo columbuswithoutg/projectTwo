@@ -340,12 +340,113 @@
   const OUTER = { JACKET: 1, BOMBER: 2, TRENCH: 3, HOODIE: 4, VEST: 5, CAPE: 6 };
   const SLEEVED = ['torso', 'upperArm', 'forearm'];
 
+  // ── detail layers ──
+  // Everything the Box body builds as extra pieces (shoe soles, boot shafts,
+  // cuffs, pockets, collars, stripes, seams, trims) as clipped shells on the
+  // realistic body: `parts` + `region` (fractions of a part's bind-pose box;
+  // see PG3DHumanoid _regionPlanes). Limb pieces are bounded by height, not by
+  // how far along the bone they sit: triangles that straddle a joint mix the
+  // two bones' values and leaked slivers at the knee. `color` is a slot name or a list tried in
+  // order — an accent slot left on Auto is skipped, so the next entry is the
+  // same default the Box body uses. The engine resolves the colours.
+  const SHOE = { SNEAKERS: 1, HITOPS: 2, BOOTS: 3, DRESS: 4, HEELS: 5, SANDALS: 6 };
+  const SHIRT = { HOODIE: 3, POLO: 4, VNECK: 5, TURTLENECK: 6, JERSEY: 7, RIPPED: 8 };
+  const PANTS = { PANTS: 0, CARGO: 2, SHORTS: 3, JOGGERS: 5, GREAVES: 6 };
+  const FRONT_STRIP = { ref: 'torso', xAbs: [null, 0.05], z: [0.5, null] };
+  const WAIST_BAND = { ref: 'pelvis', y: [0.82, 1.08] };
+  const JACKET_HEM = { ref: 'torso', y: [0.08, null], parts: ['torso'] };
+
+  function detailsFor(c) {
+    const suit = c.suit ?? 0;
+    const outer = c.outerwear ?? 0;
+    const shirt = c.shirtStyle ?? 0;
+    const pants = c.pantsStyle ?? 0;
+    const shoe = c.shoeStyle ?? 0;
+    const ripped = suit === 0 && shirt === SHIRT.RIPPED;
+    const d = [];
+    const add = (kind, spec) => d.push(Object.assign({ kind }, spec));
+
+    // Footwear. A Ripped top means bare feet (see the engine's _lookFor).
+    if (!ripped) {
+      if (shoe === SHOE.SNEAKERS) {
+        add('sole', { parts: ['foot'], region: { ref: 'foot', y: [null, 0.24] }, inflate: 0.02, color: ['shoeAccent', 'white'] });
+      } else if (shoe === SHOE.HITOPS) {
+        add('hi-top', { parts: ['shin', 'foot'], region: { ref: 'shin', y: [null, 0.24] }, inflate: 0.02, color: 'shoe' });
+      } else if (shoe === SHOE.BOOTS) {
+        add('boot', { parts: ['shin', 'foot'], region: { ref: 'shin', y: [null, 0.56] }, inflate: 0.022, color: 'shoe' });
+        if ((c.shoeColor2 ?? 0) > 0) {
+          add('boot-cuff', { parts: ['shin'], region: { ref: 'shin', y: [0.5, 0.6] }, inflate: 0.03, color: 'shoeAccent' });
+        }
+      } else if (shoe === SHOE.DRESS) {
+        add('dress-shoe', { parts: ['foot'], inflate: 0.008, color: 'shoe', rough: 0.25, metal: 0.15 });
+        add('sole', { parts: ['foot'], region: { ref: 'foot', y: [null, 0.1] }, inflate: 0.014, color: 'dark' });
+      } else if (shoe === SHOE.HEELS) {
+        add('sole', { parts: ['foot'], region: { ref: 'foot', y: [null, 0.14] }, inflate: 0.012, color: 'shoe' });
+      } else if (shoe === SHOE.SANDALS) {
+        add('sole', { parts: ['foot'], region: { ref: 'foot', y: [null, 0.18] }, inflate: 0.016, color: 'shoe' });
+        add('strap', { parts: ['foot'], region: { ref: 'foot', z: [0.52, 0.7] }, inflate: 0.01, color: 'shoe' });
+      }
+    }
+
+    if (suit === 0) {
+      // Trousers: Pants hang a little loose (Slim is the skin-tight tint).
+      if (pants === PANTS.PANTS && outer !== OUTER.TRENCH) {
+        add('trousers', { parts: ['thigh', 'shin'], inflate: 0.012, color: 'pants' });
+      } else if (pants === PANTS.CARGO) {
+        add('cargo-pocket', { parts: ['thigh'], region: { ref: 'thigh', xAbs: [0.74, null], y: [0.3, 0.62] }, inflate: 0.035, color: ['pantsAccent', 'pantsShade'] });
+      } else if (pants === PANTS.JOGGERS) {
+        add('cuff', { parts: ['shin'], region: { ref: 'shin', y: [null, 0.16] }, inflate: 0.03, color: ['pantsAccent', 'pants'] });
+      } else if (pants === PANTS.GREAVES) {
+        add('greave', { parts: ['shin'], region: { ref: 'shin', y: [0.2, 0.78], z: [0.5, null] }, inflate: 0.026, color: ['pantsAccent', 'accessory'], metal: 0.6, rough: 0.35 });
+      }
+
+      // Tops.
+      if (shirt === SHIRT.HOODIE) {
+        add('pocket', { parts: ['torso'], region: { ref: 'torso', xAbs: [null, 0.42], y: [0.1, 0.32], z: [0.5, null] }, inflate: 0.026, color: ['shirtAccent', 'shirtShade'] });
+      } else if (shirt === SHIRT.POLO) {
+        add('collar', { parts: ['torso', 'neck'], region: { ref: 'torso', y: [0.92, 1.08], xAbs: [null, 0.45] }, inflate: 0.02, color: ['shirtAccent', 'shirt'] });
+      } else if (shirt === SHIRT.VNECK) {
+        add('v-neck', { parts: ['torso'], region: { ref: 'torso', vee: { top: 1.02, depth: 0.24, slope: 1.3 }, z: [0.5, null] }, inflate: 0.005, color: 'skin' });
+      } else if (shirt === SHIRT.TURTLENECK) {
+        add('turtleneck', { parts: ['torso', 'neck'], region: { ref: 'torso', y: [0.9, null] }, inflate: 0.025, color: 'shirt' });
+      } else if (shirt === SHIRT.JERSEY) {
+        add('stripe', { parts: ['torso'], region: { ref: 'torso', y: [0.45, 0.58] }, inflate: 0.012, color: ['shirtAccent', 'white'] });
+      } else if (ripped) {
+        // Torn cloth left on a bare chest: a ragged hem and shoulder flaps.
+        add('rag-hem', { parts: ['torso'], region: { ref: 'torso', y: [null, 0.2] }, rag: 0.035, inflate: 0.01, color: 'shirt' });
+        add('rag-flap', { parts: ['torso'], region: { ref: 'torso', y: [0.62, null], xAbs: [0.55, null] }, rag: 0.04, inflate: 0.01, color: 'shirt' });
+      }
+    }
+
+    // Outerwear trims (the shell itself is built by garmentsFor).
+    if (outer >= OUTER.JACKET && outer <= OUTER.VEST) {
+      if (outer !== OUTER.HOODIE) {
+        add('seam', { parts: ['torso'], region: FRONT_STRIP, inflate: 0.02, color: ['outerAccent', 'seamDark'] });
+      }
+      if (outer === OUTER.BOMBER) {
+        add('hem', { parts: ['torso'], region: { ref: 'torso', y: [0.08, 0.17] }, inflate: 0.024, color: 'outer' });
+      }
+    }
+
+    // Suit trims, in the accessory colour like the Box body.
+    if (suit === SUIT.BODYSUIT) {
+      add('seam', { parts: ['torso'], region: FRONT_STRIP, inflate: 0.008, color: 'accessory' });
+      add('belt', { parts: ['torso', 'pelvis'], region: WAIST_BAND, inflate: 0.02, color: 'accessory' });
+    } else if (suit === SUIT.ROBE) {
+      add('panel', { parts: ['torso'], region: { ref: 'torso', xAbs: [null, 0.2], z: [0.5, null] }, inflate: 0.008, color: 'accessory' });
+    } else if (suit === SUIT.JUMPSUIT) {
+      add('collar', { parts: ['torso', 'neck'], region: { ref: 'torso', y: [0.92, 1.08], xAbs: [null, 0.45] }, inflate: 0.02, color: 'accessory' });
+      add('belt', { parts: ['torso', 'pelvis'], region: WAIST_BAND, inflate: 0.02, color: 'accessory' });
+    }
+    return d;
+  }
+
   function garmentsFor(c) {
     c = c || {};
     const suit = c.suit ?? 0;
     const outer = c.outerwear ?? 0;
     const pants = c.pantsStyle ?? 0;
-    const out = { shell: null, skirt: null, cape: null, hood: false };
+    const out = { shell: null, skirt: null, cape: null, hood: false, details: detailsFor(c) };
 
     // Full-body armour (Iron Man) — a metal shell over everything but the head,
     // two-tone: the biceps and thighs take the accessory colour (Iron Man's
@@ -364,7 +465,8 @@
     // Skirts: a dress/robe suit, or the Skirt trouser style.
     if (suit === SUIT.DRESS) out.skirt = { kind: 'dress', color: 'suit', length: 0.5, flare: 1.8 };
     else if (suit === SUIT.ROBE) out.skirt = { kind: 'robe', color: 'suit', length: 0.85, flare: 1.5 };
-    else if (pants === PANTS_SKIRT) out.skirt = { kind: 'skirt', color: 'bottom', length: 0.32, flare: 1.9 };
+    // (A suit owns the legs, so a stored Skirt trouser style under it is ignored.)
+    else if (pants === PANTS_SKIRT && suit === 0) out.skirt = { kind: 'skirt', color: 'bottom', length: 0.32, flare: 1.9 };
 
     if (outer === OUTER.CAPE) {
       // Shoulder-width, ankle-length. Wider than this reads as a flag, not a
@@ -377,7 +479,10 @@
         parts: outer === OUTER.VEST ? ['torso'] : SLEEVED,
         // A bomber's sleeves stop at a ribbed cuff; the rest reach the wrist.
         cut: outer === OUTER.BOMBER ? { forearm: 0.85 } : null,
-        inflate: outer === OUTER.VEST ? 0.016 : 0.014, metal: 0, rough: 0.8
+        inflate: outer === OUTER.VEST ? 0.016 : 0.014, metal: 0, rough: 0.8,
+        // A straight hem at the waist (the torso/pelvis triangle border is
+        // stair-stepped and read as torn). Only the body is clipped, not the sleeves.
+        region: JACKET_HEM
       };
       // Coat tails hang from the waist like a skirt.
       if (outer === OUTER.TRENCH) out.skirt = { kind: 'coat', color: 'outer', length: 0.62, flare: 1.3 };

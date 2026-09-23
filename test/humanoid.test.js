@@ -321,8 +321,61 @@ test('garmentsFor: a cape hangs and is not a shell (Thor)', () => {
 test('garmentsFor: outerwear is worn over a suit; nothing selected → nothing built', () => {
   const over = H.garmentsFor({ suit: 4, outerwear: 1 });
   assert.equal(over.shell.kind, 'jacket', 'the jacket is the outer layer');
-  assert.deepEqual(H.garmentsFor({}), { shell: null, skirt: null, cape: null, hood: false });
-  assert.deepEqual(H.garmentsFor(null), { shell: null, skirt: null, cape: null, hood: false });
+  // The default outfit (Pants) only adds the loose trouser layer.
+  const plain = { shell: null, skirt: null, cape: null, hood: false, details: [{ kind: 'trousers', parts: ['thigh', 'shin'], inflate: 0.012, color: 'pants' }] };
+  assert.deepEqual(H.garmentsFor({}), plain);
+  assert.deepEqual(H.garmentsFor(null), plain);
+});
+
+// ── Detail layers: every Box style has a realistic counterpart ──
+
+const kinds = (c) => H.garmentsFor(c).details.map((d) => d.kind);
+
+test('details: every shoe style except plain Shoes adds its own piece', () => {
+  assert.deepEqual(kinds({ pantsStyle: 1, shoeStyle: 0 }), []);
+  assert.deepEqual(kinds({ pantsStyle: 1, shoeStyle: 1 }), ['sole']);
+  assert.deepEqual(kinds({ pantsStyle: 1, shoeStyle: 2 }), ['hi-top']);
+  assert.deepEqual(kinds({ pantsStyle: 1, shoeStyle: 3 }), ['boot']);
+  assert.deepEqual(kinds({ pantsStyle: 1, shoeStyle: 4 }), ['dress-shoe', 'sole']);
+  assert.deepEqual(kinds({ pantsStyle: 1, shoeStyle: 5 }), ['sole']);          // + heel blocks (engine)
+  assert.deepEqual(kinds({ pantsStyle: 1, shoeStyle: 6 }), ['sole', 'strap']);
+});
+
+test('details: shoe accent → sneaker sole colour and a boot cuff (Auto keeps the defaults)', () => {
+  const sole = H.garmentsFor({ pantsStyle: 1, shoeStyle: 1 }).details[0];
+  assert.deepEqual(sole.color, ['shoeAccent', 'white']);
+  assert.deepEqual(kinds({ pantsStyle: 1, shoeStyle: 3, shoeColor2: 2 }), ['boot', 'boot-cuff']);
+  const boot = H.garmentsFor({ pantsStyle: 1, shoeStyle: 3 }).details[0];
+  assert.ok(boot.region.y[1] > 0 && boot.region.y[1] < 1, 'the shaft stops part-way up the shin');
+});
+
+test('details: trouser styles (cargo pockets, jogger cuffs, greaves) and a ripped top is barefoot', () => {
+  assert.deepEqual(kinds({ pantsStyle: 2 }), ['cargo-pocket']);
+  assert.deepEqual(kinds({ pantsStyle: 5 }), ['cuff']);
+  assert.deepEqual(kinds({ pantsStyle: 6 }), ['greave']);
+  assert.deepEqual(kinds({ pantsStyle: 3 }), []);                           // shorts: the tint cut
+  assert.deepEqual(kinds({ pantsStyle: 1, shirtStyle: 8, shoeStyle: 3 }), ['rag-hem', 'rag-flap']);
+});
+
+test('details: top styles, outerwear trims and suit trims', () => {
+  assert.deepEqual(kinds({ pantsStyle: 1, shirtStyle: 3 }), ['pocket']);      // + hood (engine)
+  assert.deepEqual(kinds({ pantsStyle: 1, shirtStyle: 4 }), ['collar']);
+  assert.deepEqual(kinds({ pantsStyle: 1, shirtStyle: 5 }), ['v-neck']);
+  assert.deepEqual(kinds({ pantsStyle: 1, shirtStyle: 6 }), ['turtleneck']);
+  assert.deepEqual(kinds({ pantsStyle: 1, shirtStyle: 7 }), ['stripe']);
+  assert.deepEqual(kinds({ pantsStyle: 1, outerwear: 1 }), ['seam']);
+  assert.deepEqual(kinds({ pantsStyle: 1, outerwear: 2 }), ['seam', 'hem']);
+  assert.deepEqual(kinds({ pantsStyle: 1, outerwear: 4 }), []);            // hood (engine)
+  assert.deepEqual(kinds({ suit: 1 }), ['seam', 'belt']);
+  assert.deepEqual(kinds({ suit: 3 }), ['panel']);
+  assert.deepEqual(kinds({ suit: 5 }), ['collar', 'belt']);
+  // A suit hides the shirt and trouser styles, so none of their pieces show.
+  assert.deepEqual(kinds({ suit: 1, shirtStyle: 3, pantsStyle: 2 }), ['seam', 'belt']);
+});
+
+test('garmentsFor: a stored Skirt trouser style under a suit builds no skirt', () => {
+  assert.equal(H.garmentsFor({ suit: 1, pantsStyle: 4 }).skirt, null);
+  assert.equal(H.garmentsFor({ suit: 2, pantsStyle: 4 }).skirt.kind, 'dress');
 });
 
 // ── Slot coverage ──

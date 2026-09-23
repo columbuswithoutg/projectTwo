@@ -696,7 +696,7 @@
     put(PART.upperArm, top, sleeves === 'long' ? 2 : sleeves === 'short' ? 0.5 : 0);
     if (look.bracers != null) put(PART.forearm, look.bracers, 2);
     else put(PART.forearm, top, sleeves === 'long' ? 2 : 0);
-    put(PART.hand, look.gloves, 2);
+    put(PART.hand, look.gloves, look.glovesCut != null ? look.glovesCut : 2);
     put(PART.pelvis, bottom, 2);
     // Torso + pelvis use the horizontal waistline: trousers below, shirt above.
     for (let p = 0; p < PART_COUNT; p++) u.uPartWaist.value[p] = p === PART.torso || p === PART.pelvis ? 1 : 0;
@@ -714,16 +714,38 @@
   // pushed out along its normals, with fragments discarded wherever the
   // garment doesn't cover. It deforms with every animation for free and costs
   // one draw call (jacket, vest, Iron Man armour).
+  // Region shells (boot shafts, soles, cuffs, pockets, collars, stripes…) are
+  // the same layer clipped further: up to MAX_PLANES half-spaces in bind-pose
+  // body space keep only one patch. Planes test
+  // (|x|, y, z) — every region is mirrored left/right, like the clothes.
+  const MAX_PLANES = 6;
   const SHELL_FRAG_DECL = [
     'flat varying int vPart;',
     'varying float vAlong;',
     'varying float vHeight;',
+    'varying vec3 vBind;',
     `uniform float uCover[${PART_COUNT}];`,
     `uniform float uCoverCut[${PART_COUNT}];`,
     `uniform float uAccent[${PART_COUNT}];`,
     'uniform vec3 uAccentColor;',
-    'uniform float uHemY;'
+    'uniform float uHemY;',
+    `uniform vec4 uPlanes[${MAX_PLANES}];`,
+    `uniform float uRegionPart[${PART_COUNT}];`,
+    'uniform int uPlaneCount;',
+    'uniform float uRag;'
   ].join('\n') + '\n';
+  // Discard outside the region planes. `uRag` makes the first plane's edge
+  // jagged (torn cloth).
+  const SHELL_REGION = [
+    'if ( uRegionPart[ vPart ] > 0.5 ) {',
+    'vec3 rp = vec3( abs( vBind.x ), vBind.y, vBind.z );',
+    `for ( int i = 0; i < ${MAX_PLANES}; i++ ) {`,
+    '  if ( i >= uPlaneCount ) break;',
+    '  float jagP = i == 0 ? ( sin( vBind.x * 90.0 ) + sin( vBind.x * 37.0 + 1.3 ) ) * 0.5 * uRag : 0.0;',
+    '  if ( dot( uPlanes[ i ].xyz, rp ) < uPlanes[ i ].w + jagP ) discard;',
+    '}',
+    '}'
+  ].join('\n');
 
   function _shellMaterial(hex, spec) {
     const THREE = T();
@@ -741,22 +763,27 @@
       uAccent: { value: new Array(PART_COUNT).fill(0) },
       uAccentColor: { value: new THREE.Color(spec.accentHex != null ? spec.accentHex : hex) },
       uHemY: { value: -1e3 },
-      uInflate: { value: spec.inflate != null ? spec.inflate : 0.014 }
+      uInflate: { value: spec.inflate != null ? spec.inflate : 0.014 },
+      uPlanes: { value: Array.from({ length: MAX_PLANES }, () => new THREE.Vector4()) },
+      uPlaneCount: { value: 0 },
+      // Which parts the region clips (a jacket's straight hem must not cut the sleeves).
+      uRegionPart: { value: new Array(PART_COUNT).fill(1) },
+      uRag: { value: spec.rag || 0 }
     };
     mat.userData.shell = u;
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, u);
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform float uInflate;\n' + TINT_VERT_DECL)
+        .replace('#include <common>', '#include <common>\nuniform float uInflate;\nvarying vec3 vBind;\n' + TINT_VERT_DECL)
         .replace('#include <begin_vertex>',
-          '#include <begin_vertex>\nvPart = int( aPart + 0.5 );\nvAlong = aAlong;\nvHeight = aHeight;\ntransformed += objectNormal * uInflate;');
+          '#include <begin_vertex>\nvPart = int( aPart + 0.5 );\nvAlong = aAlong;\nvHeight = aHeight;\nvBind = position;\ntransformed += objectNormal * uInflate;');
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\n' + SHELL_FRAG_DECL)
         .replace('#include <clipping_planes_fragment>',
           '#include <clipping_planes_fragment>\n' +
           'if ( uCover[ vPart ] < 0.5 ) discard;\n' +
           'if ( vAlong > uCoverCut[ vPart ] ) discard;\n' +
-          'if ( vHeight < uHemY ) discard;')
+          'if ( vHeight < uHemY ) discard;\n' + SHELL_REGION)
         .replace('#include <color_fragment>',
           '#include <color_fragment>\nif ( uAccent[ vPart ] > 0.5 ) diffuseColor.rgb = uAccentColor;');
     };
@@ -868,31 +895,79 @@
       capeMesh = null;
     }
 
+    // Region (see PG3DHumanoidLogic.garmentsFor) → clip planes in bind-pose
+    // body space. Fractions are of the `ref` part's bounding box: y 0 = its
+    // bottom, z 0 = its back, x is |x| over the box's half-width (0 = the
+    // body's centre line). Kept where dot(n, (|x|, y, z)) >= d.
+    function _regionPlanes(region) {
+      const out = [];
+      if (!region) return out;
+      const b = variant.partBox[PART[region.ref || 'torso']];
+      if (!b) return out;
+      const at = (axis, f) => b.min[axis] + (b.max[axis] - b.min[axis]) * f;
+      const halfW = Math.max(Math.abs(b.min[0]), Math.abs(b.max[0]));
+      const push = (x, y, z, d) => out.push([x, y, z, d]);
+      // The vee goes first so a torn hem (rag) can't jag the neckline.
+      if (region.vee) {
+        const v = region.vee;
+        push(-v.slope, 1, 0, at(1, v.top) - v.depth * (b.max[1] - b.min[1]));
+      }
+      if (region.y) {
+        if (region.y[0] != null) push(0, 1, 0, at(1, region.y[0]));
+        if (region.y[1] != null) push(0, -1, 0, -at(1, region.y[1]));
+      }
+      if (region.xAbs) {
+        if (region.xAbs[0] != null) push(1, 0, 0, halfW * region.xAbs[0]);
+        if (region.xAbs[1] != null) push(-1, 0, 0, -halfW * region.xAbs[1]);
+      }
+      if (region.z) {
+        if (region.z[0] != null) push(0, 0, 1, at(2, region.z[0]));
+        if (region.z[1] != null) push(0, 0, -1, -at(2, region.z[1]));
+      }
+      return out.slice(0, MAX_PLANES);
+    }
+
+    // One shell layer (see _shellMaterial): a jacket, armour, or a clipped
+    // region such as a boot shaft, a sole, a cuff or a collar.
+    function _addShell(sh) {
+      const mat = _shellMaterial(sh.hex, sh);
+      const u = mat.userData.shell;
+      for (const p of sh.parts || []) {
+        if (PART[p] == null) continue;
+        u.uCover.value[PART[p]] = 1;
+        u.uCoverCut.value[PART[p]] = (sh.cut && sh.cut[p] != null) ? sh.cut[p] : 2;
+      }
+      if (sh.accentHex != null) {
+        for (const p of sh.accentParts || []) if (PART[p] != null) u.uAccent.value[PART[p]] = 1;
+      }
+      const planes = _regionPlanes(sh.region);
+      planes.forEach((p, i) => u.uPlanes.value[i].set(p[0], p[1], p[2], p[3]));
+      u.uPlaneCount.value = planes.length;
+      if (sh.region && sh.region.parts) {
+        for (let i = 0; i < PART_COUNT; i++) u.uRegionPart.value[i] = 0;
+        for (const p of sh.region.parts) if (PART[p] != null) u.uRegionPart.value[PART[p]] = 1;
+      }
+      const mesh = new THREE.SkinnedMesh(bodyMesh.geometry, mat);
+      mesh.name = 'garment:' + sh.kind;
+      mesh.frustumCulled = false;
+      mesh.castShadow = true;
+      body.add(mesh);
+      mesh.bind(skeleton, new THREE.Matrix4());
+      garments.push(mesh);
+      mats.push(mat);
+      return { mesh, mat };
+    }
+
     function setGarments(spec) {
       _clearGarments();
       if (!spec) return;
       const box = variant.partBox;
+      // Detail layers (shoes, cuffs, pockets, collars, trims): clipped shells.
+      for (const sh of spec.details || []) if (sh && sh.hex != null) _addShell(sh);
       // A second skin: jacket, bomber, hoodie, vest, Iron Man armour.
       if (spec.shell && spec.shell.hex != null) {
         const sh = spec.shell;
-        const mat = _shellMaterial(sh.hex, sh);
-        const u = mat.userData.shell;
-        for (const p of sh.parts || []) {
-          if (PART[p] == null) continue;
-          u.uCover.value[PART[p]] = 1;
-          u.uCoverCut.value[PART[p]] = (sh.cut && sh.cut[p] != null) ? sh.cut[p] : 2;
-        }
-        if (sh.accentHex != null) {
-          for (const p of sh.accentParts || []) if (PART[p] != null) u.uAccent.value[PART[p]] = 1;
-        }
-        const mesh = new THREE.SkinnedMesh(bodyMesh.geometry, mat);
-        mesh.name = 'garment:' + sh.kind;
-        mesh.frustumCulled = false;
-        mesh.castShadow = true;
-        body.add(mesh);
-        mesh.bind(skeleton, new THREE.Matrix4());
-        garments.push(mesh);
-        mats.push(mat);
+        const { mat } = _addShell(sh);
         if (sh.pauldrons) {
           const arm = box[PART.upperArm];
           const r = (arm ? arm.size[2] : 0.12) * 0.85;
@@ -1093,7 +1168,9 @@
       'forearm.L': boneBy(cls['forearm.L'] && cls['forearm.L'][0]),
       'forearm.R': boneBy(cls['forearm.R'] && cls['forearm.R'][0]),
       'upperArm.L': boneBy(cls['upperArm.L'] && cls['upperArm.L'][0]),
-      'upperArm.R': boneBy(cls['upperArm.R'] && cls['upperArm.R'][0])
+      'upperArm.R': boneBy(cls['upperArm.R'] && cls['upperArm.R'][0]),
+      'foot.L': boneBy(cls['foot.L'] && cls['foot.L'][0]),
+      'foot.R': boneBy(cls['foot.R'] && cls['foot.R'][0])
     };
     // The mixer rewrites every bone each update, so the constant posture
     // offsets are re-applied right after it (never accumulated). They fade out
@@ -1290,6 +1367,9 @@
       get backpedal() { return leanW; },
       get pose() { return poseW; },
       get hipsY() { return variant.hipsY; },   // hip joint height in character units (seat placement)
+      // Bind-pose bounding box of a body part ('foot', 'torso', …) in body
+      // units — lets add-on pieces (heels, bow ties) size and place themselves.
+      partBox(name) { return variant.partBox[PART[name]] || null; },
       get state() { return currentState; }
     };
     _lastInstance = handle;          // debugging aid (PG3DHumanoid._debug.last)
