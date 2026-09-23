@@ -311,6 +311,23 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-09-23 — Security + bug fix pass, mobile screen lock
+
+From a full code review. Security and data-loss fixes first, then bugs, then the mobile "whole app drags / zooms / turns blue" problem.
+
+- **Caption XSS** — `esc()` in `js/utils.js` now escapes `"` and `'` too; it was used inside `alt="…"` / `src="…"`, so a friend's memory caption could inject an `onerror` handler. `routes/progress.js` `sanitizeMemory` also rejects memory URLs containing quotes, `<`, `>` or whitespace.
+- **Home rooms need friendship** — `home:join` in `routes/world-socket.js` now requires the owner or an accepted friend (`friendFilter`), matching `GET /api/friends/by-username`. Before, any logged-in user could join, chat and join voice (exposing peers' IPs).
+- **No more progress wipe** — `js/state.js`: a logged-in user whose `/progress/load` fails no longer falls back to (empty) localStorage; `loadFailed` blocks saves and `clear()` until a successful load, with a toast. Save failures now show a toast instead of only `console.warn`.
+- **Dependencies** — `npm audit fix` (multer, socket.io-parser, ws, path-to-regexp, mongoose, qs, body-parser …). Left: `cloudinary` < 2.7 (needs a breaking v2 upgrade, and `multer-storage-cloudinary@4` targets v1).
+- **Chat spam floor** — every `/world` chat channel (incl. project and whisper) now has the same 750 ms per-player floor as the DM route (`MessagingLogic.C.SEND_FLOOR_MS`, `p.lastAnyChat`); the 10 s world cooldown is unchanged.
+- **Leaving a page mid-load** — `js/views/home.js` (`_loadSeq`) and the four `js/views/friend-*.js` views (`_mountSeq`) bail after each await once unmounted; `FriendView.enter` has an `_enterSeq` that `exit()` bumps, and the router now calls `exit()` whenever it leaves `/friend/*` (not only when already active), so a late response never swaps a friend's data into your own view.
+- **Usernames** — register rejects a name that matches an existing one case-insensitively ("bob" next to "Bob"). Existing duplicate pairs, if any, are untouched.
+- **Friend requests** — a `rejected` request no longer blocks the pair from requesting again (`routes/friends.js`).
+- **Admin cleanup** — deleting a user also deletes their `ProjectStay` rows (no ghost house keepers); deleting a memory also removes it from feeds (`feed.removeMemory`) and invalidates the Cloudinary CDN copy.
+- **Voice mesh leak** — `leaveHomeVoice()` in `routes/world-socket.js` removes a socket from `voiceHomes` (and sends `voice:peer-left`) on `home:leave`, home switch, retired duplicate tab and disconnect.
+- **Fetch errors** — memory delete in `js/popup.js` only removes the memory on screen after the server confirms (toast otherwise); `js/profile.js` `loadProfile` checks `res.ok`.
+- **Mobile screen lock** (`styles.css`, `js/boot.js`) — `* { touch-action: pan-x pan-y; -webkit-tap-highlight-color: transparent }` turns off browser pinch / double-tap zoom and the blue tap flash while keeping one-finger scrolling; the in-app zoom surfaces keep their own more specific `touch-action`. `body` gets `overscroll-behavior: none` and `user-select: none` / no long-press callout; inputs, chat lines, DM bubbles and feed captions opt back into selection. `html` is clipped (`overflow: hidden`, except the legacy login page) so the app can't slide sideways; scroll panels get `overscroll-behavior: contain`. `gesturestart` / `gesturechange` are cancelled for iOS Safari, which ignores `user-scalable=no`.
+
 ### 2026-09-22 — Houses round 2: admin prop cap, wall-hugging props, shelf runs, standable props, bed, sit / lie, spawn at your house
 
 - **Admin-editable prop cap** — `world.maxProps` (default 20, 1..60) in `models/AdminConfig.js` (+ `defaults()`), `CONFIG_RULES` in `routes/admin.js`, the public reshape in `routes/config.js` (→ `window.APP_WORLD.maxProps`), a slider in `js/views/admin/config.js`. `validateHouse(raw, { maxProps })` keeps the shared module pure; `routes/world.js` validates the PUT against a fresh read (`maxPropsNow`) and returns the cached value on `GET /houses`; **reads never truncate** (`toHouse` uses the grid size as the cap — an over-cap doc used to vanish entirely). The editor counts against the server's value, previews an over-cap legacy house and refuses Save until enough props are removed.

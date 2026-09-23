@@ -213,6 +213,65 @@ body {
   overflow: hidden;
   background: var(--color-bg);
   color: var(--text-1);
+  /* App-like touch: no rubber-band / pull-to-refresh, no long-press text
+     selection or callout menu (re-enabled below for text people copy). */
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Lock the page itself on mobile. The SPA never scrolls the document (every
+   view is its own fixed/scrolling panel), so clip the root too — stops the
+   whole app sliding sideways. The legacy login page (body.auth-page) keeps
+   normal scrolling. */
+html {
+  overscroll-behavior: none;
+}
+html:not(:has(body.auth-page)) {
+  overflow: hidden;
+  height: 100%;
+}
+
+/* Browser pinch-zoom and double-tap zoom off everywhere; one-finger
+   scrolling still works. In-app zoom (map, watch-order pinch, 3D camera,
+   customize preview) is done in JS on elements whose own touch-action rule
+   (none / manipulation / pan-x) is more specific than this one. */
+* {
+  touch-action: pan-x pan-y;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Text people type or may want to copy stays selectable. iOS also refuses
+   typing into inputs that inherit user-select:none, so inputs must opt in. */
+input,
+textarea,
+[contenteditable],
+.world-chat-line,
+.msg-bubble-text,
+.msg-conv-preview,
+.feed-caption,
+.feed-post-caption,
+.feed-comment-body {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* Scrolling to the end of a panel shouldn't drag the page behind it. */
+#feed-wrapper,
+#messages-wrapper,
+#reports-wrapper,
+#profile-wrapper,
+#characters-wrapper,
+.msg-log,
+.world-chat-log,
+.flow-wrapper,
+.admin-page,
+.world-lb-panel,
+.world-spawn-panel,
+.world-house-panel {
+  overscroll-behavior: contain;
 }
 
 /* Screen-reader-only labels (keeps inputs associated without visual change). */

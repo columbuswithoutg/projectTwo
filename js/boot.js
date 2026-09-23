@@ -144,6 +144,13 @@ fetch(`${API}/config/public`)
 // across the navigation.
 window.addEventListener('pagehide', () => state?.flushPersist?.());
 
+// iOS Safari ignores user-scalable=no and fires its own pinch "gesture"
+// events that zoom the whole page. Cancelling them stops page zoom only —
+// the in-app pinch (map, watch order, 3D camera) runs on touch/pointer
+// events, which still arrive.
+['gesturestart', 'gesturechange'].forEach(type =>
+  document.addEventListener(type, e => e.preventDefault(), { passive: false }));
+
 // Register the PWA service worker. Runs after load so it never competes with
 // first-paint work. Network-only for /api/*, stale-while-revalidate for the
 // SPA shell — see sw.js. Registration failure is non-fatal; the app works the
