@@ -30,7 +30,10 @@
   const BODY_FILES = { male: 'body_male.glb', female: 'body_female.glb' };
 
   // Indexed like Playground.GENDER_LABELS = ['Neutral', 'Masculine', 'Feminine'].
+  const GENDER_MASCULINE = 1;
   const GENDER_FEMININE = 2;
+  // Neutral frame relative to Masculine (see bodyShapeFor).
+  const NEUTRAL_FRAME = { chestW: 0.9, chestD: 0.94, traps: 0.85, arms: 0.9, forearms: 0.92 };
 
   // Indexed like Playground.BUILDS (Slim, Normal, Large, Huge). `scale` mirrors
   // BUILDS[].scale (height); the rest are proportions relative to that height.
@@ -66,13 +69,24 @@
   //   position; pelvis width → hip sockets) so thick arms/legs don't sink into
   //   a widened torso.
   function bodyShapeFor(c) {
-    const s = BUILD_SHAPE[buildIndex(c)];
     const model = c && c.gender === GENDER_FEMININE ? 'female' : 'male';
+    // Neutral (and a character saved before genders existed) uses the male
+    // model with a leaner frame; Masculine is the full male frame. The Box
+    // body draws Masculine ~10% broader than Neutral (js/playground3d-avatar.js
+    // _genderSpec), so Neutral narrows the chest, traps and arms by about that.
+    const neutral = model === 'male' && !(c && c.gender === GENDER_MASCULINE);
+    const b = BUILD_SHAPE[buildIndex(c)];
+    const s = neutral ? Object.assign({}, b, {
+      chestW: b.chestW * NEUTRAL_FRAME.chestW, chestD: b.chestD * NEUTRAL_FRAME.chestD,
+      traps: b.traps * NEUTRAL_FRAME.traps, arms: b.arms * NEUTRAL_FRAME.arms,
+      forearms: b.forearms * NEUTRAL_FRAME.forearms
+    }) : b;
     const waistW = mix(1, s.chestW, 0.55);
     const waistD = mix(1, s.chestD, 0.6);
     const headScale = round3(s.head);
     return {
       model,
+      neutral,
       file: ASSET_BASE + BODY_FILES[model],
       build: s.name,
       rootScale: s.scale,

@@ -478,12 +478,14 @@
   const BACKPEDAL_POSE = { spine: -0.16, neck: 0.07, head: 0.07 };
   const BACKPEDAL_STRIDE_K = 0.3;
 
-  function _variant(model, build) {
-    const key = model + '|' + build;
+  // `neutral`: the leaner Neutral frame on the male model (see bodyShapeFor).
+  function _variant(model, build, neutral) {
+    neutral = model === 'male' && !!neutral;
+    const key = model + '|' + build + (neutral ? '|n' : '');
     if (_variants.has(key)) return _variants.get(key);
     const THREE = T();
     const proto = _protos[model];
-    const shape = L.bodyShapeFor({ gender: model === 'female' ? 2 : 1, build });
+    const shape = L.bodyShapeFor({ gender: model === 'female' ? 2 : (neutral ? 0 : 1), build });
     const tpl = THREE.SkeletonUtils.clone(proto.scene);
     tpl.position.set(0, 0, 0); tpl.quaternion.identity(); tpl.scale.set(1, 1, 1);
     tpl.updateMatrixWorld(true);
@@ -924,7 +926,7 @@
     if (_status !== 'ready') throw new Error('[PG3DHumanoid] not ready');
     const THREE = T();
     look = Object.assign({ model: 'male', build: 1 }, look);
-    const variant = _variant(look.model, look.build);
+    const variant = _variant(look.model, look.build, look.neutral);
     const pivot = new THREE.Group();
     pivot.name = 'humanoid';
     const body = THREE.SkeletonUtils.clone(variant.template);

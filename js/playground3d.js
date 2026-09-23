@@ -822,6 +822,7 @@ const Playground3D = (() => {
     const accessoryHex = _palette('ACCESSORY_COLORS', c.accessoryColor);
     return {
       model: (c.gender ?? 0) === 2 ? 'female' : 'male',
+      neutral: (c.gender ?? 0) === 0,        // leaner frame than Masculine (bodyShapeFor)
       build: c.build ?? 1,
       skin: _palette('SKIN_TONES', c.skin),
       top: ripped ? null : (suitHex || _palette('SHIRT_COLORS', c.shirtColor)),

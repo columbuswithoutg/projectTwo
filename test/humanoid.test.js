@@ -455,3 +455,21 @@ test('eyeShapeFor: Round keeps the sculpted eye; Narrow is flatter and Wide tall
   assert.ok(H.eyeShapeFor(3)[2] > 0, 'Sharp lifts the outer corner');
   assert.equal(H.SLOT_MAP.eyeShape.kind, 'shape');
 });
+
+// ── Neutral vs Masculine (both on the male model) ──
+
+test('bodyShapeFor: Neutral is a leaner frame than Masculine; Feminine is untouched', () => {
+  for (const build of [SLIM, NORMAL, LARGE, HUGE]) {
+    const n = H.bodyShapeFor({ gender: 0, build }), m = H.bodyShapeFor({ gender: 1, build });
+    assert.equal(n.model, 'male');
+    assert.ok(n.neutral && !m.neutral);
+    for (const k of ['spineHigh', 'neck', 'upperArm', 'forearm']) {
+      assert.ok(n.parts[k][0] < m.parts[k][0], `${k} narrower on Neutral (build ${build})`);
+    }
+    assert.deepEqual(n.parts.thigh, m.parts.thigh, 'legs and height are the same');
+    assert.equal(n.rootScale, m.rootScale);
+    assert.ok(n.widthFactor < m.widthFactor, 'smaller collision footprint');
+  }
+  assert.equal(H.bodyShapeFor({ gender: 2 }).neutral, false);
+  assert.equal(H.bodyShapeFor({}).neutral, true, 'no gender saved → Neutral');
+});

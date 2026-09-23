@@ -311,6 +311,10 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-09-23 — Realistic body: Neutral is leaner than Masculine
+
+Neutral and Masculine both used the full male frame on the realistic body, so they looked identical (the Box body draws Masculine ~10% broader). Masculine keeps that frame, so the hero presets are unchanged; Neutral (and any character saved without a gender) is now a leaner build on the same model: chest ×0.90 wide / ×0.94 deep, traps ×0.85, upper arms ×0.90, forearms ×0.92, same legs and height (`NEUTRAL_FRAME` in `bodyShapeFor`, `js/playground3d-humanoid-logic.js`). It is baked like the builds, as its own variant (`_variant(model, build, neutral)`, key `male|<build>|n`), and its collision footprint shrinks with it. Every character still on the default Neutral looks slimmer after this change. Tests: `test/humanoid.test.js`.
+
 ### 2026-09-23 — Realistic body: every hair style, facial-hair style and eye shape
 
 The second parity pass. The realistic body squeezed 14 hair styles onto 5 pack meshes (Spiky, Curly and Side-part looked the same; so did Cap, Mohawk and Buzz), drew one full beard for all five facial-hair styles (in the hair colour, ignoring `facialHairColor`), and ignored eye shape. Now every option has its own look:
