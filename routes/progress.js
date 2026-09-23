@@ -42,6 +42,8 @@ function sanitizeMemory(m) {
   if (!m || typeof m !== 'object') return null;
   if (typeof m.url !== 'string' || m.url.length === 0 || m.url.length > MAX_URL_LEN) return null;
   if (!CLOUDINARY_PREFIX || !m.url.startsWith(CLOUDINARY_PREFIX)) return null;
+  // Real Cloudinary URLs never contain quotes, angle brackets or whitespace.
+  if (/["'<>\s]/.test(m.url)) return null;
   const type = (m.type === 'video' || m.type === 'image') ? m.type : 'image';
   const caption = typeof m.caption === 'string' ? m.caption.slice(0, MAX_CAPTION_LEN) : '';
   return { url: m.url, type, caption };

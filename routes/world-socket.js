@@ -25,6 +25,8 @@ const Stay = require('../js/world-stay-logic');
 const Project = require('../models/Project');
 const ProjectStay = require('../models/ProjectStay');
 const Message = require('../models/Message');
+const Friend = require('../models/Friend');
+const { friendFilter } = require('../server/friendship');
 const MessagingLogic = require('../js/messaging-logic');
 const { PUNCH_COOLDOWN_MS } = require('../js/playground3d-physics');
 
@@ -75,6 +77,18 @@ const homePlayers = new Map();
 // voiceHomes maps ownerId → Set<socketId> for per-home voice meshes (room-wide).
 const voiceWorld = new Set();
 const voiceHomes = new Map();
+
+// Drop socket `sid` from a home's voice mesh and tell the rest of the room.
+// Called whenever a socket leaves a home (leave, switch, retired duplicate
+// tab, disconnect) so dead ids never pile up in voiceHomes.
+function leaveHomeVoice(io, sid, ownerId) {
+  const set = voiceHomes.get(ownerId);
+  if (!set || !set.delete(sid)) return;
+  io.to('home:' + ownerId).except(sid).emit('voice:peer-left', { id: sid });
+  if (set.size === 0) voiceHomes.delete(ownerId);
+  const s = io.sockets.sockets.get(sid);
+  if (s && s.data.voiceScope === 'home') s.data.voiceScope = null;
+}
 
 // ── Island stay accounting (keeper of each project house) ──
 // Every world player carries `stay` (js/world-stay-logic.js) while standing
@@ -516,6 +530,12 @@ module.exports = (io) => {
       const m = ChatLogic.normalizeMessage(raw);
       if (!m.ok) return reply(m);
       const now = Date.now();
+      // Spam floor on every channel (same as the /messages DM route). Project
+      // and whisper have no 10s cooldown, but a script must not be able to
+      // flood an island or someone's inbox.
+      if (now - (p.lastAnyChat || 0) < MessagingLogic.C.SEND_FLOOR_MS) {
+        return reply({ ok: false, error: 'cooldown', retryInMs: MessagingLogic.C.SEND_FLOOR_MS - (now - (p.lastAnyChat || 0)) });
+      }
       const limited = ChatLogic.hasCooldown(m.channel);
       if (limited) {
         const retryInMs = ChatLogic.cooldownLeft(p.lastChat, now);
@@ -525,6 +545,7 @@ module.exports = (io) => {
       // An accepted message counts as island activity (people chatting stand
       // still) — rejected sends above never reach this line.
       touchStay(p, now);
+      p.lastAnyChat = now;
       // Sender always gets its own copy (so its log shows what went out).
       const out = { channel: m.channel, id: socket.id, username: p.username, text: m.text };
       if (m.channel === 'world') {
@@ -665,6 +686,16 @@ module.exports = (io) => {
       } catch (_) { return; }
       if (!owner) return;
 
+      // Only the owner and their accepted friends may enter — same rule as
+      // GET /api/friends/by-username. Without it any logged-in user could
+      // join, chat and (via voice) see the IPs of everyone inside.
+      if (String(owner._id) !== String(socket.data.userId)) {
+        try {
+          const ok = await Friend.exists(friendFilter(socket.data.userId, owner._id));
+          if (!ok) return;
+        } catch (_) { return; }
+      }
+
       const ownerId  = String(owner._id);
       const username = String(socket.data.username || 'Anon').slice(0, MAX_USERNAME);
       const character = sanitizeCharacter(raw && raw.character);
@@ -674,6 +705,7 @@ module.exports = (io) => {
       // old room first.
       const prev = homePlayers.get(socket.id);
       if (prev && prev.ownerId !== ownerId) {
+        leaveHomeVoice(io, socket.id, prev.ownerId);
         socket.leave('home:' + prev.ownerId);
         socket.to('home:' + prev.ownerId).emit('home:left', { id: socket.id });
         homePlayers.delete(socket.id);
@@ -697,6 +729,7 @@ module.exports = (io) => {
       for (const [sid, other] of homePlayers) {
         if (sid !== socket.id && other.userId === socket.data.userId && other.ownerId === ownerId) {
           homePlayers.delete(sid);
+          leaveHomeVoice(io, sid, ownerId);
           io.to('home:' + ownerId).emit('home:left', { id: sid });
         }
       }
@@ -753,6 +786,7 @@ module.exports = (io) => {
       const p = homePlayers.get(socket.id);
       if (!p) return;
       homePlayers.delete(socket.id);
+      leaveHomeVoice(io, socket.id, p.ownerId);
       socket.leave('home:' + p.ownerId);
       socket.to('home:' + p.ownerId).emit('home:left', { id: socket.id });
     });
@@ -896,13 +930,7 @@ module.exports = (io) => {
       if (voiceWorld.delete(socket.id)) {
         socket.to('world').emit('voice:peer-left', { id: socket.id });
       }
-      if (home) {
-        const set = voiceHomes.get(home.ownerId);
-        if (set && set.delete(socket.id)) {
-          socket.to('home:' + home.ownerId).emit('voice:peer-left', { id: socket.id });
-          if (set.size === 0) voiceHomes.delete(home.ownerId);
-        }
-      }
+      if (home) leaveHomeVoice(io, socket.id, home.ownerId);
     });
   });
 };

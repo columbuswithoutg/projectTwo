@@ -9,11 +9,15 @@ const randBetween = (min, max) => min + Math.random() * (max - min);
 
 // Escape HTML for safe interpolation into innerHTML. User-controlled strings
 // (usernames, project titles from friends' data, memory captions, file URLs)
-// must go through this before reaching template literals.
+// must go through this before reaching template literals. Quotes are escaped
+// too, so the result is safe inside quoted attributes (alt="…", src="…").
 function esc(str) {
-  const d = document.createElement('div');
-  d.textContent = str == null ? '' : String(str);
-  return d.innerHTML;
+  return (str == null ? '' : String(str))
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /************************************************

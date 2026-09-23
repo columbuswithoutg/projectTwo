@@ -26,11 +26,18 @@ class WatchState {
             watchedWith: entry.watchedWith || [],
             memories: entry.memories || []
           }));
+          this.loadFailed = false;
           return;
         }
       } catch (e) {
-        console.warn("Falling back to localStorage:", e);
+        console.warn("Progress load failed:", e);
       }
+      // Never fall back to localStorage for a logged-in user: it's usually
+      // empty, and the next save would overwrite the real server copy with it.
+      // Block saves until a successful load.
+      this.loadFailed = true;
+      toast("Couldn't load your progress. Changes won't be saved until you reload.", { type: 'error', duration: 6000 });
+      return;
     }
     try {
       const saved = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY) || "{}");
@@ -71,6 +78,10 @@ class WatchState {
   _persistNow() {
     if (this.readonly) return;
     if (Auth.isLoggedIn()) {
+      if (this.loadFailed) {
+        toast("Not saved — your progress didn't load. Please reload the page.", 'error');
+        return;
+      }
       const watchedProjects = [...this.data.entries()].map(([projectId, val]) => ({
         projectId,
         count: val.count,
@@ -88,7 +99,12 @@ class WatchState {
         },
         body: JSON.stringify({ watchedProjects }),
         keepalive: true
-      }).catch(e => console.warn("Save failed:", e));
+      }).then(res => {
+        if (!res.ok) toast("Couldn't save your progress. Please try again.", 'error');
+      }).catch(e => {
+        console.warn("Save failed:", e);
+        toast("Couldn't save your progress. Check your connection.", 'error');
+      });
     } else {
       const obj = Object.fromEntries(this.data);
       localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(obj));
@@ -133,6 +149,7 @@ class WatchState {
     // Respect readonly — "Clear Progress" while viewing a friend's map must
     // not wipe our own account's server-side progress.
     if (this.readonly) return;
+    if (Auth.isLoggedIn() && this.loadFailed) return;
     this.data.clear();
     if (Auth.isLoggedIn()) {
       fetch(`${API}/progress/save`, {
