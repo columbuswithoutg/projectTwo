@@ -6,6 +6,7 @@ const Friend = require('../models/Friend');
 const { friendFilter, getFriendIds } = require('../server/friendship');
 const auth = require('../middleware/auth');
 const feed = require('../server/feed');
+const { housesForRooms } = require('../server/house');
 
 // Escape regex metacharacters so a user can't pass ".*" to dump everyone
 // or "(a+)+$" to hang the DB with catastrophic backtracking (ReDoS).
@@ -187,7 +188,7 @@ router.get('/by-username/:username', auth, async (req, res) => {
     }
     try {
         const friend = await User.findOne({ username })
-            .select('_id username profilePicture watchedProjects walkers homeLayout homeCharacter');
+            .select('_id username profilePicture watchedProjects walkers homeLayout homeCharacter homeHouses');
         if (!friend) return res.status(404).json({ error: 'User not found' });
 
         const friendship = await Friend.findOne(friendFilter(req.user.id, friend._id));
@@ -212,7 +213,9 @@ router.get('/by-username/:username', auth, async (req, res) => {
             watchedProjects,
             walkers: friend.walkers || [],
             homeLayout: friend.homeLayout || { rooms: [] },
-            homeCharacter: friend.homeCharacter || null
+            homeCharacter: friend.homeCharacter || null,
+            // Read-only here: only the owner can save a room (routes/profile.js).
+            homeHouses: housesForRooms(friend.homeHouses, friend.homeLayout && friend.homeLayout.rooms)
         });
     } catch (err) {
         console.error('by-username error', err);

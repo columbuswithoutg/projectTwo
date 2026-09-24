@@ -417,7 +417,9 @@ const CONFIG_RULES = {
   'walker.pauseMax':   { min: 500, max: 8000 },
   'encounter.dist':    { min: 10, max: 80 },
   'encounter.cooldown':{ min: 5000, max: 120000 },
-  'fight.spawnChance': { min: 0, max: 1 }
+  'fight.spawnChance': { min: 0, max: 1 },
+  'world.maxProps':    { min: 1, max: 60, integer: true },
+  'world.homeMaxProps':{ min: 1, max: 60, integer: true }
 };
 
 // Per-NPC body type (world.npcBodyTypes): keys must be real NPC ids, values a

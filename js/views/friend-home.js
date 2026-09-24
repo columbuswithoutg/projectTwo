@@ -84,6 +84,7 @@ const FriendHomeView = (() => {
     if (!character) character = Playground3D.defaultCharacter();
 
     Playground3D.init(stage, character, layout);
+    Playground3D.setHouses(friend.homeHouses || {});   // their decorated rooms — view only
 
     if (typeof Multiplayer !== 'undefined' && Multiplayer.start) {
       _mp = Multiplayer.start({

@@ -35,7 +35,9 @@ const AdminConfigSchema = new mongoose.Schema({
     npcBodyTypes: { type: Map, of: { type: Number, min: 0, max: 1 }, default: {} },
     // How many props a keeper may place in one house (WorldHouseLogic
     // C.MAX_PROPS is the fallback when no setting exists).
-    maxProps: { type: Number, default: 20, min: 1, max: 60 }
+    maxProps: { type: Number, default: 20, min: 1, max: 60 },
+    // Same cap for each room of a player's /home (edited by the owner only).
+    homeMaxProps: { type: Number, default: 20, min: 1, max: 60 }
   },
   // Bumped on every save so the client can detect staleness. Currently
   // unused for cache busting (the boot-time fetch is fresh per page load),
@@ -53,7 +55,7 @@ AdminConfigSchema.statics.defaults = function () {
     encounter: { dist: 26, cooldown: 30000 },
     fight:     { spawnChance: 0.15 },
     flags:     { fightsEnabled: false, dialoguesEnabled: true, worldEventStonesEnabled: false },
-    world:     { npcBodyTypes: {}, maxProps: 20 }
+    world:     { npcBodyTypes: {}, maxProps: 20, homeMaxProps: 20 }
   };
 };
 

@@ -572,6 +572,17 @@ const Playground3D = (() => {
     return { x: r.gx * CELL, z: r.gy * CELL };
   }
 
+  const CELL_SIDES = [
+    { name: 'N', dx: 0, dy: -1 },   // smaller Z
+    { name: 'S', dx: 0, dy:  1 },
+    { name: 'W', dx: -1, dy: 0 },   // smaller X
+    { name: 'E', dx:  1, dy: 0 }
+  ];
+
+  // Each room is also a house record in _worldNodes (home: true), so the
+  // owner's decorations (_houses, from /api/profile/home-layout) reuse the
+  // /world wall / roof / prop builders. A room with no saved house keeps the
+  // classic look: poster-tinted walls, no roof. See _buildHomeRoom.
   function _buildLayoutScene() {
     if (!_layout || !_layout.rooms.length) return;
     const THREE = window.THREE;
@@ -611,17 +622,53 @@ const Playground3D = (() => {
         });
       }
 
-      const sides = [
-        { dx: 0, dy: -1 },   // N (smaller Z)
-        { dx: 0, dy:  1 },   // S
-        { dx: -1, dy: 0 },   // W (smaller X)
-        { dx:  1, dy: 0 }    // E
-      ];
-      for (const s of sides) {
-        const hasNeighbor = cellSet.has(`${room.gx + s.dx},${room.gy + s.dy}`);
-        _buildCellSideWalls(room, s, hasNeighbor, wallMat);
+      // Doorways (world coords along each side), the same centred gaps
+      // _buildCellSideWalls cuts — the house editor shows them as fixed.
+      const hasNbr = {};
+      const openings = { N: [], S: [], E: [], W: [] };
+      for (const s of CELL_SIDES) {
+        hasNbr[s.name] = cellSet.has(`${room.gx + s.dx},${room.gy + s.dy}`);
+        const mid = s.dx === 0 ? cx : cz;
+        if (hasNbr[s.name]) openings[s.name].push([mid - DOORWAY_WIDTH / 2, mid + DOORWAY_WIDTH / 2]);
       }
+      const node = {
+        home: true, room, hasNbr, openings, plainWallMat: wallMat,
+        mesh: floor, project: project || { id: room.projectId },
+        wallHeight: _houseHeight(room.projectId),
+        house: _houses.get(room.projectId) || null,
+        ceiling: null, walls: [], decor: [], props: [], lockIcons: [], roofExtra: null, roofTopY: 0
+      };
+      _worldNodes.set(room.projectId, node);
+      _buildHomeRoom(node);
     }
+  }
+
+  // (Re)build one home room: the full house when it has one, else the plain
+  // poster-tinted walls. Called on build and whenever the editor previews.
+  function _buildHomeRoom(node) {
+    const THREE = window.THREE;
+    if (node.house) {
+      if (!node.ceiling) {
+        const ROOF_T = 0.2;   // same slab as a /world house
+        node.ceiling = new THREE.Mesh(new THREE.BoxGeometry(CELL, ROOF_T, CELL), _ceilingMat(node.project.phase));
+        node.ceiling.position.set(node.mesh.position.x, node.wallHeight + ROOF_T / 2 - 0.02, node.mesh.position.z);
+        _scene.add(node.ceiling);
+      }
+      _applyRoof(node);
+      _buildNodeWalls(node);
+      _buildProps(node);
+      return;
+    }
+    _teardownNodeWalls(node);
+    if (node.ceiling) {
+      _applyRoof(node);                  // drops the pitched part + any owned roof material
+      _scene.remove(node.ceiling);
+      node.ceiling.geometry.dispose();   // the material is the shared per-phase one
+      node.ceiling = null;
+      node.roofTopY = 0;
+    }
+    _buildProps(node);                   // no house → clears the props
+    for (const s of CELL_SIDES) _buildCellSideWalls(node.room, s, node.hasNbr[s.name], node.plainWallMat, node.walls);
   }
 
   // For a given cell + side, produce either one full wall or two flanking
@@ -629,7 +676,7 @@ const Playground3D = (() => {
   // neighboring cell. Walls are inset by WALL_THICKNESS/2 on the cell's
   // interior side so each cell owns its own walls without overlapping
   // a neighbor's (each room sees its own theme color on its walls).
-  function _buildCellSideWalls(room, side, hasDoorway, mat) {
+  function _buildCellSideWalls(room, side, hasDoorway, mat, sink) {
     const HALF = CELL / 2;
     const T = WALL_THICKNESS;
     const cx = room.gx * CELL;
@@ -651,8 +698,9 @@ const Playground3D = (() => {
       sizeX   = T;                 sizeZ   = CELL;
     }
 
+    const add = (x, z, sx, sz) => { const w = _addWallMesh(x, z, sx, sz, mat); if (sink) sink.push(w); };
     if (!hasDoorway) {
-      _addWallMesh(centerX, centerZ, sizeX, sizeZ, mat);
+      add(centerX, centerZ, sizeX, sizeZ);
       return;
     }
 
@@ -664,11 +712,11 @@ const Playground3D = (() => {
     const halfDoor = DOORWAY_WIDTH / 2;
     const segOffset = halfDoor + segLen / 2;
     if (horizontal) {
-      _addWallMesh(centerX - segOffset, centerZ, segLen, sizeZ, mat);
-      _addWallMesh(centerX + segOffset, centerZ, segLen, sizeZ, mat);
+      add(centerX - segOffset, centerZ, segLen, sizeZ);
+      add(centerX + segOffset, centerZ, segLen, sizeZ);
     } else {
-      _addWallMesh(centerX, centerZ - segOffset, sizeX, segLen, mat);
-      _addWallMesh(centerX, centerZ + segOffset, sizeX, segLen, mat);
+      add(centerX, centerZ - segOffset, sizeX, segLen);
+      add(centerX, centerZ + segOffset, sizeX, segLen);
     }
   }
 
@@ -680,10 +728,12 @@ const Playground3D = (() => {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     _scene.add(mesh);
-    _walls.push({
+    const aabb = {
       minX: cx - sx / 2, maxX: cx + sx / 2,
       minZ: cz - sz / 2, maxZ: cz + sz / 2
-    });
+    };
+    _walls.push(aabb);
+    return { mesh, aabb };
   }
 
   // ── character rig ──
@@ -1329,7 +1379,7 @@ const Playground3D = (() => {
   const SEAT_REACH = 0.9;
   function _scanSeats() {
     _seatCandidate = null;
-    if (!_player || _mode !== 'world') return;
+    if (!_player) return;
     const px = _player.position.x, pz = _player.position.z;
     let best = null, bestD2 = SEAT_REACH * SEAT_REACH;
     for (const node of _worldNodes.values()) {
@@ -1522,7 +1572,7 @@ const Playground3D = (() => {
       if (_falling || _velY !== 0 || _player.position.y > g) {
         // Ceiling cap: under a building roof / in a doorway, keep the head below
         // the lintel so a jump can't punch through. Outdoors cap is null → full hop.
-        const cap = (_mode === 'world' && !_falling)
+        const cap = !_falling
           ? _ceilingCap(_player.position.x, _player.position.z)
           : null;
         const s = PG3DPhysics.stepVertical(_player.position.y, _velY, dt, JUMP.GRAVITY, cap, g);
@@ -1635,6 +1685,10 @@ const Playground3D = (() => {
       _tickStones(dt, now);
       _tickRoomCeilings();
       _tickHUD(now);
+    } else {
+      // /home: decorated rooms have roofs and may have chairs / beds.
+      _tickRoomCeilings();
+      _tickSeatPrompt();
     }
 
     _updateCamera();
@@ -1924,6 +1978,7 @@ const Playground3D = (() => {
     const headTop = PLAYER_HEAD * ((_player && _player.scale && _player.scale.y) || 1);
     let cap = null;
     for (const node of _worldNodes.values()) {
+      if (!node.ceiling) continue;   // an undecorated /home room is open to the sky
       if (Math.abs(x - node.mesh.position.x) > halfP + M) continue;
       if (Math.abs(z - node.mesh.position.z) > halfP + M) continue;
       const H = node.wallHeight || WORLD.WALL_HEIGHT;
@@ -1946,10 +2001,13 @@ const Playground3D = (() => {
   // editor closes; the normal orbit resumes untouched.
   let _showcase = null;            // { projectId, since }
   const SHOWCASE = { RADIUS: 24, ABOVE_ROOF: 4, TURN: 0.22 /* rad/s */, START: Math.PI * 0.8 };
+  // /home rooms sit wall to wall: a closer, higher orbit looks down into the
+  // room over its neighbours (whose roofs hide meanwhile, _tickRoomCeilings).
+  const HOME_SHOWCASE = { RADIUS: 14, ABOVE_ROOF: 9 };
 
   function setHouseShowcase(projectId) {
     const node = _worldNodes.get(projectId);
-    if (!node || _mode !== 'world') { _showcase = null; return false; }
+    if (!node) { _showcase = null; return false; }
     _showcase = { projectId, since: performance.now() };
     _occlusion.reset();            // nothing stays faded from the follow camera
     return true;
@@ -1965,7 +2023,9 @@ const Playground3D = (() => {
         const t = (performance.now() - _showcase.since) / 1000;
         const a = SHOWCASE.START + t * SHOWCASE.TURN;
         const topY = node.roofTopY || ((node.wallHeight || WORLD.WALL_HEIGHT) + 0.2);
-        _camera.position.set(cx + Math.sin(a) * SHOWCASE.RADIUS, topY + SHOWCASE.ABOVE_ROOF, cz + Math.cos(a) * SHOWCASE.RADIUS);
+        const R = node.home ? HOME_SHOWCASE.RADIUS : SHOWCASE.RADIUS;
+        const up = node.home ? HOME_SHOWCASE.ABOVE_ROOF : SHOWCASE.ABOVE_ROOF;
+        _camera.position.set(cx + Math.sin(a) * R, topY + up, cz + Math.cos(a) * R);
         _camera.lookAt(cx, (node.wallHeight || WORLD.WALL_HEIGHT) * 0.45, cz);
         return;
       }
@@ -2147,8 +2207,7 @@ const Playground3D = (() => {
       // the skyline varies but a given house stays the same height every visit.
       // Stored on the node so _buildNodeWalls reuses the exact same value. (The
       // footprint stays uniform — roads/apron/collision all assume PLATFORM_W.)
-      const hr = _nodeRand(p.id);
-      const wallHeight = WORLD.WALL_HEIGHT * (WORLD.HEIGHT_VAR_MIN + (WORLD.HEIGHT_VAR_MAX - WORLD.HEIGHT_VAR_MIN) * hr);
+      const wallHeight = _houseHeight(p.id);
 
       // Ceiling — a solid roof sitting just above the wall tops so the room reads
       // as an enclosed building from outside. It's hide-able (see
@@ -2276,13 +2335,9 @@ const Playground3D = (() => {
     return { side, coord: Math.max(cx - HALF + 0.5, Math.min(cx + HALF - 0.5, exitX)) };
   }
 
-  // Build (or rebuild) the four-sided wall fence around a platform with
-  // doorways cut at every connecting-road exit. Removing old walls also
-  // drops them from the _walls collision list so the player can pass.
-  function _buildNodeWalls(node) {
-    const THREE = window.THREE;
-    // Tear down any existing walls first — they may be stale because
-    // a neighbor just unlocked and we now need a new doorway there.
+  // Remove a node's walls (+ their collision boxes), lock icons and decor.
+  // Dropping the walls from the _walls collision list lets the player pass.
+  function _teardownNodeWalls(node) {
     if (node.walls && node.walls.length) {
       const aabbsToDrop = new Set();
       for (const w of node.walls) {
@@ -2313,6 +2368,16 @@ const Playground3D = (() => {
       for (const d of node.decor) _disposeDecor(d);
     }
     node.decor = [];
+  }
+
+  // Build (or rebuild) the four-sided wall fence around a platform with
+  // doorways cut at every connecting-road exit (or, for a /home room, at
+  // every doorway to a neighbouring room).
+  function _buildNodeWalls(node) {
+    const THREE = window.THREE;
+    // Tear down any existing walls first — they may be stale because
+    // a neighbor just unlocked and we now need a new doorway there.
+    _teardownNodeWalls(node);
 
     // We always build the four-sided fence (even with no unlocked
     // connections) so that sides facing a still-locked neighbor read as a
@@ -2373,27 +2438,34 @@ const Playground3D = (() => {
       if (w < 0.3) return;                       // degenerate / fully-clipped gap
       const mid = (gStart + gEnd) / 2;
       const outSign = (sideName === 'N' || sideName === 'W') ? -1 : 1;
-      const line = fixed - outSign * T / 2;      // wall plane on the fixed axis
-      const jW = 0.3, jD = T + 0.12;             // jamb cross-section
+      const wallLine = fixed - outSign * T / 2;  // wall plane on the fixed axis
+      // A /home doorway leads into the next room, whose own frame sits back to
+      // back with this one: keep the jambs on this side of the shared edge (no
+      // overlapping faces to flicker), skip the stoop, and put the lamp + sign
+      // on the inside, facing into the room.
+      const home = !!node.home;
+      const jW = 0.3, jD = home ? T + 0.06 : T + 0.12;   // jamb cross-section
+      const line = home ? wallLine - outSign * 0.03 : wallLine;
+      const face = home ? -outSign : outSign;    // which way the lamp + sign face
       const lintelY = H - 0.225;                 // top of opening (platform top = y=0)
       if (horizontal) {
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(jW, H, jD), trimMat()), gStart, wallY, line);
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(jW, H, jD), trimMat()), gEnd,   wallY, line);
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(w + jW, 0.45, jD), trimMat()), mid, lintelY, line);
-        addDecor(new THREE.Mesh(new THREE.BoxGeometry(w, 0.16, 1.2), stoopMat()), mid, 0.06, line + outSign * 0.7);
-        const lamp = _makeLamp(gEnd + 0.4, line + outSign * 0.5, lampColor);
+        if (!home) addDecor(new THREE.Mesh(new THREE.BoxGeometry(w, 0.16, 1.2), stoopMat()), mid, 0.06, line + outSign * 0.7);
+        const lamp = _makeLamp(gEnd + 0.4, wallLine + face * 0.5, lampColor);
         if (lamp) { _scene.add(lamp); node.decor.push(lamp); }
         // Sign on the lintel's outer face; N faces -z (π), S faces +z (0).
-        placeSign(mid, lintelY, line + outSign * (jD / 2 + 0.02), outSign < 0 ? Math.PI : 0, w);
+        placeSign(mid, lintelY, line + face * (jD / 2 + 0.02), face < 0 ? Math.PI : 0, w);
       } else {
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(jD, H, jW), trimMat()), line, wallY, gStart);
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(jD, H, jW), trimMat()), line, wallY, gEnd);
         addDecor(new THREE.Mesh(new THREE.BoxGeometry(jD, 0.45, w + jW), trimMat()), line, lintelY, mid);
-        addDecor(new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, w), stoopMat()), line + outSign * 0.7, 0.06, mid);
-        const lamp = _makeLamp(line + outSign * 0.5, gEnd + 0.4, lampColor);
+        if (!home) addDecor(new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, w), stoopMat()), line + outSign * 0.7, 0.06, mid);
+        const lamp = _makeLamp(wallLine + face * 0.5, gEnd + 0.4, lampColor);
         if (lamp) { _scene.add(lamp); node.decor.push(lamp); }
         // W faces -x (-π/2), E faces +x (π/2).
-        placeSign(line + outSign * (jD / 2 + 0.02), lintelY, mid, outSign < 0 ? -Math.PI / 2 : Math.PI / 2, w);
+        placeSign(line + face * (jD / 2 + 0.02), lintelY, mid, face < 0 ? -Math.PI / 2 : Math.PI / 2, w);
       }
     }
 
@@ -2553,6 +2625,7 @@ const Playground3D = (() => {
   // merge is correct. Shared by _buildNodeWalls and getHouseLayout so the
   // editor's picture of the fixed door is exactly what gets built.
   function _sideOpenings(node) {
+    if (node.home) return node.openings;   // doorways to the neighbouring rooms
     const sides = { N: [], S: [], E: [], W: [] };
     for (const other of _getConnectedNodes(node.project.id)) {
       const { side, coord } = _doorwayOnSide(node, other);
@@ -2624,8 +2697,9 @@ const Playground3D = (() => {
     buildSide('W', cz - HALF, cz + HALF, cx - HALF, false);
     buildSide('E', cz - HALF, cz + HALF, cx + HALF, false);
     // No doorway to hang the sign on (lone island): centre it high on the
-    // south wall's outer face instead.
-    placeSign(cx, H - 0.6, cz + HALF + 0.03, 0, 3.2);
+    // south wall's outer face instead — the inner face for a one-room /home.
+    if (node.home) placeSign(cx, H - 0.6, cz + HALF - T - 0.03, Math.PI, 3.2);
+    else placeSign(cx, H - 0.6, cz + HALF + 0.03, 0, 3.2);
 
     // Hang a lock icon on the wall facing each still-locked neighbor — at the
     // spot where the road WOULD exit once that neighbor is unlocked. This hints
@@ -2650,6 +2724,7 @@ const Playground3D = (() => {
   // Looks both at this node's prerequisites and at projects that list this
   // node as a prerequisite, returning each locked neighbor's world position.
   function _getLockedNeighbors(node) {
+    if (node.home) return [];   // /home rooms have no road graph
     if (typeof projects === 'undefined' || !Array.isArray(projects)) return [];
     const me = node.project;
     const seen = new Set();
@@ -2687,6 +2762,13 @@ const Playground3D = (() => {
       if (node.project.id === showcased) {
         node.ceiling.visible = true;
         if (node.roofExtra) node.roofExtra.visible = true;
+        continue;
+      }
+      // A /home room is being edited: its neighbours' roofs step aside so
+      // the close showcase camera can see it.
+      if (showcased && node.home) {
+        node.ceiling.visible = false;
+        if (node.roofExtra) node.roofExtra.visible = false;
         continue;
       }
       // Hide the solid roof of the room the player is inside so they can see in;
@@ -2773,6 +2855,12 @@ const Playground3D = (() => {
     const s = String(id);
     for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
     return (h >>> 0) / 4294967296;
+  }
+
+  // Per-house wall height, jittered from the project id (~3.7u .. 5.6u) — the
+  // same for its /world house and for a decorated /home room of that project.
+  function _houseHeight(id) {
+    return WORLD.WALL_HEIGHT * (WORLD.HEIGHT_VAR_MIN + (WORLD.HEIGHT_VAR_MAX - WORLD.HEIGHT_VAR_MIN) * _nodeRand(id));
   }
 
   // Roof tint for a house, keyed by its MCU phase so the town reads as colored
@@ -3057,6 +3145,7 @@ const Playground3D = (() => {
 
   function _applyHouseToNode(node, house) {
     node.house = house || null;
+    if (node.home) { _buildHomeRoom(node); return; }
     _applyRoof(node);
     _buildNodeWalls(node);
     _buildProps(node);
@@ -3068,7 +3157,7 @@ const Playground3D = (() => {
     const next = new Map();
     for (const [id, h] of Object.entries(map || {})) if (h) next.set(id, h);
     _houses = next;
-    if (_mode !== 'world' || !_scene) return;
+    if (!_scene) return;   // not built yet — the scene reads _houses when it is
     for (const node of _worldNodes.values()) {
       const prev = node.house || null;
       const now = _houses.get(node.project.id) || null;
@@ -3081,7 +3170,7 @@ const Playground3D = (() => {
   function applyHouse(projectId, house) {
     if (house) _houses.set(projectId, house); else _houses.delete(projectId);
     const node = _worldNodes.get(projectId);
-    if (node && _mode === 'world' && _scene) _applyHouseToNode(node, house || null);
+    if (node && _scene) _applyHouseToNode(node, house || null);
   }
 
   function getHouse(projectId) {
@@ -3279,6 +3368,10 @@ const Playground3D = (() => {
     return Math.abs(dx * r.cosA - dz * r.sinA) <= r.halfW &&
            Math.abs(dx * r.sinA + dz * r.cosA) <= r.halfL;
   }
+  // /home: the projectId of the room the player stands in, or null.
+  function roomAtPlayer() {
+    return _player ? _nodeAt(_player.position.x, _player.position.z, CELL / 2) : null;
+  }
   function _nodeAt(x, z, half) {
     for (const [id, node] of _worldNodes) {
       if (Math.abs(x - node.mesh.position.x) <= half && Math.abs(z - node.mesh.position.z) <= half) return id;
@@ -3370,8 +3463,15 @@ const Playground3D = (() => {
       }
     }
 
-    // "Sit (E)" / "Lie down (E)" over the nearest chair / bed; hidden while
-    // seated. The touch button mirrors it (setInteractLabel).
+    _tickSeatPrompt();
+
+    // Local player's own chat bubbles, over the head.
+    _tickLocalBubbles();
+  }
+
+  // "Sit (E)" / "Lie down (E)" over the nearest chair / bed; hidden while
+  // seated. The touch button mirrors it (setInteractLabel).
+  function _tickSeatPrompt() {
     _scanSeats();
     const cand = (!_seat && _seatCandidate) ? _seatCandidate : null;
     if (cand && _hudLayer) {
@@ -3391,8 +3491,9 @@ const Playground3D = (() => {
     if (_input && _input.setInteractLabel) {
       _input.setInteractLabel(_seat ? 'Stand up' : (cand ? (cand.kind === 'bed' ? 'Lie down' : 'Sit') : null));
     }
+  }
 
-    // Local player's own chat bubbles, over the head.
+  function _tickLocalBubbles() {
     if (_localBubbleEls.length && _player) {
       _hudAnchor.set(_player.position.x, _player.position.y + 2.05 * (_player.scale.y || 1), _player.position.z);
       let stack = 0.4;
@@ -4506,7 +4607,7 @@ const Playground3D = (() => {
     // Voice-chat surface — distance attenuation + speaking indicator.
     getRemotePlayers, setRemotePlayerSpeaking,
     // Keeper-decorated houses (GET /api/world/houses + world:house pushes).
-    setHouses, applyHouse, getHouse, getHouseLayout, setHouseKeepers,
+    setHouses, applyHouse, getHouse, getHouseLayout, setHouseKeepers, roomAtPlayer,
     setHouseShowcase, clearHouseShowcase,
     // Debugging aids for the browser preview (same idea as PG3DHumanoid._debug):
     // live NPC records, the local knockdown deadline, and a raw teleport so a

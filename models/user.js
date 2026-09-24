@@ -106,7 +106,12 @@ const UserSchema = new mongoose.Schema({
       }],
       default: []
     }
-  }
+  },
+  // Decoration of each /home room, keyed by the room's projectId — the same
+  // house shape as a /world house (models/WorldHouse.js). Always written
+  // through WorldHouseLogic.validateHouse (routes/profile.js), so Mixed is
+  // safe. Kept when a room leaves the layout, so putting it back restores it.
+  homeHouses: { type: mongoose.Schema.Types.Mixed, default: {} }
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', UserSchema);

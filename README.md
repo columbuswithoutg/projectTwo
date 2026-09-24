@@ -73,6 +73,8 @@ projectOne/
 │   ├── contentLoader.js       vm.runInNewContext loader of static JS files,
 │   │                          used as the Mongo-down fallback for /api/content/*
 │   ├── feed.js                Feed post creation/merge helpers (server-side only)
+│   ├── house.js               toHouse / portraitOk / housesForRooms — shared by the
+│   │                          /world house routes and the /home room routes
 │   └── friendship.js          friendFilter() / getFriendIds() — the ONE place the
 │                              "accepted friend incl. legacy type-less docs" query lives
 │
@@ -108,6 +110,7 @@ projectOne/
     ├── playground3d-avatar.js  Avatar mesh builders + shared geometry cache + hero-gear material
     ├── playground3d-input.js   Keyboard / mouse / touch / joystick input for the 3D views
     ├── playground3d-occlusion.js See-through walls/roofs between the camera and the player
+    ├── house-editor.js        Decorate-a-house panel — /world keeper houses and /home rooms
     ├── config.js              Frontend-only app config (CONFIG)
     ├── world-config.js        CONFIG_WORLD — display geometry (NOT content)
     ├── state.js               Watch-progress in-memory store + persist
@@ -310,6 +313,19 @@ Brief summary of what changed and why.
 ```
 
 ---
+
+### 2026-09-24 — Decorate your /home rooms, admin prop cap now saves
+
+**Bug fix:** Admin → Config → "Props per house (/world)" showed "Saved" but snapped back to 20. `CONFIG_RULES` in `routes/admin.js` never listed `world.maxProps` (the 2026-09-22 entry below says it did), so the PUT silently dropped it. It's there now, with `world.homeMaxProps`.
+
+**/home room editor:** every room of your home can now be decorated with the full /world house editor — wall / roof / trim / lamp colours, roof shape + chimney, wall finish, window style and placement, sign, portrait, and props (Rotate / Remove, bed, bookshelf runs…). Only the owner can edit; friends visiting `/friend/:u/home` see the result. Rooms nobody decorated look exactly as before (poster-tinted walls, no roof).
+- **Shared editor** — the panel moved out of `js/views/world.js` into `js/house-editor.js` (`HouseEditor.open(opts)` → cancel fn; wording, prop cap, save URL and keeper hooks are options). world.js keeps a thin `_openHouseEditor` wrapper. Closing with Escape / a backdrop click now restores the saved house too (only ✕ / Cancel did).
+- **Storage + routes** — `User.homeHouses` (Mixed, keyed by the room's projectId, always written through `validateHouse`). `GET /api/profile/home-layout` adds `homeHouses` + `houseMaxProps`; new `PUT /api/profile/home-houses/:projectId` (own rooms only → 404 otherwise; portrait must be on the app's Cloudinary); `GET /api/friends/by-username/:u` adds read-only `homeHouses`. A room taken out of the layout keeps its house in storage (hidden on read), so putting it back restores it. `server/house.js` holds the helpers both route files use.
+- **Engine** (`js/playground3d.js`) — each /home room is now a node in `_worldNodes` (`home: true`, `openings` = its 2 u doorways), so `getHouse` / `applyHouse` / `getHouseLayout` / showcase / seats reuse the /world code. `_buildHomeRoom` builds the full house (ceiling slab, `_applyRoof`, `_buildNodeWalls`, `_buildProps`) or the classic plain walls (`_buildCellSideWalls` now reports its meshes so they can be swapped). Wall teardown is `_teardownNodeWalls`; house height is `_houseHeight(id)` (same for a project's /world house and /home room). Home door frames keep their jambs on their own side of the shared edge, skip the stoop, and put the lamp + sign inside. Roof hiding, the jump ceiling cap and sit / lie now run in /home too; the showcase orbit is closer and higher there and hides the neighbouring roofs. New export `roomAtPlayer()`.
+- **Home UI** (`js/views/home.js`) — ✎ menu → **Decorate <room>** opens the editor for the room you stand in. `js/views/friend-home.js` applies the friend's houses.
+- **Admin** — new slider "Props per room (/home)" (`world.homeMaxProps`, default 20, 1..60) in `models/AdminConfig.js`, `routes/admin.js`, `routes/config.js` (→ `window.APP_WORLD.homeMaxProps`), `js/views/admin/config.js`.
+- Known looks: pitched roofs of adjacent decorated rooms overlap by ~1 u (reads as one joined roof); a decorated room (3.7–5.6 u) next to a plain one (3.0 u) shows a step; outer-wall windows look out on sky. Friends already in your home see a save on their next visit.
+- `scripts/build.mjs` — `js/house-editor.js` in the `world` chunk, `HouseEditor` in `EXPECT_GLOBALS`.
 
 ### 2026-09-23 — Realistic body: Neutral is leaner than Masculine
 

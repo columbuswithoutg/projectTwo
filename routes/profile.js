@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/user');
 const auth = require('../middleware/auth');
+const HouseLogic = require('../js/world-house-logic');
+const House = require('../server/house');
 
 // GET /api/profile — returns stats + profilePicture
 router.get('/', auth, async (req, res) => {
@@ -184,15 +186,38 @@ function isLayoutConnected(rooms) {
 }
 
 router.get('/home-layout', auth, async (req, res) => {
-  const user = await User.findById(req.user.id).select('homeLayout watchedProjects').lean();
+  const user = await User.findById(req.user.id).select('homeLayout watchedProjects homeHouses').lean();
   if (!user) return res.status(404).json({ error: 'User not found' });
   const watchedIds = (user.watchedProjects || []).map(e => e.projectId);
+  const homeLayout = user.homeLayout || { rooms: [] };
   res.json({
-    homeLayout: user.homeLayout || { rooms: [] },
+    homeLayout,
     maxRooms: Math.floor(watchedIds.length / 2),
     watchedCount: watchedIds.length,
-    watchedIds
+    watchedIds,
+    homeHouses: House.housesForRooms(user.homeHouses, homeLayout.rooms),
+    houseMaxProps: await House.homeMaxPropsNow()
   });
+});
+
+// Save the decoration of one of your own /home rooms. Owner-only by
+// construction: it only ever writes the caller's own document.
+router.put('/home-houses/:projectId', auth, async (req, res) => {
+  const projectId = String(req.params.projectId || '').slice(0, 64);
+  if (!/^[\w-]+$/.test(projectId)) return res.status(400).json({ error: 'Bad room id' });
+  const user = await User.findById(req.user.id).select('homeLayout').lean();
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const rooms = (user.homeLayout && user.homeLayout.rooms) || [];
+  if (!rooms.some(r => r.projectId === projectId)) {
+    return res.status(404).json({ error: "That room isn't in your home" });
+  }
+  const v = HouseLogic.validateHouse(req.body, { maxProps: await House.homeMaxPropsNow() });
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  if (!House.portraitOk(v.house.portrait)) {
+    return res.status(400).json({ error: 'portrait must be an image uploaded through this app' });
+  }
+  await User.updateOne({ _id: req.user.id }, { $set: { ['homeHouses.' + projectId]: v.house } });
+  res.json({ house: v.house });
 });
 
 router.put('/home-layout', auth, async (req, res) => {

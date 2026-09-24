@@ -13,7 +13,8 @@
     { path: 'encounter.dist',     label: 'Encounter distance (px)', min: 10,    max: 80,     step: 1,    default: 26 },
     { path: 'encounter.cooldown', label: 'Encounter cooldown (ms)', min: 5000,  max: 120000, step: 1000, default: 30000 },
     { path: 'fight.spawnChance',  label: 'Fight spawn chance',      min: 0,     max: 1,      step: 0.05, default: 0.15 },
-    { path: 'world.maxProps',     label: 'Props per house (/world)', min: 1,     max: 60,     step: 1,    default: 20, section: 'world' }
+    { path: 'world.maxProps',     label: 'Props per house (/world)', min: 1,     max: 60,     step: 1,    default: 20, section: 'world' },
+    { path: 'world.homeMaxProps', label: 'Props per room (/home)', min: 1,     max: 60,     step: 1,    default: 20, section: 'world' }
   ];
 
   // Mirror of Playground.BODY_TYPES (index = stored value).
@@ -208,7 +209,8 @@
         flags:     cfg.flags,
         world:     {
           npcBodyTypes: { ...(cfg.world?.npcBodyTypes || {}) },
-          maxProps: Number.isFinite(cfg.world?.maxProps) ? cfg.world.maxProps : 20
+          maxProps: Number.isFinite(cfg.world?.maxProps) ? cfg.world.maxProps : 20,
+          homeMaxProps: Number.isFinite(cfg.world?.homeMaxProps) ? cfg.world.homeMaxProps : 20
         }
       };
       try {

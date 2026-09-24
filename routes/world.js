@@ -22,23 +22,9 @@ const User = require('../models/user');
 const HouseLogic = require('../js/world-house-logic');
 const AdminConfig = require('../models/AdminConfig');
 const WorldSocket = require('./world-socket');
+const { toHouse, portraitOk } = require('../server/house');
 
 const HOUSE_FIELDS = 'projectId wallColor roofColor trimColor lampColor sign portrait props roofStyle roofDir chimney wallStyle windowStyle windows';
-
-// Same rule as memories (routes/progress.js): a portrait must live on the
-// app's own Cloudinary account, so a keeper can't hang a tracker/phishing
-// URL in a house every visitor's browser then fetches.
-const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
-const CLOUDINARY_PREFIX = CLOUD_NAME ? `https://res.cloudinary.com/${CLOUD_NAME}/` : '';
-
-// Reading never truncates: a stored house keeps every prop even if the
-// admin later lowered the cap (the keeper just can't add more). The grid
-// itself is the only ceiling here.
-const READ_CAP = HouseLogic.C.GRID_MAX * HouseLogic.C.GRID_MAX;
-function toHouse(doc) {
-  const { house } = HouseLogic.validateHouse(doc || {}, { maxProps: READ_CAP });
-  return house;
-}
 
 // Admin-set prop cap (AdminConfig world.maxProps), cached like the flags in
 // world-socket.js so GET / PUT never wait on Mongo for it. Falls back to the
@@ -109,7 +95,7 @@ router.put('/houses/:projectId', auth, async (req, res) => {
   const projectId = String(req.params.projectId || '').slice(0, 64);
   const v = HouseLogic.validateHouse(req.body, { maxProps: await maxPropsNow() });
   if (!v.ok) return res.status(400).json({ error: v.error });
-  if (v.house.portrait && (!CLOUDINARY_PREFIX || !v.house.portrait.startsWith(CLOUDINARY_PREFIX))) {
+  if (!portraitOk(v.house.portrait)) {
     return res.status(400).json({ error: 'portrait must be an image uploaded through this app' });
   }
   if (!(await Project.exists({ id: projectId }))) return res.status(404).json({ error: 'Unknown project' });

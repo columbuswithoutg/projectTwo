@@ -72,7 +72,7 @@ const CHUNKS = {
     'js/playground3d-avatar.js', 'js/playground3d-input.js', 'js/playground3d-occlusion.js',
     'js/playground3d-props.js', 'js/playground3d-house.js', 'js/pg-orientation.js',
     'js/playground3d.js',
-    'js/home-socket.js', 'js/voice-chat.js',
+    'js/home-socket.js', 'js/voice-chat.js', 'js/house-editor.js',
     'js/views/customize.js', 'js/views/home.js', 'js/views/world.js', 'js/views/friend-home.js'
   ],
   admin: [
@@ -91,7 +91,7 @@ const EXPECT_GLOBALS = {
   core: ['Router', 'Auth', 'state', 'Chunks', 'CONFIG', 'API', 'Walkers', 'WALKER_DIALOGUES',
          'FriendView', 'WatchOrderView', 'AppView', 'LoginView', 'HomeEditView', 'esc', 'toast',
          'MessagesView', 'ReportsView', 'Messages', 'MessagesBadge', 'Reports', 'showReportDialog'],
-  world: ['Playground', 'Playground3D', 'Multiplayer', 'VoiceManager', 'PG3DProps',
+  world: ['Playground', 'Playground3D', 'Multiplayer', 'VoiceManager', 'PG3DProps', 'HouseEditor',
           'HomeView', 'CustomizeView', 'WorldView', 'FriendHomeView'],
   admin: ['AdminView']
 };

@@ -102,6 +102,8 @@ const HomeView = {
     let layout = { rooms: [] };
     let maxRooms = 0;
     let watchedCount = 0;
+    let houses = {};
+    let houseMaxProps = null;
     try {
       const [charRes, layoutRes] = await Promise.all([
         fetch(`${API}/profile/home-character`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } }),
@@ -116,6 +118,8 @@ const HomeView = {
         layout = data.homeLayout || { rooms: [] };
         maxRooms = data.maxRooms || 0;
         watchedCount = data.watchedCount || 0;
+        houses = data.homeHouses || {};
+        houseMaxProps = Number.isFinite(data.houseMaxProps) ? data.houseMaxProps : null;
       }
     } catch (_) {
       // Network/server issue — fall through with empty layout and defaults
@@ -128,6 +132,8 @@ const HomeView = {
     HomeView._layout = layout;
     HomeView._maxRooms = maxRooms;
     HomeView._watchedCount = watchedCount;
+    HomeView._houses = houses;
+    HomeView._houseMaxProps = houseMaxProps;
 
     if (!layout.rooms || layout.rooms.length === 0) {
       HomeView._renderEmptyHome();
@@ -163,6 +169,7 @@ const HomeView = {
 
     const localChar = HomeView._character || Playground3D.defaultCharacter();
     Playground3D.init(HomeView._stage, localChar, layout);
+    Playground3D.setHouses(houses);   // decorated rooms (read once the scene builds)
 
     if (typeof Multiplayer !== 'undefined' && Multiplayer.start) {
       HomeView._mp = Multiplayer.start({
@@ -317,6 +324,9 @@ const HomeView = {
     menu.innerHTML = `
       <button type="button" class="pg-menu-item" data-action="character">Edit character</button>
       <button type="button" class="pg-menu-item" data-action="rooms">Edit rooms</button>
+      ${HomeView._layout && HomeView._layout.rooms && HomeView._layout.rooms.length
+        ? `<button type="button" class="pg-menu-item" data-action="room">Decorate ${esc(HomeView._roomTitle(HomeView._currentRoom()))}</button>`
+        : ''}
     `;
     document.body.appendChild(menu);
     HomeView._menuEl = menu;
@@ -334,6 +344,9 @@ const HomeView = {
       } else if (action === 'rooms') {
         HomeView._closeEditMenu();
         Router.go('/home/edit');
+      } else if (action === 'room') {
+        HomeView._closeEditMenu();
+        HomeView._openRoomEditor(HomeView._currentRoom());
       }
     });
   },
@@ -343,6 +356,39 @@ const HomeView = {
       HomeView._menuEl.parentNode.removeChild(HomeView._menuEl);
     }
     HomeView._menuEl = null;
+  },
+
+  // The room the player stands in (in a doorway: none → the first room).
+  _currentRoom() {
+    const id = Playground3D.roomAtPlayer && Playground3D.roomAtPlayer();
+    return id || HomeView._layout.rooms[0].projectId;
+  },
+
+  _roomTitle(id) {
+    const p = (typeof projects !== 'undefined' && Array.isArray(projects)) ? projects.find(q => q.id === id) : null;
+    return (p && p.title) || id;
+  },
+
+  // The /world house editor, pointed at one of your own rooms. Saves go to
+  // your profile; friends who visit see the room, but only you can edit it.
+  _openRoomEditor(projectId) {
+    if (typeof HouseEditor === 'undefined' || !projectId) return;
+    if (HomeView._roomEditorClose) HomeView._roomEditorClose();
+    HomeView._roomEditorClose = HouseEditor.open({
+      projectId,
+      title: HomeView._roomTitle(projectId),
+      unit: 'room',
+      subtitle: 'Decorate this room — friends who visit your home see what you save. While this panel is open the camera looks down on the room, so every change shows as you make it. Doorways to the next room stay where they are.',
+      doorTitle: 'Doorway to the next room — fixed',
+      doorToast: 'That’s a doorway to the next room — it can’t be moved.',
+      maxProps: () => Number.isFinite(HomeView._houseMaxProps) ? HomeView._houseMaxProps
+        : (window.APP_WORLD && Number.isFinite(window.APP_WORLD.homeMaxProps)) ? window.APP_WORLD.homeMaxProps
+        : WorldHouseLogic.C.MAX_PROPS,
+      saveUrl: `${API}/profile/home-houses/${encodeURIComponent(projectId)}`,
+      savedToast: 'Room saved — friends who visit will see it.',
+      onSaved: (house) => { if (HomeView._houses) HomeView._houses[projectId] = house; },
+      onClose: () => { HomeView._roomEditorClose = null; }
+    });
   },
 
   _openBuilder({ firstTime = false } = {}) {
@@ -363,6 +409,7 @@ const HomeView = {
   unmount() {
     HomeView._loadSeq = (HomeView._loadSeq || 0) + 1;   // cancel an in-flight _loadAndStart
     HomeView._closeEditMenu();
+    if (HomeView._roomEditorClose) { try { HomeView._roomEditorClose(); } catch (_) {} HomeView._roomEditorClose = null; }
     if (HomeView._onDocClick) {
       document.removeEventListener('click', HomeView._onDocClick);
       HomeView._onDocClick = null;
@@ -396,5 +443,6 @@ const HomeView = {
     HomeView._stage = null;
     HomeView._character = null;
     HomeView._layout = null;
+    HomeView._houses = null;
   }
 };
