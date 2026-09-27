@@ -275,13 +275,15 @@ router.post('/complete', auth, async (req, res) => {
 
   // Finished: count the watch and keep the composer's photos/videos on the
   // project too (they show in the project popup's Memories).
-  const mems = payload.post.memories.map(m => ({ ...m, uploadedAt: new Date() }));
+  const finishedAt = new Date();
+  const mems = payload.post.memories.map(m => ({ ...m, uploadedAt: finishedAt }));
   const pull = { $pull: { watchSessions: { projectId } } };
   let updated = await User.findOneAndUpdate(
     { _id: req.user.id, watchSessions: sessionMatch, 'watchedProjects.projectId': projectId },
     {
       ...pull,
       $inc: { 'watchedProjects.$[w].count': 1 },
+      $set: { 'watchedProjects.$[w].lastWatchedAt': finishedAt },
       ...(mems.length ? { $push: { 'watchedProjects.$[w].memories': { $each: mems, $slice: -MAX_MEMORIES_PER_ENTRY } } } : {})
     },
     { ...opts, arrayFilters: [{ 'w.projectId': projectId, 'w.count': { $lt: 9999 } }] }
@@ -294,7 +296,7 @@ router.post('/complete', auth, async (req, res) => {
         'watchedProjects.projectId': { $ne: projectId },
         $expr: { $lt: [{ $size: { $ifNull: ['$watchedProjects', []] } }, MAX_WATCHED_PROJECTS] }
       },
-      { ...pull, $push: { watchedProjects: { projectId, count: 1, watchedWith: [], memories: mems } } },
+      { ...pull, $push: { watchedProjects: { projectId, count: 1, watchedWith: [], memories: mems, lastWatchedAt: finishedAt } } },
       opts
     ).lean();
   }

@@ -4,6 +4,9 @@ const WatchEntrySchema = new mongoose.Schema({
   projectId: { type: String, required: true },
   count: { type: Number, default: 1 },
   watchedWith: [{ type: String, default: [] }], // stores usernames
+  // When the latest watch finished (POST /api/progress/complete). Null on
+  // entries from before it existed. Drives the board's "Last N watched".
+  lastWatchedAt: { type: Date, default: null },
   memories: [{
     url: { type: String },
     type: { type: String, enum: ['image', 'video'] },

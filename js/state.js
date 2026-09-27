@@ -27,7 +27,8 @@ class WatchState {
     payload.watchedProjects.forEach(entry => this.data.set(entry.projectId, {
       count: entry.count,
       watchedWith: entry.watchedWith || [],
-      memories: entry.memories || []
+      memories: entry.memories || [],
+      lastWatchedAt: entry.lastWatchedAt ? new Date(entry.lastWatchedAt).getTime() : null
     }));
     this.sessions.clear();
     (payload.watchSessions || []).forEach(s => this.sessions.set(s.projectId, {
@@ -146,6 +147,20 @@ class WatchState {
   isWatched(id) { return this.data.has(id); }
 
   getCount(id) { return this.data.get(id)?.count || 0; }
+
+  // ms timestamp of the latest finished watch, or null. Entries from before
+  // the server stamped it fall back to their newest memory upload.
+  lastWatchedAt(id) {
+    const e = this.data.get(id);
+    if (!e) return null;
+    if (e.lastWatchedAt) return e.lastWatchedAt;
+    let best = null;
+    for (const m of e.memories || []) {
+      const t = m.uploadedAt ? new Date(m.uploadedAt).getTime() : NaN;
+      if (Number.isFinite(t) && (best === null || t > best)) best = t;
+    }
+    return best;
+  }
 
   getMemories(id) { return this.data.get(id)?.memories || []; }
 

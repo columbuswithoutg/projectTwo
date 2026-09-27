@@ -22,6 +22,85 @@ const BoardView = (() => {
 
   const byRelease = (a, b) => String(a.release || '').localeCompare(String(b.release || ''));
 
+  /* ---------- Column filters: what Not started and Done show ----------
+   * Not started picks from the unlocked projects (all / movies / series /
+   * one phase — only choices that have something in them are offered).
+   * Done shows the last N watched, newest first, or everything in release
+   * order. Choices are a per-browser preference. */
+  const PREFS_KEY = 'mcu.board.filters';
+  const DONE_LIMITS = [1, 5, 10, 20];
+  let _prefs = { todo: 'all', done: 'all' };
+  try { Object.assign(_prefs, JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')); } catch (e) { /* defaults */ }
+
+  function savePrefs() {
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(_prefs)); } catch (e) { /* not persisted */ }
+  }
+
+  function todoOptions(list) {
+    const movies = list.filter(p => !state.episodesOf(p)).length;
+    const series = list.length - movies;
+    const opts = [{ value: 'all', label: `All unlocked (${list.length})` }];
+    if (movies && series) {
+      opts.push({ value: 'movies', label: `Movies (${movies})` });
+      opts.push({ value: 'series', label: `Series (${series})` });
+    }
+    const phases = new Map();
+    list.forEach(p => { if (p.phase) phases.set(p.phase, (phases.get(p.phase) || 0) + 1); });
+    if (phases.size > 1) {
+      [...phases].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
+        .forEach(([ph, n]) => opts.push({ value: `phase:${ph}`, label: `${ph} (${n})` }));
+    }
+    return opts;
+  }
+
+  function filterTodo(list, key) {
+    if (key === 'movies') return list.filter(p => !state.episodesOf(p));
+    if (key === 'series') return list.filter(p => state.episodesOf(p));
+    if (key.startsWith('phase:')) return list.filter(p => p.phase === key.slice(6));
+    return list;
+  }
+
+  function doneOptions(list) {
+    const opts = [];
+    DONE_LIMITS.forEach(n => {
+      if (n === 1 || n < list.length) opts.push({ value: `last${n}`, label: n === 1 ? 'Last watched' : `Last ${n} watched` });
+    });
+    opts.push({ value: 'all', label: `All done (${list.length})` });
+    return opts;
+  }
+
+  // Newest watch first; entries with no known time go last, newest release first.
+  function byLastWatched(a, b) {
+    const ta = state.lastWatchedAt(a.id), tb = state.lastWatchedAt(b.id);
+    if (ta && tb) return tb - ta;
+    if (ta || tb) return ta ? -1 : 1;
+    return byRelease(b, a);
+  }
+
+  function filterDone(list, key) {
+    const m = /^last(\d+)$/.exec(key);
+    if (!m) return list.slice().sort(byRelease);
+    return list.slice().sort(byLastWatched).slice(0, Number(m[1]));
+  }
+
+  function agoLabel(t) {
+    const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const h = Math.round(mins / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.round(h / 24);
+    if (d < 30) return `${d}d ago`;
+    return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function filterSelect(col, opts, current) {
+    return `
+      <select class="kb-filter" data-filter="${col.key}" aria-label="Show in ${col.title}" title="Choose what ${col.title} shows">
+        ${opts.map(o => `<option value="${esc(o.value)}"${o.value === current ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
+      </select>`;
+  }
+
   function tabBar() {
     return `
       <div class="view-tabs" role="tablist" aria-label="View mode">
@@ -32,17 +111,19 @@ const BoardView = (() => {
       </div>`;
   }
 
-  function cardHtml(p) {
+  function cardHtml(p, opts = {}) {
     const phase = p.phase ? `<span class="kb-phase">${esc(p.phase)}</span>` : '';
     const series = state.episodesOf(p) ? '<span class="kb-tag">Series</span>' : '';
     const rewatch = state.getSession(p.id)?.rewatch ? '<span class="kb-tag kb-tag-accent">Rewatch</span>' : '';
+    const t = opts.showWatchedAt ? state.lastWatchedAt(p.id) : null;
+    const ago = t ? `<span class="kb-tag kb-tag-time" title="${esc(new Date(t).toLocaleString())}">Watched ${agoLabel(t)}</span>` : '';
     return `
       <article class="kb-card" data-id="${esc(p.id)}" tabindex="-1">
         <button type="button" class="kb-grip" aria-label="Drag ${esc(p.title)}" title="Drag to move">⋮⋮</button>
         <div class="kb-poster">${p.image ? `<img src="${esc(CONFIG.IMAGE_BASE + p.image)}" alt="" loading="lazy" />` : ''}</div>
         <div class="kb-body">
           <h3 class="kb-title">${esc(p.title)}</h3>
-          <div class="kb-tags">${phase}${series}${rewatch}</div>
+          <div class="kb-tags">${phase}${series}${rewatch}${ago}</div>
           <div class="kb-controls"></div>
         </div>
       </article>`;
@@ -62,22 +143,50 @@ const BoardView = (() => {
     }
     groups.todo.sort(byRelease);
     groups.progress.sort(byRelease);
-    groups.done.sort(byRelease);
 
+    // Resolve each filter against what's there now; a stale choice (the
+    // phase you picked is all watched) falls back to showing everything.
+    const options = { todo: todoOptions(groups.todo), done: doneOptions(groups.done) };
+    for (const k of ['todo', 'done']) {
+      if (!options[k].some(o => o.value === _prefs[k])) _prefs[k] = 'all';
+    }
+    const shown = {
+      todo: filterTodo(groups.todo, _prefs.todo),
+      progress: groups.progress,
+      done: filterDone(groups.done, _prefs.done)
+    };
+    const showWatchedAt = _prefs.done !== 'all';
+
+    const focused = document.activeElement?.dataset?.filter;
     const banner = state.atTimerCap()
       ? `<p class="kb-banner" role="status">⏱ ${WatchState.MAX_RUNNING_TIMERS} timers are running — finish or cancel one to start something else.</p>`
       : '';
-    board.innerHTML = banner + COLUMNS.map(c => `
+    board.innerHTML = banner + COLUMNS.map(c => {
+      const total = groups[c.key].length;
+      const list = shown[c.key];
+      const count = list.length < total ? `${list.length}/${total}` : total;
+      const control = options[c.key] && total ? filterSelect(c, options[c.key], _prefs[c.key]) : `<span class="kb-hint">${c.hint}</span>`;
+      return `
       <section class="kb-col" data-col="${c.key}" aria-label="${c.title}">
         <header class="kb-col-head">
           <h2>${c.title}</h2>
-          <span class="kb-count">${groups[c.key].length}</span>
-          <span class="kb-hint">${c.hint}</span>
+          <span class="kb-count" title="${list.length} shown of ${total}">${count}</span>
+          ${control}
         </header>
         <div class="kb-list">
-          ${groups[c.key].length ? groups[c.key].map(cardHtml).join('') : `<p class="kb-empty">${c.empty}</p>`}
+          ${list.length ? list.map(p => cardHtml(p, { showWatchedAt: c.key === 'done' && showWatchedAt })).join('') : `<p class="kb-empty">${c.empty}</p>`}
         </div>
-      </section>`).join('');
+      </section>`;
+    }).join('');
+
+    board.querySelectorAll('select[data-filter]').forEach(sel => {
+      sel.addEventListener('change', () => {
+        _prefs[sel.dataset.filter] = sel.value;
+        savePrefs();
+        render();
+      });
+    });
+    if (focused) board.querySelector(`select[data-filter="${focused}"]`)?.focus();
 
     board.querySelectorAll('.kb-card').forEach(card => {
       const p = state.byId.get(card.dataset.id);

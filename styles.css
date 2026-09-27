@@ -8417,6 +8417,26 @@ textarea.admin-input { min-height: 80px; resize: vertical; font-family: inherit;
   text-align: center;
 }
 .kb-hint { margin-left: auto; font-size: var(--font-size-xs); color: var(--text-3); }
+.kb-filter {
+  margin-left: auto;
+  align-self: center;
+  max-width: 55%;
+  min-height: 32px;
+  padding: 4px 26px 4px 10px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-full);
+  background: var(--surface-1) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.kb-filter:hover { border-color: var(--text-3); }
+.kb-filter:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .kb-list {
   display: flex;
   flex-direction: column;
@@ -8481,6 +8501,7 @@ textarea.admin-input { min-height: 80px; resize: vertical; font-family: inherit;
   color: var(--text-2);
 }
 .kb-tag-accent { background: var(--gold-01); color: var(--accent-text); }
+.kb-tag-time { background: transparent; color: var(--text-3); padding-left: 2px; }
 .kb-grip {
   position: absolute;
   top: var(--space-2);
