@@ -197,22 +197,31 @@
       const imageField = AdminView._cmsField('Image filename', 'text', item.image || '', { placeholder: 'e.g. ironman.png' });
 
       // Prerequisites: render as a multi-select of existing project IDs.
-      const prereqWrap = document.createElement('label');
-      prereqWrap.className = 'admin-cms-field';
-      prereqWrap.innerHTML = '<span class="admin-cms-flabel">Prerequisites</span>';
-      const prereqSelect = document.createElement('select');
-      prereqSelect.multiple = true;
-      prereqSelect.className = 'admin-cms-input admin-cms-multi';
-      prereqSelect.size = Math.min(8, Math.max(3, Editor._items.length));
-      Editor._items.forEach(p => {
-        if (p.id === item.id) return; // can't depend on self
-        const opt = document.createElement('option');
-        opt.value = p.id;
-        opt.textContent = `${p.id} — ${p.title}`;
-        if (Array.isArray(item.prerequisites) && item.prerequisites.includes(p.id)) opt.selected = true;
-        prereqSelect.appendChild(opt);
-      });
-      prereqWrap.appendChild(prereqSelect);
+      // Required ones lock the project; recommended ones are only suggested
+      // (dashed road + "optional" list) and never lock it.
+      const prereqMulti = (label, selected) => {
+        const wrap = document.createElement('label');
+        wrap.className = 'admin-cms-field';
+        wrap.innerHTML = `<span class="admin-cms-flabel">${label}</span>`;
+        const select = document.createElement('select');
+        select.multiple = true;
+        select.className = 'admin-cms-input admin-cms-multi';
+        select.size = Math.min(8, Math.max(3, Editor._items.length));
+        Editor._items.forEach(p => {
+          if (p.id === item.id) return; // can't depend on self
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = `${p.id} — ${p.title}`;
+          if (Array.isArray(selected) && selected.includes(p.id)) opt.selected = true;
+          select.appendChild(opt);
+        });
+        wrap.appendChild(select);
+        return { wrap, select };
+      };
+      const { wrap: prereqWrap, select: prereqSelect } =
+        prereqMulti('Required prerequisites (lock until watched)', item.prerequisites);
+      const { wrap: recWrap, select: recSelect } =
+        prereqMulti('Recommended prerequisites (optional — never lock)', item.recommendedPrerequisites);
 
       const runtime = Editor._runtimeFields(item);
 
@@ -220,7 +229,7 @@
         idField.wrap, titleField.wrap, releaseField.wrap, phaseField.wrap,
         runtime.wrap,
         posField.wrap, locationField.wrap, imageField.wrap,
-        prereqWrap
+        prereqWrap, recWrap
       );
 
       const actions = document.createElement('div');
@@ -245,6 +254,12 @@
       saveBtn.addEventListener('click', async () => {
         const rt = runtime.value();
         if (rt.error) { AdminView.toast(rt.error, 'error'); return; }
+        const required = Array.from(prereqSelect.selectedOptions).map(o => o.value);
+        const recommended = Array.from(recSelect.selectedOptions).map(o => o.value);
+        const both = recommended.filter(id => required.includes(id));
+        if (both.length) {
+          AdminView.toast(`${both.join(', ')} kept as required only (picked in both lists)`, 'info');
+        }
         const payload = {
           runtime: rt.runtime,
           episodes: rt.episodes,
@@ -254,7 +269,8 @@
           phase: phaseField.get(),
           location: locationField.get(),
           image: imageField.get().trim(),
-          prerequisites: Array.from(prereqSelect.selectedOptions).map(o => o.value)
+          prerequisites: required,
+          recommendedPrerequisites: recommended.filter(id => !required.includes(id))
         };
         // Only a brand-new project (placed via an empty-cell click on the
         // board) carries an explicit position. Editing an existing project

@@ -639,6 +639,14 @@ function sanitizeProject(body, requireId = true) {
   } else {
     out.prerequisites = [];
   }
+  // Recommended = optional, never locks. Drop anything already required (or
+  // self) so the same id can't be both.
+  const selfId = body.id;
+  out.recommendedPrerequisites = Array.isArray(body.recommendedPrerequisites)
+    ? [...new Set(body.recommendedPrerequisites)]
+        .filter(p => typeof p === 'string' && ID_REGEX.test(p) && p !== selfId && !out.prerequisites.includes(p))
+        .slice(0, PREREQ_MAX)
+    : [];
   out.phase = trimStr(body.phase || '', 40);
   // Board position is owned by the CMS board editor (PUT
   // /content/projects/bulk/positions). Omit the keys entirely when the
@@ -674,7 +682,7 @@ router.post('/content/projects', async (req, res) => {
 });
 
 router.put('/content/projects/:id', async (req, res) => {
-  const { out, errors } = sanitizeProject(req.body || {}, false);
+  const { out, errors } = sanitizeProject({ ...(req.body || {}), id: req.params.id }, false);
   if (Object.keys(errors).length) return badRequest(res, 'Validation failed', errors);
   const before = await Project.findOne({ id: req.params.id }).lean();
   if (!before) return res.status(404).json({ error: 'Not found' });

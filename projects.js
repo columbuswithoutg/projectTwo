@@ -48,7 +48,7 @@ var projects = [
   { id: "drstrange2", title: "Doctor Strange in the Multiverse of Madness", release: "2022-05-06", runtime: 126, prerequisites: ["wandavision", "nowayhome"], phase: "Phase 4", gridX: -1, gridY: 16, location: "multiverse", watched: false, image: "docstrange2.png" },
   { id: "msmarvel", title: "Ms. Marvel", release: "2022-06-08", episodes: [48, 48, 47, 46, 45, 50], prerequisites: ["endgame"], phase: "Phase 4", gridX: 1, gridY: 16, location: "karachi", watched: false, image: "msmarvel.png" },
   { id: "thor4", title: "Thor: Love and Thunder", release: "2022-07-08", runtime: 119, prerequisites: ["endgame"], phase: "Phase 4", gridX: -2, gridY: 16, location: "new-asgard", watched: false, image: "thor4.png" },
-  { id: "shehulk", title: "She-Hulk: Attorney at Law", release: "2022-08-18", episodes: [36, 30, 32, 32, 34, 33, 34, 30, 37], prerequisites: ["endgame", "daredevil3"], phase: "Phase 4", gridX: 3, gridY: 16, location: "nyc", watched: false, image: "shehulk.png" },
+  { id: "shehulk", title: "She-Hulk: Attorney at Law", release: "2022-08-18", episodes: [36, 30, 32, 32, 34, 33, 34, 30, 37], prerequisites: ["endgame"], recommendedPrerequisites: ["daredevil3"], phase: "Phase 4", gridX: 3, gridY: 16, location: "nyc", watched: false, image: "shehulk.png" },
   { id: "blackpanther2", title: "Black Panther: Wakanda Forever", release: "2022-11-11", runtime: 161, prerequisites: ["endgame"], phase: "Phase 4", gridX: 2, gridY: 17, location: "wakanda", watched: false, image: "blackPanther2.png" },
   { id: "antman3", title: "Ant-Man and the Wasp: Quantumania", release: "2023-02-17", runtime: 125, prerequisites: ["loki1"], phase: "Phase 5", gridX: -5, gridY: 17, location: "quantum", watched: false, image: "ant-man3.png" },
   { id: "guardiansholiday", title: "The Guardians of the Galaxy Holiday Special", release: "2022-11-25", runtime: 44, prerequisites: ["endgame"], phase: "Phase 5", gridX: -3, gridY: 17, location: "knowhere", watched: false, image: "guardians-holiday.png" },
@@ -72,6 +72,13 @@ var projects = [
   { id: "cap4", title: "Captain America: Brave New World", release: "2025-02-14", runtime: 118, prerequisites: ["falconws"], phase: "Phase 5", gridX: 6, gridY: 21, location: "dc", watched: false, image: "cap4.png" },
   { id: "thunderbolts", title: "Thunderbolts*", release: "2025-05-02", runtime: 127, prerequisites: ["blackwidow", "falconws"], phase: "Phase 5", gridX: 5, gridY: 21, location: "nyc", watched: false, image: "thunderbolts.png" },
   { id: "fantasticfour", title: "The Fantastic Four: First Steps", release: "2025-07-25", runtime: 115, prerequisites: [], phase: "Phase 6", gridX: 1, gridY: 21, location: "nyc", watched: false, image: "fantasticfour.png" },
+
+  // ROAD TO DOOMSDAY — Marvel's official "watch before Avengers: Doomsday"
+  // list. The Fox X-Men films have no prerequisites (always available); the
+  // whole list is Doomsday's required prerequisites.
+  { id: "xmen1", title: "X-Men", release: "2000-07-14", runtime: 104, prerequisites: [], phase: "Phase 1", gridX: -4, gridY: 1, location: "multiverse", watched: false, image: "xmen1.png" },
+  { id: "xmen2", title: "X2", release: "2003-05-02", runtime: 133, prerequisites: ["xmen1"], phase: "Phase 1", gridX: -4, gridY: 2, location: "multiverse", watched: false, image: "xmen2.png" },
+  { id: "doomsday", title: "Avengers: Doomsday", release: "2026-12-18", runtime: 150, prerequisites: ["xmen1", "xmen2", "cap1", "avengers1", "infinitywar", "endgame", "loki2", "shangchi", "nowayhome", "blackpanther2", "cap4", "deadpool3", "drstrange2", "thunderbolts", "fantasticfour"], phase: "Phase 6", gridX: 0, gridY: 23, location: "multiverse", watched: false, image: "doomsday.png" },
 
   // NETFLIX SAGA (MCU STREET-LEVEL ERA) — anchored in the five NYC boroughs.
   // Hell's Kitchen: Daredevil / Jessica Jones (Alias Investigations is on

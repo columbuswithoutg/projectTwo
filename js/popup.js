@@ -42,6 +42,21 @@ ${watchedWith.length ? (() => {
     })() : ''}
   ` : ''}
 
+${(() => {
+    const rec = visibleRecommended(project);
+    return rec.length ? `
+  <div class="popup-recommended">
+    <p class="popup-recommended-label">Recommended first <span>(optional)</span></p>
+    <ul class="goal-req-list">
+      ${rec.map(r => `
+        <li class="goal-req is-optional${r.watched ? ' is-met' : ''}">
+          <span class="goal-req-mark">${r.watched ? '✓' : '○'}</span>
+          <span class="goal-req-title">${esc(r.title)}</span>
+        </li>`).join('')}
+    </ul>
+  </div>` : '';
+  })()}
+
 ${!isReadonly ? `
   <div class="popup-watch-controls"></div>
   ${isWatched ? `

@@ -500,6 +500,32 @@ class OrderRenderer {
         const d = `M ${fromX} ${fromY} L ${toX} ${toY}`;
         this._buildFlowRoad(d).forEach(el => this.svg.appendChild(el));
       });
+
+      // Recommended (optional) prerequisites: a faint dashed trail, not a
+      // road — they never lock anything, so they shouldn't read as a path
+      // you're forced down.
+      (child.recommendedPrerequisites || []).forEach(parentId => {
+        const parent = state.byId?.get(parentId);
+        if (!parent || !this._isShown(parent)) return;
+        const cFrom = this._cellPos(parent);
+        const cTo = this._cellPos(child);
+        const dx = cTo.x - cFrom.x;
+        const dy = cTo.y - cFrom.y;
+        const len = Math.hypot(dx, dy);
+        if (len === 0) return;
+        const ux = dx / len;
+        const uy = dy / len;
+        const exit = this._aabbExitDist(halfW, halfH, ux, uy);
+        const trail = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        trail.setAttribute("d", `M ${cFrom.x + ux * exit} ${cFrom.y + uy * exit} L ${cTo.x - ux * exit} ${cTo.y - uy * exit}`);
+        trail.setAttribute("class", "flow-road-recommended");
+        trail.setAttribute("stroke", "rgba(201, 162, 39, 0.45)");
+        trail.setAttribute("stroke-width", "3");
+        trail.setAttribute("stroke-dasharray", "8 10");
+        trail.setAttribute("stroke-linecap", "round");
+        trail.setAttribute("fill", "none");
+        this.svg.appendChild(trail);
+      });
     });
   }
 

@@ -1957,6 +1957,35 @@ body.auth-page {
   color: var(--text-3);
 }
 
+/* Recommended (optional) prerequisites — muted, never counted as required. */
+.goal-req.is-optional .goal-req-mark {
+  color: var(--text-3);
+}
+
+.goal-req.is-optional.is-met .goal-req-mark {
+  color: var(--color-health-good);
+}
+
+.goal-rec-label,
+.popup-recommended-label {
+  margin: 8px 0 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.popup-recommended-label span {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.popup-recommended {
+  margin: 4px 0 10px;
+}
+
 /* Brief highlight when a goal's requirement card is scrolled into view. */
 .flow-cell.goal-highlight .node {
   outline: 3px solid var(--color-primary);
@@ -4717,6 +4746,9 @@ body.fight-active .flow-wrapper {
   stroke-width: 1.5;
   fill: none;
   pointer-events: none;
+}
+.admin-board-edge.is-recommended {
+  stroke-dasharray: 5 5;
 }
 .admin-board-arrow-tip {
   fill: rgba(var(--ink), 0.4);

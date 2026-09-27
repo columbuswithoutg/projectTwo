@@ -212,6 +212,15 @@ const isPhaseUnlocked = (p) => {
   return unlockerId && state.isWatched(unlockerId);
 };
 
+// Optional "watch this first" suggestions for a project, limited to titles
+// the user can already see (watched or revealed) so nothing unreached is
+// named. Never used by the unlock rules.
+const visibleRecommended = (p) => (p.recommendedPrerequisites || [])
+  .map(id => state.byId?.get(id))
+  .filter(r => r && (state.isWatched(r.id) || isRevealed(r)))
+  .map(r => ({ id: r.id, title: r.title || r.id, watched: state.isWatched(r.id) }));
+
+// Required prerequisites only — recommendedPrerequisites never lock a project.
 const allPrereqs = (p) => [
   ...(p.prerequisites || []),
   ...(p.hiddenPrerequisites || [])

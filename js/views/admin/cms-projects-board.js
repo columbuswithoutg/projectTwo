@@ -167,7 +167,12 @@
     for (const child of _items) {
       const cPos = _pos.get(child.id);
       if (!cPos) continue;
-      (child.prerequisites || []).forEach(parentId => {
+      const edges = [
+        ...(child.prerequisites || []).map(id => [id, false]),
+        // Recommended (optional) links: dashed, so the admin can tell them apart.
+        ...(child.recommendedPrerequisites || []).map(id => [id, true])
+      ];
+      edges.forEach(([parentId, optional]) => {
         const pPos = _pos.get(parentId);
         if (!pPos) return;
         const fromX = xOf(pPos.gx) + CELL_W / 2, fromY = yOf(pPos.gy) + CELL_H / 2;
@@ -184,7 +189,7 @@
         const d0 = exit(halfW, halfH);
         const x1 = fromX + ux * d0, y1 = fromY + uy * d0;
         const x2 = toX - ux * d0, y2 = toY - uy * d0;
-        svg += `<path class="admin-board-edge" d="M ${x1} ${y1} L ${x2} ${y2}" marker-end="url(#admin-board-arrow)" />`;
+        svg += `<path class="admin-board-edge${optional ? ' is-recommended' : ''}" d="M ${x1} ${y1} L ${x2} ${y2}" marker-end="url(#admin-board-arrow)" />`;
       });
     }
     svg += `</g>`;

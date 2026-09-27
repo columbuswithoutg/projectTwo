@@ -48,6 +48,13 @@ test('availability: prerequisites, hidden prerequisites and phase unlockers', ()
   assert.strictEqual(W.isAvailable(p2, new Set(['avengers1'])), true);
 });
 
+test('recommended prerequisites never lock a project (She-Hulk without Daredevil S3)', () => {
+  const shehulk = { phase: 'Phase 1', prerequisites: ['endgame'], recommendedPrerequisites: ['daredevil3'] };
+  assert.strictEqual(W.isAvailable(shehulk, new Set(['endgame'])), true);
+  assert.strictEqual(W.isAvailable(shehulk, new Set(['daredevil3'])), false);
+  assert.strictEqual(W.lockedReason(shehulk, new Set(), (id) => id), 'Watch endgame first');
+});
+
 test('lockedReason names the phase unlocker or the missing prerequisite', () => {
   const titles = { avengers1: 'The Avengers', ironman1: 'Iron Man' };
   const t = (id) => titles[id] || id;

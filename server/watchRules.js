@@ -64,6 +64,7 @@ function stepCount(p) {
 }
 
 // watched: Set of project ids the user has watched.
+// recommendedPrerequisites are advisory only and never gate availability.
 function isAvailable(p, watched) {
   const phase = parsePhase(p.phase);
   if (phase !== 1) {

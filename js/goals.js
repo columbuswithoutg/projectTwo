@@ -51,7 +51,8 @@ function computeGoals() {
     if (!visible) continue;
 
     const met = requirements.filter(r => r.watched).length;
-    goals.push({ project: p, requirements, met, total: requirements.length });
+    // Recommended titles are shown but never counted toward met/total.
+    goals.push({ project: p, requirements, recommended: visibleRecommended(p), met, total: requirements.length });
   }
 
   // Closest-to-complete first.
@@ -88,6 +89,17 @@ function showGoalsPanel() {
               </li>
             `).join('')}
           </ul>
+          ${g.recommended.length ? `
+            <p class="goal-rec-label">Recommended (optional)</p>
+            <ul class="goal-req-list">
+              ${g.recommended.map(r => `
+                <li class="goal-req is-optional${r.watched ? ' is-met' : ''}" data-action="${r.watched ? '' : 'goal-req'}" data-id="${esc(r.id)}">
+                  <span class="goal-req-mark">${r.watched ? '✓' : '○'}</span>
+                  <span class="goal-req-title">${esc(r.title)}</span>
+                </li>
+              `).join('')}
+            </ul>
+          ` : ''}
         </div>
       `).join('')
     : `<p class="goals-empty">Nothing new to work toward — keep watching.</p>`;

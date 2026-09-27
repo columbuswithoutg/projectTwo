@@ -14,6 +14,11 @@ const ProjectSchema = new mongoose.Schema({
   // (e.g. Daredevil needs Iron Man). Omitted by the admin form, so its $set
   // never clears it.
   hiddenPrerequisites: { type: [String], default: undefined },
+  // Suggested before this project ("could be needed") but NEVER required to
+  // unlock it — e.g. Daredevil S3 before She-Hulk. Drawn as a dashed road and
+  // listed as optional; the unlock rules in server/watchRules.js and
+  // js/utils.js deliberately ignore it. Editable in the admin form.
+  recommendedPrerequisites: { type: [String], default: [] },
   phase:         { type: String, default: '' },
   gridX:         { type: Number, default: 0 },
   gridY:         { type: Number, default: 0 },
