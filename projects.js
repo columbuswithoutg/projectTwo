@@ -78,7 +78,22 @@ var projects = [
   // whole list is Doomsday's required prerequisites.
   { id: "xmen1", title: "X-Men", release: "2000-07-14", runtime: 104, prerequisites: [], phase: "Phase 1", gridX: -4, gridY: 1, location: "multiverse", watched: false, image: "xmen1.png" },
   { id: "xmen2", title: "X2", release: "2003-05-02", runtime: 133, prerequisites: ["xmen1"], phase: "Phase 1", gridX: -4, gridY: 2, location: "multiverse", watched: false, image: "xmen2.png" },
-  { id: "doomsday", title: "Avengers: Doomsday", release: "2026-12-18", runtime: 150, prerequisites: ["xmen1", "xmen2", "cap1", "avengers1", "infinitywar", "endgame", "loki2", "shangchi", "nowayhome", "blackpanther2", "cap4", "deadpool3", "drstrange2", "thunderbolts", "fantasticfour"], phase: "Phase 6", gridX: 0, gridY: 23, location: "multiverse", watched: false, image: "doomsday.png" },
+  { id: "doomsday", title: "Avengers: Doomsday", release: "2026-12-18", runtime: 150, prerequisites: ["xmen1", "xmen2", "cap1", "avengers1", "infinitywar", "endgame", "loki2", "shangchi", "nowayhome", "blackpanther2", "cap4", "deadpool3", "drstrange2", "thunderbolts", "fantasticfour"], recommendedPrerequisites: ["darkphoenix", "logan", "deadpool2"], phase: "Phase 6", gridX: 0, gridY: 23, location: "multiverse", watched: false, image: "doomsday.png" },
+
+  // THE REST OF THE FOX X-SAGA — optional side-watches (not on the official
+  // list, so never required for Doomsday; each chain's last film is only a
+  // recommended road into it). The New Mutants is left out on purpose.
+  // Main line (x −4), Wolverine (x −5), Deadpool (x −6), in release order.
+  { id: "xmen3", title: "X-Men: The Last Stand", release: "2006-05-26", runtime: 104, prerequisites: ["xmen2"], phase: "Phase 1", gridX: -4, gridY: 3, location: "multiverse", watched: false, image: "xmen3.png" },
+  { id: "firstclass", title: "X-Men: First Class", release: "2011-06-03", runtime: 132, prerequisites: ["xmen3"], phase: "Phase 1", gridX: -4, gridY: 4, location: "multiverse", watched: false, image: "firstclass.png" },
+  { id: "dofp", title: "X-Men: Days of Future Past", release: "2014-05-23", runtime: 132, prerequisites: ["firstclass"], phase: "Phase 1", gridX: -4, gridY: 5, location: "multiverse", watched: false, image: "dofp.png" },
+  { id: "apocalypse", title: "X-Men: Apocalypse", release: "2016-05-27", runtime: 144, prerequisites: ["dofp"], phase: "Phase 1", gridX: -4, gridY: 6, location: "multiverse", watched: false, image: "apocalypse.png" },
+  { id: "darkphoenix", title: "Dark Phoenix", release: "2019-06-07", runtime: 113, prerequisites: ["apocalypse"], phase: "Phase 1", gridX: -4, gridY: 7, location: "multiverse", watched: false, image: "darkphoenix.png" },
+  { id: "wolverineorigins", title: "X-Men Origins: Wolverine", release: "2009-05-01", runtime: 107, prerequisites: ["xmen3"], phase: "Phase 1", gridX: -5, gridY: 4, location: "multiverse", watched: false, image: "wolverineorigins.png" },
+  { id: "thewolverine", title: "The Wolverine", release: "2013-07-26", runtime: 126, prerequisites: ["wolverineorigins"], phase: "Phase 1", gridX: -5, gridY: 5, location: "multiverse", watched: false, image: "thewolverine.png" },
+  { id: "logan", title: "Logan", release: "2017-03-03", runtime: 137, prerequisites: ["thewolverine"], phase: "Phase 1", gridX: -5, gridY: 6, location: "multiverse", watched: false, image: "logan.png" },
+  { id: "deadpool1", title: "Deadpool", release: "2016-02-12", runtime: 108, prerequisites: ["wolverineorigins"], phase: "Phase 1", gridX: -6, gridY: 5, location: "multiverse", watched: false, image: "deadpool1.png" },
+  { id: "deadpool2", title: "Deadpool 2", release: "2018-05-18", runtime: 119, prerequisites: ["deadpool1"], phase: "Phase 1", gridX: -6, gridY: 6, location: "multiverse", watched: false, image: "deadpool2.png" },
 
   // NETFLIX SAGA (MCU STREET-LEVEL ERA) — anchored in the five NYC boroughs.
   // Hell's Kitchen: Daredevil / Jessica Jones (Alias Investigations is on

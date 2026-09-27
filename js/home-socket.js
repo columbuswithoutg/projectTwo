@@ -580,8 +580,8 @@ const Multiplayer = (() => {
     // Emote button.
     const emoteBtn = document.getElementById('world-emote-btn');
     const onEmoteClick = () => {
+      if (!Playground3D.playLocalEmote('wave')) return;   // knocked down
       if (socket.connected) socket.emit(events.emote, { kind: 'wave' });
-      Playground3D.playLocalEmote('wave');
     };
     if (emoteBtn) emoteBtn.addEventListener('click', onEmoteClick);
 

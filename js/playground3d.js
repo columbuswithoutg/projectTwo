@@ -141,7 +141,9 @@ const Playground3D = (() => {
     ANIM_MS: 300,
     COOLDOWN_MS: (typeof PG3DPhysics !== 'undefined' && PG3DPhysics.PUNCH_COOLDOWN_MS) || 1000,
     DOWN_MS: 1800,
-    GETUP_MS: 400,
+    // The rigged get-up is Death01 (2.4 s) played in reverse at 1.6× = 1.5 s.
+    // At 400 ms the clip was cut off mid-rise and controls came back early.
+    GETUP_MS: 1500,
     DOWN_ANGLE: -1.35             // root rotation.x while flat on the back
   };
 
@@ -1453,7 +1455,9 @@ const Playground3D = (() => {
         const dx = Math.max(pr.aabb.minX - px, 0, px - pr.aabb.maxX);
         const dz = Math.max(pr.aabb.minZ - pz, 0, pz - pr.aabb.maxZ);
         const d2 = dx * dx + dz * dz;
-        if (d2 < bestD2) { bestD2 = d2; best = pr; }
+        // Same side of the wall: a chair pushed against the outside of a
+        // house wall is within reach of its edge, but not usable from out there.
+        if (d2 < bestD2 && !PG3DPhysics.wallBetween(px, pz, pr.x, pr.z, _walls, pr.aabb)) { bestD2 = d2; best = pr; }
       }
     }
     _seatCandidate = best;
@@ -1471,6 +1475,12 @@ const Playground3D = (() => {
     const next = cur + (target - cur) * 0.22;
     rootObj.rotation.order = 'YXZ';   // fall backward relative to facing (see _applyPose)
     rootObj.rotation.x = (target === 0 && Math.abs(next) < 0.01) ? 0 : next;
+  }
+
+  // Local player down or still getting up. _localDownUntil is 0 when never
+  // hit; guard it so 0 + GETUP_MS doesn't lock input for the first 1.5 s.
+  function _isLocalDown(now) {
+    return _localDownUntil > 0 && now < _localDownUntil + PUNCH.GETUP_MS;
   }
 
   // Damp all animated joints back toward rest. k ∈ [0,1] per frame.
@@ -1524,8 +1534,9 @@ const Playground3D = (() => {
     // Airborne (mid-jump or falling) frees XZ movement from the walkability
     // check — the landing branch below decides what happens on touchdown.
     _airborne = _falling || _player.position.y > g0 + 0.01;
-    // Knocked down = input dead until you get back up.
-    const _down = _localDownUntil > now;
+    // Knocked down = input dead until you are fully back up (the get-up
+    // window included, not just the time spent lying flat).
+    const _down = _isLocalDown(now);
     // One-shot requests, read once so the seat logic and the jump / punch
     // code below agree on the same keypress.
     const jumpReq = !!(_input && _input.consumeJump && _input.consumeJump());
@@ -3725,7 +3736,12 @@ const Playground3D = (() => {
   // every frame, so this never accumulates and never desyncs anyone.
   function _npcAvoidPlayer(npc) {
     if (!_player) return;
-    const sep = (npc.radius || NPC_RADIUS) + PHYSICS.PLAYER_RADIUS;
+    // _playerR, not the base PLAYER_RADIUS: it must match the separation
+    // _collideActors enforces. With a broad build the old base radius parked
+    // the hero INSIDE the player's bump circle, which _collideActors treats
+    // as "already overlapping, walk out freely" — so walking at a hero in a
+    // fight shoved it backwards frame after frame.
+    const sep = (npc.radius || NPC_RADIUS) + _playerR;
     let dx = npc.x - _player.position.x;
     let dz = npc.z - _player.position.z;
     const d2 = dx * dx + dz * dz;
@@ -4104,9 +4120,14 @@ const Playground3D = (() => {
     rp.emoteUntil = performance.now() + WORLD.EMOTE_DURATION_MS;
   }
 
+  // Returns false when the wave is refused (knocked down / getting up), so
+  // the caller doesn't relay an emote peers would see but we wouldn't.
   function playLocalEmote(kind) {
-    if (kind !== 'wave') return;
-    _localEmoteUntil = performance.now() + WORLD.EMOTE_DURATION_MS;
+    if (kind !== 'wave') return false;
+    const now = performance.now();
+    if (_isLocalDown(now)) return false;
+    _localEmoteUntil = now + WORLD.EMOTE_DURATION_MS;
+    return true;
   }
 
   // Float a chat bubble over the LOCAL player's own head. Mirrors showRemoteChat

@@ -277,9 +277,30 @@
     return Math.max(base, Math.min(maxV, v));
   }
 
+  // Does the segment (x0,z0)→(x1,z1) pass through a full-height wall? Boxes
+  // with a `top` are standable props (low enough to reach over), and `skip`
+  // is the prop being reached for — neither counts. Slab test on XZ.
+  function wallBetween(x0, z0, x1, z1, boxes, skip) {
+    const dx = x1 - x0, dz = z1 - z0;
+    for (const b of boxes || []) {
+      if (!b || b === skip || b.top != null) continue;
+      let t0 = 0, t1 = 1;
+      let ok = true;
+      for (const [o, d, lo, hi] of [[x0, dx, b.minX, b.maxX], [z0, dz, b.minZ, b.maxZ]]) {
+        if (Math.abs(d) < 1e-9) { if (o <= lo || o >= hi) { ok = false; break; } continue; }
+        let a = (lo - o) / d, c = (hi - o) / d;
+        if (a > c) { const s = a; a = c; c = s; }
+        t0 = Math.max(t0, a); t1 = Math.min(t1, c);
+        if (t0 >= t1) { ok = false; break; }
+      }
+      if (ok) return true;
+    }
+    return false;
+  }
+
   return {
     isWalkable, STEP, groundAt, blocksAt, stepVertical, shouldRespawn, airtime, airCarry, pickPunchTarget,
     actorRadius, spawnIslands, PUNCH_COOLDOWN_MS, punchCooldown, hash01, npcPatrol, npcPathPoint,
-    pinchZoom, fovForAspect
+    pinchZoom, fovForAspect, wallBetween
   };
 });

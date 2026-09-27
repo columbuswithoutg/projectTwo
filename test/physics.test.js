@@ -375,3 +375,17 @@ test('fovForAspect: landscape keeps 60°, portrait opens up, capped at 80°', ()
   let prev = Infinity;                                     // never widens as the view gets wider
   for (const a of [0.3, 0.46, 0.6, 0.8, 1, 1.5, 2.2]) { const f = fovForAspect(a); assert.ok(f <= prev); prev = f; }
 });
+
+test('wallBetween: a house wall blocks reaching a chair on its far side', () => {
+  const wall = { minX: 4.9, maxX: 5.1, minZ: -3, maxZ: 3 };        // full-height (no top)
+  const chair = { minX: 4.4, maxX: 4.9, minZ: -0.25, maxZ: 0.25, top: 0.45 };
+  const boxes = [wall, chair];
+  // Inside the room, beside the chair → reachable.
+  assert.equal(P.wallBetween(3.9, 0, 4.65, 0, boxes, chair), false);
+  // Outside the wall, same distance from the chair's edge → blocked.
+  assert.equal(P.wallBetween(5.5, 0, 4.65, 0, boxes, chair), true);
+  // Standable props in between never block, and neither does the target itself.
+  assert.equal(P.wallBetween(3, 0, 4.65, 0, [{ minX: 3.5, maxX: 4, minZ: -1, maxZ: 1, top: 0.8 }], null), false);
+  // Parallel to the wall, not crossing it.
+  assert.equal(P.wallBetween(4.5, -2, 4.5, 2, boxes, chair), false);
+});
