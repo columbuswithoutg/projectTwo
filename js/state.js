@@ -10,7 +10,34 @@ class WatchState {
     // friend's progress so accidental watchAgain/toggle/walker edits can't
     // PUT the friend's data to the current user's account.
     this.readonly = false;
+    // In-progress watches (board "In progress" column), keyed by projectId:
+    // { episode, startedAt: ms|null, rewatch }. Server-owned — only changed
+    // via startWatching / completeWatching / cancelWatching.
+    this.sessions = new Map();
+    // serverNow − Date.now(), so countdowns match the server's clock.
+    this.clockOffset = 0;
     // load() is async, called explicitly in DOMContentLoaded
+  }
+
+  // Adopt a { watchedProjects, watchSessions, serverNow } payload from the
+  // progress API as the source of truth, then re-render.
+  _applyServer(payload, { notify = true } = {}) {
+    if (!payload || !Array.isArray(payload.watchedProjects)) return;
+    this.data.clear();
+    payload.watchedProjects.forEach(entry => this.data.set(entry.projectId, {
+      count: entry.count,
+      watchedWith: entry.watchedWith || [],
+      memories: entry.memories || []
+    }));
+    this.sessions.clear();
+    (payload.watchSessions || []).forEach(s => this.sessions.set(s.projectId, {
+      episode: s.episode || 0,
+      startedAt: s.startedAt ? new Date(s.startedAt).getTime() : null,
+      rewatch: !!s.rewatch
+    }));
+    if (Number.isFinite(payload.serverNow)) this.clockOffset = payload.serverNow - Date.now();
+    this.byId.forEach(p => { p.watched = this.isWatched(p.id); });
+    if (notify) this.listeners.forEach(fn => fn(this.data));
   }
 
   async load() {
@@ -20,12 +47,7 @@ class WatchState {
           headers: { Authorization: `Bearer ${Auth.getToken()}` }
         });
         if (res.ok) {
-          const { watchedProjects } = await res.json();
-          watchedProjects.forEach(entry => this.data.set(entry.projectId, {
-            count: entry.count,
-            watchedWith: entry.watchedWith || [],
-            memories: entry.memories || []
-          }));
+          this._applyServer(await res.json(), { notify: false });
           this.loadFailed = false;
           return;
         }
@@ -127,21 +149,114 @@ class WatchState {
 
   getMemories(id) { return this.data.get(id)?.memories || []; }
 
-  watchAgain(id) {
-    const entry = this.data.get(id);
-    if (entry) {
-      entry.count += 1;
-      this.save();
+  /* ---------- Watch sessions: Start watching → In progress → Mark as watched ----------
+   * Watching is a timed flow enforced by the server (routes/progress.js):
+   * "Start watching" stamps a start time, and "Mark as watched" unlocks only
+   * after the movie's runtime — or, for a series, the current episode's
+   * runtime — has passed. Series go episode by episode, in order.
+   */
+
+  getSession(id) { return this.sessions.get(id) || null; }
+
+  isInProgress(id) { return this.sessions.has(id); }
+
+  // Timers ticking right now (series waiting between episodes don't count).
+  // The server allows MAX_RUNNING_TIMERS at once — routes/progress.js MAX_RUNNING.
+  runningCount() { let n = 0; this.sessions.forEach(s => { if (s.startedAt) n++; }); return n; }
+
+  atTimerCap() { return this.runningCount() >= WatchState.MAX_RUNNING_TIMERS; }
+
+  // Non-empty episode list ⇒ series.
+  episodesOf(p) { return Array.isArray(p?.episodes) && p.episodes.length ? p.episodes : null; }
+
+  stepCount(p) { const eps = this.episodesOf(p); return eps ? eps.length : 1; }
+
+  // Minutes for step `idx`: the movie runtime, or that episode's runtime.
+  stepMinutes(p, idx = 0) {
+    const eps = this.episodesOf(p);
+    const v = eps ? eps[idx] : p?.runtime;
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  }
+
+  // Skippable end credits: "Mark as watched" unlocks this long before the
+  // runtime ends — 10 min for a movie, 10% of an episode (2–10 min), never
+  // more than half the runtime. Mirrors server/watchRules.js creditsMinutes().
+  creditsMinutes(p, idx = 0) {
+    const run = this.stepMinutes(p, idx);
+    const credits = this.episodesOf(p) ? Math.min(10, Math.max(2, run * 0.10)) : 10;
+    return Math.min(credits, run / 2);
+  }
+
+  // Minutes after Start before the step can be marked watched.
+  requiredMinutes(p, idx = 0) {
+    return Math.max(0, this.stepMinutes(p, idx) - this.creditsMinutes(p, idx));
+  }
+
+  totalMinutes(p) {
+    const eps = this.episodesOf(p);
+    return eps ? eps.reduce((a, b) => a + (b > 0 ? b : 0), 0) : this.stepMinutes(p);
+  }
+
+  serverNow() { return Date.now() + this.clockOffset; }
+
+  // ms until "Mark as watched" unlocks for the running step; 0 = ready,
+  // Infinity = no timer running (not started, or between episodes).
+  remainingMs(id) {
+    const s = this.sessions.get(id);
+    if (!s || !s.startedAt) return Infinity;
+    const p = this.byId.get(id);
+    return Math.max(0, this.requiredMinutes(p, s.episode) * 60000 - (this.serverNow() - s.startedAt));
+  }
+
+  async _sessionCall(path, body) {
+    if (this.readonly) return null;
+    if (this.loadFailed) {
+      toast("Your progress didn't load. Please reload the page.", 'error');
+      return null;
+    }
+    // Flush pending tag/memory edits first so the server copy we get back
+    // (and adopt) already includes them.
+    this.flushPersist();
+    try {
+      const res = await fetch(`${API}/progress/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${Auth.getToken()}` },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.watchedProjects) this._applyServer(data);
+      if (!res.ok) {
+        toast(data.error || "Couldn't update your board. Please try again.", 'error');
+        return null;
+      }
+      return data;
+    } catch (e) {
+      console.warn(`${path} failed:`, e);
+      toast("Couldn't reach the server. Check your connection.", 'error');
+      return null;
     }
   }
 
+  // Not started / Done → In progress, or start the next episode of a series.
+  startWatching(id) { return this._sessionCall('start', { projectId: id }); }
+
+  // post: the composer's { caption, memories, tagFriendIds } (all optional —
+  // an empty composer posts it as-is). Resolves to { finished, post: { id } };
+  // finished is true when the project moved to Done.
+  completeWatching(id, post = {}) { return this._sessionCall('complete', { projectId: id, ...post }); }
+
+  // In progress → back to where it was (resets timer + episode progress).
+  cancelWatching(id) { return this._sessionCall('cancel', { projectId: id }); }
+
+  // Rewatching goes through the same timed flow.
+  watchAgain(id) { return this.startWatching(id); }
+
+  // Un-watch only. Watches are added exclusively by completeWatching().
   toggle(id) {
     if (this.isWatched(id)) {
       this.data.delete(id);
-    } else {
-      this.data.set(id, { count: 1, memories: [] });
+      this.save();
     }
-    this.save();
     return this.isWatched(id);
   }
 
@@ -151,15 +266,19 @@ class WatchState {
     if (this.readonly) return;
     if (Auth.isLoggedIn() && this.loadFailed) return;
     this.data.clear();
+    this.sessions.clear();
     if (Auth.isLoggedIn()) {
-      fetch(`${API}/progress/save`, {
+      // Dedicated endpoint: /save can no longer delete watches (a stale tab
+      // would silently erase finished ones), so wiping goes through /clear.
+      fetch(`${API}/progress/clear`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${Auth.getToken()}`
-        },
-        body: JSON.stringify({ watchedProjects: [] })
-      }).catch(e => console.warn("Failed to clear progress:", e));
+        headers: { Authorization: `Bearer ${Auth.getToken()}` }
+      }).then(res => {
+        if (!res.ok) toast("Couldn't clear your progress. Please reload and try again.", 'error');
+      }).catch(e => {
+        console.warn("Failed to clear progress:", e);
+        toast("Couldn't clear your progress. Check your connection.", 'error');
+      });
     } else {
       localStorage.removeItem(CONFIG.STORAGE_KEY);
     }
@@ -172,6 +291,7 @@ class WatchState {
   // — layout cache, renderer, walkers — rebuild for the new user.
   resetLocal() {
     this.data.clear();
+    this.sessions.clear();
     this.listeners.forEach(fn => fn(this.data));
   }
 
@@ -207,5 +327,7 @@ class WatchState {
 
   getWatchedWith(id) { return this.data.get(id)?.watchedWith || []; }
 }
+
+WatchState.MAX_RUNNING_TIMERS = 2;
 
 const state = new WatchState();

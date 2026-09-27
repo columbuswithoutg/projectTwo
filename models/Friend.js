@@ -6,7 +6,11 @@ const FriendSchema = new mongoose.Schema({
     status: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending' },
     type: { type: String, enum: ['friend', 'watch'], default: 'friend' },
     projectId: { type: String, default: null },
-    projectTitle: { type: String, default: null }
+    projectTitle: { type: String, default: null },
+    // Watch-party tag from the post composer: the FeedPost to tag the
+    // recipient on once they accept (null for older requests).
+    postId: { type: mongoose.Schema.Types.ObjectId, ref: 'FeedPost', default: null },
+    episode: { type: Number, default: null }
 }, { timestamps: true });
 
 // Every hot query filters on one of these fields; without an index Mongo does

@@ -47,7 +47,12 @@ router.post('/login', async (req, res) => {
   if (typeof username !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ error: 'Invalid credentials' });
   }
-  const user = await User.findOne({ username: username.trim() });
+  // Usernames are unique case-insensitively (see /register), so "bob" logs in
+  // "Bob". Exact match first — older accounts may predate that rule and
+  // differ only by case — then a case-insensitive, fully escaped match.
+  const name = username.trim().slice(0, 40);
+  const user = await User.findOne({ username: name }) ||
+    await User.findOne({ username: { $regex: '^' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } });
   if (!user || !(await bcrypt.compare(password, user.password)))
     return res.status(401).json({ error: 'Invalid credentials' });
   // Banned users can authenticate with the right password but receive no

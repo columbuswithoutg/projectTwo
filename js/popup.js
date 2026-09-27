@@ -43,11 +43,9 @@ ${watchedWith.length ? (() => {
   ` : ''}
 
 ${!isReadonly ? `
-  <button class="popup-action ${isWatched ? 'watch-again' : ''}">
-    ${isWatched ? 'Watch Again' : 'Mark as Watched'}
-  </button>
-  <button class="popup-action secondary" id="watched-with-friend-btn">Watched with a Friend</button>
+  <div class="popup-watch-controls"></div>
   ${isWatched ? `
+    <button class="popup-action secondary" id="watched-with-friend-btn">Watched with a Friend</button>
     <button class="popup-action secondary" id="add-memory-btn">Add Memory</button>
   ` : ''}
 ` : ''}
@@ -81,16 +79,19 @@ ${!isReadonly ? `
   popup.querySelector('.popup-close').onclick = close;
 
   if (!isReadonly) {
-    popup.querySelector('.popup-action').onclick = () => {
-      if (isWatched) {
-        state.watchAgain(project.id);
-      } else {
-        state.toggle(project.id);
+    // Start watching → timer → Mark as watched (js/watch-controls.js). The
+    // popup closes once the project lands in Done; while in progress it stays
+    // open so the countdown is visible.
+    WatchControls.mount(popup.querySelector('.popup-watch-controls'), project, {
+      showCount: false,
+      onChange: (action, result) => {
+        if (action === 'complete' && result.finished) {
+          // Map view: re-center camera on the project. Flow view: no camera.
+          renderer.setCenterTarget?.(project.id);
+          close();
+        }
       }
-      // Map view: re-center camera on the project. Flow view: no camera.
-      renderer.setCenterTarget?.(project.id);
-      close();
-    };
+    });
 
     popup.querySelector('#watched-with-friend-btn')?.addEventListener('click', () => {
       close();

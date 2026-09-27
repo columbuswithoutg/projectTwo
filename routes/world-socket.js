@@ -214,6 +214,12 @@ const CHAT_INTERVAL_MS = 1000;
 // for network jitter so an honest punch sent right at 1s is never dropped.
 const PUNCH_INTERVAL_MS = PUNCH_COOLDOWN_MS - 150;
 const POSITION_BOUND = 1000;          // sanity clamp; world is < 300u square in practice
+// Where a joiner is standing, from the join payload — so peers see them
+// appear where they are, not at (0,0) until their first position update.
+function joinPos(raw) {
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= POSITION_BOUND) ? v : 0;
+  return { x: num(raw && raw.x), z: num(raw && raw.z), yaw: num(raw && raw.yaw) };
+}
 // Per-socket floor between accepted position updates. The client broadcasts at
 // ~100ms (POS_INTERVAL_MS), so legitimate traffic never trips this — it only
 // caps a hostile/scripted client that would otherwise fan thousands of pos
@@ -237,6 +243,12 @@ const VOICE_SIGNAL_MAX_BYTES = 8192;  // SDP fragments + ICE candidates are tiny
 // fixed ring slots client-side, held stones orbit their holder.
 const STONE_IDS = ['space', 'mind', 'reality', 'power', 'time', 'soul'];
 const SNAP_INTERVAL_MS = 3000;          // floor between snaps per socket
+// Leaderboard credit rules (the snap itself still plays out): a snap with
+// nobody else in the world scores nothing, and a round must have lasted
+// MIN_SCORED_ROUND_MS since the stones last scattered. Otherwise one player
+// alone could grab-and-snap ~20 times a minute to farm /api/friends/stones.
+const MIN_SCORED_ROUND_MS = 60 * 1000;
+let stonesRoundStartedAt = Date.now();
 const worldStones = Object.create(null);
 for (const id of STONE_IDS) worldStones[id] = { holder: null };
 
@@ -396,6 +408,23 @@ module.exports = (io) => {
     }, NpcLogic.C.TICK_MS);
   }
 
+  // The user's watched project ids, kept on socket.data (never broadcast).
+  // Islands only exist client-side for watched projects, so standing on an
+  // unwatched one means a forged position — it earns no stay credit (the
+  // keeper race), no Project chat and no island voice. Reloaded at most every
+  // WATCHED_REFRESH_MS so a title finished mid-session unlocks its island
+  // without letting a zone-spamming client hammer the DB.
+  const WATCHED_REFRESH_MS = 15000;
+  function refreshWatched(socket, force = false) {
+    const d = socket.data;
+    if (d.watchedLoading || (!force && d.watchedAt && Date.now() - d.watchedAt < WATCHED_REFRESH_MS)) return;
+    d.watchedLoading = true;
+    User.findById(d.userId).select('watchedProjects.projectId').lean()
+      .then(u => { d.watched = new Set(((u && u.watchedProjects) || []).map(e => e.projectId)); })
+      .catch(() => {})
+      .finally(() => { d.watchedLoading = false; d.watchedAt = Date.now(); });
+  }
+
   io.on('connection', (socket) => {
     // Client must emit 'world:join' before broadcasting anything else.
     socket.on('world:join', (raw) => {
@@ -405,12 +434,13 @@ module.exports = (io) => {
       const character = sanitizeCharacter(raw && raw.character);
 
       socket.join('world');
+      refreshWatched(socket, true);
       const player = {
         socketId: socket.id,
         userId:   socket.data.userId,
         username,
         character,
-        x: 0, y: 0, z: 0, yaw: 0,
+        ...joinPos(raw), y: 0,
         walking: false,
         pose: null,         // 'sit' | 'lie' while on a chair / bed — in the snapshot so late joiners see it
         lastChat: 0,
@@ -440,6 +470,9 @@ module.exports = (io) => {
             if (old && old.data) old.data.voiceScope = null;
           }
           worldPlayers.delete(sid);
+          // …and out of the room, or the retired tab keeps receiving
+          // everyone's positions and chat.
+          io.in(sid).socketsLeave('world');
           io.to('world').emit('world:left', { id: sid });
           freeStonesOf(sid);   // don't strand this user's stones on the retired socket
           releaseNpcTarget(sid);
@@ -486,7 +519,14 @@ module.exports = (io) => {
       // Track which project island they're on; tell the client when it
       // changes so its Project chat tab can relabel / enable itself. The
       // island is also the voice scope and the stay-credit bucket.
-      const zone = ChatLogic.projectAt(p.x, p.z, projectGrid());
+      const island = ChatLogic.projectAt(p.x, p.z, projectGrid());
+      // Only islands the user has watched count (see refreshWatched).
+      // Mirrors _isProjectUnlocked in js/playground3d.js: a user with nothing
+      // watched yet spawns on the start island (Iron Man).
+      const watched = socket.data.watched;
+      const allowed = !!watched && (watched.has(island) || (watched.size === 0 && island === 'ironman1'));
+      if (island && !allowed) refreshWatched(socket);
+      const zone = island && allowed ? island : null;
       if (zone !== p.projectId) {
         // Voice: peers are computed from projectId, so snapshot the OLD
         // island's peers before mutating it. Both sides tear down, then the
@@ -661,12 +701,15 @@ module.exports = (io) => {
         const t = others[i]; others[i] = others[j]; others[j] = t;
       }
       const victims = others.slice(0, Math.ceil(others.length / 2));
-      io.to('world').emit('world:snapped', { by: socket.id, victims });
+      const scored = others.length > 0 && now - stonesRoundStartedAt >= MIN_SCORED_ROUND_MS;
+      const unscoredReason = scored ? null : (others.length ? 'quick' : 'alone');
+      stonesRoundStartedAt = now;
+      io.to('world').emit('world:snapped', { by: socket.id, victims, scored, unscoredReason });
 
       for (const id of STONE_IDS) worldStones[id].holder = null;
       io.to('world').emit('world:stones', { stones: stonesSnapshot() });
 
-      User.findByIdAndUpdate(socket.data.userId, { $inc: { stoneSnaps: 1 } }).catch(() => {});
+      if (scored) User.findByIdAndUpdate(socket.data.userId, { $inc: { stoneSnaps: 1 } }).catch(() => {});
     });
 
     // ── home:* events ──
@@ -677,7 +720,8 @@ module.exports = (io) => {
     // Shape mirrors world:* so the client uses the same handlers.
 
     socket.on('home:join', async (raw) => {
-      const ownerUsername = String((raw && raw.ownerUsername) || '').slice(0, MAX_USERNAME);
+      // typeof guard: String() on a crafted object throws and crashes the process.
+      const ownerUsername = (typeof raw?.ownerUsername === 'string' ? raw.ownerUsername : '').slice(0, MAX_USERNAME);
       if (!ownerUsername) return;
       let owner;
       try {
@@ -718,7 +762,7 @@ module.exports = (io) => {
         username,
         character,
         ownerId,
-        x: 0, y: 0, z: 0, yaw: 0,
+        ...joinPos(raw), y: 0,
         walking: false,
         lastChat: 0
       };
@@ -730,6 +774,9 @@ module.exports = (io) => {
         if (sid !== socket.id && other.userId === socket.data.userId && other.ownerId === ownerId) {
           homePlayers.delete(sid);
           leaveHomeVoice(io, sid, ownerId);
+          // Pull the retired socket out of the room too, or it keeps
+          // receiving the home's chat / positions.
+          io.in(sid).socketsLeave('home:' + ownerId);
           io.to('home:' + ownerId).emit('home:left', { id: sid });
         }
       }
@@ -765,7 +812,7 @@ module.exports = (io) => {
     socket.on('home:chat', (raw) => {
       const p = homePlayers.get(socket.id);
       if (!p) return;
-      const msg = String((raw && raw.text) || '').trim().slice(0, MAX_CHAT_LEN);
+      const msg = (typeof raw?.text === 'string' ? raw.text : '').trim().slice(0, MAX_CHAT_LEN);
       if (!msg) return;
       if (Date.now() - p.lastChat < CHAT_INTERVAL_MS) return;
       p.lastChat = Date.now();
@@ -938,6 +985,8 @@ module.exports = (io) => {
 // For routes/world.js: push a keeper's saved house to everyone in /world, and
 // force a stay flush so a just-crowned keeper is recognised immediately.
 module.exports.broadcastWorld = (event, payload) => { if (_io) _io.to('world').emit(event, payload); };
+// Everyone in one user's home (the owner + visiting friends).
+module.exports.broadcastHome = (ownerId, event, payload) => { if (_io) _io.to('home:' + String(ownerId)).emit(event, payload); };
 module.exports.flushStays = flushStays;
 // For routes/messages.js (via server/messages.js): live-deliver an inbox
 // message to the recipient's Whisper tab when they're in /world.

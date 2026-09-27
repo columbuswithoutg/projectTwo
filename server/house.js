@@ -48,4 +48,29 @@ function housesForRooms(map, rooms) {
   return out;
 }
 
-module.exports = { CLOUDINARY_PREFIX, portraitOk, READ_CAP, toHouse, homeMaxPropsNow, housesForRooms };
+// /home has ONE roof for the whole home: these are the fields of it. Every
+// room save carries them (the editor's roof controls), and the latest save
+// becomes the home's roof.
+function pickRoof(house) {
+  const h = house || {};
+  return {
+    roofStyle: h.roofStyle || 'flat',
+    roofColor: h.roofColor != null ? h.roofColor : null,
+    roofDir: h.roofDir || 0,
+    chimney: !!h.chimney
+  };
+}
+
+// The home's roof: the stored one (re-validated), else — for homes decorated
+// before the shared roof existed — the first decorated room's, in layout
+// order. null = the plain default roof.
+function homeRoofFor(user, rooms) {
+  if (user && user.homeRoof && typeof user.homeRoof === 'object') return pickRoof(toHouse(user.homeRoof));
+  const map = (user && user.homeHouses) || {};
+  for (const r of rooms || []) {
+    if (r && Object.prototype.hasOwnProperty.call(map, r.projectId)) return pickRoof(toHouse(map[r.projectId]));
+  }
+  return null;
+}
+
+module.exports = { CLOUDINARY_PREFIX, portraitOk, READ_CAP, toHouse, homeMaxPropsNow, housesForRooms, pickRoof, homeRoofFor };

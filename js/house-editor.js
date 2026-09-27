@@ -7,6 +7,8 @@
  *     doorTitle, doorToast,          // wording for the fixed door cells
  *     maxProps: () => number,        // prop cap
  *     saveUrl, savedToast,           // PUT target for the validated house
+ *     sharedRoof,                    // /home: the roof controls edit the ONE
+ *                                    //   roof every room wears (setHomeRoof)
  *     onSaved(house, data), onSaveFailed(data), onClose()
  *   }) → cancel()                    // restores the saved house + closes
  *
@@ -22,20 +24,31 @@ const HouseEditor = (() => {
     const projectId = opts.projectId;
     const unit = opts.unit || 'house';
     const L = WorldHouseLogic;
-    const saved = (Playground3D.getHouse && Playground3D.getHouse(projectId)) || L.defaultHouse();
+    const hadHouse = !!(Playground3D.getHouse && Playground3D.getHouse(projectId));
+    const saved = (hadHouse && Playground3D.getHouse(projectId)) || L.defaultHouse();
+    // /home: the roof is the whole home's, so the draft starts from it.
+    const sharedRoof = !!opts.sharedRoof && !!Playground3D.getHomeRoof;
+    const savedRoof = sharedRoof ? Playground3D.getHomeRoof() : null;
+    const ROOF_FIELDS = ['roofStyle', 'roofColor', 'roofDir', 'chimney'];
+    const pickRoof = (h) => ({ roofStyle: h.roofStyle || 'flat', roofColor: h.roofColor != null ? h.roofColor : null, roofDir: h.roofDir || 0, chimney: !!h.chimney });
     // A stored house that no longer validates (e.g. a portrait URL the rules
     // now reject) must not break the editor: drop the offending field, and as
     // a last resort start from defaults.
     const v0 = L.validateHouse(saved);
     const v1 = v0.ok ? v0 : L.validateHouse({ ...saved, portrait: '' });
     const draft = v1.ok ? v1.house : L.defaultHouse();
+    if (sharedRoof) {
+      const r = pickRoof(savedRoof || {});
+      for (const f of ROOF_FIELDS) draft[f] = r[f];
+    }
     const hex = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
     const GLYPH = { chair: '🪑', table: '🛋️', frame: '🖼️', plant: '🪴', lamp: '💡', rug: '🟫', bookshelf: '📚', crate: '📦', bed: '🛏️', window: '🪟' };
     const maxProps = () => opts.maxProps();
-    const SLOTS = [['wallColor', 'Walls'], ['roofColor', 'Roof'], ['trimColor', 'Trim'], ['lampColor', 'Lamps']];
+    const roofLabel = sharedRoof ? 'Roof (whole home)' : 'Roof';
+    const SLOTS = [['wallColor', 'Walls'], ['roofColor', roofLabel], ['trimColor', 'Trim'], ['lampColor', 'Lamps']];
     // Shape / finish rows: [field, label, [[value, caption, title], …]].
     const STYLE_ROWS = [
-      ['roofStyle', 'Roof', [['flat', 'Flat', 'A flat slab roof'], ['gable', 'Gable', 'A pitched roof with a ridge'], ['hip', 'Hip', 'A pyramid roof sloping on all four sides']]],
+      ['roofStyle', roofLabel, [['flat', 'Flat', 'A flat slab roof'], ['gable', 'Gable', 'A pitched roof with a ridge'], ['hip', 'Hip', 'A pyramid roof sloping on all four sides']]],
       ['wallStyle', 'Walls', [['plaster', 'Plaster', 'Smooth stucco'], ['brick', 'Brick', 'Brick courses'], ['stone', 'Stone', 'Rough stone blocks'], ['timber', 'Timber', 'Wooden planks'], ['glass', 'Glass', 'See-through glass walls — the whole wall is a window, so none are carved']]],
       ['windowStyle', 'Windows', [['cross', 'Cross', 'Four panes'], ['grid', 'Grid', 'Six small panes'], ['plain', 'Plain', 'One clear pane'], ['shutters', 'Shutters', 'A plain pane with trim-coloured shutters']]]
     ];
@@ -154,6 +167,7 @@ const HouseEditor = (() => {
       // Save refuses until enough props are removed.
       const v = L.validateHouse(draft, { maxProps: Math.max(maxProps(), draft.props.length) });
       if (v.ok && Playground3D.applyHouse) Playground3D.applyHouse(projectId, v.house);
+      if (sharedRoof) Playground3D.setHomeRoof(pickRoof(draft));
     }
     function renderSwatches() {
       overlay.querySelectorAll('.world-house-row').forEach((row) => {
@@ -458,9 +472,13 @@ const HouseEditor = (() => {
     signInput.addEventListener('input', () => { draft.sign = L.sanitizeSign(signInput.value); preview(); });
 
     // Every way out (✕, Cancel, Escape, backdrop, a failed save) puts the
-    // saved house back unless the draft was just saved.
+    // saved house back unless the draft was just saved. A room / island that
+    // had no house goes back to having none (not to the default house).
     let closed = false, didSave = false;
-    const restore = () => { if (Playground3D.applyHouse) Playground3D.applyHouse(projectId, saved); };
+    const restore = () => {
+      if (Playground3D.applyHouse) Playground3D.applyHouse(projectId, hadHouse ? saved : null);
+      if (sharedRoof) Playground3D.setHomeRoof(savedRoof);
+    };
     const close = wireModalDismiss(overlay, () => {
       if (closed) return;
       closed = true;
@@ -495,6 +513,7 @@ const HouseEditor = (() => {
         }
         didSave = true;
         if (Playground3D.applyHouse) Playground3D.applyHouse(projectId, data.house || v.house);
+        if (sharedRoof) Playground3D.setHomeRoof(data.homeRoof || pickRoof(v.house));
         if (opts.onSaved) opts.onSaved(data.house || v.house, data);
         if (typeof toast === 'function') toast(opts.savedToast, 'success');
         close();

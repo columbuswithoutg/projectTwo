@@ -158,7 +158,15 @@ function showFriendsPanel() {
     }
 
     if (data.error) {
-      addBtn.textContent = data.error === 'Request already exists' ? 'Already Added' : data.error;
+      if (data.error === 'Request already exists') {
+        addBtn.textContent = 'Already Added';
+      } else if (/declined/i.test(data.error)) {
+        // Cooldown message is a sentence — too long for the button.
+        addBtn.textContent = 'Declined';
+        toast(data.error, 'info');
+      } else {
+        addBtn.textContent = data.error;
+      }
       addBtn.style.background = 'rgba(255, 80, 80, 0.7)';
       addBtn.style.color = '#fff';
     } else {
@@ -197,12 +205,12 @@ function showFriendsPanel() {
   <div class="friend-row">
     <span>
       ${r.type === 'watch'
-        ? `<strong>${esc(r.requester.username)}</strong> wants to watch <em style="color:rgba(46,255,81,0.8)">${esc(r.projectTitle || r.projectId)}</em> together`
+        ? `<strong>${esc(r.requester.username)}</strong> ${r.postId ? 'says you watched' : 'wants to log'} <em style="color:rgba(46,255,81,0.8)">${esc(r.projectTitle || r.projectId)}${r.episode ? ` · Episode ${Number(r.episode)}` : ''}</em> together — accept to be tagged on their post`
         : `<strong>${esc(r.requester.username)}</strong> sent you a friend request`
       }
     </span>
     <div class="friend-row-actions">
-      <button class="friend-accept-btn" data-id="${r._id}" data-type="${r.type || 'friend'}" data-project="${r.projectId || ''}">Accept</button>
+      <button class="friend-accept-btn" data-id="${esc(r._id)}" data-type="${esc(r.type || 'friend')}" data-project="${esc(r.projectId || '')}">Accept</button>
       <button class="friend-reject-btn" data-id="${r._id}">Reject</button>
     </div>
   </div>
@@ -215,17 +223,21 @@ function showFriendsPanel() {
         const projectId = btn.dataset.project;
 
         if (type === 'watch' && projectId) {
+          // The server only tags the co-watcher on an existing watch (it never
+          // adds one — that takes the timed Start watching flow), so mirror
+          // that locally instead of saving a guessed count.
           const entry = state.data.get(projectId);
-          if (entry) {
-            entry.count += 1;
+          if (entry && data.tagged) {
             if (data.requester?.username && !entry.watchedWith.includes(data.requester.username)) {
               entry.watchedWith.push(data.requester.username);
             }
-          } else {
-            state.data.set(projectId, { count: 1, watchedWith: [], memories: [] });
+            renderer.render();
           }
-          state.save();
-          renderer.render();
+          if (data.taggedOnPost) {
+            toast(entry ? "You're tagged on their post." : "You're tagged on their post. Start it on your Board to log your own watch too.", 'success');
+          } else if (!data.tagged) {
+            toast('Finish watching it from your Board first — then you can log it together.', 'info');
+          }
         }
 
         btn.closest('.friend-row').remove();
@@ -326,7 +338,7 @@ async function showWatchedWithFriendModal(project) {
     <div class="auth-box">
       <button class="popup-close" aria-label="Close">✕</button>
       <h3 id="watched-with-friend-heading">Watched with a Friend</h3>
-      <p style="color:#aaa; font-size:0.9rem">Select a friend to mark <strong style="color:#fff">${esc(project.title)}</strong> as watched for them too.</p>
+      <p style="color:#aaa; font-size:0.9rem">Tag a friend you watched <strong style="color:#fff">${esc(project.title)}</strong> with. It's added once they accept, if they've finished it too.</p>
       <div id="watch-friends-list">
         ${!friends.length
           ? '<p style="color:#666">No friends yet</p>'
@@ -348,10 +360,11 @@ async function showWatchedWithFriendModal(project) {
     btn.onclick = async () => {
       const recipientId = btn.dataset.id;
 
+      // Only a finished watch can be tagged (the popup only offers this
+      // button once it's watched; the server enforces it too).
       if (!state.isWatched(project.id)) {
-        state.data.set(project.id, { count: 1, watchedWith: [], memories: [] });
-        state.save();
-        renderer.render();
+        toast('Finish watching it first.', 'error');
+        return;
       }
 
       const res = await fetch(`${API}/friends/watch-request`, {
@@ -369,13 +382,9 @@ async function showWatchedWithFriendModal(project) {
         btn.style.background = 'rgba(255, 80, 80, 0.7)';
         btn.style.color = '#fff';
       } else {
+        // The "watched with" tag lands only when the friend accepts (and has
+        // watched it too) — see applyCoWatch in routes/friends.js.
         btn.textContent = 'Sent!';
-        const entry = state.data.get(project.id);
-        const friendName = btn.closest('.friend-row').querySelector('span').textContent;
-        if (entry && !entry.watchedWith.includes(friendName)) {
-          entry.watchedWith.push(friendName);
-          state.save();
-        }
       }
       btn.disabled = true;
     };

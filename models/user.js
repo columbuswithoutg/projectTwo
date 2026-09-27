@@ -12,10 +12,22 @@ const WatchEntrySchema = new mongoose.Schema({
   }]
 }, { _id: false });
 
+// A project the user has pressed "Start watching" on (the board's In
+// progress column). For a series, `episode` is the 0-based episode being
+// watched and `startedAt` is null between episodes (waiting for the next
+// "Start episode N"). `rewatch` marks a session started from Done.
+const WatchSessionSchema = new mongoose.Schema({
+  projectId: { type: String, required: true },
+  episode: { type: Number, default: 0 },
+  startedAt: { type: Date, default: null },
+  rewatch: { type: Boolean, default: false }
+}, { _id: false });
+
 const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   watchedProjects: { type: [WatchEntrySchema], default: [] },
+  watchSessions: { type: [WatchSessionSchema], default: [] },
   profilePicture: { type: String, default: '' },
   walkers: { type: mongoose.Schema.Types.Mixed, default: [] },
   // Lifetime Infinity Stone snaps performed in the shared /world PvP contest.
@@ -111,7 +123,11 @@ const UserSchema = new mongoose.Schema({
   // house shape as a /world house (models/WorldHouse.js). Always written
   // through WorldHouseLogic.validateHouse (routes/profile.js), so Mixed is
   // safe. Kept when a room leaves the layout, so putting it back restores it.
-  homeHouses: { type: mongoose.Schema.Types.Mixed, default: {} }
+  homeHouses: { type: mongoose.Schema.Types.Mixed, default: {} },
+  // The ONE roof over the whole home — { roofStyle, roofColor, roofDir,
+  // chimney } — taken from the latest room save (server/house.js pickRoof).
+  // null: derived from the first decorated room, else the plain roof.
+  homeRoof: { type: mongoose.Schema.Types.Mixed, default: null }
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', UserSchema);

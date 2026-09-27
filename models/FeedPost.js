@@ -25,6 +25,10 @@ const FeedPostSchema = new mongoose.Schema({
     // The author's lifetime watch count for this project at post time —
     // drives "watched for the 3rd time".
     count: { type: Number, default: 1 },
+    // Series: which episode this post is for (1-based) — each finished
+    // episode gets its own post; the season finale is episode === total.
+    // null for movies/specials and for posts made before per-episode posts.
+    episode: { type: Number, default: null },
     // Usernames, mirroring WatchEntry.watchedWith.
     watchedWith: { type: [String], default: [] },
     memories: {

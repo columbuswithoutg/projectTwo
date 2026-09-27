@@ -60,7 +60,7 @@ const Multiplayer = (() => {
     left:        'home:left',
     leave:       'home:leave',     // emitted before disconnect so the room's owner gets prompt notice
     zone:        null,             // homes have one shared chat — no channels
-    house:       null,             // no keeper houses in /home
+    house:       'home:house',     // server: the owner saved a room (+ the home's roof)
     channels:    false
   };
 
@@ -333,12 +333,14 @@ const Multiplayer = (() => {
       }
       joined = true;
       errToasted = false;
+      // A fresh socket starts at (0,0) server-side; force the next position
+      // tick to go out even while standing still, so peers (and the snapshot
+      // later joiners get) see where we really are.
+      lastPosSent = { x: NaN, y: 0, z: NaN, yaw: 0, walking: false, backward: false, pose: null };
       if (events.zone) {
-        // A fresh socket starts with no island server-side; force the next
-        // position tick to go out (even standing still) so the server
-        // re-derives our zone and the Project tab comes back.
+        // …and in /world the server re-derives our island from it, bringing
+        // the Project tab back.
         chan.projectId = null;
-        lastPosSent = { x: NaN, y: 0, z: NaN, yaw: 0, walking: false, backward: false, pose: null };
         renderTabs();
         if (onZone) onZone(null);
       }
@@ -346,9 +348,13 @@ const Multiplayer = (() => {
       // tell "held by me" from "held by a remote" for the shared stones, and
       // "the hero is angry at ME" for NPC fights.
       if ((events.stones || events.punch) && Playground3D.setLocalId) Playground3D.setLocalId(socket.id);
+      // Where we stand, so peers see us appear there (not at the origin
+      // until our first position update).
+      const at = Playground3D.getLocalState ? Playground3D.getLocalState() : null;
       socket.emit(events.join, {
         username: Auth.getUsername() || 'Anon',
         character,
+        ...(at ? { x: at.x, z: at.z, yaw: at.yaw } : {}),
         ...(joinPayload || {})
       });
     });
@@ -363,6 +369,8 @@ const Multiplayer = (() => {
       for (const p of (players || [])) {
         Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y, p.pose);
       }
+      // We just arrived: don't stand inside someone who was already here.
+      if (Playground3D.unstackFromPeers) Playground3D.unstackFromPeers();
     });
     socket.on(events.joined, (p) => {
       Playground3D.addRemotePlayer(p.socketId, p.character, p.username, p.x, p.z, p.yaw, p.y, p.pose);
@@ -399,6 +407,8 @@ const Multiplayer = (() => {
       socket.on(events.house, (p) => {
         if (!p || !p.projectId) return;
         if (Playground3D.applyHouse) Playground3D.applyHouse(p.projectId, p.house || null);
+        // /home: the save also carries the whole home's roof.
+        if (p.homeRoof !== undefined && Playground3D.setHomeRoof) Playground3D.setHomeRoof(p.homeRoof);
         if (onHouse) onHouse(p);
       });
     }

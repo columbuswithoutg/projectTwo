@@ -12,6 +12,7 @@ const FeedView = (() => {
   let _loading = false;
   let _friendNames = new Set();
   let _seq = 0;
+  let _asOthersSee = false; // set only while rendering a composer preview
   // Collapsed threads show only the latest few comments.
   const COLLAPSED_COMMENTS = 2;
   // Keys mirror REACTION_TYPES in routes/feed.js + the FeedPost enum.
@@ -61,6 +62,7 @@ const FeedView = (() => {
   // friend (or it's the viewer) — a co-watcher outside your circle would 403.
   function nameLink(username, { capital = false } = {}) {
     const me = Auth.getUsername();
+    if (_asOthersSee) return `<span class="feed-name">${esc(username)}</span>`;
     if (username === me) return `<a href="/profile" data-link class="feed-name">${capital ? 'You' : 'you'}</a>`;
     if (_friendNames.has(username)) {
       return `<a href="/friend/${encodeURIComponent(username)}" data-link class="feed-name">${esc(username)}</a>`;
@@ -82,6 +84,14 @@ const FeedView = (() => {
     if (post.kind === 'memory') {
       const n = post.memories.length;
       return `${who} added ${n > 1 ? n + ' memories' : 'a memory'} from ${title}`;
+    }
+    // Series: one post per episode; the season's last one reads "finished".
+    const total = Array.isArray(project.episodes) ? project.episodes.length : 0;
+    if (post.episode && total) {
+      if (post.episode >= total) {
+        return `${who} finished ${title} <span class="feed-ep">all ${total} episodes</span>${withList(post.watchedWith)}`;
+      }
+      return `${who} watched ${title} <span class="feed-ep">Episode ${post.episode} of ${total}</span>${withList(post.watchedWith)}`;
     }
     return `${who} watched ${title}${withList(post.watchedWith)}`;
   }
@@ -268,7 +278,7 @@ const FeedView = (() => {
             <p class="feed-line">${headline(post, project)}</p>
             <p class="feed-meta">${timeAgo(post.createdAt)}${rewatch}${memoryBadge}</p>
           </div>
-          ${post.mine ? `<button type="button" class="feed-caption-edit" title="Edit caption" aria-label="Edit caption">✎</button>` : ''}
+          ${post.mine ? `<button type="button" class="feed-caption-edit" title="Edit post" aria-label="Edit post">✎</button>` : ''}
         </header>
         <div class="feed-caption-slot">${captionHtml(post)}</div>
         ${memoriesHtml(post)}
@@ -431,83 +441,31 @@ const FeedView = (() => {
     }));
   }
 
-  // Author-only caption: inline editor in place of the caption text.
-  // Enter saves, Shift+Enter adds a line, Escape cancels.
+  // Author-only: "Edit post" (✎, or "Add a caption…") reopens the same post
+  // composer used when marking as watched — caption, photos/videos and
+  // watched-with tags — and swaps the card for the saved version.
   function wireCaption(card, post) {
     if (!post.mine) return;
-    const slot = card.querySelector('.feed-caption-slot');
-    const editBtn = card.querySelector('.feed-caption-edit');
-
-    function show() {
-      slot.innerHTML = captionHtml(post);
-      slot.querySelector('.feed-caption-add')?.addEventListener('click', edit);
-    }
-
-    function edit() {
-      const existing = slot.querySelector('.feed-caption-input');
-      if (existing) { existing.focus(); return; }
-      slot.innerHTML = `
-        <form class="feed-caption-form">
-          <textarea class="feed-caption-input" maxlength="500" rows="2"
-                    placeholder="Say something about this…" aria-label="Caption"></textarea>
-          <div class="feed-caption-actions">
-            <span class="feed-caption-counter" aria-live="polite"></span>
-            <button type="button" class="feed-caption-cancel">Cancel</button>
-            <button type="submit" class="feed-caption-save">Save</button>
-          </div>
-        </form>
-      `;
-      const form = slot.querySelector('form');
-      const ta = slot.querySelector('textarea');
-      const counter = slot.querySelector('.feed-caption-counter');
-      const save = slot.querySelector('.feed-caption-save');
-      const sync = () => {
-        ta.style.height = 'auto';
-        ta.style.height = ta.scrollHeight + 'px';
-        const left = 500 - ta.value.length;
-        counter.textContent = left <= 60 ? `${left} left` : '';
-        save.disabled = ta.value.trim() === post.caption;
-      };
-      ta.value = post.caption;
-      sync();
-      ta.focus();
-      ta.setSelectionRange(ta.value.length, ta.value.length);
-
-      ta.addEventListener('input', sync);
-      ta.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { e.preventDefault(); show(); editBtn.focus(); }
-        else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+    const open = () => {
+      if (typeof PostComposer === 'undefined') return;
+      PostComposer.open({
+        mode: 'edit',
+        post,
+        project: projectFor(post.projectId),
+        onSaved: (saved) => replaceCard(card, saved)
       });
-      slot.querySelector('.feed-caption-cancel').addEventListener('click', () => { show(); editBtn.focus(); });
+    };
+    card.querySelector('.feed-caption-edit')?.addEventListener('click', open);
+    card.querySelector('.feed-caption-add')?.addEventListener('click', open);
+  }
 
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        if (save.disabled) return;
-        save.disabled = true;
-        ta.disabled = true;
-        save.textContent = 'Saving…';
-        try {
-          const res = await fetch(`${API}/feed/${post.id}/caption`, {
-            method: 'PUT',
-            headers: authHeaders(true),
-            body: JSON.stringify({ caption: ta.value })
-          });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error);
-          post.caption = data.caption;
-          show();
-        } catch (err) {
-          toast(err.message || "Couldn't save caption", 'error');
-          ta.disabled = false;
-          save.textContent = 'Save';
-          sync();
-          ta.focus();
-        }
-      });
-    }
-
-    editBtn.addEventListener('click', edit);
-    show();
+  // Re-render one card in place with a fresh server copy of its post.
+  function replaceCard(card, post) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = cardHtml(post);
+    const fresh = tmp.firstElementChild;
+    card.replaceWith(fresh);
+    wireCard(fresh, post);
   }
 
   function wireCard(card, post) {
@@ -687,7 +645,8 @@ const FeedView = (() => {
       <header id="header">
         <button id="feed-friends-btn" class="feed-header-btn" title="Friends" aria-label="Friends">👥</button>
         <div class="view-tabs" role="tablist" aria-label="View mode">
-          <button class="view-tab" data-route="/" role="tab" aria-selected="false">Watch Order</button>
+          <button class="view-tab" data-route="/" role="tab" aria-selected="false"><span class="vt-long">Watch </span>Order</button>
+          <button class="view-tab" data-route="/board" role="tab" aria-selected="false">Board</button>
           <button class="view-tab active" data-route="/feed" role="tab" aria-selected="true">Feed</button>
           <button class="view-tab" data-route="/world" role="tab" aria-selected="false">World</button>
         </div>
@@ -733,5 +692,12 @@ const FeedView = (() => {
     _root = null;
   }
 
-  return { title: 'Feed — MCU Tracker', mount, unmount };
+  // previewCardHtml: the exact feed card markup for an unsaved post, used by
+  // the post composer's live preview (js/post-composer.js).
+  // asOthersSee renders names plainly (your own as your name, not "You").
+  function previewCardHtml(post, { asOthersSee = false } = {}) {
+    _asOthersSee = asOthersSee;
+    try { return cardHtml(post); } finally { _asOthersSee = false; }
+  }
+  return { title: 'Feed — MCU Tracker', mount, unmount, previewCardHtml };
 })();

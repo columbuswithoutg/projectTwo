@@ -31,6 +31,7 @@ const HomeView = {
                 <div class="nav-section-title">Navigate</div>
                 <button data-route="/world">World</button>
                 <button data-route="/">Watch Order</button>
+                <button data-route="/board">Board</button>
                 <button data-route="/profile">Profile</button>
                 <button data-route="/characters">Characters</button>
                 <button data-route="/map">Universe Map</button>
@@ -103,6 +104,7 @@ const HomeView = {
     let maxRooms = 0;
     let watchedCount = 0;
     let houses = {};
+    let homeRoof = null;
     let houseMaxProps = null;
     try {
       const [charRes, layoutRes] = await Promise.all([
@@ -119,6 +121,7 @@ const HomeView = {
         maxRooms = data.maxRooms || 0;
         watchedCount = data.watchedCount || 0;
         houses = data.homeHouses || {};
+        homeRoof = data.homeRoof || null;
         houseMaxProps = Number.isFinite(data.houseMaxProps) ? data.houseMaxProps : null;
       }
     } catch (_) {
@@ -133,6 +136,7 @@ const HomeView = {
     HomeView._maxRooms = maxRooms;
     HomeView._watchedCount = watchedCount;
     HomeView._houses = houses;
+    HomeView._homeRoof = homeRoof;
     HomeView._houseMaxProps = houseMaxProps;
 
     if (!layout.rooms || layout.rooms.length === 0) {
@@ -170,6 +174,7 @@ const HomeView = {
     const localChar = HomeView._character || Playground3D.defaultCharacter();
     Playground3D.init(HomeView._stage, localChar, layout);
     Playground3D.setHouses(houses);   // decorated rooms (read once the scene builds)
+    Playground3D.setHomeRoof(homeRoof);   // one roof over every room
 
     if (typeof Multiplayer !== 'undefined' && Multiplayer.start) {
       HomeView._mp = Multiplayer.start({
@@ -386,7 +391,11 @@ const HomeView = {
         : WorldHouseLogic.C.MAX_PROPS,
       saveUrl: `${API}/profile/home-houses/${encodeURIComponent(projectId)}`,
       savedToast: 'Room saved — friends who visit will see it.',
-      onSaved: (house) => { if (HomeView._houses) HomeView._houses[projectId] = house; },
+      sharedRoof: true,   // the roof controls restyle the whole home's one roof
+      onSaved: (house, data) => {
+        if (HomeView._houses) HomeView._houses[projectId] = house;
+        if (data && data.homeRoof !== undefined) HomeView._homeRoof = data.homeRoof;
+      },
       onClose: () => { HomeView._roomEditorClose = null; }
     });
   },
@@ -444,5 +453,6 @@ const HomeView = {
     HomeView._character = null;
     HomeView._layout = null;
     HomeView._houses = null;
+    HomeView._homeRoof = null;
   }
 };

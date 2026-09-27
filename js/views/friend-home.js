@@ -7,8 +7,9 @@
  *
  * Multiplayer: opens a socket on mount and joins room `home:<ownerId>`
  * via the shared Multiplayer module. If the owner is also on /home
- * they're already in the same room, so you see each other walk, chat,
- * and emote (same UX as /world, scoped to one home).
+ * they're already in the same room, so you see each other walk, sit, chat,
+ * and emote (same UX as /world, scoped to one home). A room the owner saves
+ * while you're here restyles live (home:house).
  ************************************************/
 const FriendHomeView = (() => {
   let _mp = null;
@@ -31,7 +32,7 @@ const FriendHomeView = (() => {
     if (!username) { Router.go('/'); return; }
 
     const myMount = ++_mountSeq;
-    const friend = await FriendView.enter(username);
+    const friend = await FriendView.enter(username, { freshHome: true });
     if (myMount !== _mountSeq) return;
     if (!friend) {
       FriendView.render404(container, username);
@@ -85,6 +86,8 @@ const FriendHomeView = (() => {
 
     Playground3D.init(stage, character, layout);
     Playground3D.setHouses(friend.homeHouses || {});   // their decorated rooms — view only
+    Playground3D.setHomeRoof(friend.homeRoof || null); // their one roof over every room
+    // Live: when the owner saves a room while we're here, home:house restyles it.
 
     if (typeof Multiplayer !== 'undefined' && Multiplayer.start) {
       _mp = Multiplayer.start({

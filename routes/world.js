@@ -58,6 +58,12 @@ async function maxPropsNow() {
   return maxPropsSetting();
 }
 
+// Nobody keeps an island until they've really spent time there: without a
+// floor, one forged position packet (a few ms of stay) claimed any of the
+// ~60 unclaimed houses. Stay only accrues while moving/chatting on an island
+// you've watched (routes/world-socket.js), so 5 minutes is real presence.
+const KEEPER_MIN_MS = 5 * 60 * 1000;
+
 // Top stay row per project, joined to the username. Returns
 // { [projectId]: { userId, username, ms } }.
 async function keepersByProject() {
@@ -70,7 +76,7 @@ async function keepersByProject() {
   const names = new Map(users.map(u => [String(u._id), u.username]));
   const out = {};
   for (const t of top) {
-    if (!(t.ms > 0)) continue;
+    if (!(t.ms >= KEEPER_MIN_MS)) continue;
     out[t._id] = { userId: String(t.userId), username: names.get(String(t.userId)) || 'Someone', ms: t.ms };
   }
   return out;
@@ -88,7 +94,7 @@ router.get('/houses', auth, async (req, res) => {
   ]);
   const mine = {};
   for (const r of myRows) if (r.ms > 0) mine[r.projectId] = r.ms;
-  res.json({ me: String(req.user.id), houses, keepers, mine, maxProps: maxPropsSetting() });
+  res.json({ me: String(req.user.id), houses, keepers, mine, maxProps: maxPropsSetting(), minKeeperMs: KEEPER_MIN_MS });
 });
 
 router.put('/houses/:projectId', auth, async (req, res) => {
@@ -102,8 +108,8 @@ router.put('/houses/:projectId', auth, async (req, res) => {
 
   await WorldSocket.flushStays();
   const top = await ProjectStay.findOne({ projectId }).sort({ ms: -1, updatedAt: 1 }).select('userId ms').lean();
-  if (!top || !(top.ms > 0)) {
-    return res.status(403).json({ error: 'No one has stayed here long enough yet' });
+  if (!top || !(top.ms >= KEEPER_MIN_MS)) {
+    return res.status(403).json({ error: 'Stay on this island for 5 minutes to claim its house' });
   }
   if (String(top.userId) !== String(req.user.id)) {
     const u = await User.findById(top.userId).select('username').lean();

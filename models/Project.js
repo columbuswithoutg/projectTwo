@@ -10,11 +10,21 @@ const ProjectSchema = new mongoose.Schema({
   title:         { type: String, required: true },
   release:       { type: String, default: '' },
   prerequisites: { type: [String], default: [] },
+  // Required before it unlocks, but not drawn as a road on the flowchart
+  // (e.g. Daredevil needs Iron Man). Omitted by the admin form, so its $set
+  // never clears it.
+  hiddenPrerequisites: { type: [String], default: undefined },
   phase:         { type: String, default: '' },
   gridX:         { type: Number, default: 0 },
   gridY:         { type: Number, default: 0 },
   location:      { type: String, default: '' },
-  image:         { type: String, default: '' }
+  image:         { type: String, default: '' },
+  // Watch timer. A movie/special uses `runtime` (minutes); a series season
+  // lists each episode's minutes in `episodes` instead (non-empty ⇒ series).
+  // Both are gates: "Mark as watched" stays locked until that much time has
+  // passed since "Start watching" — see server/watchRules.js.
+  runtime:       { type: Number, default: 0 },
+  episodes:      { type: [Number], default: undefined }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Project', ProjectSchema);

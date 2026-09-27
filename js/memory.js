@@ -1,4 +1,34 @@
 /************************************************
+ * MEMORY UPLOAD — POST /api/upload (Cloudinary) with progress.
+ * XHR (not fetch) so upload.onprogress works. onProgress(frac 0..1);
+ * onProcessing() fires once the bytes are up while Cloudinary still
+ * processes. Resolves { url, type }. Shared by the Add Memory modal and
+ * the post composer (js/post-composer.js).
+ ************************************************/
+function uploadMemoryFile(file, { onProgress, onProcessing } = {}) {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API}/upload`);
+    xhr.setRequestHeader('Authorization', `Bearer ${Auth.getToken()}`);
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable && onProgress) onProgress(ev.loaded / ev.total);
+    };
+    xhr.upload.onload = () => { if (onProgress) onProgress(1); if (onProcessing) onProcessing(); };
+    xhr.onload = () => {
+      try {
+        const json = JSON.parse(xhr.responseText || '{}');
+        if (xhr.status >= 200 && xhr.status < 300 && json.url) resolve({ url: json.url, type: json.type });
+        else reject(new Error(json.error || `Upload failed (HTTP ${xhr.status})`));
+      } catch (err) { reject(err); }
+    };
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.send(formData);
+  });
+}
+
+/************************************************
  * ADD MEMORY MODAL
  ************************************************/
 async function showAddMemoryModal(project) {
@@ -78,34 +108,12 @@ async function showAddMemoryModal(project) {
     };
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      // XHR (not fetch) so we can surface upload.onprogress.
-      const uploadJson = await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${API}/upload`);
-        xhr.setRequestHeader('Authorization', `Bearer ${Auth.getToken()}`);
-        xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) setProgress(ev.loaded / ev.total);
-        };
-        xhr.onload = () => {
-          // Bytes are up; Cloudinary may still be processing — show an
-          // indeterminate "almost there" state until the response lands.
-          setProgress(1);
-          progressWrap.classList.add('processing');
-          try {
-            const json = JSON.parse(xhr.responseText || '{}');
-            if (xhr.status >= 200 && xhr.status < 300) resolve(json);
-            else reject(new Error(json.error || `HTTP ${xhr.status}`));
-          } catch (err) { reject(err); }
-        };
-        xhr.onerror = () => reject(new Error('Network error'));
-        xhr.send(formData);
+      // Bytes up → Cloudinary may still be processing: show an
+      // indeterminate "almost there" state until the response lands.
+      const { url, type } = await uploadMemoryFile(file, {
+        onProgress: setProgress,
+        onProcessing: () => progressWrap.classList.add('processing')
       });
-
-      const { url, type, error } = uploadJson;
-      if (error) throw new Error(error);
 
       const saveRes = await fetch(`${API}/progress/memory`, {
         method: 'POST',

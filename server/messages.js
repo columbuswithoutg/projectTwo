@@ -49,7 +49,11 @@ function sendSystem({ recipientId, text, kind = 'report-reply', reportId = null 
         pairKey: adminPairKey(recipientId),
         kind,
         reportId,
-        text: String(text).slice(0, MessagingLogic.C.DM_MAX_LEN)
+        // Admin replies can be longer than a DM; mark the cut instead of
+        // silently dropping the end (the full reply is on the report page).
+        text: String(text).length > MessagingLogic.C.DM_MAX_LEN
+            ? String(text).slice(0, MessagingLogic.C.DM_MAX_LEN - 1) + '…'
+            : String(text)
     });
 }
 

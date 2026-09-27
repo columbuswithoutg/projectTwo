@@ -314,6 +314,33 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-09-27 — Multiplayer polish from a three-account playtest
+
+Played /world and /home with three accounts at once (two browsers + a socket bot): movement, jumping, chat on every channel, waves, punches, NPC sync, stones + snap, reconnects, sitting, live room saves.
+- **Players no longer spawn inside each other.** Everyone entering an island (or a home) landed on the exact same point, and `_collideActors` then pinned overlapping players together (a step snapped you to their far side). New `_spreadSpawn` picks a free spot on a small ring around the anchor (walkable, not in a wall / prop, clear of known peers) for the first spawn, snap respawns and `teleportToNode`; `unstackFromPeers()` moves a newcomer again if the room snapshot shows someone on its spot; and `_collideActors` lets you walk out of an overlap you started in — `js/playground3d.js`, `js/home-socket.js`.
+- **No more flying in from (0,0).** The server announced a joiner at the origin until their first position update, so peers watched them slide across the map. Joins now carry the client's position (`joinPos` in `routes/world-socket.js`, sent from `js/home-socket.js`), and a remote player who jumps more than 6 u in one update (join, teleport, respawn) pops there instead of gliding (`REMOTE_SNAP_DIST`).
+- A /world socket retired by a second tab now leaves the `world` room too (it kept receiving everyone's traffic).
+- Dusted with a spawn picker open, the toast said "reassembling at the start" — it now says "pick where to reassemble" — `js/views/world.js`.
+
+---
+
+### 2026-09-27 — Friends see each other + live decorations in homes, one roof per home
+
+**Bug fix — frozen players in homes:** in `/home` and `/friend/:u/home` other players never moved, never showed sitting / lying, and their name tags + chat bubbles (and your own bubble) piled up in the corner. `_tick` only ran `_tickRemotePlayers` / `_tickHUD` in /world; both now run in home mode too (`_tickHUD` skips its NPC / keeper-tag parts outside /world) — `js/playground3d.js`.
+
+**Bug fix — visitors seeing old / no decorations:** saving a room now broadcasts `home:house` `{ projectId, house, homeRoof }` to the home's room (`WorldSocket.broadcastHome`, `routes/world-socket.js`; sent from `routes/profile.js`), and `Multiplayer.HOME_EVENTS.house` listens for it, so friends already inside see the change live. `FriendView.enter(u, { freshHome: true })` re-reads the home fields even when the friend is cached (the Home tab uses it). Note: the server serves `dist/` — run `npm run build` after pulling, or the browser keeps the old client.
+
+**One roof for the whole home:** every room — decorated or not — now wears the same roof at one height (`HOME_WALL_HEIGHT` 4.2; plain walls rise to meet it). Colour, shape, ridge and chimney come from `User.homeRoof` (one chimney, on the first room). The room editor's roof controls read "Roof (whole home)" and preview on every room; saving any room sets the home's roof (`server/house.js` `pickRoof` / `homeRoofFor` — homes decorated before this take the first decorated room's roof). `GET /api/profile/home-layout` and `GET /api/friends/by-username/:u` return `homeRoof`; engine API `setHomeRoof` / `getHomeRoof`.
+
+**Other fixes:**
+- Cancelling the editor on a room / island that had no decorations left a default house behind until reload; it now goes back to undecorated — `js/house-editor.js`.
+- After a reconnect in a home your position wasn't re-sent while standing still, so others saw you at the spawn point — `js/home-socket.js`.
+- A socket retired by a second tab of the same user stayed in the home's socket.io room and kept receiving its chat — `routes/world-socket.js`.
+- `/home-layout` GET and `/home-houses` PUT now return 500 instead of an unhandled rejection on a DB error.
+- Tests: `pickRoof` / `homeRoofFor` in `test/home-house.test.js`.
+
+---
+
 ### 2026-09-24 — Decorate your /home rooms, admin prop cap now saves
 
 **Bug fix:** Admin → Config → "Props per house (/world)" showed "Saved" but snapped back to 20. `CONFIG_RULES` in `routes/admin.js` never listed `world.maxProps` (the 2026-09-22 entry below says it did), so the PUT silently dropped it. It's there now, with `world.homeMaxProps`.

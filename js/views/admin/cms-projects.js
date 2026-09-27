@@ -64,11 +64,96 @@
           { key: 'id', label: 'ID' },
           { key: 'title', label: 'Title' },
           { key: 'release', label: 'Release' },
-          { key: 'phase', label: 'Phase' }
+          { key: 'phase', label: 'Phase' },
+          { key: 'runtime', label: 'Runtime', fmt: (_, item) => Editor._runtimeSummary(item) }
         ],
         onPick: (item) => Editor.openForm(item, false),
         onAdd: () => Editor.openForm({}, true)
       });
+    },
+
+    // "2h 6m" / "13 eps · 11h 55m" / "not set" — the watch-timer length.
+    _runtimeSummary(item) {
+      const eps = Array.isArray(item.episodes) ? item.episodes.filter(n => n > 0) : [];
+      if (eps.length) {
+        const total = eps.reduce((a, b) => a + b, 0);
+        return `${eps.length} eps · ${WatchControls.fmtRuntime(total)}`;
+      }
+      return item.runtime > 0 ? WatchControls.fmtRuntime(item.runtime) : '⚠ not set';
+    },
+
+    // "53, 55, 51" → [53, 55, 51]; null if any entry isn't a positive number.
+    _parseEpisodes(text) {
+      const parts = String(text || '').split(/[\s,;]+/).filter(Boolean);
+      const nums = parts.map(Number);
+      if (nums.some(n => !Number.isFinite(n) || n <= 0 || n > 600)) return null;
+      return nums.map(Math.round);
+    },
+
+    // Movie runtime / series episode runtimes. Drives the Start watching →
+    // Mark as watched timer (server/watchRules.js), so it's worth a
+    // dedicated block rather than two bare inputs.
+    _runtimeFields(item) {
+      const eps = Array.isArray(item.episodes) ? item.episodes : [];
+      const isSeries = eps.length > 0;
+
+      const box = document.createElement('fieldset');
+      box.className = 'admin-cms-runtime';
+      box.innerHTML = '<legend class="admin-cms-flabel">Watch runtime</legend>';
+
+      const typeField = AdminView._cmsField('Type', 'select', isSeries ? 'series' : 'movie', {
+        options: [{ value: 'movie', label: 'Movie / special' }, { value: 'series', label: 'Series (per episode)' }]
+      });
+      typeField.set(isSeries ? 'series' : 'movie');
+      const runtimeField = AdminView._cmsField('Runtime (minutes)', 'number', item.runtime > 0 ? item.runtime : '', {
+        placeholder: 'e.g. 126', step: 1
+      });
+      runtimeField.input.min = '1';
+      runtimeField.input.max = '600';
+      const epsField = AdminView._cmsField('Episode runtimes (minutes, in order)', 'textarea', eps.join(', '), {
+        placeholder: 'e.g. 53, 55, 51, 55', rows: 3
+      });
+      const summary = document.createElement('p');
+      summary.className = 'admin-cms-hint';
+
+      const sync = () => {
+        const series = typeField.get() === 'series';
+        runtimeField.wrap.hidden = series;
+        epsField.wrap.hidden = !series;
+        if (series) {
+          const parsed = Editor._parseEpisodes(epsField.get());
+          summary.textContent = parsed === null
+            ? 'Use positive numbers separated by commas.'
+            : parsed.length
+              ? `${parsed.length} episode${parsed.length !== 1 ? 's' : ''} · ${WatchControls.fmtRuntime(parsed.reduce((a, b) => a + b, 0))} total. Each episode unlocks "Mark as watched" at its runtime minus credits (10%, 2–10 min).`
+              : 'Add one runtime per episode.';
+        } else {
+          const n = Number(runtimeField.get());
+          summary.textContent = n > 0
+            ? `"Mark as watched" unlocks ${WatchControls.fmtRuntime(Math.round(state.requiredMinutes({ runtime: Math.round(n) })))} after "Start watching" (runtime minus skippable credits).`
+            : 'Without a runtime, "Mark as watched" unlocks immediately.';
+        }
+      };
+      [typeField.input, runtimeField.input, epsField.input].forEach(el => el.addEventListener('input', sync));
+      typeField.input.addEventListener('change', sync);
+      sync();
+
+      box.append(typeField.wrap, runtimeField.wrap, epsField.wrap, summary);
+      return {
+        wrap: box,
+        // → { runtime, episodes } or { error }
+        value() {
+          if (typeField.get() === 'series') {
+            const parsed = Editor._parseEpisodes(epsField.get());
+            if (!parsed || !parsed.length) return { error: 'Enter at least one episode runtime (positive minutes).' };
+            return { runtime: 0, episodes: parsed };
+          }
+          const raw = String(runtimeField.get()).trim();
+          const n = raw === '' ? 0 : Number(raw);
+          if (!Number.isFinite(n) || n < 0 || n > 600) return { error: 'Runtime must be between 1 and 600 minutes.' };
+          return { runtime: Math.round(n), episodes: [] };
+        }
+      };
     },
 
     // coords: optional { gridX, gridY } — set when opened from the board
@@ -129,8 +214,11 @@
       });
       prereqWrap.appendChild(prereqSelect);
 
+      const runtime = Editor._runtimeFields(item);
+
       wrap.append(
         idField.wrap, titleField.wrap, releaseField.wrap, phaseField.wrap,
+        runtime.wrap,
         posField.wrap, locationField.wrap, imageField.wrap,
         prereqWrap
       );
@@ -155,7 +243,11 @@
       wrap.appendChild(actions);
 
       saveBtn.addEventListener('click', async () => {
+        const rt = runtime.value();
+        if (rt.error) { AdminView.toast(rt.error, 'error'); return; }
         const payload = {
+          runtime: rt.runtime,
+          episodes: rt.episodes,
           id: idField.get().trim(),
           title: titleField.get().trim(),
           release: releaseField.get().trim(),

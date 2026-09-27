@@ -26,6 +26,13 @@ const NodeFactory = (() => {
     check.textContent = "✔";
     node.appendChild(check);
 
+    // Ribbon for a title on the Board's "In progress" column (timer running
+    // or mid-series) — otherwise it looks identical to a not-started pin.
+    const watching = document.createElement("span");
+    watching.className = "watching-badge";
+    watching.textContent = "▶ Watching";
+    node.appendChild(watching);
+
     updateState(node, project);
     return node;
   }
@@ -35,6 +42,7 @@ const NodeFactory = (() => {
     const locked = !isUnlocked(project);
     node.classList.toggle("watched", isWatched);
     node.classList.toggle("locked", locked);
+    node.classList.toggle("in-progress", state.isInProgress(project.id));
   }
 
   return { create, updateState };

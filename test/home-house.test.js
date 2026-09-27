@@ -42,3 +42,25 @@ test('homeMaxPropsNow: the admin value, else the default', async (t) => {
   AdminConfig.findOne = stub(null);
   assert.equal(await H.homeMaxPropsNow(), AdminConfig.defaults().world.homeMaxProps);
 });
+
+test('pickRoof: just the roof fields, with defaults', () => {
+  assert.deepEqual(H.pickRoof({ roofStyle: 'gable', roofColor: 3, roofDir: 1, chimney: true, wallColor: 2, props: [] }),
+    { roofStyle: 'gable', roofColor: 3, roofDir: 1, chimney: true });
+  assert.deepEqual(H.pickRoof(null), { roofStyle: 'flat', roofColor: null, roofDir: 0, chimney: false });
+});
+
+test('homeRoofFor: the stored roof wins', () => {
+  const user = { homeRoof: { roofStyle: 'hip', roofColor: 4 }, homeHouses: { a: { roofStyle: 'gable' } } };
+  const r = H.homeRoofFor(user, [{ projectId: 'a' }]);
+  assert.equal(r.roofStyle, 'hip');
+  assert.equal(r.roofColor, 4);
+});
+
+test('homeRoofFor: legacy homes take the first decorated room in layout order', () => {
+  const user = { homeHouses: { b: { roofStyle: 'gable', roofDir: 1 }, c: { roofStyle: 'hip' } } };
+  const r = H.homeRoofFor(user, [{ projectId: 'a' }, { projectId: 'b' }, { projectId: 'c' }]);
+  assert.equal(r.roofStyle, 'gable');
+  assert.equal(r.roofDir, 1);
+  assert.equal(H.homeRoofFor({ homeHouses: {} }, [{ projectId: 'a' }]), null);
+  assert.equal(H.homeRoofFor(null, []), null);
+});

@@ -83,9 +83,12 @@
   // target — those need server state.
   function normalizeMessage(raw) {
     const channel = CHANNELS.includes(raw && raw.channel) ? raw.channel : 'world';
-    const text = String((raw && raw.text) || '').trim().slice(0, C.MAX_LEN);
+    // Strings only: String() on a client-sent object like {"toString":1}
+    // throws, and a throw inside a socket handler takes the whole server down.
+    const str = (v) => (typeof v === 'string' ? v : '');
+    const text = str(raw && raw.text).trim().slice(0, C.MAX_LEN);
     if (!text) return { ok: false, error: 'empty' };
-    const to = channel === 'whisper' ? String((raw && raw.to) || '').trim().slice(0, 40) : null;
+    const to = channel === 'whisper' ? str(raw && raw.to).trim().slice(0, 40) : null;
     if (channel === 'whisper' && !to) return { ok: false, error: 'no-target' };
     return { ok: true, channel, text, to };
   }

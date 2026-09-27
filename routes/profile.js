@@ -1,9 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/user');
+const Character = require('../models/Character');
+const contentLoader = require('../server/contentLoader');
 const auth = require('../middleware/auth');
 const HouseLogic = require('../js/world-house-logic');
 const House = require('../server/house');
+const WorldSocket = require('./world-socket');
 
 // GET /api/profile — returns stats + profilePicture
 router.get('/', auth, async (req, res) => {
@@ -52,12 +55,49 @@ function validProfilePictureUrl(url) {
   return false;
 }
 
+// Character portraits the picker can offer: image file → what unlocks it.
+// A character's base image needs its debut watched; an alternate look
+// (stage) also needs its `after` project. Same source as /api/content
+// (Mongo, else characters.js), cached briefly.
+let _charImages = null;
+let _charImagesAt = 0;
+async function characterImages() {
+  if (_charImages && Date.now() - _charImagesAt < 60000) return _charImages;
+  let list = null;
+  try {
+    const docs = await Character.find({}).select('debut image stages').lean();
+    if (docs.length) list = docs;
+  } catch (_) { /* fall back to the static file */ }
+  const map = new Map();
+  for (const c of list || contentLoader.get('characters')) {
+    if (c.image) map.set(c.image, { needs: [c.debut] });
+    for (const s of c.stages || []) if (s.image) map.set(s.image, { needs: [c.debut, s.after] });
+  }
+  _charImages = map;
+  _charImagesAt = Date.now();
+  return map;
+}
+
+// Why a character portrait can't be used, or null if it can. Uploaded
+// (Cloudinary) photos aren't character portraits and always pass here.
+async function characterPictureError(url, userId) {
+  const m = /^assets\/characters\/([\w.\-]+)$/.exec(url);
+  if (!m) return null;
+  const rule = (await characterImages()).get(m[1]);
+  if (!rule) return 'Unknown character picture';
+  const u = await User.findById(userId).select('watchedProjects.projectId').lean();
+  const watched = new Set(((u && u.watchedProjects) || []).map(e => e.projectId));
+  return rule.needs.every(id => id && watched.has(id)) ? null : 'Watch more to unlock that character';
+}
+
 // POST /api/profile/picture — update profile picture
 router.post('/picture', auth, async (req, res) => {
   const { profilePicture } = req.body || {};
   if (!profilePicture) return res.status(400).json({ error: 'No picture provided' });
   if (!validProfilePictureUrl(profilePicture))
     return res.status(400).json({ error: 'Invalid picture URL' });
+  const locked = await characterPictureError(profilePicture, req.user.id);
+  if (locked) return res.status(400).json({ error: locked });
   await User.findByIdAndUpdate(req.user.id, { profilePicture });
   res.json({ profilePicture });
 });
@@ -186,38 +226,53 @@ function isLayoutConnected(rooms) {
 }
 
 router.get('/home-layout', auth, async (req, res) => {
-  const user = await User.findById(req.user.id).select('homeLayout watchedProjects homeHouses').lean();
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const watchedIds = (user.watchedProjects || []).map(e => e.projectId);
-  const homeLayout = user.homeLayout || { rooms: [] };
-  res.json({
-    homeLayout,
-    maxRooms: Math.floor(watchedIds.length / 2),
-    watchedCount: watchedIds.length,
-    watchedIds,
-    homeHouses: House.housesForRooms(user.homeHouses, homeLayout.rooms),
-    houseMaxProps: await House.homeMaxPropsNow()
-  });
+  try {
+    const user = await User.findById(req.user.id).select('homeLayout watchedProjects homeHouses homeRoof').lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const watchedIds = (user.watchedProjects || []).map(e => e.projectId);
+    const homeLayout = user.homeLayout || { rooms: [] };
+    res.json({
+      homeLayout,
+      maxRooms: Math.floor(watchedIds.length / 2),
+      watchedCount: watchedIds.length,
+      watchedIds,
+      homeHouses: House.housesForRooms(user.homeHouses, homeLayout.rooms),
+      homeRoof: House.homeRoofFor(user, homeLayout.rooms),
+      houseMaxProps: await House.homeMaxPropsNow()
+    });
+  } catch (err) {
+    console.error('[profile] GET /home-layout failed:', err);
+    res.status(500).json({ error: 'Could not load your home' });
+  }
 });
 
 // Save the decoration of one of your own /home rooms. Owner-only by
-// construction: it only ever writes the caller's own document.
+// construction: it only ever writes the caller's own document. Its roof
+// fields become the whole home's roof, and everyone in the home (visiting
+// friends too) gets the change live as `home:house`.
 router.put('/home-houses/:projectId', auth, async (req, res) => {
-  const projectId = String(req.params.projectId || '').slice(0, 64);
-  if (!/^[\w-]+$/.test(projectId)) return res.status(400).json({ error: 'Bad room id' });
-  const user = await User.findById(req.user.id).select('homeLayout').lean();
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const rooms = (user.homeLayout && user.homeLayout.rooms) || [];
-  if (!rooms.some(r => r.projectId === projectId)) {
-    return res.status(404).json({ error: "That room isn't in your home" });
+  try {
+    const projectId = String(req.params.projectId || '').slice(0, 64);
+    if (!/^[\w-]+$/.test(projectId)) return res.status(400).json({ error: 'Bad room id' });
+    const user = await User.findById(req.user.id).select('homeLayout').lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const rooms = (user.homeLayout && user.homeLayout.rooms) || [];
+    if (!rooms.some(r => r.projectId === projectId)) {
+      return res.status(404).json({ error: "That room isn't in your home" });
+    }
+    const v = HouseLogic.validateHouse(req.body, { maxProps: await House.homeMaxPropsNow() });
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    if (!House.portraitOk(v.house.portrait)) {
+      return res.status(400).json({ error: 'portrait must be an image uploaded through this app' });
+    }
+    const homeRoof = House.pickRoof(v.house);
+    await User.updateOne({ _id: req.user.id }, { $set: { ['homeHouses.' + projectId]: v.house, homeRoof } });
+    WorldSocket.broadcastHome(req.user.id, 'home:house', { projectId, house: v.house, homeRoof });
+    res.json({ house: v.house, homeRoof });
+  } catch (err) {
+    console.error('[profile] PUT /home-houses failed:', err);
+    res.status(500).json({ error: 'Could not save the room' });
   }
-  const v = HouseLogic.validateHouse(req.body, { maxProps: await House.homeMaxPropsNow() });
-  if (!v.ok) return res.status(400).json({ error: v.error });
-  if (!House.portraitOk(v.house.portrait)) {
-    return res.status(400).json({ error: 'portrait must be an image uploaded through this app' });
-  }
-  await User.updateOne({ _id: req.user.id }, { $set: { ['homeHouses.' + projectId]: v.house } });
-  res.json({ house: v.house });
 });
 
 router.put('/home-layout', auth, async (req, res) => {

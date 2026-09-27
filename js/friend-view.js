@@ -23,9 +23,24 @@ const FriendView = (() => {
 
   // Idempotent entry — returns the friend payload or null on failure
   // (unknown user or not friends). Does NOT navigate; the caller (the
-  // friend view's mount) decides what to render.
-  async function enter(username) {
-    if (_active && _active.username === username) return _active;
+  // friend view's mount) decides what to render. { freshHome: true } re-reads
+  // the home fields (layout / decorations / roof) even when cached, so the
+  // Home tab never shows rooms the friend has since redecorated.
+  async function enter(username, opts) {
+    if (_active && _active.username === username) {
+      if (!(opts && opts.freshHome)) return _active;
+      const seq = _enterSeq;
+      try {
+        const data = await Friends.getByUsername(username);
+        if (seq === _enterSeq && _active && _active.username === username && data && !data.error) {
+          _active.homeLayout = data.homeLayout;
+          _active.homeHouses = data.homeHouses;
+          _active.homeRoof = data.homeRoof;
+          _active.homeCharacter = data.homeCharacter;
+        }
+      } catch (_) { /* keep the cached copy */ }
+      return (_active && _active.username === username) ? _active : null;
+    }
     if (_active) exit();
 
     // exit() (or a newer enter()) bumps _enterSeq while we await, so a late

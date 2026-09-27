@@ -9,6 +9,7 @@ const AuditLog = require('../models/AuditLog');
 const AdminConfig = require('../models/AdminConfig');
 const WorldNpcLogic = require('../js/world-npc-logic');   // NPC_IDS for world.npcBodyTypes
 const Project = require('../models/Project');
+const watchRules = require('../server/watchRules');
 const Character = require('../models/Character');
 const Location = require('../models/Location');
 const Dialogue = require('../models/Dialogue');
@@ -357,6 +358,23 @@ router.patch('/reports/:id', async (req, res) => {
   const from = doc.status;
   doc.status = status;
   await doc.save();
+  // Tell the reporter — a status change used to be invisible to them unless
+  // it came with a reply. Best-effort, like the reply notification below.
+  if (from !== status && await User.exists({ _id: doc.user })) {
+    const label = doc.kind === 'bug' ? 'bug report' : 'suggestion';
+    const STATUS_TEXT = {
+      'open': 'is open again',
+      'in-progress': 'is now being worked on',
+      'fixed': 'has been fixed — thanks for reporting it!',
+      'wontfix': "won't be changed for now",
+      'closed': 'has been closed'
+    };
+    Messages.sendSystem({
+      recipientId: doc.user,
+      reportId: doc._id,
+      text: `Your ${label} “${doc.title}” ${STATUS_TEXT[status] || `is now ${status}`}`.replace(/([^!.])$/, '$1.')
+    }).catch(err => console.error('Report status → inbox failed:', err && err.message));
+  }
   logAudit(req, 'reportStatus', req.params.id, { from, to: status, username: doc.username, title: doc.title });
   res.json(doc.toObject());
 });
@@ -632,6 +650,10 @@ function sanitizeProject(body, requireId = true) {
   if (body.gridY !== undefined) out.gridY = _gridCoord(body.gridY);
   out.location = trimStr(body.location || '', 80);
   out.image = trimStr(body.image || '', 200);
+  // Watch timer: minutes for a movie, or one entry per episode for a series
+  // (a non-empty episode list makes it a series and runtime is ignored).
+  out.episodes = watchRules.sanitizeEpisodes(body.episodes);
+  out.runtime = out.episodes.length ? 0 : watchRules.sanitizeRuntime(body.runtime);
   return { out, errors };
 }
 
@@ -646,6 +668,7 @@ router.post('/content/projects', async (req, res) => {
   const exists = await Project.exists({ id: out.id });
   if (exists) return badRequest(res, 'A project with that id already exists', { id: 'duplicate' });
   await Project.create(out);
+  watchRules.invalidate();
   logAudit(req, 'contentEdit', { type: 'project', id: out.id }, { action: 'create' });
   res.json(out);
 });
@@ -656,6 +679,7 @@ router.put('/content/projects/:id', async (req, res) => {
   const before = await Project.findOne({ id: req.params.id }).lean();
   if (!before) return res.status(404).json({ error: 'Not found' });
   const after = await Project.findOneAndUpdate({ id: req.params.id }, out, { new: true }).lean();
+  watchRules.invalidate();
   logAudit(req, 'contentEdit', { type: 'project', id: req.params.id }, { action: 'update' });
   res.json(after);
 });
@@ -663,6 +687,7 @@ router.put('/content/projects/:id', async (req, res) => {
 router.delete('/content/projects/:id', async (req, res) => {
   const r = await Project.deleteOne({ id: req.params.id });
   if (r.deletedCount === 0) return res.status(404).json({ error: 'Not found' });
+  watchRules.invalidate();
   logAudit(req, 'contentEdit', { type: 'project', id: req.params.id }, { action: 'delete' });
   res.json({ message: 'Deleted' });
 });

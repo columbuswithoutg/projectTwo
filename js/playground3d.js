@@ -194,6 +194,12 @@ const Playground3D = (() => {
   // from GET /api/world/houses + live world:house pushes. Kept separately from
   // the nodes so a house that arrives before its island unlocks still applies.
   let _houses = new Map();        // projectId → { wallColor, roofColor, trimColor, lampColor, sign, props }
+  // /home: ONE roof for the whole home — { roofStyle, roofColor, roofDir,
+  // chimney } — worn by every room (decorated or not) at HOME_WALL_HEIGHT.
+  // A room's own house roof fields are ignored there. See _applyRoof.
+  let _homeRoof = null;
+  let _homeRoofMat = null;        // the one slab material every home room shares
+  const HOME_WALL_HEIGHT = 4.2;
   // Keeper tags floating over each house roof: projectId → { line1, line2, mine }.
   // Set by the view (setHouseKeepers); rendered as HUD elements in _tickHUD.
   let _keeperTags = new Map();
@@ -351,6 +357,8 @@ const Playground3D = (() => {
     _matPlatformSide = null;
     _matApron = null;
     _ceilMatByPhase = null;
+    _homeRoof = null;
+    _homeRoofMat = null;
     _walkableRoads = [];
     _remotePlayers.clear();
     _hudLayer = null;
@@ -494,6 +502,7 @@ const Playground3D = (() => {
     _player = _buildPlayer(_currentChar);
     _rig = _player.userData.bones;        // local rig — animated by _tick
     _playerR = _actorRadiusFor(_currentChar);
+    spawn = _spreadSpawn(spawn.x, spawn.z);   // not on top of whoever else arrived here
     _player.position.set(spawn.x, 0, spawn.z);
     _lastSafe.x = spawn.x; _lastSafe.z = spawn.z;   // fall-respawn to where they actually started
     _scene.add(_player);
@@ -634,7 +643,7 @@ const Playground3D = (() => {
       const node = {
         home: true, room, hasNbr, openings, plainWallMat: wallMat,
         mesh: floor, project: project || { id: room.projectId },
-        wallHeight: _houseHeight(room.projectId),
+        wallHeight: HOME_WALL_HEIGHT,   // one height → one continuous roof line
         house: _houses.get(room.projectId) || null,
         ceiling: null, walls: [], decor: [], props: [], lockIcons: [], roofExtra: null, roofTopY: 0
       };
@@ -644,31 +653,35 @@ const Playground3D = (() => {
   }
 
   // (Re)build one home room: the full house when it has one, else the plain
-  // poster-tinted walls. Called on build and whenever the editor previews.
+  // poster-tinted walls. Every room wears the shared home roof either way.
+  // Called on build and whenever the editor previews.
   function _buildHomeRoom(node) {
     const THREE = window.THREE;
+    if (!node.ceiling) {
+      const ROOF_T = 0.2;   // same slab as a /world house
+      node.ceiling = new THREE.Mesh(new THREE.BoxGeometry(CELL, ROOF_T, CELL), _homeRoofMaterial());
+      node.ceiling.position.set(node.mesh.position.x, node.wallHeight + ROOF_T / 2 - 0.02, node.mesh.position.z);
+      _scene.add(node.ceiling);
+    }
+    _applyRoof(node);
     if (node.house) {
-      if (!node.ceiling) {
-        const ROOF_T = 0.2;   // same slab as a /world house
-        node.ceiling = new THREE.Mesh(new THREE.BoxGeometry(CELL, ROOF_T, CELL), _ceilingMat(node.project.phase));
-        node.ceiling.position.set(node.mesh.position.x, node.wallHeight + ROOF_T / 2 - 0.02, node.mesh.position.z);
-        _scene.add(node.ceiling);
-      }
-      _applyRoof(node);
       _buildNodeWalls(node);
       _buildProps(node);
       return;
     }
     _teardownNodeWalls(node);
-    if (node.ceiling) {
-      _applyRoof(node);                  // drops the pitched part + any owned roof material
-      _scene.remove(node.ceiling);
-      node.ceiling.geometry.dispose();   // the material is the shared per-phase one
-      node.ceiling = null;
-      node.roofTopY = 0;
-    }
     _buildProps(node);                   // no house → clears the props
-    for (const s of CELL_SIDES) _buildCellSideWalls(node.room, s, node.hasNbr[s.name], node.plainWallMat, node.walls);
+    for (const s of CELL_SIDES) _buildCellSideWalls(node.room, s, node.hasNbr[s.name], node.plainWallMat, node.walls, node.wallHeight);
+  }
+
+  // The one slab material all home rooms share, tinted by _homeRoof.roofColor.
+  function _homeRoofMaterial() {
+    const THREE = window.THREE;
+    if (!_homeRoofMat) _homeRoofMat = new THREE.MeshLambertMaterial({ color: WORLD.CEILING_COLOR });
+    const idx = _homeRoof ? _homeRoof.roofColor : null;
+    const c = (idx != null && typeof WorldHouseLogic !== 'undefined') ? WorldHouseLogic.PALETTE[idx] : null;
+    _homeRoofMat.color.set(typeof c === 'number' ? c : WORLD.CEILING_COLOR);
+    return _homeRoofMat;
   }
 
   // For a given cell + side, produce either one full wall or two flanking
@@ -676,7 +689,7 @@ const Playground3D = (() => {
   // neighboring cell. Walls are inset by WALL_THICKNESS/2 on the cell's
   // interior side so each cell owns its own walls without overlapping
   // a neighbor's (each room sees its own theme color on its walls).
-  function _buildCellSideWalls(room, side, hasDoorway, mat, sink) {
+  function _buildCellSideWalls(room, side, hasDoorway, mat, sink, height) {
     const HALF = CELL / 2;
     const T = WALL_THICKNESS;
     const cx = room.gx * CELL;
@@ -698,7 +711,7 @@ const Playground3D = (() => {
       sizeX   = T;                 sizeZ   = CELL;
     }
 
-    const add = (x, z, sx, sz) => { const w = _addWallMesh(x, z, sx, sz, mat); if (sink) sink.push(w); };
+    const add = (x, z, sx, sz) => { const w = _addWallMesh(x, z, sx, sz, mat, height); if (sink) sink.push(w); };
     if (!hasDoorway) {
       add(centerX, centerZ, sizeX, sizeZ);
       return;
@@ -720,11 +733,12 @@ const Playground3D = (() => {
     }
   }
 
-  function _addWallMesh(cx, cz, sx, sz, mat) {
+  function _addWallMesh(cx, cz, sx, sz, mat, height) {
     const THREE = window.THREE;
-    const geom = new THREE.BoxGeometry(sx, WALL_HEIGHT, sz);
+    const H = height || WALL_HEIGHT;
+    const geom = new THREE.BoxGeometry(sx, H, sz);
     const mesh = new THREE.Mesh(geom, mat);
-    mesh.position.set(cx, WALL_HEIGHT / 2, cz);
+    mesh.position.set(cx, H / 2, cz);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     _scene.add(mesh);
@@ -1343,6 +1357,55 @@ const Playground3D = (() => {
     return false;
   }
 
+  // Everyone who enters (or respawns / teleports) at an island or a home
+  // shares the same anchor point, so landing exactly on it stacks players
+  // inside each other — and _collideActors then pins them together. Pick a
+  // random free spot on a small ring around the anchor instead: walkable, not
+  // in a wall or prop, and clear of every remote player we know about.
+  function _spreadSpawn(x, z) {
+    const clearOfPeers = (cx, cz) => {
+      for (const rp of _remotePlayers.values()) {
+        const dx = cx - rp.current.x, dz = cz - rp.current.z;
+        if (dx * dx + dz * dz < 1.1 * 1.1) return false;
+      }
+      return true;
+    };
+    const ok = (cx, cz) => (_mode !== 'world' || _isInWalkable(cx, cz)) && !_blockedAt(cx, cz, 0) && clearOfPeers(cx, cz);
+    const spots = [];
+    const a0 = Math.random() * Math.PI * 2;
+    for (const r of [1.3, 2.3]) {
+      for (let i = 0; i < 8; i++) {
+        const a = a0 + i * Math.PI / 4;
+        const cx = x + Math.cos(a) * r, cz = z + Math.sin(a) * r;
+        if (ok(cx, cz)) spots.push({ x: cx, z: cz });
+      }
+      if (spots.length) break;           // prefer the inner ring
+    }
+    // Remember the anchor for a few seconds: the room's snapshot usually
+    // lands just AFTER we spawn, and addRemotePlayer re-spreads us if a peer
+    // it brings turns out to be standing on our spot.
+    _spawnAnchor = { x, z, until: performance.now() + 4000 };
+    if (spots.length) return spots[Math.floor(Math.random() * spots.length)];
+    return { x, z };                     // nowhere free — the anchor itself
+  }
+  let _spawnAnchor = null;
+
+  // The room's snapshot arrived (we're the newcomer): if we've only just
+  // spawned and someone already there is on top of us, step to a free spot
+  // around the same anchor. Called by the socket layer after the snapshot.
+  function unstackFromPeers() {
+    if (!_player || !_spawnAnchor || performance.now() > _spawnAnchor.until || _seat) return;
+    let stacked = false;
+    for (const rp of _remotePlayers.values()) {
+      const dx = _player.position.x - rp.current.x, dz = _player.position.z - rp.current.z;
+      if (dx * dx + dz * dz < 1.1 * 1.1) { stacked = true; break; }
+    }
+    if (!stacked) return;
+    const at = _spreadSpawn(_spawnAnchor.x, _spawnAnchor.z);
+    _player.position.set(at.x, _groundAt(at.x, at.z), at.z);
+    _lastSafe.x = at.x; _lastSafe.z = at.z;
+  }
+
   // Stand up: step off the prop to the first free side (front, left, right,
   // back), never leaving the player embedded in the prop's collision box.
   function _standUp() {
@@ -1686,9 +1749,12 @@ const Playground3D = (() => {
       _tickRoomCeilings();
       _tickHUD(now);
     } else {
-      // /home: decorated rooms have roofs and may have chairs / beds.
+      // /home: the owner and visitors share the room (home:<ownerId>), so
+      // peers move / sit / lie and wear name tags + bubbles here too.
+      // _tickHUD also runs the seat prompt and the local chat bubbles.
+      _tickRemotePlayers(dt, now);
       _tickRoomCeilings();
-      _tickSeatPrompt();
+      _tickHUD(now);
     }
 
     _updateCamera();
@@ -1735,7 +1801,7 @@ const Playground3D = (() => {
     // through them. Resolved per-axis like walls, so you slide along instead of
     // sticking. Runs before the walkability check so a bump can't shove you off
     // a road/platform.
-    const a = _collideActors(x, z, dx, dz, r);
+    const a = _collideActors(x, z, dx, dz, r, startX, startZ);
     x = a.x; z = a.z;
     // World-mode walkability: must end up on a node or road. Stepping
     // off into open ground is rejected for whichever axis caused it,
@@ -1757,14 +1823,20 @@ const Playground3D = (() => {
   // slides around people instead of phasing through them. The local player is in
   // neither list, so there's no self-collision; collision is in the XZ plane
   // regardless of jump height (avatars are taller than the jump apex anyway).
-  function _collideActors(x, z, dx, dz, r) {
+  function _collideActors(x, z, dx, dz, r, x0, z0) {
     // Each actor carries its own build-scaled footprint (see _actorRadiusFor);
     // BUMP_RADIUS is the fallback for anyone built before that was known.
+    // (x0, z0): where this axis step started.
     const hit = (ox, oz, oR) => {
       const sep = r + (oR || BUMP_RADIUS);
       const sep2 = sep * sep;
       const ddx = x - ox, ddz = z - oz;
       if (ddx * ddx + ddz * ddz >= sep2) return;          // no overlap
+      // Already inside them before this step (a peer arrived on our spot, or
+      // walked into us): let us walk out freely — resolving to the contact
+      // edge here would teleport us to their far side, or pin us in place.
+      const sdx = x0 - ox, sdz = z0 - oz;
+      if (sdx * sdx + sdz * sdz < sep2) return;
       if (dx !== 0 && dz === 0) {
         const reach = Math.sqrt(Math.max(0, sep2 - ddz * ddz));
         x = dx > 0 ? ox - reach - 0.001 : ox + reach + 0.001;
@@ -1928,8 +2000,9 @@ const Playground3D = (() => {
     if (!_player) return;
     _falling = false; _velY = 0; _localDownUntil = 0;
     _seat = null; _player.rotation.x = 0;
-    _player.position.set(_spawnPoint.x, _groundAt(_spawnPoint.x, _spawnPoint.z), _spawnPoint.z);
-    _lastSafe.x = _spawnPoint.x; _lastSafe.z = _spawnPoint.z;
+    const at = _spreadSpawn(_spawnPoint.x, _spawnPoint.z);
+    _player.position.set(at.x, _groundAt(at.x, at.z), at.z);
+    _lastSafe.x = at.x; _lastSafe.z = at.z;
     if (_viewport) {
       let fade = _viewport.querySelector('.pg3d-fade');
       if (!fade) { fade = document.createElement('div'); fade.className = 'pg3d-fade'; _viewport.appendChild(fade); }
@@ -1978,7 +2051,7 @@ const Playground3D = (() => {
     const headTop = PLAYER_HEAD * ((_player && _player.scale && _player.scale.y) || 1);
     let cap = null;
     for (const node of _worldNodes.values()) {
-      if (!node.ceiling) continue;   // an undecorated /home room is open to the sky
+      if (!node.ceiling) continue;
       if (Math.abs(x - node.mesh.position.x) > halfP + M) continue;
       if (Math.abs(z - node.mesh.position.z) > halfP + M) continue;
       const H = node.wallHeight || WORLD.WALL_HEIGHT;
@@ -2107,8 +2180,9 @@ const Playground3D = (() => {
   // picker (WorldView) so a dusted player can pick where to reassemble.
   function teleportToNode(id) {
     if (!_player || _mode !== 'world') return;
-    const pos = _projectPos(id);
-    if (!pos) return;
+    const anchor = _projectPos(id);
+    if (!anchor) return;
+    const pos = _spreadSpawn(anchor.x, anchor.z);
     _falling = false; _velY = 0; _localDownUntil = 0;
     _seat = null; _player.rotation.x = 0;
     _player.position.set(pos.x, _groundAt(pos.x, pos.z), pos.z);
@@ -2953,8 +3027,12 @@ const Playground3D = (() => {
       node.ownsRoofMat = false;
     }
     const house = node.house || null;
-    const idx = house ? house.roofColor : null;
-    if (idx != null && typeof WorldHouseLogic !== 'undefined' && typeof WorldHouseLogic.PALETTE[idx] === 'number') {
+    // /home rooms take their roof (colour + shape) from the shared _homeRoof.
+    const roof = node.home ? (_homeRoof || {}) : house;
+    const idx = (!node.home && house) ? house.roofColor : null;
+    if (node.home) {
+      node.ceiling.material = _homeRoofMaterial();
+    } else if (idx != null && typeof WorldHouseLogic !== 'undefined' && typeof WorldHouseLogic.PALETTE[idx] === 'number') {
       node.ceiling.material = new THREE.MeshLambertMaterial({ color: WorldHouseLogic.PALETTE[idx] });
       node.ownsRoofMat = true;
     } else {
@@ -2969,17 +3047,20 @@ const Playground3D = (() => {
       node.roofExtra = null;
     }
     node.roofTopY = slabTop;
-    if (!house || typeof PG3DHouse === 'undefined' || !_scene) return;
-    const style = house.roofStyle || 'flat';
-    if (style === 'flat' && !house.chimney) return;
+    if (!roof || typeof PG3DHouse === 'undefined' || !_scene) return;
+    const style = roof.roofStyle || 'flat';
+    // A home has one chimney, on its first room — not one per room.
+    const chimney = !!roof.chimney && (!node.home || (_layout && _layout.rooms[0] && _layout.rooms[0].projectId === node.project.id));
+    if (style === 'flat' && !chimney) return;
     // Gable ends wear the wall finish + colour so the house reads as one body
     // (see-through too when the walls are glass).
-    const wallMat = (house.wallStyle === 'glass')
-      ? PG3DHouse.glassWallMaterial(THREE, house.wallColor != null ? _houseColor(node, 'wallColor', WORLD.WALL_COLOR) : null)
-      : new THREE.MeshLambertMaterial({ color: _houseColor(node, 'wallColor', WORLD.WALL_COLOR), map: PG3DHouse.wallTexture(THREE, house.wallStyle || 'plaster') || null });
+    const finish = house || {};
+    const wallMat = (finish.wallStyle === 'glass')
+      ? PG3DHouse.glassWallMaterial(THREE, finish.wallColor != null ? _houseColor(node, 'wallColor', WORLD.WALL_COLOR) : null)
+      : new THREE.MeshLambertMaterial({ color: _houseColor(node, 'wallColor', WORLD.WALL_COLOR), map: PG3DHouse.wallTexture(THREE, finish.wallStyle || 'plaster') || null });
     node.roofWallMat = wallMat;
     const group = PG3DHouse.roofExtra(THREE, {
-      style, dir: house.roofDir, chimney: !!house.chimney,
+      style, dir: roof.roofDir, chimney,
       roofMat: node.ceiling.material, wallMat,
       trimColor: _houseColor(node, 'trimColor', WORLD.WALL_TRIM_COLOR),
       baseY: slabTop - 0.02,
@@ -3175,6 +3256,24 @@ const Playground3D = (() => {
 
   function getHouse(projectId) {
     return _houses.get(projectId) || null;
+  }
+
+  // /home: the one roof every room wears (from home-layout / by-username /
+  // a live home:house push, or the editor's preview). null = plain flat roof.
+  function setHomeRoof(roof) {
+    _homeRoof = roof ? {
+      roofStyle: roof.roofStyle || 'flat',
+      roofColor: roof.roofColor != null ? roof.roofColor : null,
+      roofDir: roof.roofDir || 0,
+      chimney: !!roof.chimney
+    } : null;
+    if (!_scene || !window.THREE) return;   // the build reads _homeRoof later
+    if (_homeRoofMat) _homeRoofMaterial();  // re-tint the shared slab
+    for (const node of _worldNodes.values()) if (node.home) _applyRoof(node);
+  }
+
+  function getHomeRoof() {
+    return _homeRoof ? { ..._homeRoof } : null;
   }
 
   // Create / update / remove the HUD tag for one node from _keeperTags.
@@ -3403,8 +3502,9 @@ const Playground3D = (() => {
   }
 
   function _tickHUD(now) {
-    if (_mode !== 'world' || !_hudLayer) return;
-    const vic = _player ? _computeVicinity(_player.position.x, _player.position.z) : null;
+    if (!_hudLayer) return;
+    const world = _mode === 'world';
+    const vic = (world && _player) ? _computeVicinity(_player.position.x, _player.position.z) : null;
 
     // Remote-player tags + bubbles. _hudAnchor is module-scoped and reused
     // each frame to avoid per-tick GC churn — set() instead of new.
@@ -3423,7 +3523,7 @@ const Playground3D = (() => {
 
     // NPC hero tags (name + health pips) — float above each NPC's
     // (build-scaled) head, sinking toward the floor while it's out cold.
-    for (const npc of _npcs) {
+    for (const npc of (world ? _npcs : [])) {
       const lying = (npc.koUntil || 0) > now || (npc.koGetupUntil || 0) > now;
       const tagTarget = lying ? Math.min(npc.headY, 1.1) : npc.headY;
       if (npc.tagY == null) npc.tagY = npc.headY;
@@ -3449,7 +3549,7 @@ const Playground3D = (() => {
     // Keeper tags over each house roof — who owns it and how far you are from
     // taking it over. Only for houses one road away (just your own house while
     // you're inside one), and never beyond KEEPER_TAG_MAX_DIST.
-    if (_player) {
+    if (world && _player && vic) {
       const px = _player.position.x, pz = _player.position.z;
       for (const [id, node] of _worldNodes) {
         const el = node.keeperEl;
@@ -3947,7 +4047,14 @@ const Playground3D = (() => {
     rp.target.walking = !!walking;
     rp.target.backward = !!walking && !!backward;
     rp.target.pose = (pose === 'sit' || pose === 'lie') ? pose : null;
+    // A jump no walk could make (joining, teleport, respawn, picking an
+    // island): appear there instead of gliding across the map.
+    const jx = x - rp.current.x, jz = z - rp.current.z;
+    if (jx * jx + jz * jz > REMOTE_SNAP_DIST * REMOTE_SNAP_DIST) {
+      rp.current.x = x; rp.current.z = z; rp.current.y = rp.target.y; rp.current.yaw = yaw;
+    }
   }
+  const REMOTE_SNAP_DIST = 6;   // world units; walking covers ~0.5 per update
 
   function removeRemotePlayer(id) {
     const rp = _remotePlayers.get(id);
@@ -4608,6 +4715,7 @@ const Playground3D = (() => {
     getRemotePlayers, setRemotePlayerSpeaking,
     // Keeper-decorated houses (GET /api/world/houses + world:house pushes).
     setHouses, applyHouse, getHouse, getHouseLayout, setHouseKeepers, roomAtPlayer,
+    setHomeRoof, getHomeRoof, unstackFromPeers,
     setHouseShowcase, clearHouseShowcase,
     // Debugging aids for the browser preview (same idea as PG3DHumanoid._debug):
     // live NPC records, the local knockdown deadline, and a raw teleport so a

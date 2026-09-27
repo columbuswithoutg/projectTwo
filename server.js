@@ -105,7 +105,7 @@ app.use(express.json({ limit: '64kb' }));
 // SPA routes — BEFORE static middleware so they take priority over index.html
 const spaFile = path.join(DIST, 'spa.html');
 // '/spa.html' itself is the service worker's precached offline fallback.
-['/', '/spa.html', '/map', '/login', '/profile', '/characters', '/home', '/customize', '/admin', '/world', '/feed', '/messages', '/reports'].forEach(route => {
+['/', '/spa.html', '/map', '/login', '/profile', '/characters', '/home', '/customize', '/admin', '/world', '/board', '/feed', '/messages', '/reports'].forEach(route => {
   app.get(route, (req, res) => res.sendFile(spaFile));
 });
 // Parameterized SPA routes — `/friend/:username` and its sub-tabs all
@@ -158,7 +158,11 @@ app.get('/sw.js', (req, res) => {
 });
 
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('MongoDB connected'))
+  .then(() => {
+    console.log('MongoDB connected');
+    // Give seeded projects their watch runtimes (never overwrites admin edits).
+    require('./server/watchRules').backfillRuntimes();
+  })
   .catch(err => console.error(err));
 
 const authLimiter = rateLimit({
@@ -241,8 +245,13 @@ app.use('/api/content', publicConfigLimiter, require('./routes/content'));
 // this, unhandled errors in route handlers leak stack traces to the client.
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  console.error(err);
   if (res.headersSent) return next(err);
+  // Client mistakes from the body parser: answer plainly and don't log the
+  // error object — it carries the raw body, which for a truncated login
+  // request would put a plaintext password in the server log.
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid request body' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Request is too large' });
+  console.error(err);
   res.status(err.status || 500).json({ error: 'Server error' });
 });
 

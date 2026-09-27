@@ -38,6 +38,7 @@ const WorldView = (() => {
   let _houseMe = null;
   let _houseKeepers = {};
   let _houseMine = {};             // projectId → my own stay ms (for "time to take over")
+  let _minKeeperMs = 5 * 60 * 1000; // stay needed before anyone can claim a house (server-sent)
   let _housesAt = 0;
   let _housePoll = null;           // 30 s refresh so keeper tags / take-over times stay current
   const HOUSE_POLL_MS = 30000;
@@ -318,13 +319,21 @@ const WorldView = (() => {
     const iDusted = myId && victims.includes(myId);
     // Dusted back to the start in a disconnected world → offer where to
     // reassemble (the engine already respawned us at Iron Man; this relocates).
+    let picking = false;
     if (iDusted) {
       const islands = _spawnIslands();
-      if (islands.length > 1 || _myHouses(islands).length) _openSpawnPicker(islands, 'respawn');
+      picking = islands.length > 1 || _myHouses(islands).length > 0;
+      if (picking) _openSpawnPicker(islands, 'respawn');
     }
     if (typeof toast !== 'function') return;
-    if (iSnapped) toast('✨ You snapped! Half the world turned to dust.', { type: 'success', duration: 5000 });
-    else if (iDusted) toast('💨 You were dusted — reassembling at the start.', { type: 'warn', duration: 5000 });
+    if (iSnapped && payload.scored === false) {
+      // Server didn't add it to the leaderboard (routes/world-socket.js).
+      toast(payload.unscoredReason === 'alone'
+        ? "✨ You snapped — but nobody else is here, so it doesn't count on the leaderboard."
+        : "✨ You snapped — too soon after the last round to count on the leaderboard (rounds need a minute).",
+        { type: 'info', duration: 6000 });
+    } else if (iSnapped) toast('✨ You snapped! Half the world turned to dust.', { type: 'success', duration: 5000 });
+    else if (iDusted) toast(picking ? '💨 You were dusted — pick where to reassemble.' : '💨 You were dusted — reassembling at the start.', { type: 'warn', duration: 5000 });
     else toast('✨ Someone snapped. You survived.', { type: 'info', duration: 4000 });
   }
 
@@ -415,6 +424,7 @@ const WorldView = (() => {
       _houseMe = data.me || null;
       _houseKeepers = data.keepers || {};
       _houseMine = data.mine || {};
+      if (Number.isFinite(data.minKeeperMs)) _minKeeperMs = data.minKeeperMs;
       _housesAt = Date.now();
       if (Number.isFinite(data.maxProps)) _houseMaxProps = data.maxProps;
       if (_liveStay) { _liveSettle(_housesAt); _liveStay.extraMs = 0; }
@@ -587,9 +597,12 @@ const WorldView = (() => {
         + `<span class="world-house-keeper-you" style="--pct:${pct.toFixed(3)}">you ${_fmtStay(my)}</span>`;
       label.title = `${k.username} keeps ${_projectTitle(_zone)} with ${_fmtStay(k.ms)} here · you ${_fmtStay(my)}. The longest stay (moving or chatting) keeps the house.`;
     } else {
+      // Unclaimed: progress toward the minimum stay that claims it.
+      const my = _myStay(_zone);
+      const pct = Math.min(1, my / Math.max(1, _minKeeperMs));
       label.innerHTML = `<span class="world-house-keeper-name">🔑 Unclaimed</span>`
-        + `<span class="world-house-keeper-you" style="--pct:0">you ${_fmtStay(_myStay(_zone))}</span>`;
-      label.title = `Nobody keeps ${_projectTitle(_zone)} yet — the longest stay here wins it.`;
+        + `<span class="world-house-keeper-you" style="--pct:${pct.toFixed(3)}">you ${_fmtStay(my)} / ${_fmtStay(_minKeeperMs)}</span>`;
+      label.title = `Nobody keeps ${_projectTitle(_zone)} yet — stay ${_fmtStay(_minKeeperMs)} (moving or chatting) to claim it; the longest stay keeps it.`;
     }
   }
 
