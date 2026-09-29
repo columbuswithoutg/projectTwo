@@ -48,8 +48,12 @@
   };
   const ONE_SHOT = new Set(['jumpUp', 'land', 'down', 'getup']);
 
-  let _status = 'idle';
-  let _ready = null;
+  let _status = 'idle';            // idle | loading | ready | failed
+  let _ready = null;               // the in-flight / resolved load (null after a failure)
+  let _progress = 0;               // 0..1 while loading (bytes vs the manifest)
+  let _lastError = null;
+  let _autoRetried = false;
+  const _statusListeners = new Set();
   const _protos = {};              // model → { scene, restHeight, hipsName, hipsRest, skinAvg }
   let _hair = null;                // { meshes: Map(style → SkinnedMesh), avg: Color }
   let _clipsSrc = [];
@@ -62,28 +66,70 @@
 
   // ── Loading ──
 
-  function _load(src) {
+  // onBytes(loaded): download progress for one file (GLTFLoader reports bytes
+  // as they stream in).
+  function _load(src, onBytes) {
     return new Promise((resolve, reject) => {
       const loader = new (T().GLTFLoader)();
       if (src instanceof ArrayBuffer) loader.parse(src, '', resolve, reject);
-      else loader.load(src, resolve, undefined, reject);
+      else loader.load(src, resolve, (e) => { if (onBytes && e && e.loaded > 0) onBytes(e.loaded); }, reject);
     });
+  }
+
+  // Status + progress subscribers (the loading gate and /customize).
+  // fn({ status, progress }) is called at once with the current state, then on
+  // every change. Returns an unsubscribe function.
+  function _emitStatus() {
+    for (const fn of [..._statusListeners]) { try { fn({ status: _status, progress: _progress }); } catch (_) {} }
+  }
+  function onStatus(fn) {
+    _statusListeners.add(fn);
+    try { fn({ status: _status, progress: _progress }); } catch (_) {}
+    return () => { _statusListeners.delete(fn); };
+  }
+  // fn() once the models are ready — now, or after a later (re)try succeeds.
+  function onReady(fn) {
+    if (_status === 'ready') { fn(); return () => {}; }
+    let off = null;
+    off = onStatus(({ status }) => {
+      if (status !== 'ready') return;
+      if (off) off();
+      fn();
+    });
+    return off;
+  }
+
+  // ?rig=legacy / localStorage pg3dRig=legacy keeps every character procedural
+  // (same switch as the engine), so don't download the models for it.
+  function _legacyRig() {
+    try {
+      if (/[?&]rig=legacy\b/.test(location.search)) return true;
+      return localStorage.getItem('pg3dRig') === 'legacy';
+    } catch (_) { return false; }
   }
 
   // GLTFLoader + SkeletonUtils are imported by spa.html AFTER three-ready, so a
   // caller can easily ask for characters before they exist. Wait for them
   // rather than failing — treating that race as a permanent failure left a
   // whole page stuck on the procedural rig.
+  // If the addons already FAILED before anyone listened, the event has fired
+  // and will never fire again — waiting for it hung the load forever (every
+  // character stuck procedural with status 'loading'). three-shim.mjs records
+  // the outcome in window.__threeAddons for exactly this case.
+  const ADDONS_TIMEOUT_MS = 20000;
   function _whenAddons() {
     if (T() && T().GLTFLoader && T().SkeletonUtils) return Promise.resolve();
     if (typeof window === 'undefined') return Promise.reject(new Error('no window'));
+    if (window.__threeAddons === 'failed') return Promise.reject(new Error('THREE.GLTFLoader / SkeletonUtils failed to load'));
     return new Promise((resolve, reject) => {
       const cleanup = () => {
+        clearTimeout(timer);
         window.removeEventListener('three-addons-ready', ok);
         window.removeEventListener('three-addons-failed', fail);
       };
       const ok = () => { cleanup(); resolve(); };
       const fail = () => { cleanup(); reject(new Error('THREE.GLTFLoader / SkeletonUtils unavailable')); };
+      const timer = setTimeout(() => { cleanup(); reject(new Error('THREE addons timed out')); }, ADDONS_TIMEOUT_MS);
       window.addEventListener('three-addons-ready', ok);
       window.addEventListener('three-addons-failed', fail);
     });
@@ -91,29 +137,82 @@
 
   // opts.base: asset folder URL; opts.buffers: { male, female, hair, anims }
   // ArrayBuffers (tests / offline preview).
+  // A failed load clears _ready and is NOT restarted by every caller (that
+  // would hammer the network once per character built); it retries once by
+  // itself after 2 s, and whenever retry() is called (the Retry toast).
   function preload(opts) {
     if (_ready) return _ready;
     opts = opts || {};
+    if (_status === 'failed' && !opts.retry) return Promise.reject(_lastError || new Error('humanoid load failed'));
     const base = opts.base || L.ASSET_BASE;
     const src = (k, file) => (opts.buffers && opts.buffers[k]) || base + file;
     _status = 'loading';
-    _ready = _whenAddons().then(() => Promise.all([
-      _load(src('male', L.BODY_FILES.male)),
-      _load(src('female', L.BODY_FILES.female)),
-      _load(src('hair', 'hair.glb')),
-      _load(src('anims', 'anims.glb'))
+    _progress = 0;
+    _emitStatus();
+    // Byte progress per file against the manifest's sizes (the server's gzip
+    // hides Content-Length, so the loader alone can't know the total).
+    const got = { male: 0, female: 0, hair: 0, anims: 0 };
+    let total = 0;
+    const bump = () => {
+      if (!(total > 0) || _status !== 'loading') return;
+      const p = Math.min(0.99, (got.male + got.female + got.hair + got.anims) / total);
+      if (p >= _progress + 0.01) { _progress = p; _emitStatus(); }
+    };
+    if (!opts.buffers && typeof fetch === 'function') {
+      fetch(base + 'manifest.json').then((r) => (r.ok ? r.json() : null)).then((m) => {
+        if (!m) return;
+        total = Object.values(m.bodies || {}).reduce((s, b) => s + (b.bytes || 0), 0)
+          + ((m.hair && m.hair.bytes) || 0) + ((m.anims && m.anims.bytes) || 0);
+        bump();
+      }).catch(() => {});
+    }
+    const track = (k) => (n) => { got[k] = n; bump(); };
+    const p = _whenAddons().then(() => Promise.all([
+      _load(src('male', L.BODY_FILES.male), track('male')),
+      _load(src('female', L.BODY_FILES.female), track('female')),
+      _load(src('hair', 'hair.glb'), track('hair')),
+      _load(src('anims', 'anims.glb'), track('anims'))
     ])).then(([male, female, hair, anims]) => {
       _protos.male = _prepBody(male);
       _protos.female = _prepBody(female);
       _hair = _prepHair(hair);
       _prepAnims(anims);
       _status = 'ready';
+      _progress = 1;
+      _emitStatus();
     }, (err) => {
       _status = 'failed';
+      _lastError = err;
+      _ready = null;
       console.warn('[PG3DHumanoid] load failed — characters stay procedural', err);
+      _emitStatus();
+      if (!_autoRetried) {
+        _autoRetried = true;
+        setTimeout(() => { if (_status === 'failed') retry().catch(() => {}); }, 2000);
+      }
       throw err;
     });
-    return _ready;
+    _ready = p;
+    return p;
+  }
+
+  // Start over after a failure (no-op while loading / once ready). Re-imports
+  // the three addons too when those were what failed.
+  function retry() {
+    if (_status === 'ready' || _status === 'loading') return _ready || Promise.resolve();
+    if (typeof window !== 'undefined' && window.__threeAddons === 'failed' && typeof window.__retryThreeAddons === 'function') {
+      try { window.__retryThreeAddons(); } catch (_) {}
+    }
+    return preload({ retry: true });
+  }
+
+  // Start downloading as soon as the three addons exist — i.e. when the
+  // world chunk loads — instead of when the first character is built, which
+  // was after the scene was already on screen (the box-body flash).
+  if (typeof window !== 'undefined' && typeof location !== 'undefined' && !_legacyRig()) {
+    const kick = () => { preload().catch(() => {}); };
+    if (window.__threeAddons === 'ready') setTimeout(kick, 0);
+    else window.addEventListener('three-addons-ready', kick, { once: true });
   }
 
   function _skinnedIn(obj) {
@@ -1391,6 +1490,24 @@
         m.opacity = a;
         m.depthWrite = a >= 1;
       }
+      // Gear mounted on the bones (hats, helmets, glasses, props) owns its own
+      // materials: fade those too, relative to their OWN resting opacity (a
+      // lens rests below 1). Before, hats stayed solid while the body dusted.
+      const own = new Set(mats);
+      pivot.traverse((obj) => {
+        if (!obj.material) return;
+        const list = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const mat of list) {
+          if (own.has(mat)) continue;
+          const ud = mat.userData;
+          if (ud.gearBaseOpacity === undefined) {
+            ud.gearBaseOpacity = mat.opacity;
+            ud.gearBaseTransparent = mat.transparent;
+          }
+          mat.opacity = ud.gearBaseOpacity * o;
+          mat.transparent = ud.gearBaseTransparent || o < 1;
+        }
+      });
     }
 
     // Brief red glow when hit — every material's emissive is driven up and
@@ -1414,6 +1531,12 @@
       mixer.stopAllAction();
       mixer.uncacheRoot(body);
       for (const m of mats) m.dispose();
+      // Every instance owns its cloned skeleton (SkeletonUtils.clone). three
+      // r160 backs each skinned skeleton with a GPU bone texture that only
+      // Skeleton.dispose() frees — one leaked per player who left / tile drawn.
+      const skels = new Set();
+      pivot.traverse((o) => { if (o.isSkinnedMesh && o.skeleton) skels.add(o.skeleton); });
+      for (const s of skels) { try { s.dispose(); } catch (_) {} }
       pivot.removeFromParent();
     }
 
@@ -1638,8 +1761,12 @@
 
   root.PG3DHumanoid = {
     preload,
+    retry,
     whenReady() { return _ready || preload(); },
+    onReady,
+    onStatus,
     status() { return _status; },
+    progress() { return _progress; },
     createInstance,
     clipNames() { return _clipsSrc.map((c) => c.name); },
     hairStyles() { return _hair ? [..._hair.meshes.keys()] : []; },

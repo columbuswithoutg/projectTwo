@@ -4855,6 +4855,14 @@ body.fight-active .flow-wrapper {
   letter-spacing: 0.02em;
 }
 @keyframes world-spin { to { transform: rotate(360deg); } }
+/* Cover over the 3D canvas while its shaders compile (js/playground3d.js
+   _startWhenWarm): opaque, then fades once a real frame is on screen. */
+.world-loading.pg3d-cover {
+  background: #07080f;
+  z-index: 20;
+  transition: opacity 0.3s ease;
+}
+.world-loading.pg3d-cover--done { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
   .world-loading-spinner { animation-duration: 2.4s; }
 }
@@ -6731,6 +6739,17 @@ body:has(#nav-drawer.open) .world-chat-row {
 }
 .cz-tile-av svg { width: 100%; height: 100%; display: block; }
 img.cz-tile-av { object-fit: contain; }
+/* Still waiting on its 3D thumbnail (the character models are loading). */
+img.cz-tile-av:not([src]) {
+  color: transparent;               /* no alt text flashing in the box */
+  background: linear-gradient(90deg, rgba(var(--ink), 0.03) 25%, rgba(var(--ink), 0.09) 50%, rgba(var(--ink), 0.03) 75%);
+  background-size: 200% 100%;
+  animation: cz-shimmer 1.2s linear infinite;
+}
+@keyframes cz-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  img.cz-tile-av:not([src]) { animation: none; }
+}
 .cz-tile-cap {
   font-size: 10px;
   line-height: 1.15;

@@ -53,6 +53,20 @@ const Playground3D = (() => {
     FOLLOW_RATE: 4.0              // lerp speed for auto-follow azimuth
   };
 
+  // Sun + shadow camera. The shadow camera FOLLOWS the player (_updateSunRig,
+  // snapped to whole shadow texels so edges don't crawl): a fixed ±160 box
+  // aimed at the origin left 67 of the 84 islands without shadows and made
+  // every character shadow a blur. RADIUS = how far around the player
+  // shadows reach.
+  const SUN = {
+    DIR: [8, 16, 6],              // toward the light (normalised at init)
+    DIST: 60,                     // light distance from the shadow centre
+    WORLD_RADIUS: 36,
+    HOME_RADIUS: 28,
+    MAP: 2048,
+    MAP_TOUCH: 1024               // phones: a quarter of the fill cost
+  };
+
   // World/grid constants — must match the editor's grid cell size and
   // server-side validation in routes/profile.js.
   const CELL = 12;                // world units per grid cell (X and Z)
@@ -136,6 +150,8 @@ const Playground3D = (() => {
   // an actor (remote player or NPC) within RANGE gets knocked down — falls
   // backward, lies DOWN_MS with input dead (for the local victim), then gets
   // up over GETUP_MS. Networked via world:punch (see js/home-socket.js).
+  // Server + client share the knockdown immunity window (PG3DPhysics.KNOCKDOWN).
+  const KNOCKDOWN_IMMUNE_MS = (typeof PG3DPhysics !== 'undefined' && PG3DPhysics.KNOCKDOWN && PG3DPhysics.KNOCKDOWN.IMMUNE_MS) || 4300;
   const PUNCH = {
     RANGE: 1.4,
     ANIM_MS: 300,
@@ -158,7 +174,6 @@ const Playground3D = (() => {
     { id: 'time',    color: 0x39b54a },
     { id: 'soul',    color: 0xff8020 }
   ];
-  const STONE_RING_R = 4;          // ring radius around spawn (within Iron Man's floor)
   const STONE_PICKUP_D2 = 0.81;    // grab within 0.9u (feet, 3D) — same as batch 3
 
   // Head-top of the rig at build-scale 1 (feet at y=0): HIP_Y 0.7 + TORSO_H 0.75
@@ -238,6 +253,11 @@ const Playground3D = (() => {
   const _npcCombat = new Map();    // npcId → last server record; seeds heroes that materialise mid-fight
   // ── shared Infinity Stones (server-authoritative PvP; see routes/world-socket.js) ──
   const _spawnPoint = { x: 0, z: 0 }; // /world start position (Iron Man 1) — snap-respawn target
+  let _sunRig = null;            // { light, dir, radius, mapSize, dist } — see _updateSunRig
+  // Centre of the Infinity Stone ring: the START island (Iron Man 1) for
+  // EVERY player — the server checks grabs against the same slots. (It used
+  // to be each player's first unlocked island, so players disagreed.)
+  const _stoneCenter = { x: 0, z: 0, reachable: false };
   let _initialSpawnId = null;         // island/node the player picked to spawn on (spawn picker), or null
 
   // ── shared, mount-persistent resources ──
@@ -298,13 +318,13 @@ const Playground3D = (() => {
 
   function _waitForThree(container) {
     if (window.THREE) {
-      _initInternal();
+      _waitForCharacters(container);
     } else {
       const onReady = () => {
         window.removeEventListener('three-ready', onReady);
         _threeReadyHandler = null;
         // Container may have been swapped out before THREE arrived.
-        if (_container === container) _initInternal();
+        if (_container === container) _waitForCharacters(container);
       };
       // Track it so destroy() can remove it if the view is left before THREE
       // finishes loading from the CDN — otherwise the closure leaks per mount.
@@ -313,7 +333,105 @@ const Playground3D = (() => {
     }
   }
 
+  // ── Character loading gate ──
+  // The scene waits behind a "Loading characters… NN%" cover until the
+  // realistic bodies are ready, so nobody sees the procedural stand-ins
+  // first (they used to show on every first visit until the ~2.4 MB of
+  // models arrived). After CHAR_GATE_MS it gives up and builds with the
+  // stand-ins, which upgrade in place when the models land
+  // (PG3DHumanoid.onReady in _buildPlayer).
+  const CHAR_GATE_MS = 15000;
+  let _charWait = null;          // { cancel } while the gate holds init back
+
+  const WARMUP_MS = 4000;
+  function _startWhenWarm() {
+    const cover = _loadingCover(_viewport, 'Almost ready…', 'pg3d-cover');
+    let started = false;
+    const go = () => {
+      if (started) return;
+      started = true;
+      if (!_running) return;
+      _lastTime = performance.now();
+      if (!_rafId) _rafId = requestAnimationFrame(_tick);
+      // Lift the cover once a real frame is on screen.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        cover.el.classList.add('pg3d-cover--done');
+        setTimeout(() => { if (cover.el.parentNode) cover.el.parentNode.removeChild(cover.el); }, 350);
+      }));
+    };
+    const warm = (_renderer && _renderer.compileAsync && _scene && _camera)
+      ? _renderer.compileAsync(_scene, _camera).catch(() => {})
+      : Promise.resolve();
+    Promise.race([warm, new Promise((r) => setTimeout(r, WARMUP_MS))]).then(go);
+  }
+
+  function _waitForCharacters(container) {
+    _charWait = _gateCharacters(container, 'Loading characters…', (decision) => {
+      _charWait = null;
+      if (_container !== container) return;          // left while loading
+      _initInternal();
+      if (decision !== 'reveal' && typeof toast === 'function') {
+        toast('Characters are still loading — showing simple bodies until they arrive.', 'warn');
+      }
+    });
+  }
+
+  // Show the spinner in `container` until the realistic bodies are ready,
+  // failed, or CHAR_GATE_MS passes; then remove it and call done(decision)
+  // ('reveal' | 'fallback' — PG3DHumanoidLogic.gateDecision). Immediate when
+  // they're already ready (or the procedural rig is forced). → { cancel() }
+  function _gateCharacters(container, text, done) {
+    if (!_humanoidUsable() || PG3DHumanoid.status() === 'ready') {
+      done('reveal');
+      return { cancel() {} };
+    }
+    const cover = _loadingCover(container, text);
+    const t0 = performance.now();
+    let settled = false, off = null, timer = null;
+    const cleanup = () => {
+      if (off) { off(); off = null; }
+      clearTimeout(timer);
+      if (cover.el.parentNode && !cover.el.classList.contains('pg3d-cover')) cover.el.parentNode.removeChild(cover.el);
+    };
+    const settle = (decision) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      done(decision);
+    };
+    const check = (st) => {
+      const d = PG3DHumanoidLogic.gateDecision({ status: st.status, elapsedMs: performance.now() - t0, timeoutMs: CHAR_GATE_MS });
+      if (d === 'wait') cover.progress(st.progress);
+      else settle(d);
+    };
+    PG3DHumanoid.whenReady().catch(() => {});   // make sure a load is running
+    off = PG3DHumanoid.onStatus(check);         // runs check once right away
+    if (settled && off) { off(); off = null; }  // …which may already have settled
+    if (!settled) timer = setTimeout(() => check({ status: PG3DHumanoid.status(), progress: PG3DHumanoid.progress() }), CHAR_GATE_MS);
+    return { cancel() { if (!settled) { settled = true; cleanup(); } } };
+  }
+
+  // The branded spinner (same markup as the /world view's own loading state,
+  // which it reuses when present). progress(p) adds a percentage.
+  function _loadingCover(container, text, extraClass) {
+    let el = container.querySelector(':scope > .world-loading');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'world-loading' + (extraClass ? ' ' + extraClass : '');
+      el.innerHTML = '<div class="world-loading-spinner" aria-hidden="true"></div><div class="world-loading-text"></div>';
+      container.appendChild(el);
+    }
+    const label = el.querySelector('.world-loading-text');
+    const base = text.replace(/…$/, '');
+    if (label) label.textContent = text;
+    return {
+      el,
+      progress(p) { if (label) label.textContent = p > 0.005 ? base + '… ' + Math.round(p * 100) + '%' : text; }
+    };
+  }
+
   function destroy() {
+    if (_charWait) _charWait.cancel();
     _running = false;
     _sceneAlive = false;
     _occlusion.reset();
@@ -345,6 +463,15 @@ const Playground3D = (() => {
         _renderer.domElement.parentNode.removeChild(_renderer.domElement);
       }
     }
+    // Characters before the scene sweep: _disposeActor marks each one
+    // discarded (a model upgrade still waiting on the download must not build
+    // a body for a scene that's gone) and releases its humanoid instance
+    // (materials, cloned skeleton).
+    if (_player) _disposeActor(_player);
+    for (const rp of _remotePlayers.values()) {
+      _disposeActor(rp.rig);
+      if (rp.nameEl && rp.nameEl.parentNode) rp.nameEl.parentNode.removeChild(rp.nameEl);
+    }
     if (_scene) _disposeRig(_scene);
     // World-mode cleanup.
     _clearNpcs();          // removes NPC name-tag DOM nodes + clears _npcs
@@ -370,6 +497,8 @@ const Playground3D = (() => {
     _localBackward = false;
     _velY = 0;
     _showcase = null;
+    _sunRig = null;
+    _frustum = null;
     _mode = 'home';
     if (_container) _container.innerHTML = '';
     _container = _viewport = _renderer = _scene = _camera = null;
@@ -471,27 +600,35 @@ const Playground3D = (() => {
     const sun = (_mode === 'world')
       ? new THREE.DirectionalLight(0xfff4e0, 1.0)
       : new THREE.DirectionalLight(0xffffff, 0.9);
-    sun.position.set(8, 16, 6);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
+    // The shadow box travels with the player (_updateSunRig), so it only needs
+    // to cover the area around them — a much sharper map than one box
+    // stretched over the whole world.
+    const sunRadius = _mode === 'world' ? SUN.WORLD_RADIUS : SUN.HOME_RADIUS;
+    const sunMap = _isCoarsePointer() ? SUN.MAP_TOUCH : SUN.MAP;
+    sun.shadow.mapSize.set(sunMap, sunMap);
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.03;     // no acne on curved skin / fabric
     const cam = sun.shadow.camera;
-    // World mode covers a much larger area than home — widen the
-    // directional light's shadow frustum so the whole map gets shade.
-    if (_mode === 'world') {
-      cam.left = -160; cam.right = 160; cam.top = 160; cam.bottom = -160;
-      cam.near = 0.5; cam.far = 400;
-    } else {
-      cam.left = -32; cam.right = 32; cam.top = 32; cam.bottom = -32;
-      cam.near = 0.5; cam.far = 80;
-    }
+    cam.left = -sunRadius; cam.right = sunRadius; cam.top = sunRadius; cam.bottom = -sunRadius;
+    cam.near = 0.5; cam.far = SUN.DIST * 2 + sunRadius * 2;
     _scene.add(sun);
+    _scene.add(sun.target);           // the follow moves the target, so it must be in the scene
+    _sunRig = {
+      light: sun,
+      dir: new THREE.Vector3(SUN.DIR[0], SUN.DIR[1], SUN.DIR[2]).normalize(),
+      radius: sunRadius,
+      mapSize: sunMap,
+      dist: SUN.DIST
+    };
 
     _walls = [];
     let spawn;
     if (_mode === 'world') {
       _buildWorldScene();
       const worldSpawn = _worldSpawn();
-      _spawnPoint.x = worldSpawn.x; _spawnPoint.z = worldSpawn.z;   // snap-respawn + stone-ring center (canonical)
+      _spawnPoint.x = worldSpawn.x; _spawnPoint.z = worldSpawn.z;   // snap-respawn target
+      _placeStoneCenter();
       // The player's START position may differ from _spawnPoint when they picked
       // an island in the spawn picker — resolve it, else fall back to Iron Man.
       spawn = (_initialSpawnId && _projectPos(_initialSpawnId)) || worldSpawn;
@@ -533,8 +670,11 @@ const Playground3D = (() => {
     _resizeObs = new ResizeObserver(_resizeRenderer);
     _resizeObs.observe(_viewport);
 
-    _lastTime = performance.now();
-    _rafId = requestAnimationFrame(_tick);
+    // Compile every shader the scene needs before the first frame (the
+    // realistic bodies' tinted materials are heavy) behind a cover, so
+    // entering never freezes on a half-drawn frame. Falls through after
+    // WARMUP_MS whatever happens.
+    _startWhenWarm();
 
     // Stop rendering entirely while the tab is hidden — saves GPU/battery
     // beyond the browser's own RAF throttling. On return, reset the clock so
@@ -1156,18 +1296,45 @@ const Playground3D = (() => {
   // procedural rigs so the caller runs the old hand-posed code.
   //   s: { speed, airborne, velY, falling, landAt, downUntil, getupUntil,
   //        hitUntil, hitClip, punchUntil, punchClip, emoteUntil, overlaySeq }
-  let _coarsePointer = null;   // touch device → tighter LOD tiers
+  let _coarsePointer = null;   // touch device → tighter LOD tiers, smaller shadow map
+  function _isCoarsePointer() {
+    if (_coarsePointer === null) {
+      _coarsePointer = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    }
+    return _coarsePointer;
+  }
+
+  // The camera's view volume for this frame (refreshed in _tick after the
+  // camera moves), so characters behind the camera can skip animation work.
+  let _frustum = null, _frustumMat = null, _frustumSphere = null;
+  function _updateFrustum() {
+    const THREE = window.THREE;
+    if (!_camera || !THREE) return;
+    if (!_frustum) {
+      _frustum = new THREE.Frustum();
+      _frustumMat = new THREE.Matrix4();
+      _frustumSphere = new THREE.Sphere();
+    }
+    _camera.updateMatrixWorld();
+    _frustumMat.multiplyMatrices(_camera.projectionMatrix, _camera.matrixWorldInverse);
+    _frustum.setFromProjectionMatrix(_frustumMat);
+  }
+  // A generous sphere around a character (feet at the root, ~2 tall × build).
+  function _actorOnScreen(root) {
+    if (!_frustum) return true;
+    const s = root.scale.y || 1;
+    _frustumSphere.center.set(root.position.x, root.position.y + s, root.position.z);
+    _frustumSphere.radius = 1.5 * s;
+    return _frustum.intersectsSphere(_frustumSphere);
+  }
 
   function _animateActor(root, s, dt, now) {
     const inst = root && root.userData.humanoid;
     if (!inst) return false;
     // Level of detail: distant characters animate at a lower rate (or freeze),
     // and only nearby ones cast shadows. Keeps a crowded /world cheap.
-    if (_coarsePointer === null) {
-      _coarsePointer = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-    }
     const dist = _camera ? _camera.position.distanceTo(root.position) : 0;
-    const tier = PG3DHumanoidLogic.lodTier(dist, true, _coarsePointer);
+    const tier = PG3DHumanoidLogic.lodTier(dist, _actorOnScreen(root), _isCoarsePointer());
     inst.setShadows(tier.castShadow);
     if (!tier.animate) return true;                       // frozen: hold the pose
     if (tier.interval > 0) {
@@ -1228,9 +1395,12 @@ const Playground3D = (() => {
     if (PG3DHumanoid.status() === 'ready') { _upgradeActor(root, c, true); return root; }
     const gen = (root.userData.buildGen || 0) + 1;
     root.userData.buildGen = gen;
-    PG3DHumanoid.whenReady().then(() => {
-      if (root.userData.buildGen === gen) _upgradeActor(root, c);
-    }).catch(() => {});
+    PG3DHumanoid.whenReady().catch(() => {});   // make sure a load is running
+    // onReady (not whenReady().then): a failed first load that succeeds on a
+    // retry still upgrades every stand-in in place.
+    PG3DHumanoid.onReady(() => {
+      if (root.userData.buildGen === gen && !root.userData.disposed) _upgradeActor(root, c);
+    });
     return root;
   }
   // ── tick / animation ──
@@ -1325,8 +1495,27 @@ const Playground3D = (() => {
   // rot, top, nodeId). The seat transform is derived from the prop: a chair
   // seats you at its centre facing the way it faces, hips at seat height; a
   // bed lays you along it with your head at the headboard.
+  // Where a player ends up when using prop `pr` (the same spot _sitOn puts
+  // them): a chair's centre, or the foot end of a bed along its facing.
+  function _seatPoint(pr) {
+    if (pr.kind !== 'bed') return { x: pr.x, z: pr.z };
+    const yaw = (pr.rot || 0) * Math.PI / 2;
+    return { x: pr.x + Math.sin(yaw) * 1.0, z: pr.z + Math.cos(yaw) * 1.0 };
+  }
+  // Someone else is already sitting / lying there — two players used to
+  // share one chair.
+  function _seatTaken(pr) {
+    const seated = [];
+    for (const rp of _remotePlayers.values()) {
+      if (rp.target.pose) seated.push({ x: rp.target.x, z: rp.target.z });
+    }
+    if (!seated.length) return false;
+    const p = _seatPoint(pr);
+    return PG3DPhysics.seatOccupied(p.x, p.z, seated, 0.6);
+  }
+
   function _sitOn(pr) {
-    if (!_player || !pr) return;
+    if (!_player || !pr || _seatTaken(pr)) return;
     const scale = _player.scale.y || 1;
     const yaw = (pr.rot || 0) * Math.PI / 2;
     let px = pr.x, pz = pr.z, py;
@@ -1457,7 +1646,7 @@ const Playground3D = (() => {
         const d2 = dx * dx + dz * dz;
         // Same side of the wall: a chair pushed against the outside of a
         // house wall is within reach of its edge, but not usable from out there.
-        if (d2 < bestD2 && !PG3DPhysics.wallBetween(px, pz, pr.x, pr.z, _walls, pr.aabb)) { bestD2 = d2; best = pr; }
+        if (d2 < bestD2 && !_seatTaken(pr) && !PG3DPhysics.wallBetween(px, pz, pr.x, pr.z, _walls, pr.aabb)) { bestD2 = d2; best = pr; }
       }
     }
     _seatCandidate = best;
@@ -1501,7 +1690,9 @@ const Playground3D = (() => {
 
   function _tick(now) {
     if (!_running) return;
-    const dt = Math.min(0.05, (now - _lastTime) / 1000);
+    // Clamped both ways: a rAF timestamp can come in just before _lastTime
+    // (first frame after start / tab return) and a negative dt ends one-shot clips.
+    const dt = Math.max(0, Math.min(0.05, (now - _lastTime) / 1000));
     _lastTime = now;
 
     const axis = _input ? _input.getAxis() : { x: 0, y: 0 };
@@ -1601,6 +1792,9 @@ const Playground3D = (() => {
         const actors = [];
         if (_mode === 'world') {
           for (const [id, rp] of _remotePlayers) {
+            // Still down, getting up or just back on their feet: not a target
+            // (the server refuses it too — KNOCKDOWN.IMMUNE_MS).
+            if (rp.downUntil && now < rp.downUntil - PUNCH.DOWN_MS + KNOCKDOWN_IMMUNE_MS) continue;
             actors.push({ id: 'rp:' + id, x: rp.current.x, z: rp.current.z, y: rp.current.y || 0 });
           }
           for (let i = 0; i < _npcs.length; i++) {
@@ -1624,7 +1818,9 @@ const Playground3D = (() => {
         } else if (hit) {
           targetSocket = hit.slice(3);
           const rp = _remotePlayers.get(targetSocket);
-          if (rp) rp.downUntil = now + PUNCH.DOWN_MS;   // optimistic — relay confirms
+          // Optimistic — the server's ack confirms it or cancelRemoteKnockdown
+          // stands them back up (out of reach by the server's positions).
+          if (rp) { rp.downUntil = now + PUNCH.DOWN_MS; rp.optimisticDown = true; }
         }
         if (_onPunch) { try { _onPunch({ target: targetSocket, npc: targetNpc }); } catch (_) {} }
       }
@@ -1769,6 +1965,8 @@ const Playground3D = (() => {
     }
 
     _updateCamera();
+    _updateFrustum();      // on-screen tests for the next frame's animation LOD
+    _updateSunRig();       // shadow box follows the player / showcase
     // No see-through fading while a house is showcased: the player is inside
     // it, so every wall between the outside camera and them would fade away.
     if (!_showcase) _occlusion.tick(dt, now, _scene, _camera, _player);
@@ -1889,11 +2087,20 @@ const Playground3D = (() => {
   // A peer (not us) got hit — topple their rig.
   function knockdownRemote(id) {
     const rp = _remotePlayers.get(id);
-    if (rp) rp.downUntil = performance.now() + PUNCH.DOWN_MS;
+    if (rp) { rp.downUntil = performance.now() + PUNCH.DOWN_MS; rp.optimisticDown = false; }
   }
 
-  // WE got hit — fall over, input dead until back up.
+  // The server refused OUR hit on this peer (out of reach by the positions it
+  // has, or they were still getting up): undo the optimistic knockdown.
+  function cancelRemoteKnockdown(id) {
+    const rp = _remotePlayers.get(id);
+    if (rp && rp.optimisticDown) { rp.downUntil = 0; rp.optimisticDown = false; }
+  }
+
+  // WE got hit — fall over, input dead until back up. Already down → ignore:
+  // re-arming here is what let two punchers keep someone on the floor.
   function knockdownLocal() {
+    if (_isLocalDown(performance.now())) return;
     if (_seat) _standUp();
     _localDownUntil = performance.now() + PUNCH.DOWN_MS;
     _localWalking = false;
@@ -1904,6 +2111,23 @@ const Playground3D = (() => {
   // derived from the spawn island (Iron Man 1) — identical for every client,
   // so free stones sit in the same place for everyone regardless of which
   // other islands they've unlocked.
+  // The START node's position (unlocked or not) → _stoneCenter. Free stones
+  // are only shown when this player has that island (else they'd float over
+  // the void, out of reach).
+  function _placeStoneCenter() {
+    const startId = (typeof CONFIG !== 'undefined' && CONFIG.START_NODE_ID) || 'ironman1';
+    const p = (typeof projects !== 'undefined' && Array.isArray(projects)) ? projects.find(q => q.id === startId) : null;
+    if (p && typeof p.gridX === 'number' && typeof p.gridY === 'number') {
+      _stoneCenter.x = p.gridX * WORLD.SCALE;
+      _stoneCenter.z = p.gridY * WORLD.SCALE;
+      _stoneCenter.reachable = _isProjectUnlocked(p);
+    } else {
+      _stoneCenter.x = _spawnPoint.x;
+      _stoneCenter.z = _spawnPoint.z;
+      _stoneCenter.reachable = true;
+    }
+  }
+
   function _buildStoneMeshes() {
     if (_stones.size || !_scene || _mode !== 'world') return;
     const THREE = window.THREE;
@@ -1914,12 +2138,13 @@ const Playground3D = (() => {
       mat.emissiveIntensity = 0.55;
       const mesh = new THREE.Mesh(geo, mat);
       mesh.castShadow = true;
+      mesh.userData.noOcclude = true;   // small + moving: never a see-through occluder
       _scene.add(mesh);
-      const ang = (i / STONE_DEFS.length) * Math.PI * 2;
+      const slot = PG3DPhysics.stoneSlot(_stoneCenter.x, _stoneCenter.z, i);
       _stones.set(def.id, {
         mesh, holder: null,
-        ringX: _spawnPoint.x + Math.cos(ang) * STONE_RING_R,
-        ringZ: _spawnPoint.z + Math.sin(ang) * STONE_RING_R,
+        ringX: slot.x,
+        ringZ: slot.z,
         spin: Math.random() * Math.PI * 2
       });
     });
@@ -1971,8 +2196,9 @@ const Playground3D = (() => {
       const bob = Math.sin(now / 400 + s.spin) * 0.08;
       s.mesh.rotation.y = s.spin;
       if (!s.holder) {
-        // Free — sits on its ring slot; walk/jump onto it to claim.
-        s.mesh.visible = !_grabbing.has(id);
+        // Free — sits on its ring slot; walk/jump onto it to claim. Hidden
+        // when this player doesn't have the start island.
+        s.mesh.visible = !_grabbing.has(id) && _stoneCenter.reachable;
         s.mesh.position.set(s.ringX, 0.55 + bob, s.ringZ);
         if (!_grabbing.has(id) && !_falling) {
           const dx = px - s.ringX, dy = py - 0.55, dz = pz - s.ringZ;
@@ -2098,6 +2324,24 @@ const Playground3D = (() => {
   }
   function clearHouseShowcase() { _showcase = null; }
 
+  // Keep the sun's shadow box centred on what the camera is looking at: the
+  // player, or the house a showcase is circling. Snapped to whole shadow
+  // texels (PG3DPhysics.snapShadowCenter) so shadow edges don't shimmer as
+  // the player walks. Scenery may change dir / colour / intensity, never the
+  // light itself or its shadow-camera bounds.
+  function _updateSunRig() {
+    const r = _sunRig;
+    if (!r || !_player) return;
+    let px = _player.position.x, pz = _player.position.z;
+    if (_showcase) {
+      const node = _worldNodes.get(_showcase.projectId);
+      if (node && node.mesh) { px = node.mesh.position.x; pz = node.mesh.position.z; }
+    }
+    const c = PG3DPhysics.snapShadowCenter(px, 0, pz, r.dir, (2 * r.radius) / r.mapSize);
+    r.light.target.position.set(c.x, c.y, c.z);
+    r.light.position.set(c.x + r.dir.x * r.dist, c.y + r.dir.y * r.dist, c.z + r.dir.z * r.dist);
+  }
+
   function _updateCamera() {
     if (!_camera || !_player || !_orbit) return;
     if (_showcase) {
@@ -2132,11 +2376,11 @@ const Playground3D = (() => {
     _camera.lookAt(targetX, targetY, targetZ);
   }
 
+  // Shortest-arc angle lerp, result wrapped to (-π, π]. Modulo-based
+  // (PG3DPhysics.lerpAngle): the old while-loops never finished for a huge
+  // remote yaw (1e300), which froze every tab in /world.
   function _lerpAngle(a, b, t) {
-    let diff = b - a;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    return a + diff * t;
+    return PG3DPhysics.lerpAngle(a, b, t);
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -2260,6 +2504,7 @@ const Playground3D = (() => {
   function _rebuildWorldNodes() {
     if (_mode !== 'world' || !_scene || typeof projects === 'undefined') return;
     const THREE = window.THREE;
+    _placeStoneCenter();   // the start island may have just unlocked
 
     for (const p of projects) {
       if (!_isProjectUnlocked(p)) continue;
@@ -3033,6 +3278,13 @@ const Playground3D = (() => {
   function _applyRoof(node) {
     const THREE = window.THREE;
     if (!THREE || !node || !node.ceiling) return;
+    // A roof faded by the see-through pass wears the occlusion's clone: hand
+    // the real material back first, so the dispose / swap below acts on it
+    // (and the fade can't later write the old colour back).
+    _occlusion.release(node.ceiling);
+    if (node.roofExtra && typeof node.roofExtra.traverse === 'function') {
+      node.roofExtra.traverse((o) => { if (o.isMesh) _occlusion.release(o); });
+    }
     if (node.ownsRoofMat) {
       try { node.ceiling.material.dispose(); } catch (_) {}
       node.ownsRoofMat = false;
@@ -3524,6 +3776,18 @@ const Playground3D = (() => {
       // following the rig's Y so a tag rises with a jumping peer.
       const headY = 2.05 * (rp.rig.scale.y || 1);
       _hudAnchor.set(rp.rig.position.x, (rp.rig.position.y || 0) + headY + 0.3, rp.rig.position.z);
+      // Far-off players (and, while you're inside a house, anyone outside it —
+      // the tag would float through the walls) get no tag or bubbles. Tags of
+      // the whole town used to pile up on screen.
+      const dx = rp.rig.position.x - (_player ? _player.position.x : 0);
+      const dz = rp.rig.position.z - (_player ? _player.position.z : 0);
+      const showTag = dx * dx + dz * dz <= REMOTE_TAG_DIST * REMOTE_TAG_DIST
+        && !(vic && vic.inside && !_inVicinity(vic, rp.rig.position.x, rp.rig.position.z));
+      if (!showTag) {
+        if (rp.nameEl && rp.nameEl.style.display !== 'none') rp.nameEl.style.display = 'none';
+        for (const b of rp.bubbleEls) if (b.style.display !== 'none') b.style.display = 'none';
+        continue;
+      }
       if (rp.nameEl) _placeHudEl(rp.nameEl, _hudAnchor, 0);
       let stack = 0.4;
       for (const b of rp.bubbleEls) {
@@ -4056,6 +4320,10 @@ const Playground3D = (() => {
   function updateRemotePlayer(id, x, z, yaw, walking, y, backward, pose) {
     const rp = _remotePlayers.get(id);
     if (!rp) return;
+    // Defence in depth — the server sanitises positions too. A NaN would
+    // stick in the lerp forever; a huge yaw used to hang the angle math.
+    if (typeof x !== 'number' || typeof z !== 'number' || !Number.isFinite(x) || !Number.isFinite(z)) return;
+    yaw = PG3DPhysics.wrapAngle(yaw);
     rp.target.x = x;
     rp.target.z = z;
     rp.target.y = (typeof y === 'number' && Number.isFinite(y)) ? y : 0;
@@ -4071,6 +4339,7 @@ const Playground3D = (() => {
     }
   }
   const REMOTE_SNAP_DIST = 6;   // world units; walking covers ~0.5 per update
+  const REMOTE_TAG_DIST = 45;   // world units; farther players show no name tag
 
   function removeRemotePlayer(id) {
     const rp = _remotePlayers.get(id);
@@ -4163,14 +4432,29 @@ const Playground3D = (() => {
     if (vis && inst) {
       inst.setOpacity(o);
     } else if (vis) {
-      rp.rig.traverse(m => {
-        if (!m.material) return;
-        const mats = Array.isArray(m.material) ? m.material : [m.material];
-        mats.forEach(mat => { mat.transparent = o < 1; mat.opacity = o; });
-      });
+      _fadeMaterials(rp.rig, o);
     }
     if (rp.nameEl) rp.nameEl.style.opacity = String(o);
     for (const b of rp.bubbleEls) b.style.opacity = String(o);
+  }
+
+  // Fade every material under `root` to `o` × that material's OWN resting
+  // opacity, recorded the first time it's faded. Overwriting opacity with `o`
+  // made see-through parts (glasses lenses rest at 0.6) solid after any fade.
+  function _fadeMaterials(root, o) {
+    root.traverse(m => {
+      if (!m.material) return;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) {
+        const ud = mat.userData || (mat.userData = {});
+        if (ud.baseOpacity === undefined) {
+          ud.baseOpacity = mat.opacity;
+          ud.baseTransparent = mat.transparent;
+        }
+        mat.opacity = ud.baseOpacity * o;
+        mat.transparent = ud.baseTransparent || o < 1;
+      }
+    });
   }
 
   // Per-tick interpolation + walking animation for remote players.
@@ -4402,6 +4686,7 @@ const Playground3D = (() => {
     const pointers = new Map();     // active pointers (pinch tracking)
     let pinchDist = 0;
     let pending = character;
+    let charGate = null;            // the realistic-body gate, while it's holding the rig back
 
     function _size() {
       const w = Math.max(1, container.clientWidth);
@@ -4451,8 +4736,16 @@ const Playground3D = (() => {
 
       rotGroup = new THREE.Group();
       scene.add(rotGroup);
-      rig = _buildPlayer(pending);
-      rotGroup.add(rig);
+      // The body appears once the realistic models are ready — a spinner
+      // until then instead of the procedural stand-in (setCharacter just
+      // updates `pending` meanwhile).
+      charGate = _gateCharacters(container, 'Loading character…', () => {
+        charGate = null;
+        if (!alive || rig || !rotGroup) return;
+        rig = _buildPlayer(pending);
+        rotGroup.add(rig);
+        measureAt = 0;
+      });
 
       _attachPointer();
       _attachResize();
@@ -4461,7 +4754,7 @@ const Playground3D = (() => {
       let last = performance.now();
       const loop = (now) => {
         if (!alive) return;
-        const dt = Math.min(0.05, (now - last) / 1000);
+        const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
         last = now;
         if (!dragging) yaw += autoYawVel * dt;
         rotGroup.rotation.y = yaw;
@@ -4596,7 +4889,7 @@ const Playground3D = (() => {
       pending = c;
       if (!rig || !rotGroup) return;
       rotGroup.remove(rig);
-      _disposeRig(rig);
+      _disposeActor(rig);       // marks it discarded so a pending model upgrade skips it
       rig = _buildPlayer(c);
       rotGroup.add(rig);
       measureAt = 0;   // a new body may be a different height/build
@@ -4604,10 +4897,11 @@ const Playground3D = (() => {
 
     function destroy() {
       alive = false;
+      if (charGate) { charGate.cancel(); charGate = null; }
       if (rafId) cancelAnimationFrame(rafId);
       rafId = null;
       if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
-      if (rig && rotGroup) { rotGroup.remove(rig); _disposeRig(rig); }
+      if (rig && rotGroup) { rotGroup.remove(rig); _disposeActor(rig); }
       if (scene) _disposeRig(scene);
       if (renderer) {
         try { renderer.dispose(); } catch (_) {}
@@ -4683,6 +4977,13 @@ const Playground3D = (() => {
   function renderThumbnail(character, opts) {
     opts = opts || {};
     const w = opts.w || 132, h = opts.h || 176;
+    // While the realistic models are still loading, draw nothing — the tile
+    // keeps its shimmer and /customize re-renders the grid when they land (or
+    // fail, and the stand-in is all there is). Box bodies never wait.
+    if (_humanoidUsable() && !_isBoxBody(character)) {
+      const st = PG3DHumanoid.status();
+      if (st !== 'ready' && st !== 'failed') { PG3DHumanoid.whenReady().catch(() => {}); return null; }
+    }
     if (!_ensureThumb(w, h)) return null;
     const rig = _buildPlayer(character);
     _thumbGroup.rotation.y = (opts.yaw != null) ? opts.yaw : 0.42;  // gentle 3/4 view
@@ -4721,7 +5022,7 @@ const Playground3D = (() => {
     setWorldStones, setStoneHeld, setStoneGrabHandler, setLocalId,
     getLocalStoneCount, applySnap, snapRespawnLocal, clearStones,
     // Punch + knockdown — relayed via world:punch (js/home-socket.js).
-    setPunchHandler, playRemotePunch, knockdownRemote, knockdownLocal,
+    setPunchHandler, playRemotePunch, knockdownRemote, cancelRemoteKnockdown, knockdownLocal,
     // Spawn picker — choose which disconnected island to (re)spawn on.
     // isProjectUnlocked is exported so WorldView's island grouping uses the
     // engine's own rule instead of a second, drifting copy of it.
@@ -4751,6 +5052,11 @@ const Playground3D = (() => {
       teleport(x, z) { if (_player) { _seat = null; _player.rotation.x = 0; _player.position.set(x, _groundAt(x, z), z); _lastSafe.x = x; _lastSafe.z = z; } },
       seat() { return _seat; },
       seatCandidate() { return _seatCandidate; },
+      // Is the off-screen /customize thumbnail renderer (a WebGL context) alive?
+      thumbAlive() { return !!_thumbR; },
+      // Where the sun's shadow box is centred right now.
+      sun() { return _sunRig ? { x: _sunRig.light.target.position.x, z: _sunRig.light.target.position.z, radius: _sunRig.radius, map: _sunRig.mapSize } : null; },
+      stoneCenter() { return { ..._stoneCenter }; },
       // Advance one frame by hand when the tab is throttled (rAF frozen).
       // Cancels the queued frame first so the loop never doubles up.
       step() { if (!_running) return; if (_rafId) cancelAnimationFrame(_rafId); _tick(performance.now()); }

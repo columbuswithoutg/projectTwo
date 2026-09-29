@@ -422,7 +422,16 @@ const Multiplayer = (() => {
     if (events.punch) {
       if (Playground3D.setPunchHandler) {
         Playground3D.setPunchHandler(({ target, npc }) => {
-          if (socket.connected) socket.emit(events.punch, { target: target || null, npc: npc || null });
+          if (!socket.connected) return;
+          // The ack says whether a player hit counted. Refused (out of reach
+          // by the server's positions, or they were still getting up) → stand
+          // them back up on our screen. Older servers never ack: the
+          // optimistic knockdown stands, as before.
+          socket.emit(events.punch, { target: target || null, npc: npc || null }, (res) => {
+            if (res && res.ok === false && target && Playground3D.cancelRemoteKnockdown) {
+              Playground3D.cancelRemoteKnockdown(target);
+            }
+          });
         });
       }
       socket.on(events.punch, ({ id, target }) => {

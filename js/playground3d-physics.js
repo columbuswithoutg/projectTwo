@@ -298,9 +298,112 @@
     return false;
   }
 
+  // ── Angles ──
+  // Every yaw / camera azimuth goes through these. They are modulo-based on
+  // purpose: the old `while (d > π) d -= 2π` loops never terminate once 2π is
+  // below the float spacing of the input (yaw = 1e300 froze every client in
+  // /world — the server relayed it verbatim).
+  const TAU = Math.PI * 2;
+
+  // Any number → the equivalent angle in (-π, π]. Non-finite → 0.
+  function wrapAngle(a) {
+    if (typeof a !== 'number' || !Number.isFinite(a)) return 0;
+    let r = a % TAU;                    // (-2π, 2π)
+    if (r > Math.PI) r -= TAU;
+    else if (r <= -Math.PI) r += TAU;
+    return r;
+  }
+
+  // Move `a` toward `b` by fraction t along the shorter arc; result wrapped.
+  function lerpAngle(a, b, t) {
+    const from = wrapAngle(a);
+    if (typeof b !== 'number' || !Number.isFinite(b)) return from;
+    return wrapAngle(from + wrapAngle(b - from) * t);
+  }
+
+  // Frame-rate independent turn toward `target` at `rate` (1/s). Exponential
+  // approach, so it never overshoots and a 30 fps phone turns like 144 Hz.
+  function turnToward(yaw, target, dt, rate) {
+    const k = 1 - Math.exp(-Math.max(0, rate || 0) * Math.max(0, dt || 0));
+    return lerpAngle(yaw, target, k);
+  }
+
+  // ── Knockdown timing + server punch validation ──
+  // Shared by the engine's PUNCH block and routes/world-socket.js. A victim is
+  // immune from a fresh knockdown until IMMUNE_MS after the last one (down +
+  // get-up + a second to walk away) — without it two players could chain-stun
+  // someone forever (the 1 s punch cooldown is shorter than the 3.3 s down).
+  const KNOCKDOWN = { DOWN_MS: 1800, GETUP_MS: 1500, IMMUNE_MS: 4300 };
+
+  // attacker / victim: { x, y, z, downAt } (server-side records; downAt = when
+  // their last accepted knockdown landed, 0/undefined = never).
+  // opts: { now, range, slack, ySlack } — slack absorbs position latency.
+  // → 'ok' | 'range' | 'immune' | 'attacker-down'
+  function punchCheck(opts) {
+    const o = opts || {};
+    const a = o.attacker || {}, v = o.victim || {};
+    const now = o.now;
+    const range = o.range == null ? 1.4 : o.range;
+    const slack = o.slack == null ? 1.6 : o.slack;
+    const ySlack = o.ySlack == null ? 1.0 : o.ySlack;
+    if (a.downAt && now - a.downAt < KNOCKDOWN.DOWN_MS + KNOCKDOWN.GETUP_MS) return 'attacker-down';
+    if (v.downAt && now - v.downAt < KNOCKDOWN.IMMUNE_MS) return 'immune';
+    const dx = (v.x || 0) - (a.x || 0), dz = (v.z || 0) - (a.z || 0);
+    const reach = range + slack;
+    if (!(dx * dx + dz * dz <= reach * reach)) return 'range';
+    if (Math.abs((v.y || 0) - (a.y || 0)) > 1.5 + ySlack) return 'range';
+    return 'ok';
+  }
+
+  // ── Infinity Stone ring ──
+  // Free stones sit on a fixed ring around the START island (Iron Man 1) for
+  // every player; the server checks grabs against the same slots.
+  const STONE_RING = { R: 4, COUNT: 6, PICKUP_R: 0.9 };
+  function stoneSlot(cx, cz, i) {
+    const ang = (i / STONE_RING.COUNT) * TAU;
+    return { x: cx + Math.cos(ang) * STONE_RING.R, z: cz + Math.sin(ang) * STONE_RING.R };
+  }
+
+  // ── Seats ──
+  // Is the seat at (x, z) already taken by one of `seated` ([{x, z}] of other
+  // players currently sitting or lying)? radius: how close counts as "on it".
+  function seatOccupied(x, z, seated, radius) {
+    const r2 = (radius == null ? 0.6 : radius) ** 2;
+    for (const s of seated || []) {
+      if (!s) continue;
+      const dx = s.x - x, dz = s.z - z;
+      if (dx * dx + dz * dz <= r2) return true;
+    }
+    return false;
+  }
+
+  // ── Shadow camera follow ──
+  // Snap a shadow centre to whole shadow-map texels along the light camera's
+  // own right/up axes, so a following sun doesn't make shadow edges crawl as
+  // the player walks. dir: unit vector from the target toward the light.
+  // texel: world units per shadow-map texel (2 * radius / mapSize).
+  function snapShadowCenter(px, py, pz, dir, texel) {
+    const zx = dir.x, zy = dir.y, zz = dir.z;
+    // x = normalize(up × z), up = +Y (same basis Matrix4.lookAt builds).
+    let xx = zz, xz = -zx;
+    let xl = Math.hypot(xx, xz);
+    if (xl < 1e-6) { xx = 1; xz = 0; xl = 1; }   // sun straight overhead
+    xx /= xl; xz /= xl;
+    const xy = 0;
+    // y = z × x
+    const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+    if (!(texel > 0)) return { x: px, y: py, z: pz };
+    const u = px * xx + py * xy + pz * xz;
+    const v = px * yx + py * yy + pz * yz;
+    const du = Math.round(u / texel) * texel - u;
+    const dv = Math.round(v / texel) * texel - v;
+    return { x: px + du * xx + dv * yx, y: py + du * xy + dv * yy, z: pz + du * xz + dv * yz };
+  }
+
   return {
     isWalkable, STEP, groundAt, blocksAt, stepVertical, shouldRespawn, airtime, airCarry, pickPunchTarget,
     actorRadius, spawnIslands, PUNCH_COOLDOWN_MS, punchCooldown, hash01, npcPatrol, npcPathPoint,
-    pinchZoom, fovForAspect, wallBetween
+    pinchZoom, fovForAspect, wallBetween,
+    wrapAngle, lerpAngle, turnToward, KNOCKDOWN, punchCheck, STONE_RING, stoneSlot, seatOccupied, snapShadowCenter
   };
 });

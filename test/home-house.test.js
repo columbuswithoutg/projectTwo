@@ -64,3 +64,35 @@ test('homeRoofFor: legacy homes take the first decorated room in layout order', 
   assert.equal(H.homeRoofFor({ homeHouses: {} }, [{ projectId: 'a' }]), null);
   assert.equal(H.homeRoofFor(null, []), null);
 });
+
+// ── effectiveLayout: what a home may show once the watch list shrinks ──
+
+test('effectiveLayout: drops unwatched rooms and caps at floor(watched / 2)', () => {
+  const rooms = [
+    { projectId: 'a', gx: 0, gy: 0 }, { projectId: 'b', gx: 1, gy: 0 },
+    { projectId: 'c', gx: 2, gy: 0 }, { projectId: 'd', gx: 3, gy: 0 }
+  ];
+  // 4 watched → 2 rooms allowed; 'b' unwatched is skipped, but then 'a' has
+  // no neighbour left and stays alone (the kept set must be connected).
+  assert.deepEqual(H.effectiveLayout({ rooms }, ['a', 'c', 'd', 'x']).rooms, [{ projectId: 'a', gx: 0, gy: 0 }]);
+  // Everything watched, 6 watched → 3 rooms: grown from the entrance room.
+  assert.deepEqual(H.effectiveLayout({ rooms }, ['a', 'b', 'c', 'd', 'e', 'f']).rooms.map(r => r.projectId), ['a', 'b', 'c']);
+});
+
+test('effectiveLayout: after Clear Progress nothing is shown; the stored layout is untouched', () => {
+  const layout = { rooms: [{ projectId: 'a', gx: 0, gy: 0 }] };
+  assert.deepEqual(H.effectiveLayout(layout, []), { rooms: [] });
+  assert.equal(layout.rooms.length, 1, 'input not mutated');
+  assert.deepEqual(H.effectiveLayout(null, ['a', 'b']), { rooms: [] });
+  assert.deepEqual(H.effectiveLayout({ rooms: 'junk' }, new Set(['a', 'b'])), { rooms: [] });
+});
+
+test('effectiveLayout: a layout within its cap comes back unchanged', () => {
+  const rooms = [{ projectId: 'a', gx: 0, gy: 0 }, { projectId: 'b', gx: 0, gy: 1 }];
+  assert.deepEqual(H.effectiveLayout({ rooms }, ['a', 'b', 'c', 'd']).rooms, rooms);
+});
+
+test('watchedIdsOf: object and legacy string entries', () => {
+  assert.deepEqual([...H.watchedIdsOf({ watchedProjects: ['a', { projectId: 'b' }, null] })], ['a', 'b']);
+  assert.equal(H.watchedIdsOf(null).size, 0);
+});

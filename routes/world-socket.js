@@ -28,35 +28,51 @@ const Message = require('../models/Message');
 const Friend = require('../models/Friend');
 const { friendFilter } = require('../server/friendship');
 const MessagingLogic = require('../js/messaging-logic');
-const { PUNCH_COOLDOWN_MS } = require('../js/playground3d-physics');
+const { PUNCH_COOLDOWN_MS, KNOCKDOWN, punchCheck, stoneSlot, STONE_RING } = require('../js/playground3d-physics');
+const NetLogic = require('../js/world-net-logic');
+const contentLoader = require('../server/contentLoader');
+// The client sends its character on join and the server re-broadcasts it to
+// every other joiner, so it is reduced to the known slots, each an in-range
+// integer (server/character.js — the same ranges the profile PUT enforces).
+// Stops a hostile client parking a large blob that gets fanned to everyone,
+// and keeps junk out of other clients' rig builder.
+const { sanitizeCharacter } = require('../server/character');
 
-// Whitelisted homeCharacter slots (mirrors models/user.js homeCharacter). The
-// client sends its character on join and the server re-broadcasts it verbatim
-// to every other joiner, so we coerce it to this set of small integers — both
-// to stop a hostile client parking a large blob that gets fanned to everyone,
-// and so a junk payload can't reach other clients' rig builder.
-const CHARACTER_KEYS = new Set([
-  'skin', 'hairStyle', 'hairColor', 'shirtColor', 'pantsColor', 'eyeColor', 'eyeShape',
-  'facialHairStyle', 'facialHairColor', 'glasses', 'hat', 'shoeColor', 'build', 'gear',
-  'shirtStyle', 'pantsStyle', 'shoeStyle', 'outerwear', 'outerwearColor', 'suit', 'suitColor',
-  'gloves', 'belt', 'mask', 'accessoryColor', 'gender', 'shirtColor2', 'pantsColor2',
-  'outerwearColor2', 'shoeColor2', 'helmet', 'helmetColor', 'prop', 'propColor', 'emblem', 'emblemColor',
-  'bodyType'
-]);
+// Per-socket token buckets (js/world-net-logic.js RATES) for the events that
+// hit the DB or fan out to a whole room without a floor of their own.
+function rateOk(socket, key) {
+  const store = socket.data.rl || (socket.data.rl = {});
+  return NetLogic.allow(store, key, Date.now());
+}
 
-function sanitizeCharacter(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const out = {};
-  for (const k of CHARACTER_KEYS) {
-    const v = raw[k];
-    // Only finite numbers; clamp to a generous index range. The renderers
-    // default/ignore unknown indices, so this can't break rendering — it just
-    // bounds size and type.
-    if (typeof v === 'number' && Number.isFinite(v)) {
-      out[k] = Math.max(0, Math.min(99, Math.floor(v)));
-    }
+// Copy a sanitized position packet (NetLogic.sanitizePos) onto a player
+// record. Walking, jumping or taking a seat ends a looping emote — peers end
+// it locally from the same packet; this keeps late joiners' snapshots right.
+function applyPos(p, s) {
+  p.x = s.x; p.y = s.y; p.z = s.z; p.yaw = s.yaw;
+  p.walking = s.walking; p.backward = s.backward; p.pose = s.pose; p.mv = s.mv;
+  if (p.emote && (s.walking || s.pose || (s.mv & NetLogic.MV.AIR))) p.emote = null;
+}
+
+// The position fan-out for world:pos / home:pos.
+function posRelay(id, p) {
+  return { id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward, pose: p.pose, mv: p.mv || 0 };
+}
+
+// world:emote / home:emote. `kind` is an EMOTES id or 'stop'. A start needs a
+// token (and no seat); 'stop' is only relayed when a loop is actually running.
+// Returns the payload to relay, or null to drop it.
+function emoteRelay(socket, p, raw) {
+  const kind = raw && raw.kind;
+  if (kind === 'stop') {
+    if (!p.emote) return null;
+    p.emote = null;
+    return { id: socket.id, kind: 'stop' };
   }
-  return out;
+  if (!NetLogic.isEmoteKind(kind) || p.pose) return null;
+  if (!rateOk(socket, 'emote')) return null;
+  p.emote = NetLogic.isLoopingEmote(kind) ? kind : null;
+  return { id: socket.id, kind };
 }
 
 // socketId → { socketId, userId, username, character, x, z, yaw, walking, lastChat }
@@ -213,13 +229,18 @@ const CHAT_INTERVAL_MS = 1000;
 // Floor between relayed punches per socket — the client cooldown, less slack
 // for network jitter so an honest punch sent right at 1s is never dropped.
 const PUNCH_INTERVAL_MS = PUNCH_COOLDOWN_MS - 150;
-const POSITION_BOUND = 1000;          // sanity clamp; world is < 300u square in practice
 // Where a joiner is standing, from the join payload — so peers see them
 // appear where they are, not at (0,0) until their first position update.
-function joinPos(raw) {
-  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= POSITION_BOUND) ? v : 0;
-  return { x: num(raw && raw.x), z: num(raw && raw.z), yaw: num(raw && raw.yaw) };
-}
+// Position packets (and this) go through js/world-net-logic.js, which wraps
+// yaw into (-π, π]: an unwrapped 1e300 used to hang every peer's angle math.
+const joinPos = NetLogic.joinPos;
+// Knockdown / punch reach, validated here against the positions the players
+// themselves broadcast (PG3DPhysics.punchCheck). Mirrors the engine's PUNCH.RANGE.
+const PUNCH_RANGE = 1.4;
+// Stolen-stone grabs must happen near the stone's ring slot. Slack covers a
+// position packet (~100 ms) plus latency at sprint speed.
+const STONE_GRAB_SLACK = 1.5;
+const START_NODE_ID = 'ironman1';     // js/config.js CONFIG.START_NODE_ID
 // Per-socket floor between accepted position updates. The client broadcasts at
 // ~100ms (POS_INTERVAL_MS), so legitimate traffic never trips this — it only
 // caps a hostile/scripted client that would otherwise fan thousands of pos
@@ -304,6 +325,17 @@ function projectGrid() {
       .finally(() => { _projectGridRefreshing = false; });
   }
   return _projectGrid;
+}
+
+// Centre of the Infinity Stone ring: the START island (Iron Man 1) for every
+// player — the client places the free stones around the same point. Falls
+// back to the bundled projects.js grid when the DB has no projects yet;
+// null when neither knows the node (the grab check then can't run).
+function stoneRingCenter() {
+  const find = (list) => (list || []).find(p => p && p.id === START_NODE_ID && typeof p.gridX === 'number' && typeof p.gridY === 'number');
+  let n = find(projectGrid());
+  if (!n) { try { n = find(contentLoader.get('projects')); } catch (_) { n = null; } }
+  return n ? { x: n.gridX * ChatLogic.C.GRID_SCALE, z: n.gridY * ChatLogic.C.GRID_SCALE } : null;
 }
 
 // ── Avengers NPC fights (single 'world' room) ──
@@ -428,6 +460,9 @@ module.exports = (io) => {
   io.on('connection', (socket) => {
     // Client must emit 'world:join' before broadcasting anything else.
     socket.on('world:join', (raw) => {
+      // Each join hits the DB (watched list) and fans out to the whole room.
+      // A real client joins once per socket (a reconnect is a new socket).
+      if (!rateOk(socket, 'join')) return;
       // Username comes from the verified token, NOT the client payload, so a
       // user can't join as someone else in chat/nametag.
       const username  = String(socket.data.username || 'Anon').slice(0, MAX_USERNAME);
@@ -443,6 +478,9 @@ module.exports = (io) => {
         ...joinPos(raw), y: 0,
         walking: false,
         pose: null,         // 'sit' | 'lie' while on a chair / bed — in the snapshot so late joiners see it
+        mv: 0,              // movement flags (NetLogic.MV) from the last position packet
+        emote: null,        // looping emote in progress — in the snapshot so late joiners see it
+        downAt: 0,          // when their last accepted knockdown landed (punch immunity)
         lastChat: 0,
         projectId: null,    // island the player stands on (Project chat / voice scope)
         stay: null          // js/world-stay-logic record while on an island
@@ -479,8 +517,9 @@ module.exports = (io) => {
         }
       }
 
-      // Bootstrap the new client with everyone else's current state.
-      const others = [...worldPlayers.values()].filter(p => p.socketId !== socket.id);
+      // Bootstrap the new client with everyone else's current state — the
+      // public fields only (no user ids, chat timing or stay accounting).
+      const others = [...worldPlayers.values()].filter(p => p.socketId !== socket.id).map(NetLogic.publicPlayer);
       // serverTime lets clients derive a shared clock. The roaming NPCs are
       // simulated locally on every client from that clock, so without a common
       // time base each user would see the same hero in a different spot.
@@ -494,7 +533,7 @@ module.exports = (io) => {
       if (stonesEventEnabled()) socket.emit('world:stones', { stones: stonesSnapshot() });
 
       // Tell everyone else about the new arrival.
-      socket.to('world').emit('world:joined', { ...player });
+      socket.to('world').emit('world:joined', NetLogic.publicPlayer(player));
     });
 
     socket.on('world:pos', (raw) => {
@@ -503,19 +542,11 @@ module.exports = (io) => {
       const nowPos = Date.now();
       if (nowPos - (socket.data.lastPos || 0) < POS_MIN_INTERVAL_MS) return;
       socket.data.lastPos = nowPos;
-      if (!raw || typeof raw.x !== 'number' || typeof raw.z !== 'number') return;
-      if (!Number.isFinite(raw.x) || !Number.isFinite(raw.z)) return;
-      if (Math.abs(raw.x) > POSITION_BOUND || Math.abs(raw.z) > POSITION_BOUND) return;
-      p.x = raw.x;
-      p.z = raw.z;
-      // y is optional (jump height) — clamp to a sane range so a hacked
-      // client can't fling its character to the moon for everyone else.
-      const rawY = (typeof raw.y === 'number' && Number.isFinite(raw.y)) ? raw.y : 0;
-      p.y = Math.max(-2, Math.min(10, rawY));
-      p.yaw = (typeof raw.yaw === 'number' && Number.isFinite(raw.yaw)) ? raw.yaw : 0;
-      p.walking = !!raw.walking;
-      p.backward = p.walking && !!raw.backward;
-      p.pose = (raw.pose === 'sit' || raw.pose === 'lie') ? raw.pose : null;
+      // Bounds x/z, clamps y (so a hacked client can't fling its character to
+      // the moon for everyone else), wraps yaw, whitelists pose + move flags.
+      const s = NetLogic.sanitizePos(raw);
+      if (!s) return;
+      applyPos(p, s);
       // Track which project island they're on; tell the client when it
       // changes so its Project chat tab can relabel / enable itself. The
       // island is also the voice scope and the stay-credit bucket.
@@ -553,9 +584,7 @@ module.exports = (io) => {
       } else {
         touchStay(p, nowPos);
       }
-      socket.to('world').emit('world:pos', {
-        id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward, pose: p.pose
-      });
+      socket.to('world').emit('world:pos', posRelay(socket.id, p));
     });
 
     // Chat, split into channels: 'world' (everyone), 'project' (players on
@@ -609,10 +638,10 @@ module.exports = (io) => {
     socket.on('world:emote', (raw) => {
       const p = worldPlayers.get(socket.id);
       if (!p) return;
-      const kind = raw && raw.kind;
-      if (kind !== 'wave') return;
+      const out = emoteRelay(socket, p, raw);
+      if (!out) return;
       touchStay(p);
-      socket.to('world').emit('world:emote', { id: socket.id, kind });
+      socket.to('world').emit('world:emote', out);
     });
 
     // Punch relay. Same per-user cooldown pattern as chat. `target` must be
@@ -621,19 +650,42 @@ module.exports = (io) => {
     // sender already animated the hit optimistically. `npc` (exclusive with
     // `target`) names a hero the swing reached: HP comes off here and the
     // result is broadcast to everyone, sender included.
-    socket.on('world:punch', (raw) => {
+    //
+    // A player hit is checked against the positions both players broadcast
+    // (PG3DPhysics.punchCheck): out of reach, a victim still down / getting up
+    // (KNOCKDOWN.IMMUNE_MS), or an attacker who is down themselves is relayed
+    // as a whiff, and the ack tells the attacker's client to undo its
+    // optimistic knockdown. Without this one modified client could stun-lock
+    // anyone, anywhere on the map.
+    socket.on('world:punch', (raw, ack) => {
+      const reply = (typeof ack === 'function') ? ack : () => {};
       const p = worldPlayers.get(socket.id);
-      if (!p) return;
+      if (!p) return reply({ ok: false, reason: 'not-joined' });
       const now = Date.now();
-      if (now - (p.lastPunch || 0) < PUNCH_INTERVAL_MS) return;
+      if (now - (p.lastPunch || 0) < PUNCH_INTERVAL_MS) return reply({ ok: false, reason: 'cooldown' });
       p.lastPunch = now;
       let target = raw && raw.target;
-      if (target != null && (typeof target !== 'string' || !worldPlayers.has(target))) return;
+      if (target != null && (typeof target !== 'string' || !worldPlayers.has(target))) return reply({ ok: false, reason: 'bad-target' });
       let npc = raw && raw.npc;
-      if (npc != null && (typeof npc !== 'string' || !NPC_IDS.has(npc))) return;
-      if (target && npc) return;
+      if (npc != null && (typeof npc !== 'string' || !NPC_IDS.has(npc))) return reply({ ok: false, reason: 'bad-target' });
+      if (target && npc) return reply({ ok: false, reason: 'bad-target' });
+      if (target === socket.id) return reply({ ok: false, reason: 'bad-target' });
+      if (p.downAt && now - p.downAt < KNOCKDOWN.DOWN_MS + KNOCKDOWN.GETUP_MS) {
+        return reply({ ok: false, reason: 'attacker-down' });
+      }
       touchStay(p, now);
+      if (target) {
+        const victim = worldPlayers.get(target);
+        const verdict = punchCheck({ now, attacker: p, victim, range: PUNCH_RANGE });
+        if (verdict !== 'ok') {
+          socket.to('world').emit('world:punch', { id: socket.id, target: null });
+          return reply({ ok: false, reason: verdict });
+        }
+        victim.downAt = now;
+        victim.emote = null;
+      }
       socket.to('world').emit('world:punch', { id: socket.id, target: target || null });
+      reply({ ok: true });
       if (npc) {
         const r = NpcLogic.applyHit(worldNpcs[npc], socket.id, now);
         if (r.event) {
@@ -659,24 +711,44 @@ module.exports = (io) => {
     // cooldown. Broadcast to everyone including the sender, which knocks
     // itself down on the echo, the same way world:punch works.
     socket.on('world:npc-punch', (raw) => {
-      if (!worldPlayers.has(socket.id)) return;
+      const me = worldPlayers.get(socket.id);
+      if (!me) return;
       const npc = raw && raw.npc;
       if (typeof npc !== 'string' || !NPC_IDS.has(npc)) return;
       const now = Date.now();
+      // Still down / getting up from the last hit — the hero waits its turn
+      // (same immunity as player punches, so heroes can't chain-stun either).
+      if (me.downAt && now - me.downAt < KNOCKDOWN.IMMUNE_MS) return;
       if (!NpcLogic.canNpcSwing(worldNpcs[npc], socket.id, now)) return;
       worldNpcs[npc] = Object.assign({}, worldNpcs[npc], { lastSwingAt: now });
+      me.downAt = now;
+      me.emote = null;
       io.to('world').emit('world:npc-punch', { npc, target: socket.id });
     });
 
     // Claim a FREE stone the client reached on foot. Authoritative: only the
     // first grab wins; losers reconcile from the world:stone-update broadcast.
+    // The grabber must be standing near that stone's ring slot (by the
+    // position it broadcasts) — a script can no longer sweep all six from
+    // anywhere. A refused grab gets the true state back so its optimistic
+    // hide undoes itself.
     socket.on('world:stone-grab', (raw) => {
       if (!stonesEventEnabled()) return;      // event off — no stones to grab
-      if (!worldPlayers.has(socket.id)) return;
+      const p = worldPlayers.get(socket.id);
+      if (!p) return;
       const stone = raw && raw.stone;
       if (typeof stone !== 'string' || !STONE_IDS.includes(stone)) return;
-      if (worldStones[stone].holder !== null) return;   // already taken
-      touchStay(worldPlayers.get(socket.id));
+      const resync = () => socket.emit('world:stones', { stones: stonesSnapshot() });
+      if (!rateOk(socket, 'stoneGrab')) return resync();
+      if (worldStones[stone].holder !== null) return resync();   // already taken
+      const center = stoneRingCenter();
+      if (center) {
+        const slot = stoneSlot(center.x, center.z, STONE_IDS.indexOf(stone));
+        const reach = STONE_RING.PICKUP_R + STONE_GRAB_SLACK;
+        const dx = p.x - slot.x, dz = p.z - slot.z;
+        if (dx * dx + dz * dz > reach * reach) return resync();
+      }
+      touchStay(p);
       worldStones[stone].holder = socket.id;
       io.to('world').emit('world:stone-update', { stone, holder: socket.id });
     });
@@ -720,15 +792,23 @@ module.exports = (io) => {
     // Shape mirrors world:* so the client uses the same handlers.
 
     socket.on('home:join', async (raw) => {
+      // One or two DB lookups per join — rate-limited like world:join.
+      if (!rateOk(socket, 'join')) return;
       // typeof guard: String() on a crafted object throws and crashes the process.
       const ownerUsername = (typeof raw?.ownerUsername === 'string' ? raw.ownerUsername : '').slice(0, MAX_USERNAME);
       if (!ownerUsername) return;
+      // The lookups below are async: if the socket disconnects (quick reload /
+      // navigate-away) or leaves / re-joins while they run, the disconnect
+      // handler has nothing to remove yet, and adding the player afterwards
+      // left a frozen ghost avatar in that home. Every await re-checks.
+      const seq = socket.data.homeJoinSeq = (socket.data.homeJoinSeq || 0) + 1;
+      const stale = () => !socket.connected || socket.data.homeJoinSeq !== seq;
       let owner;
       try {
         owner = await User.findOne({ username: ownerUsername })
           .select('_id').lean();
       } catch (_) { return; }
-      if (!owner) return;
+      if (!owner || stale()) return;
 
       // Only the owner and their accepted friends may enter — same rule as
       // GET /api/friends/by-username. Without it any logged-in user could
@@ -738,6 +818,7 @@ module.exports = (io) => {
           const ok = await Friend.exists(friendFilter(socket.data.userId, owner._id));
           if (!ok) return;
         } catch (_) { return; }
+        if (stale()) return;
       }
 
       const ownerId  = String(owner._id);
@@ -764,6 +845,9 @@ module.exports = (io) => {
         ownerId,
         ...joinPos(raw), y: 0,
         walking: false,
+        pose: null,
+        mv: 0,
+        emote: null,
         lastChat: 0
       };
       homePlayers.set(socket.id, player);
@@ -782,9 +866,10 @@ module.exports = (io) => {
       }
 
       const others = [...homePlayers.values()]
-        .filter(p => p.ownerId === ownerId && p.socketId !== socket.id);
+        .filter(p => p.ownerId === ownerId && p.socketId !== socket.id)
+        .map(NetLogic.publicPlayer);
       socket.emit('home:snapshot', { players: others });
-      socket.to('home:' + ownerId).emit('home:joined', { ...player });
+      socket.to('home:' + ownerId).emit('home:joined', NetLogic.publicPlayer(player));
     });
 
     socket.on('home:pos', (raw) => {
@@ -793,20 +878,10 @@ module.exports = (io) => {
       const nowPos = Date.now();
       if (nowPos - (socket.data.lastPos || 0) < POS_MIN_INTERVAL_MS) return;
       socket.data.lastPos = nowPos;
-      if (!raw || typeof raw.x !== 'number' || typeof raw.z !== 'number') return;
-      if (!Number.isFinite(raw.x) || !Number.isFinite(raw.z)) return;
-      if (Math.abs(raw.x) > POSITION_BOUND || Math.abs(raw.z) > POSITION_BOUND) return;
-      p.x = raw.x;
-      p.z = raw.z;
-      const rawY = (typeof raw.y === 'number' && Number.isFinite(raw.y)) ? raw.y : 0;
-      p.y = Math.max(-2, Math.min(10, rawY));
-      p.yaw = (typeof raw.yaw === 'number' && Number.isFinite(raw.yaw)) ? raw.yaw : 0;
-      p.walking = !!raw.walking;
-      p.backward = p.walking && !!raw.backward;
-      p.pose = (raw.pose === 'sit' || raw.pose === 'lie') ? raw.pose : null;
-      socket.to('home:' + p.ownerId).emit('home:pos', {
-        id: socket.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward, pose: p.pose
-      });
+      const s = NetLogic.sanitizePos(raw);
+      if (!s) return;
+      applyPos(p, s);
+      socket.to('home:' + p.ownerId).emit('home:pos', posRelay(socket.id, p));
     });
 
     socket.on('home:chat', (raw) => {
@@ -824,12 +899,14 @@ module.exports = (io) => {
     socket.on('home:emote', (raw) => {
       const p = homePlayers.get(socket.id);
       if (!p) return;
-      const kind = raw && raw.kind;
-      if (kind !== 'wave') return;
-      socket.to('home:' + p.ownerId).emit('home:emote', { id: socket.id, kind });
+      const out = emoteRelay(socket, p, raw);
+      if (!out) return;
+      socket.to('home:' + p.ownerId).emit('home:emote', out);
     });
 
     socket.on('home:leave', () => {
+      // Also cancels a home:join still waiting on the DB (see home:join).
+      socket.data.homeJoinSeq = (socket.data.homeJoinSeq || 0) + 1;
       const p = homePlayers.get(socket.id);
       if (!p) return;
       homePlayers.delete(socket.id);
@@ -881,21 +958,27 @@ module.exports = (io) => {
       }
     }
 
-    // Idempotent — a duplicate announce still gets the voice:peers reply
-    // and re-broadcasts voice:peer-joined. Clients re-announce after a
-    // socket reconnect (and retry until the reply arrives), and remote
-    // peers treat a repeated peer-joined as "that peer restarted" and
-    // rebuild their connection to it.
+    // Idempotent — a duplicate announce still gets the voice:peers reply.
+    // Clients announce once per voice session and after a socket reconnect
+    // (a NEW socket id, so never a duplicate), and retry until the reply
+    // arrives. Only the FIRST announce of a membership tells the peers:
+    // remote peers treat a repeated peer-joined as "that peer restarted" and
+    // rebuild their WebRTC connection, so re-broadcasting on every retry (or
+    // on a scripted flood) made a whole island tear its calls down.
     socket.on('voice:announce', (raw) => {
+      if (!rateOk(socket, 'announce')) return;
       const scope = raw && raw.scope;
+      let already = false;
       if (scope === 'world') {
         if (!worldPlayers.has(socket.id)) return;
+        already = voiceWorld.has(socket.id);
         voiceWorld.add(socket.id);
       } else if (scope === 'home') {
         const home = homePlayers.get(socket.id);
         if (!home) return;
         let set = voiceHomes.get(home.ownerId);
         if (!set) { set = new Set(); voiceHomes.set(home.ownerId, set); }
+        already = set.has(socket.id);
         set.add(socket.id);
       } else {
         return;
@@ -903,7 +986,7 @@ module.exports = (io) => {
       socket.data.voiceScope = scope;
       const peers = voicePeersInSameRoom(scope);
       socket.emit('voice:peers', { scope, peers });
-      emitVoicePeerEvent(scope, 'voice:peer-joined', { id: socket.id });
+      if (!already) emitVoicePeerEvent(scope, 'voice:peer-joined', { id: socket.id });
     });
 
     socket.on('voice:leave', () => {
@@ -959,6 +1042,8 @@ module.exports = (io) => {
     });
 
     socket.on('disconnect', () => {
+      // A home:join still awaiting the DB must not add us after this.
+      socket.data.homeJoinSeq = (socket.data.homeJoinSeq || 0) + 1;
       if (worldPlayers.has(socket.id)) {
         drainStay(worldPlayers.get(socket.id));   // banked on the next flush
         worldPlayers.delete(socket.id);

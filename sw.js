@@ -16,8 +16,16 @@
 //   kill the worker first, the cache never updated, and a returning phone ran
 //   old files ("blank map when reopened on Chrome").
 // - /api/* and /socket.io/* → network only, never cached.
+// - The realistic-character models (MODEL_FILES, a versioned folder whose
+//   URLs never change content) → cache-first in their OWN cache, which is
+//   kept across deploys. They used to live in the per-build cache, so every
+//   release made returning players download ~2.4 MB again. The page can ask
+//   for them ahead of time with postMessage({ type: 'warm-models' })
+//   (js/humanoid-prefetch.js).
 const CACHE_VERSION = '__CACHE_VERSION__';
 const PRECACHE = __PRECACHE__;
+const MODEL_CACHE = '__MODEL_CACHE__';
+const MODEL_FILES = __MODEL_FILES__;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -28,8 +36,22 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(
-      keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k))
+      keys.filter((k) => k !== CACHE_VERSION && k !== MODEL_CACHE).map((k) => caches.delete(k))
     )).then(() => self.clients.claim())
+  );
+});
+
+// Fill the model cache ahead of time (only files not already in it).
+self.addEventListener('message', (event) => {
+  if (!event.data || event.data.type !== 'warm-models') return;
+  event.waitUntil(
+    caches.open(MODEL_CACHE).then((cache) => Promise.all(MODEL_FILES.map(async (f) => {
+      if (await cache.match(f)) return;
+      try {
+        const res = await fetch(f);
+        if (res && res.status === 200) await cache.put(f, res);
+      } catch (_) { /* offline — the page loads them itself later */ }
+    })))
   );
 });
 
@@ -49,6 +71,20 @@ self.addEventListener('fetch', (event) => {
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req).catch(() => caches.match('/spa.html'))
+    );
+    return;
+  }
+
+  // Character models — cache-first from the long-lived model cache.
+  if (MODEL_FILES.includes(url.pathname)) {
+    event.respondWith(
+      caches.open(MODEL_CACHE).then(async (cache) => {
+        const cached = await cache.match(req);
+        if (cached) return cached;
+        const res = await fetch(req);
+        if (res && res.status === 200) event.waitUntil(cache.put(req, res.clone()));
+        return res;
+      })
     );
     return;
   }

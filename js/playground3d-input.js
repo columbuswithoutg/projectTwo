@@ -8,7 +8,8 @@
  * makeInput(viewport, { orbit, CAMERA, minElev }) mutates the engine's
  * orbit object in place (azimuth / elevation / distance) and returns
  * { getAxis, isOrbiting, consumeJump, consumePunch, setPunchCooldown,
- *   denyPunch, detach }. Uses PG3DPhysics.pinchZoom when present. Must
+ *   denyPunch, resetHeld, detach }. Uses PG3DPhysics.pinchZoom when present
+ * and PG3DInputLogic (js/playground3d-input-logic.js — load it first). Must
  * load BEFORE js/playground3d.js.
  ************************************************/
 (function (root) {
@@ -26,39 +27,52 @@
     let punchRequested = false;   // same one-shot edge-trigger pattern as jump
     let interactRequested = false; // E / the 🪑 button: sit on a chair, lie in a bed, stand up
 
-    function isTextField(el) {
-      if (!el) return false;
-      const tag = el.tagName;
-      return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
-    }
+    // Pure key decisions (js/playground3d-input-logic.js, unit-tested).
+    const IL = root.PG3DInputLogic;
+    const isTextField = (el) => IL.isTypingTarget(el);
 
+    // Keys are read by physical position (e.code) so WASD works on any
+    // keyboard layout.
     function onKey(e, down) {
-      if (isTextField(document.activeElement)) return;
-      let handled = true;
-      switch (e.key) {
-        case 'w': case 'W': case 'ArrowUp':    keys.up = down; break;
-        case 's': case 'S': case 'ArrowDown':  keys.down = down; break;
-        case 'a': case 'A': case 'ArrowLeft':  keys.left = down; break;
-        case 'd': case 'D': case 'ArrowRight': keys.right = down; break;
-        case ' ': case 'Spacebar':
-          // Suppress the browser's default (page scroll) regardless of
-          // direction; only the keydown sets the one-shot request flag.
-          if (down) jumpRequested = true;
-          break;
-        case 'f': case 'F':
-          if (down) punchRequested = true;
-          break;
-        case 'e': case 'E':
-          if (down) interactRequested = true;
-          break;
-        default: handled = false;
+      const action = IL.actionFor(e);
+      if (!action) return;
+      const typing = isTextField(document.activeElement);
+      if (IL.isHeld(action)) {
+        // A key-up always counts, even while typing: a key held down when
+        // focus moved into the chat box used to stay "down" forever and the
+        // avatar walked off on its own.
+        if (down && typing) return;
+        keys[action] = down;
+      } else {
+        if (typing) return;
+        // One-shots fire on the first keydown only — auto-repeat used to
+        // bunny-hop on a held Space and flip sit/stand on a held E.
+        if (down && !e.repeat) {
+          if (action === 'jump') jumpRequested = true;
+          else if (action === 'punch') punchRequested = true;
+          else if (action === 'interact') interactRequested = true;
+        }
       }
-      if (handled) e.preventDefault();
+      // Suppress page scroll etc. — but never swallow keys the user is typing.
+      if (!typing) e.preventDefault();
     }
     const onKeyDown = e => onKey(e, true);
     const onKeyUp   = e => onKey(e, false);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+
+    // Drop every held movement key. A key-up that happens while the window
+    // is in the background (Alt-Tab, a notification, another tab) never
+    // reaches us, and neither does one after focus moves into a text field.
+    function resetHeld() {
+      keys.up = keys.down = keys.left = keys.right = false;
+    }
+    const onWindowBlur = () => resetHeld();
+    const onVisibility = () => { if (document.visibilityState === 'hidden') resetHeld(); };
+    const onFocusIn = (e) => { if (isTextField(e.target)) resetHeld(); };
+    window.addEventListener('blur', onWindowBlur);
+    document.addEventListener('visibilitychange', onVisibility);
+    document.addEventListener('focusin', onFocusIn);
 
     // Mouse-drag to orbit camera; wheel to zoom.
     let mouseDragging = false;
@@ -460,6 +474,10 @@
 
     function getAxis() {
       if (joyActive) return { x: joyAxis.x, y: joyAxis.y };
+      // Typing somewhere: the keyboard isn't steering. (Belt and braces with
+      // the focusin reset above — some focus changes fire no event, e.g.
+      // focus() while the window itself isn't focused.)
+      if (isTextField(document.activeElement)) return { x: 0, y: 0 };
       let x = 0, y = 0;
       if (keys.left)  x -= 1;
       if (keys.right) x += 1;
@@ -498,6 +516,9 @@
     function detach() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onWindowBlur);
+      document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('focusin', onFocusIn);
       viewport.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
@@ -524,7 +545,7 @@
       if (sitEl && sitEl.parentNode) sitEl.parentNode.removeChild(sitEl);
     }
 
-    return { getAxis, isOrbiting, consumeJump, consumePunch, consumeInteract, setInteractLabel, setPunchCooldown, denyPunch, detach };
+    return { getAxis, isOrbiting, consumeJump, consumePunch, consumeInteract, setInteractLabel, setPunchCooldown, denyPunch, resetHeld, detach };
   }
 
   root.PG3DInput = { makeInput };

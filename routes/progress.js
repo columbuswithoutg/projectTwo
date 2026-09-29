@@ -88,11 +88,13 @@ router.post('/save', auth, async (req, res) => {
 });
 
 // Clear Progress: wipe every watch and in-progress session. The only way to
-// remove watches wholesale — /save deliberately can't.
+// remove watches wholesale — /save deliberately can't. The /home layout goes
+// too (its rooms are unlocked by watches, so none are allowed any more);
+// homeHouses is kept, so re-adding a room brings its decorations back.
 router.post('/clear', auth, async (req, res) => {
   const before = await User.findByIdAndUpdate(
     req.user.id,
-    { $set: { watchedProjects: [], watchSessions: [] } },
+    { $set: { watchedProjects: [], watchSessions: [], 'homeLayout.rooms': [] } },
     { projection: { watchedProjects: 1 } }
   ).lean();
   if (!before) return res.status(404).json({ error: 'User not found' });

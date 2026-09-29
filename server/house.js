@@ -73,4 +73,40 @@ function homeRoofFor(user, rooms) {
   return null;
 }
 
-module.exports = { CLOUDINARY_PREFIX, portraitOk, READ_CAP, toHouse, homeMaxPropsNow, housesForRooms, pickRoof, homeRoofFor };
+// The /home layout as it may be SHOWN right now: rooms whose project the user
+// still has watched, capped at floor(watched / 2) — the same rule the layout
+// PUT enforces — and connected. Clear Progress (or anything that shrinks the
+// watch list) can leave a stored layout over its cap; serving it as-is showed
+// rooms the owner could no longer save. Kept rooms are the connected set
+// grown from the first kept room (breadth-first, so the entrance room stays
+// first), in their original order. The stored layout is never rewritten here.
+//   layout:     { rooms: [{ projectId, gx, gy }] } (or null)
+//   watchedIds: Set or array of watched project ids
+function effectiveLayout(layout, watchedIds) {
+  const watched = watchedIds instanceof Set ? watchedIds : new Set(watchedIds || []);
+  const rooms = ((layout && Array.isArray(layout.rooms)) ? layout.rooms : [])
+    .filter(r => r && watched.has(r.projectId));
+  const cap = Math.floor(watched.size / 2);
+  if (!rooms.length || cap <= 0) return { rooms: [] };
+  const byCell = new Map(rooms.map(r => [`${r.gx},${r.gy}`, r]));
+  const keep = new Set([rooms[0]]);
+  const queue = [rooms[0]];
+  while (queue.length && keep.size < cap) {
+    const r = queue.shift();
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const n = byCell.get(`${r.gx + dx},${r.gy + dy}`);
+      if (n && !keep.has(n) && keep.size < cap) { keep.add(n); queue.push(n); }
+    }
+  }
+  return { rooms: rooms.filter(r => keep.has(r)).map(r => ({ projectId: r.projectId, gx: r.gx, gy: r.gy })) };
+}
+
+// Watched project ids of a user doc (entries may be legacy plain strings).
+function watchedIdsOf(user) {
+  return new Set(((user && user.watchedProjects) || []).map(e => (typeof e === 'string' ? e : e && e.projectId)).filter(Boolean));
+}
+
+module.exports = {
+  CLOUDINARY_PREFIX, portraitOk, READ_CAP, toHouse, homeMaxPropsNow, housesForRooms, pickRoof, homeRoofFor,
+  effectiveLayout, watchedIdsOf
+};

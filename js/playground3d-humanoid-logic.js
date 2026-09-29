@@ -287,10 +287,15 @@
   // → { animate, interval (seconds between mixer updates; 0 = every frame),
   //     castShadow }
   function lodTier(dist, onScreen, isMobile) {
-    if (!onScreen) return { animate: false, interval: Infinity, castShadow: false };
     const near = isMobile ? 12 : 20;
     const far = isMobile ? 30 : 50;
     const shadow = isMobile ? 15 : 30;
+    if (!onScreen) {
+      // Out of view. A nearby one's shadow can still fall into the frame, so
+      // it keeps a slow tick and its shadow; anything farther freezes.
+      if (dist <= shadow) return { animate: true, interval: 1 / 10, castShadow: true };
+      return { animate: false, interval: Infinity, castShadow: false };
+    }
     if (dist <= near) return { animate: true, interval: 0, castShadow: dist <= shadow };
     if (dist <= far) return { animate: true, interval: 1 / 15, castShadow: dist <= shadow };
     return { animate: false, interval: Infinity, castShadow: false };
@@ -550,9 +555,24 @@
     return out;
   }
 
+  // The 3D entry gate (js/playground3d.js _waitForCharacters): hold the scene
+  // back until the realistic bodies are ready — but never forever.
+  //   s: { status: PG3DHumanoid.status(), elapsedMs, timeoutMs }
+  //   → 'reveal'   ready: build with real bodies
+  //     'fallback' failed or timed out: build with stand-ins (they upgrade in
+  //                place if the models arrive later)
+  //     'wait'     keep the loading cover up
+  function gateDecision(s) {
+    const o = s || {};
+    if (o.status === 'ready') return 'reveal';
+    if (o.status === 'failed') return 'fallback';
+    if (Number.isFinite(o.elapsedMs) && Number.isFinite(o.timeoutMs) && o.elapsedMs >= o.timeoutMs) return 'fallback';
+    return 'wait';
+  }
+
   return {
     ASSET_BASE, BODY_FILES, BUILD_SHAPE, ANIM, SLOT_MAP,
     bodyShapeFor, parseBoneName, classifySkeleton, missingParts,
-    downPhase, selectAnimState, lodTier, garmentsFor, hairSpec, beardSpec, eyeShapeFor
+    downPhase, selectAnimState, lodTier, garmentsFor, hairSpec, beardSpec, eyeShapeFor, gateDecision
   };
 });

@@ -122,6 +122,11 @@ app.get('/home/edit', (req, res) => res.sendFile(spaFile));
 // In dev, everything revalidates (no-cache) so edits show up on plain reload
 // instead of hiding behind the browser HTTP cache for a day.
 const IS_PROD = process.env.NODE_ENV === 'production';
+// The character models live in a versioned folder (assets/models/humanoid/vN,
+// written by scripts/build-humanoid-assets.mjs): a changed model means a new
+// folder, so a given URL never changes → cache it for good in production.
+app.use('/assets/models/humanoid', express.static(path.join(__dirname, 'assets', 'models', 'humanoid'),
+  IS_PROD ? { immutable: true, maxAge: '1y', index: false } : { maxAge: 0, index: false }));
 app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: IS_PROD ? '30d' : 0 }));
 // Built client. Every file under dist/static carries a content hash in its
 // name (core.a1b2c3d4.js, styles.<hash>.css …), so it is cached forever: a

@@ -80,11 +80,17 @@ const CustomizeView = {
     // The realistic bodies (js/playground3d-humanoid.js) stream in after boot.
     // The big preview upgrades itself; the option tiles are rendered
     // synchronously, so re-render them once the models land.
-    if (typeof PG3DHumanoid !== 'undefined' && PG3DHumanoid.whenReady) {
-      PG3DHumanoid.whenReady().then(() => {
+    // Tiles render nothing (a shimmer) until then; a failed load re-renders
+    // them with the stand-in bodies, and a later retry swaps in the real ones.
+    if (typeof PG3DHumanoid !== 'undefined' && PG3DHumanoid.onStatus) {
+      let last = PG3DHumanoid.status();
+      CustomizeView._offModels = PG3DHumanoid.onStatus(({ status }) => {
+        if (status === last) return;
+        last = status;
+        if (status !== 'ready' && status !== 'failed') return;
         if (CustomizeView._overlayRoot !== container) return;   // navigated away
         CustomizeView._renderOptions();
-      }).catch(() => {});
+      });
     }
   },
 
@@ -347,7 +353,10 @@ const CustomizeView = {
       // A few per tick so the grid paints instantly. setTimeout (not rAF) so the
       // run still completes if the tab is backgrounded mid-render.
       const step = () => {
-        if (gen !== CustomizeView._thumbGen) return;   // navigated away — abandon
+        // Navigated away (or the grid re-rendered) — abandon. Without the
+        // overlay check a batch still in flight after unmount recreated the
+        // thumbnail renderer and left a WebGL context behind.
+        if (gen !== CustomizeView._thumbGen || !CustomizeView._overlayRoot) return;
         const end = Math.min(i + 4, jobs.length);
         for (; i < end; i++) {
           const j = jobs[i];
@@ -457,7 +466,10 @@ const CustomizeView = {
       const gen = CustomizeView._thumbGen;
       let i = 0;
       const step = () => {
-        if (gen !== CustomizeView._thumbGen) return;   // navigated away — abandon
+        // Navigated away (or the grid re-rendered) — abandon. Without the
+        // overlay check a batch still in flight after unmount recreated the
+        // thumbnail renderer and left a WebGL context behind.
+        if (gen !== CustomizeView._thumbGen || !CustomizeView._overlayRoot) return;
         const end = Math.min(i + 4, jobs.length);
         for (; i < end; i++) {
           try {
@@ -567,6 +579,10 @@ const CustomizeView = {
   },
 
   unmount() {
+    // First: any tile batch still queued bails out on its next step instead of
+    // rendering into (and so re-creating) the thumbnail context.
+    CustomizeView._thumbGen = (CustomizeView._thumbGen || 0) + 1;
+    if (CustomizeView._offModels) { CustomizeView._offModels(); CustomizeView._offModels = null; }
     if (CustomizeView._previewHandle) {
       try { CustomizeView._previewHandle.destroy(); } catch (_) {}
       CustomizeView._previewHandle = null;

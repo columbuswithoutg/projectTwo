@@ -26,16 +26,33 @@ const ns = { ...THREE, RoundedBoxGeometry };
 window.THREE = ns;
 window.dispatchEvent(new Event('three-ready'));
 
-Promise.all([
-  import('three/addons/loaders/GLTFLoader.js'),
-  import('three/addons/utils/SkeletonUtils.js')
-]).then(([gltf, skel]) => {
-  ns.GLTFLoader = gltf.GLTFLoader;
-  ns.SkeletonUtils = skel;
-  window.__threeAddons = 'ready';
-  window.dispatchEvent(new Event('three-addons-ready'));
-}).catch((err) => {
-  console.warn('[three] addons unavailable — characters stay procedural', err);
-  window.__threeAddons = 'failed';
-  window.dispatchEvent(new Event('three-addons-failed'));
-});
+// Browsers cache a FAILED module fetch per URL, so a retry must use a new URL:
+// attempt n > 0 imports the absolute unpkg path with ?r=n. (Their internal
+// `import 'three'` still resolves through the importmap.)
+const ADDON_BASE = 'https://unpkg.com/three@0.160.0/examples/jsm/';
+let _addonTry = 0;
+function loadAddons() {
+  const n = _addonTry;
+  const url = (path) => (n ? ADDON_BASE + path + '?r=' + n : 'three/addons/' + path);
+  window.__threeAddons = 'loading';
+  return Promise.all([
+    import(url('loaders/GLTFLoader.js')),
+    import(url('utils/SkeletonUtils.js'))
+  ]).then(([gltf, skel]) => {
+    ns.GLTFLoader = gltf.GLTFLoader;
+    ns.SkeletonUtils = skel;
+    window.__threeAddons = 'ready';
+    window.dispatchEvent(new Event('three-addons-ready'));
+  }).catch((err) => {
+    console.warn('[three] addons unavailable — characters stay procedural', err);
+    window.__threeAddons = 'failed';
+    window.dispatchEvent(new Event('three-addons-failed'));
+  });
+}
+// PG3DHumanoid.retry() calls this after a failure (the Retry toast).
+window.__retryThreeAddons = () => {
+  if (window.__threeAddons !== 'failed') return Promise.resolve();
+  _addonTry += 1;
+  return loadAddons();
+};
+loadAddons();

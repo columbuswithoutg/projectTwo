@@ -54,7 +54,7 @@ const CHUNKS = {
     'js/watch-controls.js', 'js/post-composer.js', 'js/popup.js', 'js/goals.js', 'js/friend-view.js', 'js/friends.js',
     'js/messages.js', 'js/reports.js',
     'js/memory.js', 'js/walker-dialogues.js', 'js/walkerView.js', 'js/walkers.js',
-    'js/chunk-loader.js', 'js/router.js',
+    'js/chunk-loader.js', 'js/router.js', 'js/humanoid-prefetch.js',
     'js/views/login.js', 'js/views/app.js', 'js/views/watchorder.js', 'js/views/board.js',
     'js/views/profile.js', 'js/views/feed.js', 'js/views/characters.js',
     'js/views/messages.js', 'js/views/reports.js',
@@ -66,10 +66,10 @@ const CHUNKS = {
     'js/playground.js', 'js/character-schema.js', 'js/theme-color.js',
     // pure logic (also unit-tested) — must precede playground3d.js, which
     // reads PG3DPhysics / WorldNpcLogic constants when its IIFE runs
-    'js/playground3d-physics.js', 'js/world-npc-logic.js', 'js/world-chat-logic.js',
+    'js/playground3d-physics.js', 'js/world-net-logic.js', 'js/world-npc-logic.js', 'js/world-chat-logic.js',
     'js/world-house-logic.js',
     'js/playground3d-humanoid-logic.js', 'js/playground3d-humanoid.js',
-    'js/playground3d-avatar.js', 'js/playground3d-input.js', 'js/playground3d-occlusion.js',
+    'js/playground3d-avatar.js', 'js/playground3d-input-logic.js', 'js/playground3d-input.js', 'js/playground3d-occlusion.js',
     'js/playground3d-props.js', 'js/playground3d-house.js', 'js/pg-orientation.js',
     'js/playground3d.js',
     'js/home-socket.js', 'js/voice-chat.js', 'js/house-editor.js',
@@ -98,14 +98,37 @@ const EXPECT_GLOBALS = {
 // Globals attached as properties (`root.PG3DPhysics = api` in the UMD-style
 // files) rather than declared — checked for a `.Name =` assignment instead.
 const EXPECT_ATTACHED = {
-  core: ['MessagingLogic'],
-  world: ['PG3DPhysics', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid',
+  core: ['MessagingLogic', 'HumanoidPrefetch'],
+  world: ['PG3DPhysics', 'WorldNetLogic', 'PG3DInputLogic', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid',
           'PG3DAvatar', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation']
 };
 // Must stay `var` (window properties): js/boot.js does window[key] = items.
 const VAR_GLOBALS = ['projects', 'characters', 'LOCATIONS'];
 
 const PRECACHE_STATIC = ['/spa.html', '/assets/favicon.jpg', '/assets/avengers-logo.svg', '/manifest.json'];
+
+// The realistic-character model folder — read from PG3DHumanoidLogic.ASSET_BASE
+// (the one place it is defined), then handed to the core chunk
+// (js/humanoid-prefetch.js) and the service worker's model cache.
+function modelInfo() {
+  const logic = read('js/playground3d-humanoid-logic.js');
+  const m = logic.match(/const ASSET_BASE = '([^']+)'/);
+  if (!m) throw new Error('[build] ASSET_BASE not found in js/playground3d-humanoid-logic.js');
+  const base = m[1];                                   // '/assets/models/humanoid/v1/'
+  const rel = base.replace(/^\//, '');
+  let manifest = null;
+  try { manifest = JSON.parse(read(rel + 'manifest.json')); } catch (_) { /* no models built */ }
+  const files = manifest ? [
+    'manifest.json',
+    ...Object.values(manifest.bodies || {}).map((b) => b.file),
+    manifest.hair && manifest.hair.file,
+    manifest.anims && manifest.anims.file
+  ].filter(Boolean).map((f) => base + f) : [];
+  // New models (a new vN folder or a rebuilt manifest) → a new cache name;
+  // the worker drops the old one when it activates.
+  const cache = 'mcu-models-' + hash(base + (manifest ? JSON.stringify(manifest) : ''));
+  return { base, files, cache };
+}
 
 const hash = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 8);
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
@@ -133,7 +156,7 @@ function assertGlobals(name, code) {
   }
 }
 
-async function buildChunk(name) {
+async function buildChunk(name, define) {
   const concat = CHUNKS[name]
     .map((rel) => `// ---- ${rel} ----\n` + read(rel))
     .join('\n;\n') + '\n';
@@ -143,7 +166,8 @@ async function buildChunk(name) {
     sourcefile: `${name}.concat.js`,
     target: 'es2022',
     legalComments: 'none',
-    logLevel: 'warning'
+    logLevel: 'warning',
+    define: define || {}
   });
   assertGlobals(name, out.code);
   const file = `${name}.${hash(out.code)}.js`;
@@ -185,7 +209,9 @@ export async function build() {
   const t0 = Date.now();
   fs.mkdirSync(STATIC, { recursive: true });
 
-  const [core, world, admin] = await Promise.all(['core', 'world', 'admin'].map(buildChunk));
+  const models = modelInfo();
+  const define = { __MODEL_BASE__: JSON.stringify(models.base) };
+  const [core, world, admin] = await Promise.all(['core', 'world', 'admin'].map((n) => buildChunk(n, define)));
   const css = await buildCss();
   const shim = buildShim();
 
@@ -204,7 +230,9 @@ export async function build() {
   const version = 'mcu-' + hash([core, world, admin, css, shim].map((o) => o.file).join('|') + spa);
   const sw = fill('sw.js', {
     '__CACHE_VERSION__': version,
-    '__PRECACHE__': JSON.stringify([...PRECACHE_STATIC, core.url, css.url])
+    '__PRECACHE__': JSON.stringify([...PRECACHE_STATIC, core.url, css.url]),
+    '__MODEL_CACHE__': models.cache,
+    '__MODEL_FILES__': JSON.stringify(models.files)
   });
   fs.writeFileSync(path.join(DIST, 'sw.js'), sw);
 

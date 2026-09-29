@@ -389,3 +389,93 @@ test('wallBetween: a house wall blocks reaching a chair on its far side', () => 
   // Parallel to the wall, not crossing it.
   assert.equal(P.wallBetween(4.5, -2, 4.5, 2, boxes, chair), false);
 });
+
+// ── Angles (the /world freeze: `while (d > π) d -= 2π` never ends for 1e300) ──
+
+test('wrapAngle: any input lands in (-π, π], huge and non-finite included', () => {
+  const inRange = (a) => a > -Math.PI - 1e-12 && a <= Math.PI + 1e-12;
+  for (const a of [0, 1, -1, Math.PI, -Math.PI, 3 * Math.PI, -7.5, 1e300, -1e300, Number.MAX_VALUE, 1e-300]) {
+    assert.ok(inRange(P.wrapAngle(a)), `${a} → ${P.wrapAngle(a)}`);
+  }
+  assert.equal(P.wrapAngle(NaN), 0);
+  assert.equal(P.wrapAngle(Infinity), 0);
+  assert.equal(P.wrapAngle('1'), 0);
+  assert.ok(Math.abs(P.wrapAngle(2 * Math.PI + 0.25) - 0.25) < 1e-12);
+  assert.ok(Math.abs(P.wrapAngle(-Math.PI) - Math.PI) < 1e-12, '-π maps to +π');
+});
+
+test('lerpAngle: takes the short way round and survives garbage', () => {
+  // 170° → -170° is 20° through ±180°, not 340° the long way.
+  const a = 170 * Math.PI / 180, b = -170 * Math.PI / 180;
+  const mid = P.lerpAngle(a, b, 0.5);
+  assert.ok(Math.abs(Math.abs(mid) - Math.PI) < 1e-9, `mid ${mid}`);
+  assert.ok(Math.abs(P.lerpAngle(0, 1, 1) - 1) < 1e-12);
+  assert.equal(P.lerpAngle(0.5, NaN, 0.5), 0.5, 'bad target: stay put');
+  assert.ok(Number.isFinite(P.lerpAngle(1e300, -1e300, 0.3)));
+});
+
+test('turnToward: converges without overshoot, independent of frame rate', () => {
+  let slow = 0, fast = 0;
+  for (let i = 0; i < 30; i++) slow = P.turnToward(slow, 2, 1 / 30, 14);     // 1 s at 30 fps
+  for (let i = 0; i < 144; i++) fast = P.turnToward(fast, 2, 1 / 144, 14);   // 1 s at 144 fps
+  assert.ok(Math.abs(slow - 2) < 1e-4 && Math.abs(fast - 2) < 1e-4);
+  assert.ok(Math.abs(slow - fast) < 1e-4, 'same result at any frame rate');
+  let y = 0;
+  for (let i = 0; i < 10; i++) { y = P.turnToward(y, 1, 0.016, 14); assert.ok(y <= 1 + 1e-12, 'no overshoot'); }
+  assert.equal(P.turnToward(0.3, 1, 0, 14), 0.3, 'dt 0 → no turn');
+});
+
+// ── Server punch validation ──
+
+test('punchCheck: reach, vertical reach, victim immunity, downed attacker', () => {
+  const at = (x, z, extra) => Object.assign({ x, y: 0, z, downAt: 0 }, extra);
+  const now = 100000;
+  const opts = (attacker, victim) => ({ now, attacker, victim, range: 1.4 });
+  assert.equal(P.punchCheck(opts(at(0, 0), at(1.4, 0))), 'ok');
+  assert.equal(P.punchCheck(opts(at(0, 0), at(2.9, 0))), 'ok', 'latency slack');
+  assert.equal(P.punchCheck(opts(at(0, 0), at(50, 0))), 'range', 'across the map');
+  assert.equal(P.punchCheck(opts(at(0, 0), at(0.5, 0, { y: 5 }))), 'range', 'high above');
+  assert.equal(P.punchCheck(opts(at(0, 0), at(1, 0, { downAt: now - 1000 }))), 'immune', 'still down');
+  assert.equal(P.punchCheck(opts(at(0, 0), at(1, 0, { downAt: now - 4000 }))), 'immune', 'getting up + grace');
+  assert.equal(P.punchCheck(opts(at(0, 0), at(1, 0, { downAt: now - P.KNOCKDOWN.IMMUNE_MS }))), 'ok');
+  assert.equal(P.punchCheck(opts(at(0, 0, { downAt: now - 500 }), at(1, 0))), 'attacker-down');
+  // Immunity outlasts the time a victim is helpless, so no chain-stun.
+  assert.ok(P.KNOCKDOWN.IMMUNE_MS > P.KNOCKDOWN.DOWN_MS + P.KNOCKDOWN.GETUP_MS);
+});
+
+test('stoneSlot: six slots on a radius-4 ring, same as the client ring', () => {
+  const pts = [0, 1, 2, 3, 4, 5].map(i => P.stoneSlot(10, -20, i));
+  for (const p of pts) assert.ok(Math.abs(Math.hypot(p.x - 10, p.z + 20) - P.STONE_RING.R) < 1e-9);
+  assert.ok(Math.abs(pts[0].x - 14) < 1e-9 && Math.abs(pts[0].z + 20) < 1e-9, 'slot 0 due +X');
+});
+
+test('seatOccupied: someone within the radius takes the seat', () => {
+  assert.equal(P.seatOccupied(0, 0, [], 0.6), false);
+  assert.equal(P.seatOccupied(0, 0, [{ x: 0.5, z: 0 }], 0.6), true);
+  assert.equal(P.seatOccupied(0, 0, [{ x: 0.7, z: 0 }], 0.6), false);
+  assert.equal(P.seatOccupied(0, 0, [null, { x: 0.1, z: 0.1 }]), true, 'default radius, tolerates holes');
+});
+
+test('snapShadowCenter: lands on whole texels across the light, moves < a texel', () => {
+  const dir = { x: -0.62, y: 0.5, z: 0.6 };
+  const l = Math.hypot(dir.x, dir.y, dir.z); dir.x /= l; dir.y /= l; dir.z /= l;
+  const texel = (2 * 36) / 2048;
+  // The light camera's right/up axes (same basis Matrix4.lookAt builds).
+  const xl = Math.hypot(dir.z, dir.x);
+  const ax = { x: dir.z / xl, y: 0, z: -dir.x / xl };
+  const ay = { x: dir.y * ax.z - dir.z * ax.y, y: dir.z * ax.x - dir.x * ax.z, z: dir.x * ax.y - dir.y * ax.x };
+  const dot = (p, a) => p.x * a.x + p.y * a.y + p.z * a.z;
+  for (const [px, pz] of [[10.001, 5.002], [-123.4567, 88.8888], [0.3, -0.7]]) {
+    const c = P.snapShadowCenter(px, 0, pz, dir, texel);
+    for (const a of [ax, ay]) {
+      const k = dot(c, a) / texel;
+      assert.ok(Math.abs(k - Math.round(k)) < 1e-6, `on a texel boundary (${k})`);
+    }
+    // Only the across-light components move, each by at most half a texel.
+    const d = Math.hypot(c.x - px, c.y, c.z - pz);
+    assert.ok(d <= (texel * Math.SQRT2) / 2 + 1e-9, `moved ${d}`);
+  }
+  // Straight-down sun and a bad texel don't blow up.
+  assert.ok(Number.isFinite(P.snapShadowCenter(1, 0, 1, { x: 0, y: 1, z: 0 }, texel).x));
+  assert.deepEqual(P.snapShadowCenter(1, 2, 3, dir, 0), { x: 1, y: 2, z: 3 });
+});

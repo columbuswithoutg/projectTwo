@@ -7,7 +7,7 @@ const { friendFilter, getFriendIds } = require('../server/friendship');
 const auth = require('../middleware/auth');
 const feed = require('../server/feed');
 const watchRules = require('../server/watchRules');
-const { housesForRooms, homeRoofFor } = require('../server/house');
+const { housesForRooms, homeRoofFor, effectiveLayout, watchedIdsOf } = require('../server/house');
 
 // Escape regex metacharacters so a user can't pass ".*" to dump everyone
 // or "(a+)+$" to hang the DB with catastrophic backtracking (ReDoS).
@@ -243,17 +243,19 @@ router.get('/by-username/:username', auth, async (req, res) => {
             };
         });
 
+        // The home as it may be shown today (watched rooms within the cap).
+        const shownLayout = effectiveLayout(friend.homeLayout, watchedIdsOf(friend));
         res.json({
             id: friend._id,
             username: friend.username,
             profilePicture: friend.profilePicture || '',
             watchedProjects,
             walkers: friend.walkers || [],
-            homeLayout: friend.homeLayout || { rooms: [] },
+            homeLayout: shownLayout,
             homeCharacter: friend.homeCharacter || null,
             // Read-only here: only the owner can save a room (routes/profile.js).
-            homeHouses: housesForRooms(friend.homeHouses, friend.homeLayout && friend.homeLayout.rooms),
-            homeRoof: homeRoofFor(friend, friend.homeLayout && friend.homeLayout.rooms)
+            homeHouses: housesForRooms(friend.homeHouses, shownLayout.rooms),
+            homeRoof: homeRoofFor(friend, shownLayout.rooms)
         });
     } catch (err) {
         console.error('by-username error', err);
@@ -289,7 +291,7 @@ router.get('/progress/:friendId', auth, async (req, res) => {
             username: friend.username,
             watchedProjects,
             walkers: friend.walkers || [],
-            homeLayout: friend.homeLayout || { rooms: [] },
+            homeLayout: effectiveLayout(friend.homeLayout, watchedIdsOf(friend)),
             homeCharacter: friend.homeCharacter || null
         });
     } catch (e) {

@@ -252,6 +252,16 @@ test('selectAnimState: falling to respawn shows the fall with no overlay', () =>
 
 // ── LOD ──
 
+test('gateDecision: reveal when ready, fall back on failure or timeout, else wait', () => {
+  assert.equal(H.gateDecision({ status: 'ready', elapsedMs: 0, timeoutMs: 15000 }), 'reveal');
+  assert.equal(H.gateDecision({ status: 'ready', elapsedMs: 99999, timeoutMs: 15000 }), 'reveal', 'ready beats the clock');
+  assert.equal(H.gateDecision({ status: 'failed', elapsedMs: 10, timeoutMs: 15000 }), 'fallback');
+  assert.equal(H.gateDecision({ status: 'loading', elapsedMs: 14999, timeoutMs: 15000 }), 'wait');
+  assert.equal(H.gateDecision({ status: 'loading', elapsedMs: 15000, timeoutMs: 15000 }), 'fallback');
+  assert.equal(H.gateDecision({ status: 'idle', elapsedMs: 0, timeoutMs: 15000 }), 'wait');
+  assert.equal(H.gateDecision(undefined), 'wait');
+});
+
 test('lodTier: every frame near, throttled mid, frozen far or off-screen', () => {
   assert.deepEqual(H.lodTier(5, true, false), { animate: true, interval: 0, castShadow: true });
   const mid = H.lodTier(40, true, false);
@@ -259,7 +269,11 @@ test('lodTier: every frame near, throttled mid, frozen far or off-screen', () =>
   assert.equal(mid.interval, 1 / 15);
   assert.equal(mid.castShadow, false);
   assert.equal(H.lodTier(80, true, false).animate, false);
-  assert.equal(H.lodTier(1, false, false).animate, false);
+  // Off-screen: nearby ones keep a slow tick + their shadow (it can fall into
+  // view); far ones freeze.
+  assert.deepEqual(H.lodTier(1, false, false), { animate: true, interval: 1 / 10, castShadow: true });
+  assert.equal(H.lodTier(40, false, false).animate, false);
+  assert.equal(H.lodTier(40, false, false).castShadow, false);
   assert.equal(H.lodTier(25, true, true).interval, 1 / 15, 'mobile tiers are tighter');
 });
 
@@ -381,11 +395,10 @@ test('garmentsFor: a stored Skirt trouser style under a suit builds no skirt', (
 // ── Slot coverage ──
 
 test('SLOT_MAP covers every stored character key (server whitelist + schema)', () => {
-  const sock = fs.readFileSync(path.join(__dirname, '..', 'routes', 'world-socket.js'), 'utf8');
-  const block = sock.match(/CHARACTER_KEYS = new Set\(\[([\s\S]*?)\]\)/);
-  assert.ok(block, 'CHARACTER_KEYS found in routes/world-socket.js');
-  const keys = [...block[1].matchAll(/'(\w+)'/g)].map((m) => m[1]);
-  assert.ok(keys.length >= 30, `parsed ${keys.length} keys`);
+  // The server's one list of stored slots (routes/world-socket.js and the
+  // profile PUT both use it).
+  const keys = [...require('../server/character.js').CHARACTER_KEYS];
+  assert.ok(keys.length >= 30, `found ${keys.length} keys`);
   const schema = fs.readFileSync(path.join(__dirname, '..', 'js', 'character-schema.js'), 'utf8');
   const schemaKeys = [...schema.matchAll(/key: '(\w+)'/g)].map((m) => m[1]);
   for (const k of new Set([...keys, ...schemaKeys])) {

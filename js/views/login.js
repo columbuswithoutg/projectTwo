@@ -177,6 +177,8 @@ const LoginView = {
 
         if (currentMode === 'login') {
           localStorage.setItem('mcu_token', data.token);
+          // Start fetching the 3D character models in the background.
+          if (window.HumanoidPrefetch) HumanoidPrefetch.warm();
           localStorage.setItem('mcu_username', data.username);
           Router.go('/');
         } else {

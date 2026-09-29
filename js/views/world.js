@@ -339,10 +339,9 @@ const WorldView = (() => {
 
   let _snapHinted = false;
 
+  // Same rule as the engine's keys (dropdowns count — the whisper picker).
   function _isTextField(el) {
-    if (!el) return false;
-    const t = el.tagName;
-    return t === 'INPUT' || t === 'TEXTAREA' || el.isContentEditable;
+    return PG3DInputLogic.isTypingTarget(el);
   }
 
   // Full-stage white flash for any snap.

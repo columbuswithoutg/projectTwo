@@ -7,6 +7,7 @@ const auth = require('../middleware/auth');
 const HouseLogic = require('../js/world-house-logic');
 const House = require('../server/house');
 const WorldSocket = require('./world-socket');
+const { pickInt, validateCharacterUpdate } = require('../server/character');
 
 // GET /api/profile — returns stats + profilePicture
 router.get('/', auth, async (req, res) => {
@@ -102,70 +103,15 @@ router.post('/picture', auth, async (req, res) => {
   res.json({ profilePicture });
 });
 
-// /home playground character. Server-side validation must mirror the option
-// counts defined client-side in js/playground.js. Bumping any of these maxes
-// requires updating BOTH places. Returns null fields when the user has never
-// saved — the client treats that as "open the builder modal".
+// /home playground character. The slot ranges (and the partial-update
+// validation) live in server/character.js — shared with the socket layer,
+// which re-broadcasts characters to other players. Returns null fields when
+// the user has never saved — the client treats that as "open the builder".
 //
 // PUT is a partial update: any key that is missing from the body is left
 // untouched in Mongo, so older clients (and progressive new-field rollouts)
 // don't 400 just for not knowing about a slot. A key that IS present must
 // validate or the whole request 400s.
-const HOME_CHARACTER_RANGES = {
-  skin:            { max: 12 },   // 12 = Hulk green (added for Avengers presets)
-  hairStyle:       { max: 13 },
-  hairColor:       { max: 13 },
-  shirtColor:      { max: 16 },
-  pantsColor:      { max: 15 },
-  eyeColor:        { max: 7 },
-  eyeShape:        { max: 4 },
-  facialHairStyle: { max: 5 },
-  facialHairColor: { max: 13 },
-  glasses:         { max: 4 },
-  hat:             { max: 4 },
-  shoeColor:       { max: 7 },
-  build:           { max: 3 },    // body size/bulk
-  bodyType:        { max: 1 },    // BODY_TYPES: 0 = Realistic, 1 = Box
-  gear:            { max: 6 },    // DEPRECATED (round 2): hero `gear` slot removed
-                                  // from UI/render; kept so old docs/clients
-                                  // that still PUT it don't 400. Ignored.
-  // Clothing SHAPE slots — maxes mirror the array lengths in js/playground.js
-  // (SHIRT_STYLES/PANTS_STYLES/SHOE_STYLES/OUTERWEAR_STYLES/SUIT_STYLES/
-  // GLOVES_STYLES/BELT_STYLES/MASK_STYLES) and models/user.js. Keep in sync.
-  shirtStyle:      { max: 8 },    // 0 = plain tee (legacy); 8 = ripped (bare chest)
-  pantsStyle:      { max: 6 },    // 0 = plain pants (legacy)
-  shoeStyle:       { max: 6 },    // 0 = plain shoe (legacy)
-  outerwear:       { max: 6 },    // 0 = none
-  outerwearColor:  { max: 16 },   // reuses SHIRT_COLORS
-  suit:            { max: 5 },    // 0 = none (overrides top+bottom)
-  suitColor:       { max: 7 },    // SUIT_COLORS
-  gloves:          { max: 3 },    // 0 = none
-  belt:            { max: 4 },    // 0 = none
-  mask:            { max: 4 },    // 0 = none
-  accessoryColor:  { max: 5 },    // ACCESSORY_COLORS (gloves/belt/mask trim)
-  // Round 2: gender, accent/secondary colors, reusable hero slots + colors.
-  // NOTE: the four accent (*Color2) maxes are palette.length, NOT length-1 —
-  // index 0 is the "Auto" sentinel and 1..N map to palette[0..N-1].
-  gender:          { max: 2 },    // 0 = Neutral (back-compat)
-  shirtColor2:     { max: 17 },   // Auto + SHIRT_COLORS (17)
-  pantsColor2:     { max: 16 },   // Auto + PANTS_COLORS (16)
-  outerwearColor2: { max: 17 },   // Auto + SHIRT_COLORS (17)
-  shoeColor2:      { max: 8 },    // Auto + SHOE_COLORS (8)
-  helmet:          { max: 6 },    // HELMET_STYLES (0 = none); 6 = Soldier (WWII Cap)
-  helmetColor:     { max: 16 },   // SHIRT_COLORS
-  prop:            { max: 6 },    // PROP_STYLES (0 = none); 6 = Bow + quiver
-  propColor:       { max: 16 },   // SHIRT_COLORS
-  emblem:          { max: 7 },    // EMBLEM_STYLES (0 = none); 6 = Soldier flag, 7 = Discs
-  emblemColor:     { max: 16 }    // SHIRT_COLORS
-};
-
-function pickInt(value, max) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  const v = Math.floor(value);
-  if (v < 0 || v > max) return null;
-  return v;
-}
-
 router.get('/home-character', auth, async (req, res) => {
   const user = await User.findById(req.user.id).select('homeCharacter').lean();
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -173,18 +119,7 @@ router.get('/home-character', auth, async (req, res) => {
 });
 
 router.put('/home-character', auth, async (req, res) => {
-  const body = req.body || {};
-  const update = {};
-  const errors = {};
-  for (const [key, rule] of Object.entries(HOME_CHARACTER_RANGES)) {
-    if (!(key in body)) continue;          // partial update — skip missing keys
-    const v = pickInt(body[key], rule.max);
-    if (v === null) {
-      errors[key] = `must be an integer 0..${rule.max}`;
-    } else {
-      update['homeCharacter.' + key] = v;
-    }
-  }
+  const { update, errors } = validateCharacterUpdate(req.body);
   if (Object.keys(errors).length) {
     return res.status(400).json({ error: 'Validation failed', fields: errors });
   }
@@ -230,7 +165,8 @@ router.get('/home-layout', auth, async (req, res) => {
     const user = await User.findById(req.user.id).select('homeLayout watchedProjects homeHouses homeRoof').lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
     const watchedIds = (user.watchedProjects || []).map(e => e.projectId);
-    const homeLayout = user.homeLayout || { rooms: [] };
+    // Within today's cap (Clear Progress can leave a stored layout over it).
+    const homeLayout = House.effectiveLayout(user.homeLayout, watchedIds);
     res.json({
       homeLayout,
       maxRooms: Math.floor(watchedIds.length / 2),
