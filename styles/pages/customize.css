@@ -1,7 +1,7 @@
 /************************************************
  * CUSTOMIZE (/customize) — the character builder
  *   Cinematic: a red studio spotlight behind the model, gold selection rings.
- *   Comic: the model on a yellow sunburst panel, ink chips and tiles.
+ *   Comic: the model on plain halftone paper, ink chips and tiles.
  ************************************************/
 /* ── The 3D preview's backdrop ── */
 [data-theme="cinematic"] .cz-preview {
