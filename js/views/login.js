@@ -32,6 +32,7 @@ const LoginView = {
       <div class="auth-modal-static">
         <div class="auth-box" id="auth-box">
           <div class="auth-form-panel" id="auth-form-panel">
+            <span class="brand-mark brand-mark--lg" aria-hidden="true"></span>
             <h1>MCU Watch Order</h1>
             <p class="auth-subtitle">Track your Marvel journey</p>
 

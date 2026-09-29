@@ -1,0 +1,109 @@
+/* ======================
+   GLOBAL
+====================== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  /* 100dvh tracks the visible viewport on iOS Safari (shrinks as the URL bar
+     appears), so the bottom shelf isn't cropped by the toolbar. 100vh is a
+     fallback for older browsers. */
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--text-1);
+  /* App-like touch: no rubber-band / pull-to-refresh, no long-press text
+     selection or callout menu (re-enabled below for text people copy). */
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Lock the page itself on mobile. The SPA never scrolls the document (every
+   view is its own fixed/scrolling panel), so clip the root too — stops the
+   whole app sliding sideways. The legacy login page (body.auth-page) keeps
+   normal scrolling. */
+html {
+  overscroll-behavior: none;
+}
+html:not(:has(body.auth-page)) {
+  overflow: hidden;
+  height: 100%;
+}
+
+/* Browser pinch-zoom and double-tap zoom off everywhere; one-finger
+   scrolling still works. In-app zoom (map, watch-order pinch, 3D camera,
+   customize preview) is done in JS on elements whose own touch-action rule
+   (none / manipulation / pan-x) is more specific than this one. */
+* {
+  touch-action: pan-x pan-y;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Text people type or may want to copy stays selectable. iOS also refuses
+   typing into inputs that inherit user-select:none, so inputs must opt in. */
+input,
+textarea,
+[contenteditable],
+.world-chat-line,
+.msg-bubble-text,
+.msg-conv-preview,
+.feed-caption,
+.feed-post-caption,
+.feed-comment-body {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* Scrolling to the end of a panel shouldn't drag the page behind it. */
+#feed-wrapper,
+#messages-wrapper,
+#reports-wrapper,
+#profile-wrapper,
+#characters-wrapper,
+.msg-log,
+.world-chat-log,
+.flow-wrapper,
+.admin-page,
+.world-lb-panel,
+.world-spawn-panel,
+.world-house-panel {
+  overscroll-behavior: contain;
+}
+
+/* Screen-reader-only labels (keeps inputs associated without visual change). */
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Keyboard focus ring — visible on :focus-visible (keyboard nav), invisible on mouse clicks. */
+:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Suppress default outline when focus-visible is supported and inapplicable. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+/* Node-specific focus — rounded corners match the node shape. */
+.node:focus-visible {
+  outline-offset: 4px;
+  border-radius: 8px;
+}

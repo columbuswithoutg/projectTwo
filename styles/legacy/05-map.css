@@ -1,0 +1,689 @@
+/* ======================
+   MAP WRAPPER
+====================== */
+#map-wrapper {
+  position: fixed;
+  top: var(--header-height);
+  left: 0;
+  right: 0;
+  bottom: var(--shelf-height, 88px);
+  overflow: hidden;
+  background: var(--scene-bg);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#map-wrapper.panning {
+  cursor: grabbing;
+}
+
+/* ======================
+   UP-NEXT SHELF
+   Fixed bottom dock for revealed-but-unwatched pins.
+====================== */
+:root { --shelf-height: 88px; }
+
+#up-next-shelf {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--shelf-height);
+  padding: 8px 14px;
+  /* Keep content above the iPhone home indicator when viewport-fit=cover
+     lets the shelf extend into the safe area. */
+  padding-left: max(14px, env(safe-area-inset-left));
+  padding-right: max(14px, env(safe-area-inset-right));
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  background: var(--surface-glass);
+  border-top: 2px solid var(--border-print);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  z-index: 40;
+  transform: translateY(0);
+  transition: transform 0.35s ease;
+  backdrop-filter: blur(6px);
+}
+
+#up-next-shelf.empty {
+  transform: translateY(100%);
+  pointer-events: none;
+}
+
+#up-next-shelf .shelf-label {
+  font: 600 11px/1 system-ui, sans-serif;
+  letter-spacing: 0.22em;
+  color: var(--accent-text);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  padding: 4px 0;
+  flex: 0 0 auto;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+#up-next-shelf .shelf-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1;
+  min-width: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gold-035) transparent;
+  padding: 4px 2px;
+  /* Explicit pan-x lets mobile browsers recognize horizontal swipes as scroll
+     immediately instead of waiting for tap-vs-scroll disambiguation. */
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+}
+
+#up-next-shelf .shelf-track::-webkit-scrollbar { height: 6px; }
+#up-next-shelf .shelf-track::-webkit-scrollbar-thumb {
+  background: var(--gold-035);
+  border-radius: 3px;
+}
+
+/* Shelf pins override the map's absolute positioning so they can flow
+   inline in a horizontal track. */
+#up-next-shelf .node.pin.shelf-pin {
+  position: static !important;
+  flex: 0 0 auto;
+  left: auto !important;
+  top: auto !important;
+  animation: shelfPinBirth 0.35s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+@keyframes shelfPinBirth {
+  from { transform: scale(0.5); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* Block native drag-ghosts of node posters when the user pans across them. */
+#map-wrapper img {
+  user-drag: none;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+}
+
+#map-wrapper::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+#map-wrapper::-webkit-scrollbar-track {
+  background: var(--scene-bg);
+}
+
+#map-wrapper::-webkit-scrollbar-thumb {
+  background: var(--scene-surface);
+  border-radius: 4px;
+  border: 2px solid var(--scene-bg);
+}
+
+#map-wrapper::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary);
+}
+
+/* ======================
+   WORLD VIEWPORT (zoom + pan)
+====================== */
+#world-viewport {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* 2× the previous 4000×2800 so real-world-adjacent cities (NYC metro,
+     European capitals) have room to breathe without card overlap. */
+  width: 8000px;
+  height: 5600px;
+  transform-origin: 0 0;
+  transform: translate(0, 0) scale(0.55);
+}
+
+#world-viewport.interacting {
+  will-change: transform;
+}
+
+/* ======================
+   BACKDROP LAYERS
+   #world-continents = Earth band (y: 0..3400) — ocean + continents + haze
+   #cosmos-starfield = Cosmos band (y: 3400..5600) — deep space + nebulas
+====================== */
+
+/* Earth band is a flat sky-blue "ocean". No continent art — locations
+   sit on top as standalone islands at real-world equirectangular coords.
+   Subtle vertical gradient gives depth: slightly lighter at the top
+   (surface sunlight), deeper blue near the bottom (open-water feel),
+   then a mask fade into the cosmos starfield at y=3400 so the horizon
+   between Earth band and space doesn't read as a hard seam. */
+#world-continents {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 8000px;
+  height: 3400px;
+  pointer-events: none;
+  z-index: 0;
+  background: linear-gradient(
+    180deg,
+    rgb(138, 188, 226) 0%,
+    rgb(95, 155, 205) 55%,
+    rgb(55, 115, 175) 100%
+  );
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 92%, transparent 100%);
+          mask-image: linear-gradient(180deg, #000 0%, #000 92%, transparent 100%);
+}
+
+/* Cosmos band: deep space with nebula clouds and layered starfield.
+   Nebulas use huge soft radial gradients, stars use tiny tight ones
+   tiled via background-size. */
+#cosmos-starfield {
+  position: absolute;
+  top: 3400px;
+  left: 0;
+  width: 8000px;
+  height: 2200px;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    /* stars — six tiled layers at different densities/tints */
+    radial-gradient(1px 1px at 25% 15%, rgba(255,255,255,0.85) 0%, transparent 100%),
+    radial-gradient(1px 1px at 70% 35%, rgba(255,255,255,0.65) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 45% 65%, rgba(180,200,255,0.7) 0%, transparent 100%),
+    radial-gradient(1px 1px at 85% 80%, rgba(255,255,255,0.7) 0%, transparent 100%),
+    radial-gradient(1px 1px at 12% 55%, rgba(255,180,220,0.55) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 62% 20%, rgba(200,220,255,0.5) 0%, transparent 100%),
+    /* nebulas — large soft blobs at fixed positions across the canvas */
+    radial-gradient(ellipse 900px 600px at 15% 20%, rgba(150, 60, 180, 0.22) 0%, transparent 60%),
+    radial-gradient(ellipse 1200px 700px at 50% 55%, rgba(60, 100, 220, 0.18) 0%, transparent 65%),
+    radial-gradient(ellipse 800px 500px at 85% 30%, rgba(220, 80, 140, 0.2) 0%, transparent 60%),
+    radial-gradient(ellipse 1000px 600px at 25% 80%, rgba(80, 180, 220, 0.15) 0%, transparent 65%),
+    radial-gradient(ellipse 700px 450px at 75% 85%, rgba(200, 120, 60, 0.16) 0%, transparent 60%),
+    /* base: very dark, slightly warmer toward top (closer to earth band) */
+    linear-gradient(180deg,
+      rgba(10, 6, 22, 1) 0%,
+      rgba(6, 3, 15, 1) 40%,
+      rgba(3, 1, 10, 1) 100%);
+  background-size:
+    220px 180px, 180px 160px, 260px 200px, 200px 180px, 240px 200px, 300px 220px,
+    100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%,
+    100% 100%;
+  background-repeat:
+    repeat, repeat, repeat, repeat, repeat, repeat,
+    no-repeat, no-repeat, no-repeat, no-repeat, no-repeat,
+    no-repeat;
+  opacity: 1;
+}
+
+#region-glows {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 8000px;
+  height: 5600px;
+  pointer-events: none;
+  /* Sits ABOVE #connections (z-index 1) so location cards (.cluster-frame,
+     rendered as children here) cover the road endpoints that extend into
+     each cluster's AABB. Otherwise the asphalt pokes out past the card's
+     edge like a stray tongue. The ambient .region-glow halos also render
+     above the roads but use mix-blend-mode: screen, so the visual impact
+     on the asphalt is a subtle brightening, not a mask. Below #nodes
+     (z-index 2) so pins still sit on top of every card. */
+  z-index: 2;
+}
+
+.region-glow {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 50%;
+  /* Normal alpha compositing. Previously 'screen' was additive — where
+     multiple halos overlapped (the five NYC boroughs + DC + Chicago, for
+     instance) they additively brightened land paint beneath until the
+     continent palette bleached out into pastel mush. Plain compositing
+     lets overlapping halos mix/darken naturally and leaves the continent
+     colors legible. */
+}
+
+/* Location frame — the fixed-size "room" for each region. The backdrop is
+   now a child <img loading="lazy" decoding="async"> (see .cluster-frame-bg
+   below) so the browser can defer off-screen images. The frame itself keeps
+   a region-tinted gradient as the fallback behind the image — if the WebP
+   hasn't been authored yet (or fails to load and the <img> self-removes),
+   the tint shows through clean. */
+.cluster-frame {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  border: 1.5px solid rgba(237, 29, 36, 0.32);
+  border-radius: 14px;
+  overflow: hidden;
+  background-color: rgba(13, 16, 32, 0.55);
+  background-image:
+    linear-gradient(135deg, var(--region-tint-a, transparent) 0%, transparent 60%);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.6),
+    0 10px 28px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  z-index: 1;
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
+  animation: locationBirth 540ms cubic-bezier(0.22, 0.8, 0.32, 1);
+}
+
+/* Backdrop <img> fills the frame. object-fit: cover mimics the old
+   background-size: cover behavior. It sits beneath the ::after shelf
+   gradient via a lower z-index / normal stacking order. */
+.cluster-frame-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.cluster-frame:hover {
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.6),
+    0 10px 32px rgba(0, 0, 0, 0.7),
+    0 0 24px var(--gold-025),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Bottom shelf — dark gradient under the pin row keeps posters readable
+   over busy background images. Fades from transparent at top to ~75% black
+   at the very bottom edge. */
+.cluster-frame::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 72px;
+  background: linear-gradient(to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.35) 45%,
+    rgba(0, 0, 0, 0.8) 100%);
+  pointer-events: none;
+}
+
+.cluster-frame.cosmic {
+  border-color: rgba(255, 180, 110, 0.36);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.6),
+    0 10px 32px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 200, 150, 0.08),
+    0 0 30px rgba(255, 140, 70, 0.14);
+}
+
+@keyframes locationBirth {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ======================
+   MAP CONTAINER
+====================== */
+#map-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 8000px;
+  height: 5600px;
+  transform-origin: 0 0;
+  background: transparent;
+}
+
+/* Fallback atmospheric gradient behind the world viewport */
+#map-wrapper {
+  background:
+    radial-gradient(circle at 15% 20%, rgba(237, 29, 36, 0.06) 0%, transparent 50%),
+    radial-gradient(circle at 85% 40%, rgba(226, 54, 54, 0.04) 0%, transparent 45%),
+    radial-gradient(circle at 50% 80%, rgba(237, 29, 36, 0.04) 0%, transparent 40%),
+    linear-gradient(180deg, var(--scene-bg) 0%, var(--scene-surface) 50%, var(--scene-bg) 100%);
+}
+
+#map-container[data-phase="1"] { border: 1px solid var(--gold-008); }
+#map-container[data-phase="2"] { border: 1px solid rgba(237, 29, 36, 0.16); }
+#map-container[data-phase="3"] { border: 1px solid rgba(237, 29, 36, 0.26); }
+#map-container[data-phase="4"] { border: 1px solid rgba(237, 29, 36, 0.36); }
+#map-container[data-phase="5"] { border: 1px solid rgba(237, 29, 36, 0.46); }
+#map-container[data-phase="6"] { border: 1px solid rgba(237, 29, 36, 0.6); }
+
+/* ======================
+   CONNECTIONS (SVG)
+====================== */
+#connections {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  overflow: visible;
+}
+
+/* Road draw-in: stroke animates from invisible to visible when a new road appears. */
+#connections path.road-drawing {
+  animation: roadDrawIn 800ms ease-out forwards;
+}
+
+@keyframes roadDrawIn {
+  from { stroke-dashoffset: var(--road-length, 1000); opacity: 0.2; }
+  to   { stroke-dashoffset: 0; opacity: 1; }
+}
+
+/* ======================
+   CLUSTER LABELS
+====================== */
+#cluster-labels {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.cluster-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+  text-shadow:
+    0 0 8px rgba(0, 0, 0, 0.8),
+    0 0 18px rgba(237, 29, 36, 0.3),
+    0 2px 4px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity 250ms ease;
+}
+
+.cluster-label.cosmic {
+  color: rgba(255, 200, 140, 0.85);
+  text-shadow:
+    0 0 10px rgba(0, 0, 0, 0.85),
+    0 0 22px rgba(255, 140, 70, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.9);
+}
+
+/* ======================
+   WORLD VIEW BUTTON
+====================== */
+#world-view-btn {
+  position: fixed;
+  top: calc(var(--header-height) + 12px);
+  right: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(13, 16, 32, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--gold-025);
+  color: var(--color-primary-light);
+  font-size: 1.4rem;
+  cursor: pointer;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.85);
+  transition: opacity 250ms ease, transform 250ms ease, background 200ms ease;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+#world-view-btn.visible {
+  opacity: 1;
+  pointer-events: all;
+  transform: scale(1);
+}
+
+#world-view-btn:hover {
+  background: rgba(13, 16, 32, 0.8);
+  border-color: var(--color-primary);
+  box-shadow: 0 4px 20px var(--gold-03);
+}
+
+/* ======================
+   REDUCED MOTION
+====================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .node {
+    animation: none;
+  }
+
+  #connections path.road-drawing {
+    animation: none;
+  }
+}
+
+/* ======================
+   NODES
+====================== */
+#nodes {
+  position: relative;
+  z-index: 2;
+}
+
+/* Pins — small 30×45 mini-poster markers along the bottom of a location.
+   The location frame (background image + gold outline) is the dominant
+   visual; pins are just clickable chips identifying what movie plays there. */
+.node {
+  position: absolute;
+  width: 30px;
+  height: 45px;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--scene-node-bg);
+  transform-origin: center center;
+  transition:
+    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.2s ease,
+    filter 0.3s ease;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.node:hover:not(.locked) {
+  transform: scale(1.4);
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.8),
+    var(--shadow-glow),
+    inset 0 0 0 1px var(--gold-04);
+  z-index: 12;
+}
+
+.node.watched {
+  box-shadow:
+    0 0 0 1.5px var(--color-primary),
+    0 2px 6px rgba(0, 0, 0, 0.7),
+    0 0 10px rgba(237, 29, 36, 0.45);
+}
+
+.node.watched::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(237, 29, 36, 0.22) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+/* Locked nodes are hidden entirely on the world map (they reappear when unlocked). */
+.node.locked {
+  display: none;
+}
+
+/* Node birth animation — runs once when a node first appears */
+.node {
+  animation: nodeBirth 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes nodeBirth {
+  from { transform: scale(0); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+/* ======================
+   TOUCH / COARSE POINTER
+   Pins stay visually 30×45 so layouts don't reshuffle, but their hit area
+   expands to ~48×67 via a transparent ::before so taps register reliably.
+   Desktop hover scale is mirrored onto :active for tap feedback.
+====================== */
+@media (pointer: coarse) {
+  /* MAP pins keep their tight 30x45 layout but get an invisible padded
+     hit target via ::before so taps don't need pixel precision. */
+  .node.pin::before {
+    content: "";
+    position: absolute;
+    inset: -11px -9px;
+    pointer-events: auto;
+    z-index: 0;
+  }
+  /* SHELF pins are already separated by 10px gap in a flex row, so an
+     extended ::before would overlap neighboring pins and cause mis-taps.
+     Instead of extending the hit area, make the visible pin itself bigger
+     on touch — the shelf has horizontal space. Also hide the ::before so
+     the browser can recognize swipes as scroll without it absorbing the
+     pointerdown first. */
+  #up-next-shelf .node.pin.shelf-pin {
+    width: 44px;
+    height: 66px;
+  }
+  #up-next-shelf .node.pin.shelf-pin::before {
+    content: none;
+  }
+  .node.pin:active:not(.locked) {
+    transform: scale(1.35);
+    z-index: 12;
+  }
+  #world-view-btn:active {
+    background: rgba(13, 16, 32, 0.8);
+    border-color: var(--color-primary);
+  }
+}
+
+/* Hover-incapable devices: touch can't trigger :hover, so mirror the
+   hover-only visual cues onto :active / :focus-visible. */
+@media (hover: none) {
+  .node:active:not(.locked) img {
+    transform: scale(1.05);
+  }
+}
+
+/* Pulsing glow for the node where a villain fight is currently active */
+.node.active-fight {
+  box-shadow:
+    0 0 0 2px var(--color-red),
+    var(--scene-shadow),
+    var(--shadow-red);
+  animation: fightPulse 1.6s ease-in-out infinite;
+  z-index: 8;
+}
+
+@keyframes fightPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px var(--color-red),
+      var(--scene-shadow),
+      0 0 18px rgba(226, 54, 54, 0.4);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px var(--color-red-light),
+      var(--scene-shadow),
+      0 0 34px rgba(226, 54, 54, 0.75);
+  }
+}
+
+.node img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.3s ease;
+}
+
+.node:hover:not(.locked) img {
+  transform: scale(1.05);
+}
+
+/* ======================
+   CHECKMARK
+====================== */
+.node .checkmark {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 10px;
+  height: 10px;
+  background: var(--gold-gradient);
+  color: #fff;
+  font-weight: 900;
+  font-size: 7px;
+  border-radius: 50%;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.7), 0 0 4px rgba(237, 29, 36, 0.6);
+  animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 3;
+}
+
+.node.watched .checkmark {
+  display: flex;
+}
+
+/* "▶ Watching" ribbon — title is In progress on the Board */
+.node .watching-badge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: none;
+  padding: 2px 0;
+  background: var(--red-gradient);
+  color: var(--text-on-accent);
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  z-index: 3;
+  pointer-events: none;
+}
+.node.in-progress .watching-badge { display: block; }
+.node.in-progress { box-shadow: 0 0 0 2px var(--color-primary), var(--shadow-glow); }
+
+@keyframes popIn {
+  0%   { transform: scale(0); }
+  80%  { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}

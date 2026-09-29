@@ -57,10 +57,17 @@ const ProfileView = {
         <div id="profile-appearance">
           <p class="profile-section-label">Appearance</p>
           <div id="theme-toggle" role="radiogroup" aria-label="Theme">
-            <button type="button" class="theme-option" data-mode="light">Light</button>
-            <button type="button" class="theme-option" data-mode="dark">Dark</button>
-            <button type="button" class="theme-option" data-mode="system">System</button>
+            <button type="button" class="theme-option" data-mode="cinematic">
+              <span class="theme-swatch theme-swatch--cinematic" aria-hidden="true"></span>Cinematic
+            </button>
+            <button type="button" class="theme-option" data-mode="comic">
+              <span class="theme-swatch theme-swatch--comic" aria-hidden="true"></span>Comic
+            </button>
+            <button type="button" class="theme-option" data-mode="system">
+              <span class="theme-swatch theme-swatch--system" aria-hidden="true"></span>System
+            </button>
           </div>
+          <p class="theme-hint">System follows your device: dark → Cinematic, light → Comic.</p>
         </div>
 
         <div id="profile-support">

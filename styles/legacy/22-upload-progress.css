@@ -1,0 +1,29 @@
+/* ════════════════════════════════════════════════
+   Memory upload progress bar
+   ════════════════════════════════════════════════ */
+.memory-upload-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(var(--ink), 0.12);
+  overflow: hidden;
+  margin: 6px 0 10px;
+}
+
+.memory-upload-bar {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--gold-gradient);
+  transition: width 0.18s ease;
+}
+
+/* Bytes uploaded; Cloudinary still processing — gentle pulse so the bar
+   doesn't read as "stuck" at 100%. */
+.memory-upload-progress.processing .memory-upload-bar {
+  animation: memoryUploadPulse 1s ease-in-out infinite;
+}
+
+@keyframes memoryUploadPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}

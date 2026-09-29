@@ -1,0 +1,100 @@
+/************************************************
+ * PRIMITIVES — theme-independent design tokens
+ *
+ * Layout sizes, spacing, type scale, radii, stacking order and motion.
+ * Colours, fonts, borders and shadows are per theme: see
+ * theme-cinematic.css and theme-comic.css (same custom-property names, so
+ * every rule is themed by the one [data-theme] attribute on <html>).
+ ************************************************/
+:root {
+  /* Layout */
+  --header-height: 60px;
+  --bottom-nav-h: 0px;          /* set by body.has-bottom-nav on phones */
+  --node-width: 120px;
+  --node-height: 180px;
+  --drawer-width: 260px;
+  --modal-max-width: 640px;
+  --button-size-icon: 48px;
+  --avatar-button-size: 40px;
+  --indicator-size: 22px;
+  --bubble-width-max: 160px;
+  --touch-target-min: 44px;
+
+  /* Spacing scale (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  /* Type scale */
+  --font-size-xs: 11px;
+  --font-size-sm: 13px;
+  --font-size-base: 15px;
+  --font-size-lg: 18px;
+  --font-size-xl: 22px;
+  --font-size-2xl: 28px;
+  --font-size-3xl: 36px;
+  --font-size-4xl: 48px;
+  --line-height-tight: 1.2;
+  --line-height-base: 1.5;
+  --line-height-loose: 1.7;
+
+  /* Radius scale (themes pick from these for controls / cards / panels) */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
+  --radius-full: 999px;
+
+  /* Stacking order — one scale instead of ad-hoc numbers */
+  --z-hud: 50;
+  --z-header: 100;
+  --z-bottom-nav: 100;
+  --z-drawer: 200;
+  --z-popover: 300;
+  --z-modal: 1000;
+  --z-toast: 2000;
+  --z-splash: 3000;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 350ms;
+
+  /* Font stacks (the themes choose display vs body) */
+  --font-inter: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-bebas: 'Bebas Neue', 'Rajdhani', 'Arial Narrow', system-ui, sans-serif;
+  --font-bangers: 'Bangers', 'Rajdhani', 'Comic Sans MS', system-ui, sans-serif;
+  --font-rajdhani: 'Rajdhani', system-ui, sans-serif;
+  /* Labels, buttons, captions: readable at small sizes in both themes. The
+     theme's --font-display is for titles only (Bebas / Bangers are hard to
+     read at 11-13px). */
+  --font-ui: var(--font-inter);
+
+  /* Semantic states (both themes) */
+  --color-health-good: #3ecf73;
+  --color-health-warn: #f5b82e;
+  --color-health-low: #ef4444;
+  --color-locked: #252535;      /* locked map nodes — scene-only, never flips */
+
+  /* Fixed scene tokens — the animated map and the 3D canvases keep their own
+     look in BOTH themes (the HUD on top of them is themed: --hud-*). */
+  --scene-bg: #07080f;
+  --scene-surface: #0d1020;
+  --scene-node-bg: #111218;
+  --scene-grad-top: #0f0f1a;
+  --scene-text: #ffffff;
+  --scene-text-warm: #e0d6c2;
+  --scene-border: rgba(255, 255, 255, 0.08);
+  --scene-shadow: 0 15px 30px rgba(0, 0, 0, 0.7);
+
+  /* Breakpoints (documentation only — custom properties can't go in @media) */
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 1024px;
+}

@@ -1,0 +1,65 @@
+/* ==========================================
+   WATCH CONTROLS — Start watching → timer → Mark as watched
+   (js/watch-controls.js; popup + board cards)
+========================================== */
+.watch-controls { display: flex; flex-direction: column; gap: var(--space-2); }
+.wc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.wc-ep { color: var(--text-1); font-weight: 600; }
+.wc-left { margin-left: auto; }
+.wc-ready .wc-left { color: #16813d; font-weight: 700; }
+[data-theme="cinematic"] .wc-ready .wc-left { color: var(--color-health-good); }
+.wc-bar {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: rgba(var(--ink), 0.08);
+  overflow: hidden;
+}
+.wc-bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--red-gradient);
+  transition: width 0.9s linear;
+}
+.wc-ready .wc-bar > i { background: var(--color-health-good); }
+.wc-bar-series > i { background: var(--gold-04); transition: none; }
+.wc-actions { display: flex; gap: var(--space-2); }
+.wc-btn {
+  flex: 1 1 auto;
+  min-height: var(--touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-2);
+  background: rgba(var(--ink), 0.04);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
+}
+.wc-btn:hover:not(:disabled) { border-color: var(--gold-04); color: var(--accent-text); }
+.wc-btn.wc-primary {
+  border-color: transparent;
+  background: var(--red-gradient);
+  color: var(--text-on-accent);
+  box-shadow: 0 3px 10px rgba(226, 54, 54, 0.3);
+}
+.wc-btn.wc-primary:hover:not(:disabled) { background: var(--red-gradient-hover); color: var(--text-on-accent); transform: translateY(-1px); }
+.wc-btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+.wc-btn.wc-ghost { flex: 0 0 auto; background: transparent; color: var(--text-3); }
+.wc-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.wc-hint { font-size: var(--font-size-xs); color: var(--text-3); line-height: var(--line-height-tight); }
+.popup-watch-controls { margin-bottom: var(--space-3); }
+.popup-watch-controls .wc-btn { min-height: 48px; font-size: var(--font-size-base); }

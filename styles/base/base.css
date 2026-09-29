@@ -1,0 +1,77 @@
+/************************************************
+ * BASE — page canvas, typography, focus, selection, scrollbars
+ *
+ * Sits above legacy/ in the cascade, so these win over the old globals.
+ ************************************************/
+
+/* The page canvas lives on <html> so the texture layer below can sit
+   between it and the content (a background on <body> would cover it). */
+html {
+  background-color: var(--surface-0);
+  background-image: var(--page-deco);
+  background-attachment: fixed;
+  /* Bebas Neue and Bangers have one weight: never fake a bold / italic. */
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: transparent;
+  font-family: var(--font-body);
+  color: var(--text-1);
+  font-feature-settings: 'cv11', 'ss01';   /* Inter: straight-sided digits, open 1 */
+}
+
+/* Comic: newsprint halftone under everything. Fixed, so scrolling never
+   repaints it; below the content (z -1), above the paper colour. */
+[data-theme="comic"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--halftone);
+  background-size: 9px 9px;
+  opacity: 0.6;
+}
+
+/* Titles take the theme's display face: tall condensed caps (Cinematic) or
+   hand-lettered comic caps (Comic). Opt in with .display anywhere else. */
+.display,
+.page-title {
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  line-height: 1.05;
+}
+
+/* One frame without transitions while the theme flips (js/theme.js). */
+.theme-switching,
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
+}
+
+/* Keyboard focus ring in the theme's accent. */
+:focus-visible {
+  outline: 2px solid var(--highlight);
+  outline-offset: 2px;
+}
+[data-theme="comic"] :focus-visible {
+  outline: 3px solid var(--info);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(var(--highlight-rgb), 0.45);
+  color: var(--text-1);
+}
+
+/* Thin, themed scrollbars on the panels that scroll. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--ink), 0.28) transparent;
+}

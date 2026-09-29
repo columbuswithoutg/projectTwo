@@ -1,0 +1,208 @@
+/************************************************
+ * HEADER + NAV — one look for every header variant
+ *
+ * #header (watch order, board, feed, profile, characters, messages,
+ * reports), .pg-header (/home, /customize, /home/edit), .world-header,
+ * .admin-header and .friend-header all share the bar, the icon buttons, the
+ * title and the tabs styled here.
+ *
+ * No backdrop-filter on the bars: the nav drawer is position:fixed INSIDE
+ * #header / .pg-header, and a filter would make the bar its containing block
+ * (the drawer would be clipped to the header).
+ ************************************************/
+:root,
+[data-theme="cinematic"] {
+  --hdr-bg: linear-gradient(180deg, rgba(16, 18, 26, 0.97), rgba(11, 13, 19, 0.97));
+  --hdr-border: 1px solid var(--border-print);
+  --hdr-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  --hdr-fg: var(--text-1);
+  --hdr-btn-hover: rgba(255, 255, 255, 0.07);
+  --tab-font: 700 12px/1 var(--font-ui);
+  --tab-tracking: 0.14em;
+  --tab-fg: var(--text-3);
+  --tab-fg-hover: var(--text-1);
+  --tab-active-fg: var(--text-1);
+  --tab-active-bg: transparent;
+  --tab-active-ring: none;
+  --tab-active-bar: var(--highlight);
+  --tab-radius: 8px;
+  --tabs-bg: transparent;
+  --tabs-border: 1px solid transparent;
+  --drawer-bg: rgba(13, 15, 22, 0.94);
+  --drawer-border: 1px solid rgba(214, 178, 94, 0.22);
+  --drawer-shadow: 24px 0 60px rgba(0, 0, 0, 0.55);
+  --drawer-blur: 22px;
+  --drawer-item-bg: transparent;
+  --drawer-item-border: 1px solid transparent;
+  --drawer-item-hover-bg: rgba(255, 255, 255, 0.05);
+  --drawer-item-hover-fg: var(--text-1);
+  --drawer-item-shadow: none;
+}
+
+[data-theme="comic"] {
+  --hdr-bg: var(--color-primary);
+  --hdr-border: 3px solid #111111;
+  --hdr-shadow: none;
+  --hdr-fg: #ffffff;
+  --hdr-btn-hover: rgba(0, 0, 0, 0.14);
+  --tab-font: 400 18px/1 var(--font-bangers);
+  --tab-tracking: 0.05em;
+  --tab-fg: #ffffff;
+  --tab-fg-hover: #ffffff;
+  --tab-active-fg: #111111;
+  --tab-active-bg: var(--highlight);
+  --tab-active-ring: inset 0 0 0 2.5px #111111, 2px 2px 0 #111111;
+  --tab-active-bar: transparent;
+  --tab-radius: 8px;
+  --tabs-bg: transparent;
+  --tabs-border: 1px solid transparent;
+  --drawer-bg: #ffffff;
+  --drawer-border: 3px solid #111111;
+  --drawer-shadow: 6px 0 0 #111111;
+  --drawer-blur: 0px;
+  --drawer-item-bg: #ffffff;
+  --drawer-item-border: 2.5px solid #111111;
+  --drawer-item-hover-bg: var(--highlight);
+  --drawer-item-hover-fg: #111111;
+  --drawer-item-shadow: 2px 2px 0 #111111;
+}
+
+/* ── The bar ── */
+:is(#header, .pg-header, .world-header, .admin-header, .friend-header) {
+  background: var(--hdr-bg);
+  border-bottom: var(--hdr-border);
+  box-shadow: var(--hdr-shadow);
+  color: var(--hdr-fg);
+}
+
+/* ── Icon buttons in the bar (menu, back, profile, edit) ── */
+:is(#header, .pg-header, .world-header) :is(#nav-toggle, #back-btn, #cz-back, #world-back, #pg-customize-btn, #friends-toggle, .pg-header-back) {
+  color: var(--hdr-fg);
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  transition: background-color var(--dur-fast), transform var(--dur-fast);
+}
+:is(#header, .pg-header, .world-header) :is(#nav-toggle, #back-btn, #cz-back, #world-back, #pg-customize-btn, #friends-toggle, .pg-header-back):hover {
+  background: var(--hdr-btn-hover);
+  color: var(--hdr-fg);
+}
+:is(#back-btn, #world-back) {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 14px;
+  padding: 8px 12px;
+}
+
+/* The profile avatar button (right side of the main bar). */
+#header-profile-btn {
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(var(--highlight-rgb), 0.55);
+  background: var(--surface-2);
+  transition: box-shadow var(--dur-fast), transform var(--dur-fast);
+}
+#header-profile-btn:hover { box-shadow: 0 0 0 2px var(--highlight); transform: scale(1.04); }
+[data-theme="comic"] #header-profile-btn {
+  background: #ffffff;
+  box-shadow: 0 0 0 2.5px #111111, 2px 2px 0 2.5px #111111;
+}
+
+/* ── Titles ── */
+:is(#header h1, .pg-title, .world-title, .admin-header h1) {
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  font-size: calc(21px * var(--display-scale));
+  line-height: 1;
+  color: var(--hdr-fg);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+[data-theme="comic"] :is(#header h1, .pg-title, .world-title, .admin-header h1) {
+  -webkit-text-stroke: 1.5px #111111;
+  paint-order: stroke fill;
+  text-shadow: 2px 2px 0 #111111;
+}
+
+/* ── Tabs (Watch order / Board / Feed / World) ── */
+.view-tabs {
+  background: var(--tabs-bg);
+  border: var(--tabs-border);
+  gap: 2px;
+}
+.view-tab {
+  position: relative;
+  font: var(--tab-font);
+  letter-spacing: var(--tab-tracking);
+  color: var(--tab-fg);
+  border-radius: var(--tab-radius);
+  padding: 10px 16px;
+}
+.view-tab:hover { color: var(--tab-fg-hover); background: var(--hdr-btn-hover); }
+.view-tab.active {
+  background: var(--tab-active-bg);
+  color: var(--tab-active-fg);
+  box-shadow: var(--tab-active-ring);
+}
+/* Cinematic: a gold bar under the current tab instead of a fill. */
+.view-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--tab-active-bar);
+}
+[data-theme="comic"] .view-tab { text-transform: none; }
+@media (max-width: 640px) {
+  .view-tab { padding: 8px 10px; }
+  .view-tab.active::after { left: 10px; right: 10px; }
+  [data-theme="comic"] .view-tab { font-size: 16px; }
+}
+
+/* ── Nav drawer ── */
+#nav-drawer-content {
+  background: var(--drawer-bg);
+  border-right: var(--drawer-border);
+  box-shadow: var(--drawer-shadow);
+  backdrop-filter: blur(var(--drawer-blur)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--drawer-blur)) saturate(150%);
+}
+.nav-section-title {
+  font: 700 10px/1.2 var(--font-ui);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--highlight);
+}
+[data-theme="comic"] .nav-section-title {
+  font: 400 17px/1 var(--font-bangers);
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--accent-text);
+}
+#nav-drawer-content nav button {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  background: var(--drawer-item-bg);
+  border: var(--drawer-item-border);
+  box-shadow: var(--drawer-item-shadow);
+  color: var(--text-2);
+  border-radius: var(--radius-control);
+}
+#nav-drawer-content nav button:hover {
+  background: var(--drawer-item-hover-bg);
+  color: var(--drawer-item-hover-fg);
+  border-color: currentColor;
+}
+[data-theme="cinematic"] #nav-drawer-content nav button:hover { border-color: rgba(214, 178, 94, 0.3); }
+#close-drawer { color: var(--text-3); }
+
+/* Action buttons in the bar (Save…): red would vanish into the Comic red bar. */
+[data-theme="comic"] :is(#header, .pg-header) :is(.pg-btn-save, .btn--primary) {
+  background: var(--highlight);
+  color: #111111;
+}
+[data-theme="comic"] :is(#header, .pg-header) :is(.pg-btn-save, .btn--primary):hover { background: #ffe066; color: #111111; }

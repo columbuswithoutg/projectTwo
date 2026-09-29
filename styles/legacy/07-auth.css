@@ -1,0 +1,293 @@
+/* ======================
+   AUTH (Login Page)
+====================== */
+body.auth-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(226, 54, 54, 0.06) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 50%, rgba(237, 29, 36, 0.06) 0%, transparent 60%),
+    var(--color-bg);
+  overflow: auto;
+}
+
+.auth-modal-static {
+  width: 100%;
+  max-width: 380px;
+  padding: 16px;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--gold-015);
+  border-radius: 10px;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: background 0.2s, color 0.2s;
+}
+
+.auth-tab:hover:not(.active) {
+  color: var(--text-1);
+}
+
+.auth-tab.active {
+  background: var(--gold-gradient);
+  color: var(--text-on-accent);
+  box-shadow: 0 2px 8px rgba(237, 29, 36, 0.3);
+}
+
+.auth-subtitle {
+  color: var(--text-3);
+  margin: -8px 0 16px;
+  font-size: 0.9rem;
+}
+
+/* ======================
+   AUTH MODAL (In-app)
+====================== */
+.auth-modal {
+  background: var(--scrim-heavy);
+  z-index: 1000;
+}
+
+.auth-box {
+  background: var(--surface-glass);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--gold-02);
+  padding: var(--space-7);
+  gap: var(--space-3);
+  min-width: 300px;
+  max-height: 85vh;
+  box-shadow:
+    var(--shadow-3),
+    0 0 0 1px rgba(var(--ink), 0.04),
+    inset 0 1px 0 rgba(var(--ink), 0.08);
+  animation: authBoxIn 0.5s cubic-bezier(0.22, 0.8, 0.32, 1) both;
+}
+
+@keyframes authBoxIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.auth-box h3 {
+  color: var(--text-1);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-ui);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.auth-box input {
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-2);
+  background: rgba(var(--ink), 0.04);
+  color: var(--text-1);
+  font-size: 1rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.auth-box input:focus {
+  border-color: rgba(237, 29, 36, 0.55);
+  background: rgba(237, 29, 36, 0.04);
+}
+
+.auth-box #auth-submit {
+  padding: 10px;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-top: var(--space-1);
+  box-shadow: 0 4px 12px rgba(226, 54, 54, 0.35);
+  position: relative;
+  transition: box-shadow 0.2s, opacity 0.2s;
+}
+
+.auth-box #auth-submit:hover:not(:disabled) {
+  box-shadow: 0 6px 18px rgba(226, 54, 54, 0.55);
+}
+
+.auth-box #auth-submit:disabled {
+  cursor: wait;
+  opacity: 0.75;
+}
+
+.auth-box #auth-submit.loading {
+  color: transparent;
+}
+
+.auth-box #auth-submit.loading::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Styled error / success alert (replaces inline `color: red`). */
+.auth-error {
+  display: none;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid rgba(226, 54, 54, 0.4);
+  background: rgba(226, 54, 54, 0.1);
+  color: var(--color-red-light);
+  animation: authAlertIn 0.25s ease-out;
+}
+
+.auth-error.success {
+  border-color: rgba(74, 222, 128, 0.4);
+  background: rgba(74, 222, 128, 0.1);
+  color: var(--color-health-good);
+}
+
+.auth-error.visible {
+  display: block;
+}
+
+@keyframes authAlertIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.auth-box .popup-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  color: var(--text-3);
+  font-size: 1.1rem;
+}
+
+.auth-box .popup-close:hover {
+  color: var(--color-primary);
+  background: none;
+}
+
+/* Register -> success -> Login transition. .auth-form-panel and
+   .auth-success-panel occupy the same box in turn (never both visible);
+   .is-fading/.is-entering drive the cross-fade, matching FADE_MS in
+   js/views/login.js. Reduced-motion users skip this entirely — see the
+   prefersReduced branch in playSuccessTransition().
+   IMPORTANT: display must stay conditional on :not([hidden]) — an
+   unconditional `display: flex` here would outrank the browser's default
+   `[hidden] { display: none }` (same specificity, declared later) and the
+   success panel would render on every page load, not just after a real
+   registration. */
+.auth-form-panel:not([hidden]),
+.auth-success-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  opacity: 1;
+  transition: opacity 0.26s ease;
+}
+.auth-form-panel.is-fading,
+.auth-success-panel.is-fading {
+  opacity: 0;
+}
+.auth-success-panel.is-entering {
+  opacity: 0;
+}
+
+.auth-box input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-success-panel {
+  align-items: center;
+  text-align: center;
+  padding: var(--space-4) 0;
+}
+
+.auth-success-check {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--color-health-good);
+  background: rgba(74, 222, 128, 0.15);
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  animation: authCheckIn 0.36s cubic-bezier(0.22, 0.8, 0.32, 1) both;
+}
+
+@keyframes authCheckIn {
+  from { opacity: 0; transform: scale(0.7); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.auth-success-title {
+  margin: 0;
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.auth-success-sub {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 0.9rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-form-panel,
+  .auth-success-panel {
+    transition: none;
+  }
+  .auth-success-check {
+    animation: none;
+  }
+}

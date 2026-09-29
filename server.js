@@ -137,12 +137,14 @@ app.use('/dist', express.static(path.join(DIST, 'static'), { immutable: true, ma
 // from an explicit allowlist. The pre-SPA orphan pages (app.html,
 // characters.html, profile.html) and their scripts are deliberately omitted
 // so old links can't resurrect the broken flow.
-// Only the legacy login page (index.html + auth.js + the raw stylesheet) and
-// the PWA manifest still come from the repo root. spa.html and sw.js are the
-// generated ones in dist/ (below); projects.js / characters.js / locations.js
-// are bundled into the core chunk.
-const ROOT_FILES = ['index.html', 'styles.css', 'auth.js', 'manifest.json'];
-const HTML_FILES = new Set(['index.html']);
+// Only the PWA manifest still comes from the repo root. spa.html and sw.js
+// are the generated ones in dist/ (below); projects.js / characters.js /
+// locations.js are bundled into the core chunk, and the stylesheet is built
+// from styles/. The pre-SPA login page (index.html + auth.js + the raw
+// stylesheet) is gone — old links land on the SPA's /login.
+app.get('/index.html', (req, res) => res.redirect(301, '/login'));
+const ROOT_FILES = ['manifest.json'];
+const HTML_FILES = new Set();
 ROOT_FILES.forEach(name => {
   app.get('/' + name, (req, res) => {
     if (HTML_FILES.has(name) || !IS_PROD) {

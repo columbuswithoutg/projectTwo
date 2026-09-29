@@ -1,0 +1,363 @@
+/* ==========================================
+   RESPONSIVE — MOBILE (max-width: 640px)
+========================================== */
+@media (max-width: 640px) {
+  :root {
+    --header-height: 64px;
+  }
+
+  /* Header — fade-mask at the right edge is smoother than an ellipsis cut */
+  #header h1 {
+    font-size: 1rem;
+    max-width: calc(100vw - 120px);
+    overflow: hidden;
+    text-overflow: clip;
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 24px), transparent 100%);
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 24px), transparent 100%);
+  }
+
+  #nav-toggle {
+    font-size: 1.8rem;
+    width: 56px;
+  }
+
+  /* Navigation Drawer */
+  #nav-drawer-content {
+    width: 82vw;
+    max-width: 340px;
+    padding: 28px 20px;
+    gap: 10px;
+  }
+
+  #close-drawer {
+    font-size: 1.6rem;
+    padding: 8px 12px;
+    margin-bottom: 16px;
+  }
+
+  #nav-drawer-content nav {
+    gap: 12px;
+  }
+
+  #nav-drawer-content nav button {
+    padding: 18px 20px;
+    font-size: 1.1rem;
+    border-radius: 12px;
+  }
+
+  /* Node Popup — bottom sheet */
+  .node-popup {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    transform: none;
+    border-radius: 24px 24px 0 0;
+    max-width: 100vw;
+    min-width: unset;
+    width: 100%;
+    padding: 32px 24px 44px;
+    animation: slideUp 0.25s ease;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  @keyframes slideUp {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+
+  .node-popup h3 {
+    font-size: 1.3rem;
+    margin-bottom: 16px;
+  }
+
+  .popup-close {
+    width: 40px;
+    height: 40px;
+    font-size: 1.3rem;
+    top: 14px;
+    right: 14px;
+  }
+
+  .popup-action {
+    padding: 18px 20px;
+    font-size: 1.05rem;
+    border-radius: 12px;
+    margin-bottom: 10px;
+  }
+
+  /* Auth page */
+  .auth-modal-static {
+    padding: 20px;
+  }
+
+  .auth-tab {
+    padding: 14px 8px;
+    font-size: 1rem;
+  }
+
+  /* Auth modal — bottom sheet */
+  .auth-modal {
+    align-items: flex-end;
+  }
+
+  .auth-box {
+    min-width: unset;
+    width: 100%;
+    border-radius: 24px 24px 0 0;
+    padding: 32px 24px 44px;
+    max-height: 90vh;
+    gap: 14px;
+  }
+
+  .auth-box h3 {
+    font-size: 1.3rem;
+  }
+
+  .auth-box input {
+    padding: 16px 14px;
+    font-size: 1rem;
+    border-radius: 10px;
+  }
+
+  .auth-box #auth-submit {
+    padding: 16px;
+    font-size: 1.05rem;
+    border-radius: 10px;
+  }
+
+  /* Friends panel — bottom sheet */
+  .friends-panel {
+    align-items: flex-end;
+  }
+
+  .friends-box {
+    width: 100%;
+    max-height: 90vh;
+    border-radius: 24px 24px 0 0;
+    padding: 28px 20px 44px;
+    gap: 18px;
+  }
+
+  .friends-box h3 {
+    font-size: 1.25rem;
+  }
+
+  /* Goals panel — bottom sheet */
+  .goals-panel {
+    align-items: flex-end;
+  }
+
+  .goals-box {
+    width: 100%;
+    max-height: 90vh;
+    border-radius: 24px 24px 0 0;
+    padding: 28px 20px 44px;
+    gap: 14px;
+  }
+
+  .goals-box h3 {
+    font-size: 1.25rem;
+  }
+
+  .friends-section h4 {
+    font-size: 0.95rem;
+    margin-bottom: 12px;
+  }
+
+  .friends-search-row input {
+    padding: 14px 14px;
+    font-size: 1rem;
+    border-radius: 10px;
+  }
+
+  .friends-search-row button,
+  .friend-accept-btn,
+  .friend-view-btn,
+  .friend-reject-btn,
+  .friend-remove-btn {
+    padding: 12px 16px;
+    font-size: 0.95rem;
+    border-radius: 10px;
+  }
+
+  .friend-row {
+    padding: 12px 0;
+    font-size: 1rem;
+  }
+
+  /* Friend header — tighten on small screens. The "Viewing X's progress"
+     label takes its name only at narrow widths to make room for the tabs. */
+  .friend-header { gap: 6px; padding: 0 8px; }
+  .friend-header-text { font-size: 0.75rem; }
+  .friend-header-tab { padding: 5px 9px; font-size: 0.7rem; }
+  .friend-header-back { padding: 5px 9px; font-size: 0.7rem; }
+
+  /* NOTE: the mobile .world-chat-row position override lives further down,
+     immediately after the base .world-chat-row rule. Media queries add no
+     specificity, so putting it here let the later base rule win on `bottom`
+     while this block's `top` still applied — top AND bottom both set turned
+     the row into a full-screen invisible overlay that swallowed every tap on
+     the 3D canvas. Keep the two rules adjacent so source order can't flip. */
+  /* Keep ≥44px touch targets on mobile — these are the primary social
+     controls and the voice button also hosts a long-press gesture. */
+  .pg3d-chat { height: 44px; font-size: 13px; }
+  .pg3d-emote { width: 44px; height: 44px; font-size: 18px; }
+  .pg3d-voice { width: 44px; height: 44px; font-size: 16px; }
+  .world-chat-log { max-height: 100px; font-size: 11px; padding: 6px 10px; }
+  /* The chat row sits at the top on mobile, so drop the controls hint below it. */
+  .world-hint { top: 76px; }
+
+  /* Memories */
+  .memory-item img,
+  .memory-item video {
+    height: 110px;
+  }
+
+  .memory-view-btn {
+    padding: 8px 14px;
+    font-size: 0.9rem;
+  }
+
+  .memory-delete {
+    width: 28px;
+    height: 28px;
+    font-size: 0.85rem;
+  }
+
+  /* Lightbox */
+  .lightbox-close {
+    width: 48px;
+    height: 48px;
+    font-size: 1.5rem;
+    top: 16px;
+    right: 16px;
+  }
+
+  .lightbox-nav {
+    width: 44px;
+    height: 44px;
+    font-size: 2rem;
+  }
+
+  .lightbox-media img,
+  .lightbox-media video {
+    max-width: 96vw;
+    max-height: 70vh;
+  }
+
+  /* Characters page */
+  #characters-wrapper {
+    padding: 16px;
+  }
+
+  #characters-filter {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  #search-input {
+    min-width: unset;
+    width: 100%;
+    padding: 14px 14px;
+    font-size: 1rem;
+    border-radius: 10px;
+  }
+
+  #unlocked-count {
+    font-size: 0.9rem;
+    text-align: right;
+  }
+
+  #characters-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+
+  .character-card {
+    padding: 20px 12px;
+    gap: 10px;
+    border-radius: 10px;
+  }
+
+  .character-avatar,
+  .character-avatar-img {
+    width: 68px;
+    height: 68px;
+    font-size: 1.2rem;
+  }
+
+  .character-name {
+    font-size: 0.82rem;
+  }
+
+  /* Profile page */
+  #profile-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  #avatar-picker-grid {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+  }
+
+  .avatar-option {
+    width: 52px;
+    height: 52px;
+  }
+
+  #profile-username {
+    font-size: 1.4rem;
+  }
+
+  .stat-value {
+    font-size: 1.6rem;
+  }
+
+}
+
+/* Tablet breakpoint */
+@media (max-width: 1024px) {
+  #characters-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Mobile — walker picker: denser grid so more cards fit per row */
+@media (max-width: 640px) {
+  #walker-picker-grid {
+    grid-template-columns: repeat(auto-fill, minmax(65px, 1fr));
+    gap: 8px;
+  }
+
+  .walker-card-img {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* Narrow phones — keep the shelf tall enough for the touch-sized 44×66 pins
+   (84px = 66 pin + 8px padding top/bot + ~10px breathing room). Any less and
+   pins clip. Other surfaces trim down more aggressively. */
+@media (max-width: 480px) {
+  :root { --shelf-height: 84px; }
+
+  #up-next-shelf {
+    padding: 6px 10px;
+    gap: 10px;
+  }
+  #up-next-shelf .shelf-label {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+  }
+  #up-next-shelf .shelf-track { gap: 8px; }
+
+  #nav-drawer-content {
+    width: min(85vw, 260px);
+  }
+
+  .cluster-label { font-size: 11px; }
+}

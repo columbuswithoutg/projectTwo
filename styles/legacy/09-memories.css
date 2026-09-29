@@ -1,0 +1,225 @@
+/* ======================
+   MEMORIES
+====================== */
+.memories-section {
+  margin-top: 12px;
+  border-top: 1px solid var(--border-1);
+  padding-top: 12px;
+  text-align: left;
+}
+
+.memories-section h4 {
+  color: var(--accent-text);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 10px;
+}
+
+.memories-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.memory-item {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(var(--ink), 0.04);
+  cursor: pointer;
+}
+
+.memory-item img,
+.memory-item video {
+  width: 100%;
+  height: 90px;
+  object-fit: cover;
+  display: block;
+}
+
+.memory-caption {
+  font-size: 0.75rem;
+  color: var(--text-3);
+  padding: 4px 6px;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.memory-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  border-radius: 8px;
+}
+
+.memory-item:hover .memory-overlay {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .memory-overlay {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.3);
+  }
+}
+
+.memory-view-btn {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: none;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.memory-delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  color: #fff;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.memory-delete:hover {
+  background: rgba(226, 54, 54, 0.8);
+}
+
+#memory-file {
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px dashed var(--gold-035);
+  background: rgba(var(--ink), 0.02);
+  color: var(--text-3);
+  cursor: pointer;
+  width: 100%;
+  transition: border-color 0.2s;
+}
+
+#memory-file:hover {
+  border-color: rgba(237, 29, 36, 0.6);
+}
+
+#memory-preview img,
+#memory-preview video {
+  max-width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  border-radius: 8px;
+  margin-top: 8px;
+  display: block;
+}
+
+/* ======================
+   MEMORY LIGHTBOX
+====================== */
+.memory-lightbox {
+  background: rgba(0, 0, 0, 0.95);
+  z-index: 2000;
+}
+
+.lightbox-inner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: 90vw;
+  max-height: 90vh;
+}
+
+.lightbox-media {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.lightbox-media img,
+.lightbox-media video {
+  max-width: 80vw;
+  max-height: 75vh;
+  object-fit: contain;
+  border-radius: 10px;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
+}
+
+.lightbox-caption {
+  color: #bbb;
+  font-size: 0.9rem;
+  text-align: center;
+  margin: 0;
+}
+
+.lightbox-counter {
+  color: rgba(237, 29, 36, 0.5);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.lightbox-close {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 1.3rem;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lightbox-close:hover {
+  background: rgba(237, 29, 36, 0.2);
+  border-color: var(--gold-04);
+  color: var(--color-primary-light);
+}
+
+.lightbox-nav {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 2.5rem;
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.lightbox-nav:hover:not(:disabled) {
+  background: var(--gold-015);
+  border-color: var(--gold-04);
+  color: var(--color-primary-light);
+}
+
+.lightbox-nav:disabled {
+  opacity: 0.15;
+  cursor: default;
+}

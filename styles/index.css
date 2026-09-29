@@ -1,0 +1,69 @@
+/************************************************
+ * STYLESHEET ENTRY — bundled by scripts/build.mjs (esbuild, bundle: true)
+ * into dist/static/styles.<hash>.css.
+ *
+ * Cascade layers, lowest priority first. Anything new beats the old rules
+ * in legacy/ no matter how specific those are; rules migrate out of legacy/
+ * page by page.
+ *   tokens      design tokens: primitives + the two themes
+ *   legacy      the original styles.css, split verbatim (2026-09-29)
+ *   base        html / body / typography / focus / page texture
+ *   components  buttons, cards, tabs, fields, toasts, modals, header, icons
+ *   pages       per-route layouts
+ *   hud         the in-game HUD over the 3D canvases
+ *   utilities   single-purpose helpers
+ * NOTE: inside layers, !important priority runs the other way (an earlier
+ * layer's !important wins) — legacy's few !important rules (the
+ * reduced-motion kill switch, drag cursor…) keep winning, by design.
+ ************************************************/
+@layer tokens, legacy, base, components, pages, hud, utilities;
+
+@import "./tokens/primitives.css" layer(tokens);
+@import "./tokens/theme-cinematic.css" layer(tokens);
+@import "./tokens/theme-comic.css" layer(tokens);
+
+@import "./legacy/01-global.css" layer(legacy);
+@import "./legacy/02-shared.css" layer(legacy);
+@import "./legacy/03-header.css" layer(legacy);
+@import "./legacy/04-drawer.css" layer(legacy);
+@import "./legacy/05-map.css" layer(legacy);
+@import "./legacy/06-node-popup.css" layer(legacy);
+@import "./legacy/07-auth.css" layer(legacy);
+@import "./legacy/08-friends-goals.css" layer(legacy);
+@import "./legacy/09-memories.css" layer(legacy);
+@import "./legacy/10-characters.css" layer(legacy);
+@import "./legacy/11-profile.css" layer(legacy);
+@import "./legacy/12-walkers.css" layer(legacy);
+@import "./legacy/13-mobile.css" layer(legacy);
+@import "./legacy/14-view-tabs.css" layer(legacy);
+@import "./legacy/15-watchorder.css" layer(legacy);
+@import "./legacy/16-fight.css" layer(legacy);
+@import "./legacy/17-admin.css" layer(legacy);
+@import "./legacy/18-world-hud.css" layer(legacy);
+@import "./legacy/19-customize.css" layer(legacy);
+@import "./legacy/20-home.css" layer(legacy);
+@import "./legacy/21-confirm.css" layer(legacy);
+@import "./legacy/22-upload-progress.css" layer(legacy);
+@import "./legacy/23-splash.css" layer(legacy);
+@import "./legacy/24-feed.css" layer(legacy);
+@import "./legacy/25-messages-reports.css" layer(legacy);
+@import "./legacy/26-watch-controls.css" layer(legacy);
+@import "./legacy/27-board.css" layer(legacy);
+@import "./legacy/28-composer.css" layer(legacy);
+
+@import "./base/base.css" layer(base);
+
+@import "./components/header.css" layer(components);
+@import "./components/buttons.css" layer(components);
+@import "./components/surfaces.css" layer(components);
+@import "./components/forms.css" layer(components);
+@import "./components/brand.css" layer(components);
+
+@import "./pages/login.css" layer(pages);
+@import "./pages/profile.css" layer(pages);
+@import "./pages/board.css" layer(pages);
+@import "./pages/feed.css" layer(pages);
+@import "./pages/watchorder.css" layer(pages);
+@import "./pages/customize.css" layer(pages);
+
+@import "./hud/world.css" layer(hud);

@@ -1,0 +1,60 @@
+/* ======================
+   HEADER
+====================== */
+#header {
+  height: var(--header-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  /* Push content below the iPhone notch / status bar when viewport-fit=cover
+     expands the page into those areas. */
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-top: env(safe-area-inset-top);
+  box-sizing: content-box;
+  position: relative;
+  background: linear-gradient(180deg, var(--color-dark-gradient-top) 0%, var(--color-bg) 100%);
+  /* The comic "print rule" — solid black underline in light, red in dark. */
+  border-bottom: 2px solid var(--border-print);
+  box-shadow: var(--shadow-1);
+}
+
+#header h1 {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+  background: var(--gold-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+#nav-toggle {
+  height: var(--header-height);
+  width: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 1.4rem;
+  cursor: pointer;
+  border-radius: 0;
+  transition: background 0.2s;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+#nav-toggle:hover {
+  background: var(--gold-01);
+}

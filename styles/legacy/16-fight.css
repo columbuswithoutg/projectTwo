@@ -1,0 +1,153 @@
+/* ==========================================
+   FIGHT VISUALS
+   Full-screen location backdrop + node poster swap during a walker fight.
+========================================== */
+.fight-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(7, 8, 15, 0.92);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  /* Sits above general app content but below the walker layer (which
+     stays inside its canvas container — the canvas's z-index gets
+     raised via body.fight-active so walkers stay on top). */
+  z-index: 5;
+  opacity: 0;
+  transition: opacity 0.32s ease;
+  pointer-events: none;
+}
+
+.fight-backdrop::after {
+  /* Dark vignette so the location image stays atmospheric and walkers
+     plus HP bars stay readable on top. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0.7) 100%);
+}
+
+.fight-backdrop.visible {
+  opacity: 0.85;
+}
+
+/* When a fight is live, lift the canvas above the backdrop so the fight
+   node + walkers + HP bars paint on top of the location image. */
+body.fight-active #map-container,
+body.fight-active .flow-canvas {
+  position: relative;
+  z-index: 10;
+}
+
+/* Disable card interaction while a fight is active. Without this, hovering
+   a card would still trigger the .node:hover scale(1.4) — making the card
+   visibly grow past the zoomed frame — and clicking would still open the
+   project popup. The fight node itself keeps its pulsing red glow because
+   that's a class-based animation, not a hover effect. */
+body.fight-active .flow-cell {
+  pointer-events: none;
+  cursor: default;
+}
+body.fight-active .flow-wrapper {
+  cursor: default;
+}
+
+/* The fight node itself — pulsing red border draws the eye to where the
+   action is. The poster has already been swapped to the location image
+   by applyFightVisuals. */
+.node.fighting {
+  box-shadow:
+    0 0 0 2px var(--color-red),
+    0 0 24px var(--color-red),
+    0 4px 18px rgba(0, 0, 0, 0.7);
+  animation: fightingPulse 1.2s ease-in-out infinite;
+  z-index: 15;
+}
+
+@keyframes fightingPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px var(--color-red),
+      0 0 18px rgba(226, 54, 54, 0.6),
+      0 4px 18px rgba(0, 0, 0, 0.7);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px var(--color-red-light),
+      0 0 36px rgba(255, 112, 112, 0.85),
+      0 4px 18px rgba(0, 0, 0, 0.7);
+  }
+}
+
+.flow-cell {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  /* width set to match nodeWidth + label, height left to grow */
+  width: 130px;
+  cursor: pointer;
+  transition: transform 0.18s;
+}
+
+.flow-cell:hover {
+  transform: translateY(-2px);
+  z-index: 3;
+}
+
+.flow-label {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-warm);
+  text-align: center;
+  line-height: var(--line-height-tight);
+  max-width: 130px;
+  /* Clamp to 2 lines so long titles don't push siblings out of alignment */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.flow-cell .node {
+  position: relative;
+  /* Override the absolute positioning .node uses on the map */
+  left: auto !important;
+  top: auto !important;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+  border: 2px solid transparent;
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+
+.flow-cell .node:not(.locked):hover {
+  border-color: var(--gold-035);
+  box-shadow: 0 6px 18px rgba(237, 29, 36, 0.3);
+}
+
+.flow-cell .node.watched {
+  border-color: var(--color-primary);
+  box-shadow: 0 4px 14px var(--gold-035);
+}
+
+.flow-cell .node.locked {
+  filter: grayscale(0.7) brightness(0.5);
+  cursor: not-allowed;
+}
+
+.flow-cell .node.locked .checkmark {
+  display: none;
+}
+
+.flow-cell .node img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}

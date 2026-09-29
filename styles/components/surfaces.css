@@ -1,0 +1,181 @@
+/************************************************
+ * SURFACES — cards, dialogs, toasts, chips, badges
+ *
+ *   .card (+ the older card / modal-box classes adopt it by selector list)
+ *   Cinematic: dark glass panel, hairline edge, soft depth.
+ *   Comic: white panel, 3px ink outline, hard offset shadow.
+ ************************************************/
+:root,
+[data-theme="cinematic"] {
+  --card-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01)), var(--surface-1);
+  --card-border: 1px solid rgba(255, 255, 255, 0.08);
+  --card-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 14px 34px rgba(0, 0, 0, 0.42);
+  --card-hover-border: 1px solid rgba(214, 178, 94, 0.32);
+  --card-hover-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 18px 40px rgba(0, 0, 0, 0.5);
+  --card-hover-lift: translateY(-2px);
+  --dialog-bg: rgba(16, 19, 27, 0.96);
+  --dialog-border: 1px solid rgba(214, 178, 94, 0.25);
+  --dialog-shadow: 0 30px 80px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --toast-bg: rgba(18, 21, 30, 0.94);
+  --toast-border: 1px solid rgba(255, 255, 255, 0.1);
+  --toast-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --toast-radius: 12px;
+}
+[data-theme="comic"] {
+  --card-bg: #ffffff;
+  --card-border: 3px solid #111111;
+  --card-shadow: 4px 4px 0 #111111;
+  --card-hover-border: 3px solid #111111;
+  --card-hover-shadow: 6px 6px 0 #111111;
+  --card-hover-lift: translate(-2px, -2px);
+  --dialog-bg: #ffffff;
+  --dialog-border: 3px solid #111111;
+  --dialog-shadow: 8px 8px 0 #111111;
+  --toast-bg: #ffffff;
+  --toast-border: 3px solid #111111;
+  --toast-shadow: none;              /* the balloon uses a drop-shadow filter (below) */
+  --toast-radius: 22px;
+}
+
+/* ── Cards ── */
+.card,
+:is(.stat-card, .character-card) {
+  background: var(--card-bg);
+  border: var(--card-border);
+  box-shadow: var(--card-shadow);
+  border-radius: var(--radius-card);
+}
+.card--interactive,
+:is(.stat-card, .character-card) {
+  transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base), border-color var(--dur-base);
+}
+.card--interactive:hover,
+:is(.stat-card, .character-card):hover {
+  border: var(--card-hover-border);
+  box-shadow: var(--card-hover-shadow);
+  transform: var(--card-hover-lift);
+  background: var(--card-bg);
+}
+
+/* ── Dialogs ── */
+:is(.confirm-box, .auth-box, .friends-box, .goals-box, #walker-picker) {
+  background: var(--dialog-bg);
+  border: var(--dialog-border);
+  box-shadow: var(--dialog-shadow);
+  border-radius: var(--radius-panel);
+}
+.confirm-title {
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  font-size: calc(24px * var(--display-scale));
+  line-height: 1.05;
+}
+.confirm-message { color: var(--text-2); }
+[data-theme="comic"] .confirm-modal { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* ── Toasts ── */
+.app-toast {
+  position: relative;
+  background: var(--toast-bg);
+  border: var(--toast-border);
+  border-radius: var(--toast-radius);
+  box-shadow: var(--toast-shadow);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-weight: 500;
+  padding: 12px 18px;
+}
+[data-theme="cinematic"] .app-toast {
+  border-left: 3px solid var(--highlight);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+[data-theme="cinematic"] .app-toast-success { border-left-color: var(--color-health-good); }
+[data-theme="cinematic"] .app-toast-warn { border-left-color: var(--color-health-warn); }
+[data-theme="cinematic"] .app-toast-error { border-left-color: var(--color-primary-light); color: var(--text-1); }
+
+/* Comic: a speech balloon — tail bottom-left, hard shadow on balloon + tail. */
+[data-theme="comic"] .app-toast {
+  font-weight: 700;
+  filter: drop-shadow(3px 3px 0 #111111);
+  margin-bottom: 10px;
+}
+[data-theme="comic"] .app-toast::after {
+  content: "";
+  position: absolute;
+  left: 28px;
+  bottom: -10px;
+  width: 16px;
+  height: 16px;
+  background: inherit;
+  border-right: 3px solid #111111;
+  border-bottom: 3px solid #111111;
+  transform: rotate(45deg) skew(8deg, 8deg);
+}
+[data-theme="comic"] .app-toast-success { background: #dcfce7; }
+[data-theme="comic"] .app-toast-warn { background: #fff1b8; }
+[data-theme="comic"] .app-toast-error { background: #ffe0e0; color: #111111; }
+
+/* ── Chips + badges ── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-2);
+  background: rgba(var(--ink), 0.04);
+  color: var(--text-2);
+  font: 600 13px/1 var(--font-ui);
+  cursor: pointer;
+}
+.chip[aria-pressed="true"],
+.chip.is-active {
+  background: rgba(var(--highlight-rgb), 0.16);
+  border-color: rgba(var(--highlight-rgb), 0.6);
+  color: var(--text-1);
+}
+[data-theme="comic"] .chip { border: 2.5px solid #111111; background: #ffffff; color: #111111; }
+[data-theme="comic"] .chip[aria-pressed="true"],
+[data-theme="comic"] .chip.is-active { background: var(--highlight); box-shadow: 2px 2px 0 #111111; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  color: var(--text-on-accent);
+  font: 700 11px/1 var(--font-ui);
+}
+[data-theme="comic"] .badge { border: 2px solid #111111; }
+
+/* Keyboard key hint, e.g. <kbd class="kbd">E</kbd>. */
+.kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-3);
+  border-bottom-width: 2px;
+  background: rgba(var(--ink), 0.06);
+  font: 700 0.85em/1.4 var(--font-ui);
+  text-align: center;
+}
+[data-theme="comic"] .kbd { border: 2px solid #111111; border-bottom-width: 3px; background: #ffffff; color: #111111; }
+
+/* Skeleton shimmer for loading placeholders. */
+.skeleton {
+  background: linear-gradient(90deg, rgba(var(--ink), 0.05) 25%, rgba(var(--ink), 0.1) 50%, rgba(var(--ink), 0.05) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.3s linear infinite;
+  border-radius: var(--radius-md);
+}
+@keyframes skeleton-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }

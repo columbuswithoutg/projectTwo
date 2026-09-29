@@ -1,0 +1,61 @@
+/************************************************
+ * BOARD (/board) — Not started / In progress / Done
+ *   Cinematic: deep glass columns, a coloured edge along the top.
+ *   Comic: three comic panels with coloured title strips.
+ ************************************************/
+.kb-col-head h2 {
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  font-size: calc(19px * var(--display-scale));
+  line-height: 1;
+}
+.kb-col { --col-accent: var(--text-3); --col-strip: #7ad3f2; }
+.kb-col[data-col="progress"] { --col-accent: var(--color-primary-light); --col-strip: var(--highlight); }
+.kb-col[data-col="done"] { --col-accent: var(--color-health-good); --col-strip: #8ee58f; }
+
+[data-theme="cinematic"] .kb-col {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.008)), var(--surface-1);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-top: 3px solid var(--col-accent);
+  border-radius: 16px;
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.38);
+}
+[data-theme="comic"] .kb-col {
+  background: #ffffff;
+  border: 3px solid #111111;
+  border-radius: 12px;
+  box-shadow: 5px 5px 0 #111111;
+}
+[data-theme="comic"] .kb-col-head {
+  background: var(--col-strip);
+  border-bottom: 3px solid #111111;
+  border-radius: 9px 9px 0 0;
+  padding-bottom: var(--space-3);
+}
+[data-theme="comic"] .kb-col-head h2 { color: #111111; }
+
+.kb-count { font: 700 11px/1.6 var(--font-ui); }
+[data-theme="comic"] .kb-count { background: #ffffff; color: #111111; border: 2px solid #111111; }
+[data-theme="comic"] :is(.kb-filter, .kb-hint) { color: #111111; }
+[data-theme="comic"] .kb-filter { border: 2px solid #111111; background-color: #ffffff; }
+
+/* Cards */
+.kb-title { font: 700 15px/1.25 var(--font-ui); }
+[data-theme="cinematic"] .kb-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+}
+[data-theme="cinematic"] .kb-card:hover { border-color: rgba(214, 178, 94, 0.3); }
+[data-theme="comic"] .kb-card {
+  background: #ffffff;
+  border: 2.5px solid #111111;
+  border-radius: 10px;
+  box-shadow: 3px 3px 0 #111111;
+}
+.kb-poster img { border-radius: 6px; }
+[data-theme="comic"] .kb-poster img { border: 2px solid #111111; border-radius: 4px; }
+[data-theme="comic"] :is(.kb-tags span, .kb-tag-accent) { border: 1.5px solid #111111; background: #fff1b8; color: #111111; }
+[data-theme="comic"] .kb-empty { border: 2.5px dashed #111111; color: #111111; background: #fff6d5; }

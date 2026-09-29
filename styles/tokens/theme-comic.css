@@ -1,0 +1,128 @@
+/************************************************
+ * THEME: COMIC (light)
+ *
+ * Bold comic book: newsprint paper, thick ink outlines, hard offset
+ * shadows, halftone dots, Bangers display type, red / yellow / cyan pops.
+ * Picked by data-theme="comic" on <html> (js/theme.js).
+ *
+ * Contrast: white on --color-primary fills 5.2:1; --accent-text on paper
+ * 5.6:1; ink on --highlight 14.5:1; ink on --info 8.8:1. The brighter
+ * decorative red (#e8262b) fails with white text — never use it as a fill
+ * behind text.
+ ************************************************/
+[data-theme="comic"] {
+  color-scheme: light;
+
+  /* Accent */
+  --color-primary: #d71920;
+  --color-primary-light: #e8262b;
+  --primary-rgb: 215, 25, 32;
+  --gold: var(--color-primary);
+  --color-red: #d71920;
+  --color-red-light: #c4161c;        /* used as text on paper — keep it dark enough */
+  --accent-text: #c4161c;
+  --text-on-accent: #ffffff;
+  --highlight: #ffd23f;              /* comic yellow */
+  --highlight-rgb: 255, 210, 63;
+  --on-highlight: #111111;
+  --info: #22b5e8;
+
+  /* Surfaces: paper, white panels, yellowed insets */
+  --surface-0: #fff6d5;
+  --surface-1: #ffffff;
+  --surface-2: #fdf0c4;
+  --surface-3: #f6e3a1;
+  --surface-glass: rgba(255, 255, 255, 0.94);
+  --glass-blur: 0px;
+
+  /* Text */
+  --text-1: #111111;
+  --text-2: #2c2a25;
+  --text-3: #5d5648;
+  --text-disabled: #9b927c;
+  --color-text-warm: #3b352a;
+
+  --ink: 17, 17, 17;
+
+  /* Borders — ink, not hairlines */
+  --border-1: rgba(17, 17, 17, 0.16);
+  --border-2: rgba(17, 17, 17, 0.32);
+  --border-3: #111111;
+  --border-print: #111111;
+  --border-w: 3px;
+  --border-ink: #111111;
+
+  /* Scrims */
+  --scrim: rgba(17, 17, 17, 0.45);
+  --scrim-heavy: rgba(17, 17, 17, 0.72);
+  --scrim-photo: rgba(0, 0, 0, 0.9);
+
+  /* Legacy surface names */
+  --color-bg: var(--surface-0);
+  --color-surface: var(--surface-1);
+  --color-node-bg: #ffffff;
+  --color-dark-gradient-top: #fff6d5;
+
+  /* Shadows: hard, offset, ink */
+  --shadow-glow: 3px 3px 0 #111111;
+  --shadow-red: 3px 3px 0 #d71920;
+  --shadow-1: 3px 3px 0 #111111;
+  --shadow-2: 4px 4px 0 #111111;
+  --shadow-3: 6px 6px 0 #111111;
+  --shadow-card: 4px 4px 0 #111111;
+  --shadow-hard: 4px 4px 0 #111111;
+  --shadow-hard-sm: 2px 2px 0 #111111;
+  --modal-box-shadow: 8px 8px 0 #111111;
+
+  /* Shapes */
+  --radius-control: 8px;
+  --radius-card: 10px;
+  --radius-panel: 12px;
+
+  /* Type */
+  --font-display: var(--font-bangers);
+  --font-body: var(--font-inter);
+  --display-weight: 400;
+  --display-tracking: 0.04em;
+  --display-transform: none;
+  --display-scale: 1.1;
+
+  /* Flat fills — comics don't do gradients */
+  --red-gradient: #d71920;
+  --red-gradient-hover: #e8262b;
+  --gold-gradient: #d71920;
+  --modal-bg: #ffffff;
+  --splash-bg: #fff6d5;
+
+  /* Page decoration: halftone dots, denser in the corners */
+  --page-deco: radial-gradient(circle at 100% 0%, rgba(215, 25, 32, 0.1), transparent 45%),
+               radial-gradient(circle at 0% 100%, rgba(34, 181, 232, 0.1), transparent 45%);
+  --halftone: radial-gradient(rgba(17, 17, 17, 0.11) 1.1px, transparent 1.5px);
+
+  --gold-005: rgba(215, 25, 32, 0.05);
+  --gold-008: rgba(215, 25, 32, 0.08);
+  --gold-01: rgba(215, 25, 32, 0.1);
+  --gold-012: rgba(215, 25, 32, 0.12);
+  --gold-015: rgba(215, 25, 32, 0.15);
+  --gold-02: rgba(215, 25, 32, 0.2);
+  --gold-025: rgba(215, 25, 32, 0.25);
+  --gold-03: rgba(215, 25, 32, 0.3);
+  --gold-035: rgba(215, 25, 32, 0.35);
+  --gold-04: rgba(215, 25, 32, 0.4);
+
+  /* In-game HUD: white comic panels with ink outlines over the 3D world */
+  --hud-surface: rgba(255, 255, 255, 0.95);
+  --hud-surface-strong: #ffffff;
+  --hud-border: #111111;
+  --hud-border-w: 2.5px;
+  --hud-text: #111111;
+  --hud-muted: #4a4640;
+  --hud-accent: #d71920;
+  --hud-highlight: #ffd23f;
+  --hud-shadow: 3px 3px 0 #111111;
+  --hud-radius: 12px;
+  --hud-blur: 0px;
+  --chan-world: #d71920;
+  --chan-project: #9a6300;
+  --chan-whisper: #6d28d9;
+}

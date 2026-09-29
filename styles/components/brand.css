@@ -1,0 +1,24 @@
+/************************************************
+ * BRAND MARK — the logo, recoloured by the theme
+ *
+ * <span class="brand-mark" aria-hidden="true"></span>. The SVG is used as a
+ * mask, so the mark takes --brand-color: red in Cinematic, red with an ink
+ * drop shadow in Comic. (The boot splash used to tint a black SVG with a
+ * chain of CSS filters.)
+ ************************************************/
+:root,
+[data-theme="cinematic"] { --brand-color: var(--color-primary-light); --brand-shadow: drop-shadow(0 6px 18px rgba(200, 16, 46, 0.45)); }
+[data-theme="comic"] { --brand-color: var(--color-primary); --brand-shadow: drop-shadow(3px 3px 0 #111111); }
+
+.brand-mark {
+  display: inline-block;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+  background: var(--brand-color);
+  -webkit-mask: url('/assets/avengers-logo.svg') center / contain no-repeat;
+  mask: url('/assets/avengers-logo.svg') center / contain no-repeat;
+  filter: var(--brand-shadow);
+}
+.brand-mark--sm { width: 28px; height: 28px; filter: none; }
+.brand-mark--lg { width: 88px; height: 88px; }

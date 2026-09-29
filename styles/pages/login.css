@@ -1,0 +1,93 @@
+/************************************************
+ * LOGIN (/login)
+ *   Cinematic: a red spotlight on black, a glass card, Bebas title.
+ *   Comic: yellow sunburst, an ink-outlined panel, a Bangers title.
+ ************************************************/
+body.auth-page {
+  background: transparent;
+  padding: 24px 0;
+}
+[data-theme="cinematic"] body.auth-page {
+  background:
+    radial-gradient(ellipse 60% 45% at 50% 0%, rgba(200, 16, 46, 0.28), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 50% 100%, rgba(214, 178, 94, 0.1), transparent 70%);
+}
+[data-theme="comic"] body.auth-page {
+  background:
+    radial-gradient(circle at 50% 42%, #fff6d5 0 180px, transparent 181px),
+    repeating-conic-gradient(from 0deg at 50% 42%, #ffd23f 0deg 9deg, #fff1b8 9deg 18deg);
+}
+
+.auth-modal-static { max-width: 420px; }
+
+.auth-page .auth-box {
+  align-items: stretch;
+  text-align: center;
+  padding: 36px 32px 32px;
+  gap: 14px;
+}
+[data-theme="cinematic"] .auth-page .auth-box {
+  background: rgba(15, 18, 26, 0.82);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+}
+.auth-form-panel { display: flex; flex-direction: column; gap: 14px; }
+
+.auth-page .brand-mark { align-self: center; margin-bottom: 2px; }
+
+.auth-box h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  font-size: calc(38px * var(--display-scale));
+  line-height: 0.95;
+  color: var(--text-1);
+}
+[data-theme="comic"] .auth-box h1 {
+  color: var(--color-primary);
+  -webkit-text-stroke: 2px #111111;
+  paint-order: stroke fill;
+  text-shadow: 3px 3px 0 #111111;
+}
+.auth-subtitle {
+  margin: -4px 0 6px;
+  color: var(--text-3);
+  font: 500 14px/1.4 var(--font-ui);
+}
+[data-theme="cinematic"] .auth-subtitle { letter-spacing: 0.2em; text-transform: uppercase; font-size: 11px; color: var(--highlight); }
+
+/* Login / Register switch — the segmented control look. */
+.auth-tabs {
+  margin: 0;
+  background: rgba(var(--ink), 0.05);
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+}
+.auth-tab { font: 700 13px/1 var(--font-ui); letter-spacing: 0.12em; padding: 11px 8px; border-radius: 9px; }
+.auth-tab.active {
+  background: rgba(var(--highlight-rgb), 0.16);
+  color: var(--text-1);
+  box-shadow: inset 0 0 0 1px rgba(var(--highlight-rgb), 0.55);
+}
+[data-theme="comic"] .auth-tabs { background: #ffffff; border: 3px solid #111111; box-shadow: 3px 3px 0 #111111; }
+[data-theme="comic"] .auth-tab { font: 400 19px/1 var(--font-bangers); letter-spacing: 0.05em; text-transform: none; color: #111111; }
+[data-theme="comic"] .auth-tab.active { background: var(--highlight); box-shadow: inset 0 0 0 2.5px #111111; }
+
+.auth-box #auth-submit {
+  min-height: 50px;
+  margin-top: 4px;
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+[data-theme="comic"] .auth-box #auth-submit { font-size: 22px; text-transform: none; letter-spacing: 0.06em; }
+.auth-error { font: 600 13px/1.4 var(--font-ui); color: var(--accent-text); }
+.auth-success-title {
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  font-size: calc(26px * var(--display-scale));
+}

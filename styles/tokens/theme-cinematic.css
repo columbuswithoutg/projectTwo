@@ -1,0 +1,132 @@
+/************************************************
+ * THEME: CINEMATIC (dark — the default)
+ *
+ * Film-poster mood: near-black surfaces, deep red + gold, tall condensed
+ * display type (Bebas Neue), glassy translucent panels with hairline borders.
+ * Picked by data-theme="cinematic" on <html> (js/theme.js; also the default
+ * when nothing is saved, hence :root).
+ *
+ * Contrast: white on --color-primary fills 5.9:1; --accent-text on
+ * --surface-0 6.3:1; gold on --surface-0 9.6:1. --color-primary is a FILL
+ * colour — never use it for small text (3.3:1); use --accent-text.
+ ************************************************/
+:root,
+[data-theme="cinematic"] {
+  color-scheme: dark;
+
+  /* Accent */
+  --color-primary: #c8102e;
+  --color-primary-light: #e3243f;
+  --primary-rgb: 200, 16, 46;
+  --gold: var(--color-primary);      /* legacy name — a few rules still use it */
+  --color-red: #c8102e;
+  --color-red-light: #ff5a6a;
+  --accent-text: #ff5a6a;            /* red as TEXT / icons on dark surfaces */
+  --text-on-accent: #ffffff;
+  --highlight: #d6b25e;              /* gold: active nav, badges, stars */
+  --highlight-rgb: 214, 178, 94;
+  --on-highlight: #1a1405;
+  --info: #5ab8ff;
+
+  /* Surfaces */
+  --surface-0: #0b0d13;              /* page */
+  --surface-1: #12151e;              /* cards */
+  --surface-2: #1a1e2a;              /* insets, inputs */
+  --surface-3: #232838;
+  --surface-glass: rgba(18, 21, 30, 0.62);
+  --glass-blur: 16px;
+
+  /* Text */
+  --text-1: #eceef3;
+  --text-2: #bfc4d0;
+  --text-3: #8e95a6;
+  --text-disabled: rgba(255, 255, 255, 0.32);
+  --color-text-warm: #d8cfbe;        /* legacy: warm secondary text */
+
+  /* Ink: an RGB triple for translucent hairlines / fills —
+     rgba(var(--ink), 0.06) is a faint white wash here, faint ink in Comic. */
+  --ink: 255, 255, 255;
+
+  /* Borders */
+  --border-1: rgba(255, 255, 255, 0.06);
+  --border-2: rgba(255, 255, 255, 0.11);
+  --border-3: rgba(255, 255, 255, 0.2);
+  --border-print: rgba(214, 178, 94, 0.32);   /* the rule under the header */
+  --border-w: 1px;                   /* component outline width */
+  --border-ink: rgba(255, 255, 255, 0.1);    /* component outline colour */
+
+  /* Scrims */
+  --scrim: rgba(0, 0, 0, 0.55);
+  --scrim-heavy: rgba(0, 0, 0, 0.8);
+  --scrim-photo: rgba(0, 0, 0, 0.92);
+
+  /* Legacy surface names */
+  --color-bg: var(--surface-0);
+  --color-surface: var(--surface-1);
+  --color-node-bg: #111218;
+  --color-dark-gradient-top: #0f111a;
+
+  /* Shadows */
+  --shadow-glow: 0 0 18px rgba(200, 16, 46, 0.45);
+  --shadow-red: 0 0 18px rgba(200, 16, 46, 0.4);
+  --shadow-1: 0 2px 16px rgba(0, 0, 0, 0.55);
+  --shadow-2: 0 14px 30px rgba(0, 0, 0, 0.6);
+  --shadow-3: 0 24px 60px rgba(0, 0, 0, 0.75);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 28px rgba(0, 0, 0, 0.45);
+  --shadow-hard: none;               /* Comic's offset ink shadow; none here */
+  --shadow-hard-sm: none;
+  --modal-box-shadow: var(--shadow-3);
+
+  /* Shapes */
+  --radius-control: 10px;
+  --radius-card: 14px;
+  --radius-panel: 18px;
+
+  /* Type */
+  --font-display: var(--font-bebas);
+  --font-body: var(--font-inter);
+  --display-weight: 400;
+  --display-tracking: 0.05em;
+  --display-transform: uppercase;
+  --display-scale: 1.15;             /* Bebas is narrow — set it a little larger */
+
+  /* Gradients (legacy names — buttons, modals, the boot splash) */
+  --red-gradient: linear-gradient(135deg, #d4153a, #a50d25);
+  --red-gradient-hover: linear-gradient(135deg, #e3243f, #b8102c);
+  --gold-gradient: linear-gradient(135deg, var(--color-primary-light), var(--color-primary));
+  --modal-bg: linear-gradient(180deg, #161a26 0%, #0d0f16 100%);
+  --splash-bg: radial-gradient(ellipse at 50% 40%, #171b28 0%, #0b0d13 70%);
+
+  /* Page decoration: a faint spotlight + vignette behind everything */
+  --page-deco: radial-gradient(ellipse 80% 55% at 50% -10%, rgba(200, 16, 46, 0.12), transparent 60%),
+               radial-gradient(ellipse 70% 50% at 50% 115%, rgba(214, 178, 94, 0.06), transparent 60%);
+  --halftone: none;
+
+  /* The red alpha ladder (names predate the red retheme — "gold" = accent) */
+  --gold-005: rgba(200, 16, 46, 0.05);
+  --gold-008: rgba(200, 16, 46, 0.08);
+  --gold-01: rgba(200, 16, 46, 0.1);
+  --gold-012: rgba(200, 16, 46, 0.12);
+  --gold-015: rgba(200, 16, 46, 0.15);
+  --gold-02: rgba(200, 16, 46, 0.2);
+  --gold-025: rgba(200, 16, 46, 0.25);
+  --gold-03: rgba(200, 16, 46, 0.3);
+  --gold-035: rgba(200, 16, 46, 0.35);
+  --gold-04: rgba(200, 16, 46, 0.4);
+
+  /* In-game HUD (over the 3D world) */
+  --hud-surface: rgba(12, 14, 20, 0.72);
+  --hud-surface-strong: rgba(12, 14, 20, 0.9);
+  --hud-border: rgba(255, 255, 255, 0.1);
+  --hud-border-w: 1px;
+  --hud-text: #eceef3;
+  --hud-muted: #9aa0ad;
+  --hud-accent: #c8102e;
+  --hud-highlight: #d6b25e;
+  --hud-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --hud-radius: 14px;
+  --hud-blur: 12px;
+  --chan-world: #e3243f;
+  --chan-project: #d6b25e;
+  --chan-whisper: #a58bff;
+}

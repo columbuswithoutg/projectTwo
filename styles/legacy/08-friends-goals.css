@@ -1,0 +1,448 @@
+/* ======================
+   FRIENDS PANEL
+====================== */
+.friends-panel {
+  background: var(--scrim-heavy);
+  z-index: 1000;
+}
+
+.friends-box {
+  background: var(--modal-bg);
+  padding: 24px;
+  width: 380px;
+  max-height: 80vh;
+  gap: 16px;
+}
+
+.friends-box h3 {
+  color: var(--text-1);
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.friends-section h4 {
+  color: var(--accent-text);
+  margin: 0 0 8px;
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.friends-search-row {
+  display: flex;
+  gap: 8px;
+}
+
+.friends-search-row input {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-2);
+  background: rgba(var(--ink), 0.04);
+  color: var(--text-1);
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.friends-search-row input:focus {
+  border-color: rgba(237, 29, 36, 0.45);
+}
+
+/* Friend action buttons (unique props — base from shared red/secondary) */
+.friends-search-row button,
+.friend-accept-btn,
+.friend-view-btn {
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(226, 54, 54, 0.3);
+}
+
+.friends-search-row button:hover,
+.friend-accept-btn:hover,
+.friend-view-btn:hover {
+  box-shadow: 0 4px 12px rgba(226, 54, 54, 0.45);
+}
+
+.friend-reject-btn,
+.friend-remove-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
+.friend-reject-btn:hover,
+.friend-remove-btn:hover {
+  background: rgba(226, 54, 54, 0.15);
+  border-color: rgba(226, 54, 54, 0.4);
+  color: var(--color-red-light);
+}
+
+.friend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-1);
+  color: var(--text-2);
+}
+
+.friend-username {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ======================
+   GOALS PANEL
+====================== */
+.goals-panel {
+  background: var(--scrim-heavy);
+  z-index: 1000;
+}
+
+.goals-box {
+  background: var(--modal-bg);
+  padding: 24px;
+  width: 420px;
+  max-height: 80vh;
+  gap: 12px;
+}
+
+.goals-box h3 {
+  color: var(--text-1);
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.goals-subtitle {
+  color: var(--text-3);
+  margin: -6px 0 4px;
+  font-size: 0.82rem;
+}
+
+.goals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.goals-empty {
+  color: var(--text-3);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 12px 0;
+}
+
+.goal-card {
+  background: rgba(var(--ink), 0.04);
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.goal-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.goal-card-title {
+  font-family: var(--font-ui);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-1);
+}
+
+.goal-card-progress {
+  font-size: 0.78rem;
+  color: var(--accent-text);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.goal-req-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.goal-req {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-2);
+  padding: 3px 4px;
+  border-radius: 6px;
+}
+
+.goal-req[data-action="goal-req"] {
+  cursor: pointer;
+}
+
+.goal-req[data-action="goal-req"]:hover {
+  background: rgba(226, 54, 54, 0.1);
+}
+
+.goal-req-mark {
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--color-red-light);
+}
+
+.goal-req.is-met .goal-req-mark {
+  color: var(--color-health-good);
+}
+
+.goal-req.is-met .goal-req-title {
+  color: var(--text-3);
+}
+
+/* Recommended (optional) prerequisites — muted, never counted as required. */
+.goal-req.is-optional .goal-req-mark {
+  color: var(--text-3);
+}
+
+.goal-req.is-optional.is-met .goal-req-mark {
+  color: var(--color-health-good);
+}
+
+.goal-rec-label,
+.popup-recommended-label {
+  margin: 8px 0 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.popup-recommended-label span {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.popup-recommended {
+  margin: 4px 0 10px;
+}
+
+/* Brief highlight when a goal's requirement card is scrolled into view. */
+.flow-cell.goal-highlight .node {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 3px;
+  border-radius: 8px;
+  transition: outline-color 0.3s;
+}
+
+.friend-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.friends-empty {
+  color: var(--text-3);
+  font-size: 0.9rem;
+  margin: 4px 0;
+}
+
+/* ── /friend/:username header ──
+   The dedicated friend routes own their entire chrome — no host view's
+   #header is ever rendered, so the friend header IS the top of the page
+   (no fixed positioning needed; stays in normal flow). */
+.friend-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--header-height);
+  padding: 0 12px;
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+  padding-top: env(safe-area-inset-top);
+  background: linear-gradient(180deg, var(--color-dark-gradient-top) 0%, var(--color-bg) 100%);
+  border-bottom: 2px solid var(--border-print);
+  box-shadow: var(--shadow-1);
+  color: var(--text-1);
+  position: relative;
+  z-index: 5;
+}
+.friend-header-text {
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+.friend-header-name {
+  color: var(--accent-text);
+  font-weight: 700;
+  text-decoration: none;
+}
+.friend-header-name:hover { text-decoration: underline; }
+.friend-header-tabs {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.friend-header-tab {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-2);
+  background: rgba(var(--ink), 0.04);
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.friend-header-tab:hover { background: rgba(237, 29, 36, 0.12); }
+.friend-header-tab.active {
+  background: var(--gold-gradient);
+  color: var(--text-on-accent);
+  border-color: var(--gold);
+}
+.friend-header-back {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-2);
+  background: rgba(var(--ink), 0.08);
+  color: var(--text-1);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.friend-header-back:hover { background: rgba(var(--ink), 0.14); }
+
+/* 404 card shown when /friend/:username can't be resolved (no such user
+   or not friends with them). */
+.friend-404 {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--surface-0);
+}
+.friend-404-card {
+  max-width: 420px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-radius: 14px;
+  padding: 28px;
+  text-align: center;
+  box-shadow: var(--shadow-2);
+  color: var(--text-1);
+}
+.friend-404-card h2 {
+  margin: 0 0 10px;
+  font-family: var(--font-ui);
+  font-size: 20px;
+  color: var(--color-text-warm);
+}
+.friend-404-card p {
+  margin: 0 0 18px;
+  color: var(--text-3);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Friend profile tab — minimal read-only card. */
+.friend-profile-body {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 32px 16px;
+}
+.friend-profile-card {
+  max-width: 380px;
+  width: 100%;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: 14px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-1);
+  box-shadow: var(--shadow-1);
+}
+.friend-profile-avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  margin: 0 auto 14px;
+  display: block;
+  object-fit: cover;
+  border: 2px solid var(--gold-025);
+  background: rgba(var(--ink), 0.06);
+}
+.friend-profile-initials {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-ui);
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--accent-text);
+}
+.friend-profile-name {
+  margin: 0 0 18px;
+  font-family: var(--font-ui);
+  font-size: 22px;
+}
+.friend-profile-stats {
+  display: flex;
+  justify-content: space-around;
+  gap: 12px;
+}
+.friend-profile-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.friend-profile-stat strong {
+  font-family: var(--font-ui);
+  font-size: 22px;
+  color: var(--accent-text);
+}
+.friend-profile-stat span {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}

@@ -1,7 +1,7 @@
 // Client build: source files → dist/
 //
 //   npm run build            one build (also runs on `npm install` via postinstall)
-//   npm run dev              build, watch js/ + styles.css + templates, and run server.js
+//   npm run dev              build, watch js/ + styles/ + templates, and run server.js
 //   node scripts/build.mjs [--watch] [--serve]
 //
 // WHY THIS IS NOT A NORMAL BUNDLE. The app is ~60 classic scripts that share
@@ -176,11 +176,31 @@ async function buildChunk(name, define) {
   return { name, file, url: '/dist/' + file, raw: concat.length, bytes: out.code.length };
 }
 
+// styles/index.css imports the partials (and declares the cascade layers);
+// esbuild bundles them into one minified file. No url() in the CSS points at
+// a file on disk (only data: URIs), so nothing else gets pulled in.
+function cssSourceBytes(dir) {
+  let n = 0;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    n += e.isDirectory() ? cssSourceBytes(p) : (e.name.endsWith('.css') ? fs.statSync(p).size : 0);
+  }
+  return n;
+}
 async function buildCss() {
-  const out = await esbuild.transform(read('styles.css'), { loader: 'css', minify: true, logLevel: 'warning' });
-  const file = `styles.${hash(out.code)}.css`;
-  fs.writeFileSync(path.join(STATIC, file), out.code);
-  return { name: 'styles', file, url: '/dist/' + file, raw: fs.statSync(path.join(ROOT, 'styles.css')).size, bytes: out.code.length };
+  const res = await esbuild.build({
+    entryPoints: [path.join(ROOT, 'styles', 'index.css')],
+    bundle: true,
+    minify: true,
+    write: false,
+    // Site-absolute URLs (the brand mark's mask image) are served as-is.
+    external: ['/assets/*'],
+    logLevel: 'warning'
+  });
+  const code = res.outputFiles[0].text;
+  const file = `styles.${hash(code)}.css`;
+  fs.writeFileSync(path.join(STATIC, file), code);
+  return { name: 'styles', file, url: '/dist/' + file, raw: cssSourceBytes(path.join(ROOT, 'styles')), bytes: code.length };
 }
 
 function buildShim() {
@@ -205,9 +225,25 @@ function prune(keep) {
   }
 }
 
+// The anti-flash snippet in spa.html duplicates js/theme.js's defaulting and
+// theme-colour values (it has to run before any script). Refuse to build if
+// they drift apart — a mismatch flashes the wrong toolbar colour on load.
+function assertThemeSnippet() {
+  const theme = read('js/theme.js');
+  const spa = read('spa.html');
+  const metas = [...theme.matchAll(/(cinematic|comic): \{ meta: '(#[0-9a-f]{6})' \}/g)].map((m) => [m[1], m[2]]);
+  if (metas.length !== 2) throw new Error('[build] js/theme.js THEMES not found');
+  for (const [name, hex] of metas) {
+    if (!spa.includes(`'${hex}'`) && !spa.includes(`"${hex}"`)) {
+      throw new Error(`[build] spa.html anti-flash snippet lacks ${name} theme-color ${hex} (js/theme.js)`);
+    }
+  }
+}
+
 export async function build() {
   const t0 = Date.now();
   fs.mkdirSync(STATIC, { recursive: true });
+  assertThemeSnippet();
 
   const models = modelInfo();
   const define = { __MODEL_BASE__: JSON.stringify(models.base) };
@@ -263,10 +299,11 @@ async function main() {
     };
     const trigger = () => { clearTimeout(timer); timer = setTimeout(run, 150); };
     fs.watch(path.join(ROOT, 'js'), { recursive: true }, trigger);
-    for (const f of ['projects.js', 'characters.js', 'locations.js', 'styles.css', 'spa.html', 'sw.js']) {
+    fs.watch(path.join(ROOT, 'styles'), { recursive: true }, trigger);
+    for (const f of ['projects.js', 'characters.js', 'locations.js', 'spa.html', 'sw.js']) {
       fs.watch(path.join(ROOT, f), trigger);
     }
-    console.log('[build] watching js/, styles.css, spa.html, sw.js and the content files');
+    console.log('[build] watching js/, styles/, spa.html, sw.js and the content files');
   }
 
   if (SERVE) {

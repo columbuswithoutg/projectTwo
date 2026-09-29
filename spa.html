@@ -8,31 +8,41 @@
   <link rel="icon" type="image/jpeg" href="/assets/favicon.jpg" />
   <link rel="apple-touch-icon" href="/assets/favicon.jpg" />
   <link rel="manifest" href="/manifest.json" />
-  <meta name="theme-color" content="#07080f" />
+  <meta name="theme-color" content="#0b0d13" />
   <!--
     Anti-flash theme boot: every app script is deferred (runs after first
-    paint), so resolving the theme late would flash the wrong color without
-    this. Sets data-theme before the stylesheet applies. Kept in sync with
-    js/theme.js (the runtime toggle API) — dark is the hard default; only an
-    explicit 'system' choice follows the OS.
+    paint), so resolving the theme late would flash the wrong look without
+    this. Sets data-theme before the stylesheet applies. Mirrors js/theme.js
+    (the runtime API): Cinematic is the default, old 'dark' / 'light' saves
+    map to Cinematic / Comic, and only an explicit 'system' choice follows
+    the OS. scripts/build.mjs checks the theme-colour values match.
   -->
   <script>
     (function () {
       var t;
       try { t = localStorage.getItem('mcu-theme'); } catch (e) {}
+      if (t === 'dark') t = 'cinematic';
+      else if (t === 'light') t = 'comic';
       if (t === 'system') {
-        t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
-      } else if (t !== 'light' && t !== 'dark') {
-        t = 'dark';
+        t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'cinematic' : 'comic';
+      } else if (t !== 'cinematic' && t !== 'comic') {
+        t = 'cinematic';
       }
       document.documentElement.setAttribute('data-theme', t);
       var m = document.querySelector('meta[name="theme-color"]');
-      if (m) m.setAttribute('content', t === 'dark' ? '#07080f' : '#ffffff');
+      if (m) m.setAttribute('content', t === 'comic' ? '#fff6d5' : '#0b0d13');
     })();
   </script>
   <!-- build:styles -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!--
+    Display + body fonts for both themes (Cinematic: Bebas Neue, Comic:
+    Bangers, both: Inter; Rajdhani until the legacy rules stop using it).
+    Browsers only download the faces a page actually uses. Used to be an
+    @import at the top of the stylesheet, which blocked rendering twice.
+  -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bangers&family=Bebas+Neue&family=Inter:wght@400..700&family=Rajdhani:wght@500;600;700&display=swap" />
 
   <!--
     Three.js for the 3D views. The importmap must stay inline (it has to

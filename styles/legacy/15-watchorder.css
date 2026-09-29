@@ -1,0 +1,166 @@
+/* ==========================================
+   WATCH ORDER FLOWCHART
+========================================== */
+.flow-wrapper {
+  position: absolute;
+  top: var(--header-height);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: auto;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(237, 29, 36, 0.06), transparent 60%),
+    radial-gradient(ellipse at 70% 80%, rgba(226, 54, 54, 0.04), transparent 60%),
+    var(--color-bg);
+  scrollbar-width: thin;
+  scrollbar-color: var(--gold-025) transparent;
+  cursor: grab;
+  /* Mouse-drag pan in setupPanControls() updates scroll directly; this
+     prevents the browser from intercepting drag as a text selection. */
+  user-select: none;
+}
+
+.flow-wrapper.panning {
+  cursor: grabbing;
+}
+
+.flow-wrapper::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.flow-wrapper::-webkit-scrollbar-track {
+  background: transparent;
+}
+.flow-wrapper::-webkit-scrollbar-thumb {
+  background: var(--gold-025);
+  border-radius: var(--radius-full);
+}
+.flow-wrapper::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-04);
+}
+
+/* The SIZER. Its box is content × zoom, which is what gives .flow-wrapper the
+   right scroll extent at every zoom level. It is never transformed. */
+.flow-canvas {
+  position: relative;
+  /* width and height set inline by orderRenderer */
+}
+
+/* The scaled content layer. Natural (unscaled) content size, set inline by
+   orderRenderer, with transform: scale(zoom) on top. Splitting sizer from
+   scaled content is what lets the scroll area shrink when you zoom out —
+   a transform alone only ever grows scrollable overflow. */
+.flow-zoom {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  /* width/height/transform set inline by orderRenderer */
+}
+
+.flow-arrows {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.flow-nodes {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+.flow-walkers {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* Fight zoom on the flow view — lock native scroll while the canvas is
+   transformed by the WalkerView adapter. Without this, mouse-wheel/touch
+   would drag the wrapper out from under the centered fight transform. */
+.flow-wrapper.fight-zoom {
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* ==========================================
+   WATCH ORDER ZOOM CONTROLS
+   Floating −/level/+ cluster, built by orderRenderer._buildZoomUi() so
+   every view that mounts the flowchart gets it without duplicating markup.
+========================================== */
+.flow-zoom-ui {
+  position: fixed;
+  right: 16px;
+  bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--radius-full);
+  background: rgba(13, 16, 32, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--gold-025);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  z-index: 50;
+  user-select: none;
+}
+
+.flow-zoom-ui button {
+  background: transparent;
+  border: none;
+  color: var(--color-primary-light);
+  cursor: pointer;
+  border-radius: var(--radius-full);
+  transition: background 0.18s, color 0.18s, opacity 0.18s;
+}
+
+.flow-zoom-btn {
+  width: 40px;
+  height: 40px;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.flow-zoom-level {
+  min-width: 58px;
+  height: 40px;
+  padding: 0 6px;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-warm);
+}
+
+.flow-zoom-ui button:hover:not(:disabled) {
+  background: var(--gold-01);
+  color: var(--color-primary-light);
+}
+
+.flow-zoom-ui button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Out of the way while a walker fight owns the camera — the controls would
+   do nothing (zoom input is locked mid-fight) and they sit right over the
+   backdrop. */
+body.fight-active .flow-zoom-ui {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .flow-zoom-ui {
+    right: 10px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  /* Keep ≥44px touch targets. */
+  .flow-zoom-btn { width: 44px; height: 44px; }
+  .flow-zoom-level { min-width: 52px; height: 44px; }
+}

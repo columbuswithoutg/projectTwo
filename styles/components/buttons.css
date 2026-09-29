@@ -1,0 +1,164 @@
+/************************************************
+ * BUTTONS — one system for the whole app
+ *
+ *   .btn + .btn--primary | .btn--secondary | .btn--ghost | .btn--danger
+ *        + .btn--sm | .btn--lg | .btn--icon
+ *
+ * The older one-off button classes adopt the same looks by selector list
+ * below, so every primary action reads the same in both themes before the
+ * markup is migrated.
+ *   Cinematic: red fill, hairline edge, soft red glow, lifts on hover.
+ *   Comic: red fill, 3px ink outline, hard offset shadow, presses down.
+ ************************************************/
+:root,
+[data-theme="cinematic"] {
+  --btn-radius: 10px;
+  --btn-border: 1px solid rgba(255, 255, 255, 0.14);
+  --btn-shadow: 0 8px 20px rgba(200, 16, 46, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  --btn-shadow-hover: 0 10px 26px rgba(200, 16, 46, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  --btn-shadow-active: 0 3px 10px rgba(200, 16, 46, 0.25);
+  --btn-lift: translateY(-1px);
+  --btn-press: translateY(1px);
+  --btn-family: var(--font-ui);
+  --btn-weight: 600;
+  --btn-tracking: 0.02em;
+  --btn-transform: none;
+  --btn2-bg: rgba(255, 255, 255, 0.06);
+  --btn2-bg-hover: rgba(255, 255, 255, 0.1);
+  --btn2-border: 1px solid rgba(255, 255, 255, 0.14);
+  --btn2-fg: var(--text-1);
+  --btn2-shadow: none;
+}
+[data-theme="comic"] {
+  --btn-radius: 8px;
+  --btn-border: 3px solid #111111;
+  --btn-shadow: 4px 4px 0 #111111;
+  --btn-shadow-hover: 5px 5px 0 #111111;
+  --btn-shadow-active: 1px 1px 0 #111111;
+  --btn-lift: translate(-1px, -1px);
+  --btn-press: translate(3px, 3px);
+  --btn-family: var(--font-bangers);
+  --btn-weight: 400;
+  --btn-tracking: 0.06em;
+  --btn-transform: none;
+  --btn2-bg: #ffffff;
+  --btn2-bg-hover: var(--highlight);
+  --btn2-border: 3px solid #111111;
+  --btn2-fg: #111111;
+  --btn2-shadow: 3px 3px 0 #111111;
+}
+
+/* ── Shared shape ── */
+.btn,
+:is(.popup-action, .auth-box #auth-submit, .friends-search-row button, .friend-accept-btn, .friend-view-btn,
+    .memory-view-btn, #change-avatar-btn, .pg-btn-save, .pg-empty-cta, .confirm-btn, .msg-btn, .msg-new-btn,
+    .profile-support-btn, .wc-btn, .pc-post, .friend-reject-btn, .friend-remove-btn) {
+  font-family: var(--btn-family);
+  font-weight: var(--btn-weight);
+  letter-spacing: var(--btn-tracking);
+  text-transform: var(--btn-transform);
+  border-radius: var(--btn-radius);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out),
+              background-color var(--dur-base), color var(--dur-base), filter var(--dur-base);
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--touch-target-min);
+  padding: 0 18px;
+  font-size: 15px;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+}
+[data-theme="comic"] .btn { font-size: 19px; }
+.btn--sm { min-height: 36px; padding: 0 12px; font-size: 13px; }
+[data-theme="comic"] .btn--sm { font-size: 16px; }
+.btn--lg { min-height: 52px; padding: 0 26px; font-size: 17px; }
+[data-theme="comic"] .btn--lg { font-size: 22px; }
+.btn--icon { padding: 0; width: var(--touch-target-min); }
+
+/* ── Primary ── */
+.btn--primary,
+:is(.popup-action:not(.secondary), .auth-box #auth-submit, .friends-search-row button, .friend-accept-btn,
+    .friend-view-btn, .memory-view-btn, #change-avatar-btn, .pg-btn-save, .pg-empty-cta, .confirm-btn.confirm-ok,
+    .msg-btn, .msg-new-btn, .profile-support-btn.primary, .wc-btn.wc-primary, .pc-post) {
+  background: var(--color-primary);
+  color: var(--text-on-accent);
+  border: var(--btn-border);
+  box-shadow: var(--btn-shadow);
+}
+.btn--primary:hover,
+:is(.popup-action:not(.secondary), .auth-box #auth-submit, .friends-search-row button, .friend-accept-btn,
+    .friend-view-btn, .memory-view-btn, #change-avatar-btn, .pg-btn-save, .pg-empty-cta, .confirm-btn.confirm-ok,
+    .msg-btn, .msg-new-btn, .profile-support-btn.primary, .wc-btn.wc-primary, .pc-post):not(:disabled):hover {
+  background: var(--color-primary-light);
+  color: var(--text-on-accent);
+  transform: var(--btn-lift);
+  box-shadow: var(--btn-shadow-hover);
+}
+.btn--primary:active,
+:is(.popup-action:not(.secondary), .auth-box #auth-submit, .friends-search-row button, .friend-accept-btn,
+    .friend-view-btn, .memory-view-btn, #change-avatar-btn, .pg-btn-save, .pg-empty-cta, .confirm-btn.confirm-ok,
+    .msg-btn, .msg-new-btn, .profile-support-btn.primary, .wc-btn.wc-primary, .pc-post):not(:disabled):active {
+  transform: var(--btn-press);
+  box-shadow: var(--btn-shadow-active);
+}
+
+/* ── Secondary ── */
+.btn--secondary,
+:is(.popup-action.secondary, .friend-reject-btn, .friend-remove-btn, .profile-support-btn:not(.primary),
+    .confirm-btn:not(.confirm-ok), .wc-btn:not(.wc-primary)) {
+  background: var(--btn2-bg);
+  color: var(--btn2-fg);
+  border: var(--btn2-border);
+  box-shadow: var(--btn2-shadow);
+}
+.btn--secondary:hover,
+:is(.popup-action.secondary, .friend-reject-btn, .friend-remove-btn, .profile-support-btn:not(.primary),
+    .confirm-btn:not(.confirm-ok), .wc-btn:not(.wc-primary)):not(:disabled):hover {
+  background: var(--btn2-bg-hover);
+  color: var(--btn2-fg);
+  transform: var(--btn-lift);
+}
+.btn--secondary:active,
+:is(.popup-action.secondary, .friend-reject-btn, .friend-remove-btn, .profile-support-btn:not(.primary),
+    .confirm-btn:not(.confirm-ok), .wc-btn:not(.wc-primary)):not(:disabled):active {
+  transform: var(--btn-press);
+}
+
+/* ── Ghost + danger ── */
+.btn--ghost {
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid transparent;
+  box-shadow: none;
+}
+.btn--ghost:hover { background: rgba(var(--ink), 0.06); color: var(--text-1); }
+.btn--danger {
+  background: transparent;
+  color: var(--accent-text);
+  border: var(--btn2-border);
+  border-color: currentColor;
+  box-shadow: none;
+}
+.btn--danger:hover { background: rgba(var(--primary-rgb), 0.1); }
+
+/* Disabled: dimmed, never lifts. */
+.btn:disabled,
+.btn[aria-disabled="true"],
+:is(.popup-action, #auth-submit, .pg-btn-save, .confirm-btn, .msg-btn, .wc-btn, .pc-post):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Pressed shift needs no motion for people who asked for less. */
+@media (prefers-reduced-motion: reduce) {
+  .btn, .btn:hover, .btn:active { transform: none !important; }
+}

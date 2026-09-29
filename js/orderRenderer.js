@@ -539,7 +539,10 @@ class OrderRenderer {
     const ns = "http://www.w3.org/2000/svg";
     const elements = [];
 
+    // Classes let each theme restyle the road in CSS (a CSS stroke beats
+    // these presentation attributes, which stay as the fallback look).
     const roadBase = document.createElementNS(ns, "path");
+    roadBase.setAttribute("class", "flow-road-base");
     roadBase.setAttribute("d", d);
     roadBase.setAttribute("stroke", "rgba(201, 162, 39, 0.12)");
     roadBase.setAttribute("stroke-width", "16");
@@ -548,6 +551,7 @@ class OrderRenderer {
     elements.push(roadBase);
 
     const laneOuter = document.createElementNS(ns, "path");
+    laneOuter.setAttribute("class", "flow-road-edge");
     laneOuter.setAttribute("d", d);
     laneOuter.setAttribute("stroke", "rgba(201, 162, 39, 0.28)");
     laneOuter.setAttribute("stroke-width", "18");
@@ -557,6 +561,7 @@ class OrderRenderer {
     elements.push(laneOuter);
 
     const laneInner = document.createElementNS(ns, "path");
+    laneInner.setAttribute("class", "flow-road-lane");
     laneInner.setAttribute("d", d);
     laneInner.setAttribute("stroke", "rgba(10, 12, 20, 0.55)");
     laneInner.setAttribute("stroke-width", "14");
@@ -565,6 +570,7 @@ class OrderRenderer {
     elements.push(laneInner);
 
     const dash = document.createElementNS(ns, "path");
+    dash.setAttribute("class", "flow-road-dash");
     dash.setAttribute("d", d);
     dash.setAttribute("stroke", "rgba(255, 255, 255, 0.22)");
     dash.setAttribute("stroke-width", "1.5");
@@ -593,6 +599,7 @@ class OrderRenderer {
     marker.setAttribute("refY", "3");
     marker.setAttribute("orient", "auto");
     const tip = document.createElementNS(ns, "path");
+    tip.setAttribute("class", "flow-road-tip");
     tip.setAttribute("d", "M0,0 L0,6 L7,3 Z");
     tip.setAttribute("fill", "rgba(201, 162, 39, 0.7)");
     marker.appendChild(tip);

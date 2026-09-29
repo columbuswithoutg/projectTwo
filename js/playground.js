@@ -12,11 +12,12 @@
 const Playground = (() => {
 
   // Option palettes — these are the source of truth for what the
-  // character builder offers. Server-side validation in routes/profile.js
-  // mirrors the count of each (max = length-1). Keep in sync.
+  // character builder offers. Server-side validation in server/character.js
+  // mirrors the count of each (max = length-1); test/character.test.js checks
+  // the two (and models/user.js) agree.
   // Index 12 (#5aa64a) is a non-human Hulk green — added for the Avengers
   // presets. Bumping this length requires bumping the `skin` max in BOTH
-  // routes/profile.js (HOME_CHARACTER_RANGES) and models/user.js.
+  // server/character.js (HOME_CHARACTER_RANGES) and models/user.js.
   const SKIN_TONES   = ['#f5d4a8', '#e8b48a', '#c98c5d', '#8b5a3c', '#5d3a24', '#fce4d0', '#d6a878', '#3a2418', '#fbe7d7', '#c79a6b', '#7a5230', '#2a160a', '#5aa64a'];
   const HAIR_COLORS  = ['#1a1a1a', '#5a3a22', '#a06030', '#dca960', '#cccccc', '#9b59b6', '#e74c3c', '#3498db', '#1abc9c', '#ff69b4', '#f5f0e6', '#9c4a2b', '#3a1d5a', '#8eead0'];
   // Index 16 (#b1232b) is the Iron Man armour red (SUIT_COLORS[0]) so helmets,

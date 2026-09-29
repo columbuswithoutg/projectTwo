@@ -1,0 +1,112 @@
+/* ======================
+   SHARED: OVERLAYS
+====================== */
+.auth-modal,
+.friends-panel,
+.goals-panel,
+.memory-lightbox,
+#walker-picker-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ======================
+   SHARED: MODAL BOXES
+====================== */
+.auth-box,
+.friends-box,
+.goals-box,
+#walker-picker {
+  border: 1px solid var(--gold-03);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  position: relative;
+  box-shadow: var(--modal-box-shadow);
+}
+
+/* ======================
+   SHARED: CLOSE BUTTONS
+====================== */
+#close-drawer,
+.popup-close,
+.lightbox-close,
+#walker-picker-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+/* ======================
+   SHARED: RED ACTION BUTTONS
+====================== */
+.popup-action,
+.auth-box #auth-submit,
+.friends-search-row button,
+.friend-accept-btn,
+.friend-view-btn {
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+  background: var(--red-gradient);
+  color: var(--text-on-accent);
+}
+
+.popup-action:hover,
+.auth-box #auth-submit:hover,
+.friends-search-row button:hover,
+.friend-accept-btn:hover,
+.friend-view-btn:hover {
+  background: var(--red-gradient-hover);
+}
+
+/* ======================
+   SHARED: GOLD BUTTONS
+====================== */
+.popup-action.watch-again,
+.memory-view-btn {
+  background: var(--gold-gradient);
+  color: var(--text-on-accent);
+  font-weight: bold;
+}
+
+/* ======================
+   SHARED: SECONDARY BUTTONS
+====================== */
+.popup-action.secondary,
+.friend-reject-btn,
+.friend-remove-btn {
+  background: rgba(var(--ink), 0.05);
+  border: 1px solid var(--border-2);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+/* ======================
+   SHARED: CARDS
+====================== */
+.character-card,
+.stat-card {
+  background: var(--surface-1);
+  border: 1px solid var(--gold-012);
+  box-shadow: var(--shadow-1);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: border-color 0.2s, background 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+
+.character-card:hover,
+.stat-card:hover {
+  border-color: var(--gold-035);
+  background: var(--gold-005);
+}

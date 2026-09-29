@@ -1,0 +1,127 @@
+/************************************************
+ * CUSTOMIZE (/customize) — the character builder
+ *   Cinematic: a red studio spotlight behind the model, gold selection rings.
+ *   Comic: the model on a yellow sunburst panel, ink chips and tiles.
+ ************************************************/
+/* ── The 3D preview's backdrop ── */
+[data-theme="cinematic"] .cz-preview {
+  background:
+    radial-gradient(ellipse 55% 38% at 50% 88%, rgba(214, 178, 94, 0.14), transparent 70%),
+    radial-gradient(circle at 50% 30%, #2a0f16 0%, #12131c 45%, #0b0d13 75%);
+  border-right: 1px solid rgba(214, 178, 94, 0.16);
+}
+/* Comic: plain newsprint behind the model — halftone dots on paper, no
+   sunburst (the user found the rays too busy behind the character). */
+[data-theme="comic"] .cz-preview {
+  background-color: #fff6d5;
+  background-image: var(--halftone);
+  background-size: 9px 9px;
+  border-right: 3px solid #111111;
+}
+
+.cz-zoom-btn {
+  background: var(--hud-surface);
+  border: var(--hud-border-w) solid var(--hud-border);
+  color: var(--hud-text);
+  box-shadow: var(--hud-shadow);
+}
+.cz-zoom-btn:hover { border-color: var(--hud-highlight); }
+
+/* ── Panel ── */
+.cz-toolbar { background: var(--surface-0); border-bottom: 1px solid var(--border-1); }
+[data-theme="cinematic"] .cz-toolbar { background: rgba(11, 13, 19, 0.9); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+[data-theme="comic"] .cz-toolbar { border-bottom: 3px solid #111111; }
+.cz-tools .pg-btn {
+  font: 600 13px/1 var(--font-ui);
+  background: var(--btn2-bg);
+  color: var(--btn2-fg);
+  border: var(--btn2-border);
+  box-shadow: var(--btn2-shadow);
+  border-radius: var(--btn-radius);
+  min-height: 36px;
+}
+[data-theme="comic"] .cz-tools .pg-btn { font: 400 17px/1 var(--font-bangers); letter-spacing: 0.05em; }
+
+/* Category tabs — the same look as the main nav tabs. */
+.cz-tabs { border-bottom: 1px solid var(--border-1); gap: 4px; }
+[data-theme="comic"] .cz-tabs { border-bottom: 3px solid #111111; }
+.cz-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-3);
+  font: 700 12px/1 var(--font-ui);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 10px 12px;
+  border-radius: 8px;
+  position: relative;
+}
+.cz-tab:hover { color: var(--text-1); border-color: transparent; background: rgba(var(--ink), 0.05); }
+.cz-tab.active { color: var(--text-1); background: transparent; border-color: transparent; }
+[data-theme="cinematic"] .cz-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--highlight);
+}
+[data-theme="comic"] .cz-tab {
+  color: #111111;
+  font: 400 17px/1 var(--font-bangers);
+  letter-spacing: 0.05em;
+  text-transform: none;
+}
+[data-theme="comic"] .cz-tab.active { background: var(--highlight); box-shadow: inset 0 0 0 2.5px #111111, 2px 2px 0 #111111; }
+
+/* Slot pills → round chips. */
+.cz-slot-pill {
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: 600 13px/1 var(--font-ui);
+  background: rgba(var(--ink), 0.04);
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+}
+.cz-slot-pill:hover { border-color: rgba(var(--highlight-rgb), 0.6); color: var(--text-1); }
+.cz-slot-pill.active {
+  background: rgba(var(--highlight-rgb), 0.16);
+  border-color: rgba(var(--highlight-rgb), 0.7);
+  color: var(--text-1);
+}
+[data-theme="comic"] .cz-slot-pill { background: #ffffff; border: 2.5px solid #111111; color: #111111; font-weight: 700; }
+[data-theme="comic"] .cz-slot-pill.active { background: var(--highlight); box-shadow: 2px 2px 0 #111111; }
+
+.cz-option-head h3 {
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  font-size: calc(18px * var(--display-scale));
+  color: var(--text-1);
+}
+
+/* Option tiles */
+.cz-tile {
+  border-radius: 12px;
+  background: rgba(var(--ink), 0.03);
+  border: 1px solid var(--border-2);
+  transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast), box-shadow var(--dur-fast);
+}
+.cz-tile:hover { transform: translateY(-2px); border-color: rgba(var(--highlight-rgb), 0.55); }
+.cz-tile.active {
+  border-color: var(--highlight);
+  background: rgba(var(--highlight-rgb), 0.1);
+  box-shadow: 0 0 0 1px var(--highlight), 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+.cz-tile-cap { font: 600 11px/1.25 var(--font-ui); color: var(--text-2); }
+[data-theme="comic"] .cz-tile { background: #ffffff; border: 2.5px solid #111111; box-shadow: 3px 3px 0 #111111; }
+[data-theme="comic"] .cz-tile:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 #111111; border-color: #111111; }
+[data-theme="comic"] .cz-tile.active { background: #fff1b8; border-color: #111111; box-shadow: 3px 3px 0 #d71920; }
+[data-theme="comic"] .cz-tile-cap { color: #111111; font-weight: 700; }
+[data-theme="comic"] .cz-tile-av { background: #fff6d5; border: 2px solid #111111; }
+
+/* Colour swatches: an ink ring in Comic. */
+[data-theme="comic"] .pg-swatch { border: 2.5px solid #111111; box-shadow: 2px 2px 0 #111111; }

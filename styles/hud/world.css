@@ -1,0 +1,167 @@
+/************************************************
+ * IN-GAME HUD — /world, /home and friend homes (over the 3D canvas)
+ *
+ * The 3D world looks the same in both themes; the controls, chat, name tags
+ * and dialogs on top of it follow the theme through the --hud-* tokens:
+ *   Cinematic: dark glass, hairline edges, gold highlights.
+ *   Comic: white panels with ink outlines and hard shadows, speech-balloon
+ *   bubbles, chunky round buttons.
+ ************************************************/
+/* ── Chat ── */
+.world-chat-log {
+  background: var(--hud-surface);
+  border: var(--hud-border-w) solid var(--hud-border);
+  box-shadow: var(--hud-shadow);
+  color: var(--hud-text);
+  border-radius: var(--hud-radius);
+  backdrop-filter: blur(var(--hud-blur));
+  -webkit-backdrop-filter: blur(var(--hud-blur));
+  font: 500 13px/1.45 var(--font-ui);
+}
+.world-chat-name { color: var(--chan-world); }
+.world-chat-line.project .world-chat-name { color: var(--chan-project); }
+.world-chat-line.whisper { color: var(--hud-text); }
+.world-chat-line.whisper .world-chat-name { color: var(--chan-whisper); }
+
+.world-chat-tab {
+  background: var(--hud-surface);
+  border: var(--hud-border-w) solid var(--hud-border);
+  color: var(--hud-muted);
+  font: 700 12px/1 var(--font-ui);
+  letter-spacing: 0.04em;
+}
+.world-chat-tab:hover { color: var(--hud-text); border-color: var(--hud-border); }
+.world-chat-tab.active { background: var(--chan-world); border-color: var(--chan-world); color: #ffffff; }
+.world-chat-tab[data-channel="project"].active { background: var(--chan-project); border-color: var(--chan-project); color: #111111; }
+.world-chat-tab[data-channel="whisper"].active { background: var(--chan-whisper); border-color: var(--chan-whisper); color: #ffffff; }
+[data-theme="comic"] .world-chat-tab { border-color: #111111; color: #111111; }
+[data-theme="comic"] .world-chat-tab.active { border-color: #111111; box-shadow: 2px 2px 0 #111111; }
+[data-theme="comic"] .world-chat-tab[data-channel="project"].active { color: #ffffff; }
+
+.pg3d-chat,
+.world-whisper-to {
+  background: var(--hud-surface-strong);
+  border: var(--hud-border-w) solid var(--hud-border);
+  color: var(--hud-text);
+  box-shadow: var(--hud-shadow);
+  font-family: var(--font-ui);
+}
+.pg3d-chat::placeholder { color: var(--hud-muted); }
+.pg3d-chat:focus { border-color: var(--hud-highlight); }
+[data-theme="comic"] .pg3d-chat:focus { border-color: #111111; box-shadow: 3px 3px 0 var(--info); }
+
+/* Round HUD buttons: send, emote, voice (voice keeps its state colours). */
+:is(.world-chat-send, .pg3d-emote, .pg3d-voice) {
+  border: var(--hud-border-w) solid var(--hud-border);
+  box-shadow: var(--hud-shadow);
+}
+:is(.pg3d-emote, .pg3d-voice):not([aria-pressed="true"]):not(.listen-only) {
+  background: var(--hud-surface-strong);
+  color: var(--hud-text);
+}
+:is(.pg3d-emote, .pg3d-voice):not([aria-pressed="true"]):hover { border-color: var(--hud-highlight); }
+.world-chat-send { background: var(--hud-accent); color: #ffffff; }
+[data-theme="comic"] .world-chat-send { border-color: #111111; }
+.world-chat-cooldown { background: var(--hud-surface); color: var(--hud-muted); border: var(--hud-border-w) solid var(--hud-border); }
+
+/* ── Name tags + speech bubbles over characters ── */
+.pg3d-nametag {
+  background: var(--hud-surface);
+  border: var(--hud-border-w) solid var(--hud-border);
+  color: var(--hud-text);
+  text-shadow: none;
+  font: 700 11px/1.2 var(--font-ui);
+}
+[data-theme="cinematic"] .pg3d-nametag { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+[data-theme="comic"] .pg3d-nametag { box-shadow: 2px 2px 0 #111111; border-radius: 6px; }
+.pg3d-nametag.speaking { border-color: var(--color-health-good); box-shadow: 0 0 0 2px rgba(62, 207, 115, 0.45); }
+
+.pg3d-bubble {
+  background: var(--hud-surface-strong);
+  border: var(--hud-border-w) solid var(--hud-border);
+  color: var(--hud-text);
+  box-shadow: var(--hud-shadow);
+  font: 500 13px/1.35 var(--font-ui);
+}
+[data-theme="cinematic"] .pg3d-bubble { border-color: rgba(214, 178, 94, 0.35); }
+/* Comic: a real speech balloon with a tail pointing down at the speaker. */
+[data-theme="comic"] .pg3d-bubble {
+  border-radius: 18px;
+  box-shadow: none;
+  filter: drop-shadow(2px 2px 0 #111111);
+  font-weight: 700;
+}
+[data-theme="comic"] .pg3d-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -9px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  background: #ffffff;
+  border-right: 2.5px solid #111111;
+  border-bottom: 2.5px solid #111111;
+  transform: rotate(45deg);
+}
+
+.pg3d-keeper-tag { background: var(--hud-surface); color: var(--hud-text); }
+[data-theme="comic"] .pg3d-keeper-tag { border: 2px solid #111111; box-shadow: 2px 2px 0 #111111; }
+
+/* ── First-visit controls hint ── */
+.world-hint {
+  background: var(--hud-surface-strong);
+  border: var(--hud-border-w) solid var(--hud-border);
+  color: var(--hud-text);
+  box-shadow: var(--hud-shadow);
+  font-family: var(--font-ui);
+}
+
+/* ── Header pills (stones, snap, keeper, edit house) ── */
+:is(.world-stone-chip, .world-house-btn, .world-house-keeper) {
+  background: var(--hud-surface);
+  border: var(--hud-border-w) solid var(--hud-border);
+  color: var(--hud-text);
+  font-family: var(--font-ui);
+}
+[data-theme="comic"] :is(.world-stone-chip, .world-house-btn, .world-house-keeper) { background: #ffffff; color: #111111; box-shadow: 2px 2px 0 #111111; }
+[data-theme="comic"] .world-snap-btn {
+  background: var(--highlight);
+  color: #111111;
+  border: 3px solid #111111;
+  box-shadow: 3px 3px 0 #111111;
+  font: 400 18px/1 var(--font-bangers);
+  letter-spacing: 0.06em;
+  animation: none;
+}
+
+/* ── Dialogs over the world: spawn picker, snap leaderboard ── */
+:is(.world-spawn-panel, .world-lb-panel) {
+  background: var(--dialog-bg);
+  border: var(--dialog-border);
+  box-shadow: var(--dialog-shadow);
+  color: var(--text-1);
+}
+:is(.world-spawn-panel, .world-lb-panel) h3 {
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  font-size: calc(24px * var(--display-scale));
+  color: var(--text-1);
+}
+.world-spawn-card { border-radius: 12px; }
+[data-theme="comic"] .world-spawn-card { background: #ffffff; border: 2.5px solid #111111; box-shadow: 3px 3px 0 #111111; color: #111111; }
+[data-theme="comic"] .world-spawn-poster { border: 2px solid #111111; }
+
+/* ── Touch controls (phones) ── */
+:is(.pg-jump, .pg-punch, .pg-sit) {
+  background: var(--hud-surface-strong);
+  border: var(--hud-border-w) solid var(--hud-border);
+  color: var(--hud-text);
+  box-shadow: var(--hud-shadow);
+}
+[data-theme="comic"] :is(.pg-jump, .pg-punch, .pg-sit) { border-width: 3px; box-shadow: 3px 3px 0 #111111; }
+.pg-joy { border: var(--hud-border-w) solid var(--hud-border); background: var(--hud-surface); }
+[data-theme="comic"] .pg-joy { border-width: 3px; box-shadow: 3px 3px 0 #111111; }
+[data-theme="comic"] .pg-joy-stick { border: 3px solid #111111; }
