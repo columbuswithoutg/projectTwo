@@ -443,7 +443,7 @@ const Playground3D = (() => {
     _npcCombat.clear();
     _localPunchUntil = 0;
     _localDownUntil = 0;
-    _seat = null; _seatCandidate = null; _seatPromptEl = null;
+    _seat = null; _seatCandidate = null; _useCandidate = null; _seatPromptEl = null;
     if (_rafId) cancelAnimationFrame(_rafId);
     _rafId = null;
     if (_onVisibility) { document.removeEventListener('visibilitychange', _onVisibility); _onVisibility = null; }
@@ -557,7 +557,7 @@ const Playground3D = (() => {
     _localPunchUntil = 0;
     _lastPunchAt = 0;
     _localDownUntil = 0;
-    _seat = null; _seatCandidate = null; _seatPromptEl = null;
+    _seat = null; _seatCandidate = null; _useCandidate = null; _seatPromptEl = null;
     // Shared-stone state must not survive a remount (a stale holder map or an
     // orphaned mesh from a prior /world session would render wrong).
     clearStones();
@@ -1631,25 +1631,76 @@ const Playground3D = (() => {
   // Nearest chair / bed on the island the player stands on, within reach of
   // its edge. Drives the "Sit (E)" pill and the touch button.
   const SEAT_REACH = 0.9;
+  const USE_REACH = 1.1;     // overhead things (a fan) have no box: measured from their cell centre
+  // What E would do right now: sit / lie on the nearest seat, or work the
+  // nearest TV / fire / tap / fridge… (`pr.act`). Whichever is nearer wins;
+  // a seat wins a tie. `_seatCandidate` is only set when the seat won.
+  let _useCandidate = null;   // a node.props record with an `act`, or null
+  function _isSeatKind(kind) {
+    return kind === 'bed' || (typeof WorldHouseLogic !== 'undefined' && WorldHouseLogic.SEAT_KINDS.includes(kind));
+  }
   function _scanSeats() {
     _seatCandidate = null;
+    _useCandidate = null;
     if (!_player) return;
     const px = _player.position.x, pz = _player.position.z;
     let best = null, bestD2 = SEAT_REACH * SEAT_REACH;
+    let use = null, useD2 = Infinity;
     for (const node of _worldNodes.values()) {
       if (!node.props || !node.props.length) continue;
       if (Math.abs(px - node.mesh.position.x) > WORLD.PLATFORM_W / 2 + 1 || Math.abs(pz - node.mesh.position.z) > WORLD.PLATFORM_W / 2 + 1) continue;
       for (const pr of node.props) {
-        if (!pr.aabb || (pr.kind !== 'chair' && pr.kind !== 'bed')) continue;
-        const dx = Math.max(pr.aabb.minX - px, 0, px - pr.aabb.maxX);
-        const dz = Math.max(pr.aabb.minZ - pz, 0, pz - pr.aabb.maxZ);
-        const d2 = dx * dx + dz * dz;
+        const seat = !!pr.aabb && _isSeatKind(pr.kind);
+        if (!seat && !pr.act) continue;
+        let d2, reach;
+        if (pr.aabb) {
+          const dx = Math.max(pr.aabb.minX - px, 0, px - pr.aabb.maxX);
+          const dz = Math.max(pr.aabb.minZ - pz, 0, pz - pr.aabb.maxZ);
+          d2 = dx * dx + dz * dz; reach = SEAT_REACH;
+        } else {
+          d2 = (pr.x - px) * (pr.x - px) + (pr.z - pz) * (pr.z - pz); reach = USE_REACH;
+        }
+        if (d2 > reach * reach) continue;
         // Same side of the wall: a chair pushed against the outside of a
         // house wall is within reach of its edge, but not usable from out there.
-        if (d2 < bestD2 && !_seatTaken(pr) && !PG3DPhysics.wallBetween(px, pz, pr.x, pr.z, _walls, pr.aabb)) { bestD2 = d2; best = pr; }
+        if (PG3DPhysics.wallBetween(px, pz, pr.x, pr.z, _walls, pr.aabb)) continue;
+        if (seat && d2 < bestD2 && !_seatTaken(pr)) { bestD2 = d2; best = pr; }
+        if (pr.act && d2 < useD2) { useD2 = d2; use = pr; }
       }
     }
-    _seatCandidate = best;
+    if (best && (!use || bestD2 <= useD2)) _seatCandidate = best;
+    else _useCandidate = use;
+  }
+
+  // E on a TV / fire / tap / fridge: flip it. The state lives on the node
+  // (local to this viewer, kept across editor rebuilds), keyed by kind + cell.
+  function _useProp(pr) {
+    const node = _worldNodes.get(pr.nodeId);
+    if (!node || !pr.act) return;
+    const on = !node.propState.get(pr.key);
+    node.propState.set(pr.key, on);
+    if (!pr.act.eased) pr.act.apply(on);   // doors / fan blades ease toward the state in tick()
+  }
+
+  // Ambient motion + eased toggles for the houses the player is close to:
+  // a clock's hands, fish, fairy lights, a fan's blades, a swinging door.
+  let _propClock = 0;
+  function _tickPropAnim(nowMs) {
+    if (!_player) return;
+    const t = nowMs / 1000;
+    const dt = _propClock ? Math.min(0.1, Math.max(0, t - _propClock)) : 0;
+    _propClock = t;
+    const px = _player.position.x, pz = _player.position.z;
+    for (const node of _worldNodes.values()) {
+      if (!node.props || !node.props.length) continue;
+      if (Math.abs(px - node.mesh.position.x) > 14 || Math.abs(pz - node.mesh.position.z) > 14) continue;
+      for (const pr of node.props) {
+        const u = pr.obj && pr.obj.userData;
+        if (!u) continue;
+        if (u.anim) u.anim(t);
+        if (pr.act && pr.act.tick) pr.act.tick(!!node.propState.get(pr.key), dt, t);
+      }
+    }
   }
 
   // Knockdown — tip the whole rig backward while downUntil is in the future,
@@ -1739,6 +1790,7 @@ const Playground3D = (() => {
     if (interactReq) {
       if (_seat) _standUp();
       else if (_seatCandidate && !_falling && !_down && _player.position.y <= g0 + 0.01) _sitOn(_seatCandidate);
+      else if (_useCandidate && !_down) _useProp(_useCandidate);
     }
     const seated = !!_seat;
 
@@ -3374,94 +3426,64 @@ const Playground3D = (() => {
   // (Re)place the keeper's interior props: dispose the old ones, drop their
   // collision boxes, build the new set on the inner 10×10 grid. Solid props
   // register an AABB in _walls exactly like wall segments do.
+  //
+  // Every prop is its own object. Neighbours of one join group (tables,
+  // counters, sofas, beds…) are told about each other (WorldHouseLogic
+  // .joinFlags) and build flush, so a row reads as one piece while still
+  // having one collision box and one seat per cell. Hung props go on the
+  // wall, ceiling props hang from the slab, small ones stand on the surface
+  // under them — each layer has its own cells (see WorldHouseLogic.layerOf).
   function _buildProps(node) {
     const THREE = window.THREE;
     if (!THREE || !node || !_scene) return;
     if (node.props && node.props.length) {
       const drop = new Set();
       for (const pr of node.props) {
-        _disposeDecor(pr.obj);
+        if (pr.obj) _disposeDecor(pr.obj);
         if (pr.aabb) drop.add(pr.aabb);
       }
       if (drop.size) _walls = _walls.filter(a => !drop.has(a));
     }
     node.props = [];
+    if (!node.propState) node.propState = new Map();   // E-toggles (TV on, fridge open…) survive a rebuild
     const list = (node.house && Array.isArray(node.house.props)) ? node.house.props : [];
     if (!list.length || typeof PG3DProps === 'undefined' || typeof WorldHouseLogic === 'undefined') return;
+    const L = WorldHouseLogic;
     const cx = node.mesh.position.x, cz = node.mesh.position.z;
     const portrait = (node.house && typeof node.house.portrait === 'string') ? node.house.portrait : '';
-    const opts = {
+    const baseOpts = {
       THREE,
       lampTex: _lampTexture(),
       lampColor: _houseColor(node, 'lampColor', WORLD.LAMP_COLOR),
       trimColor: _houseColor(node, 'trimColor', WORLD.WALL_TRIM_COLOR),
       roofColor: _houseColor(node, 'roofColor', _phaseRoofColor(node.project.phase)),
-      hasPortrait: !!portrait
-    };
-    // Bookshelves standing side by side become ONE run of shelving that fills
-    // its cells edge to edge (one object, one collision box).
-    const runs = (WorldHouseLogic.propRuns ? WorldHouseLogic.propRuns(list, 'bookshelf') : []).filter(r => r.cells > 1);
-    const inRun = new Set();
-    for (const r of runs) for (const i of r.indices) inRun.add(i);
-
-    // Place one built object for a prop (or a run) and register its box.
-    const place = (obj, spec) => {
-      // spec: { kind, gx, gy (anchor, may be fractional for runs), rot, width }
-      const rot = spec.rot || 0;
-      const odd = rot % 2 === 1;
-      const fp = PG3DProps.footprint(spec.kind, spec.width);
-      const local = WorldHouseLogic.cellToLocal(spec.gx, spec.gy);
-      // Multi-cell props (bed) sit at the midpoint of their cells.
-      const off = WorldHouseLogic.propCentreOffset ? WorldHouseLogic.propCentreOffset(spec) : { dx: 0, dy: 0 };
-      let x = cx + local.x + off.dx, z = cz + local.z + off.dy;
-      if (spec.kind === 'frame') {
-        // Hang it on the wall's inner face (walls are inset T/2 from the
-        // platform edge, so the face is HALF - T from the centre), facing in.
-        const face = WORLD.PLATFORM_W / 2 - WORLD.WALL_THICKNESS - 0.01;
-        switch (WorldHouseLogic.frameWall(spec)) {
-          case 'N': z = cz - face; break;
-          case 'S': z = cz + face; break;
-          case 'W': x = cx - face; break;
-          default:  x = cx + face; break;   // 'E'
-        }
-      } else {
-        // Any solid prop on an edge cell hugs that wall: slide it from the
-        // cell centre until its side touches the wall's inner face. Wall-
-        // backed kinds (bookshelf / chair / bed) were already turned to face
-        // the room by validation, so it's their back that meets the wall.
-        const side = fp.solid && WorldHouseLogic.wallHug ? WorldHouseLogic.wallHug(spec.kind, spec.gx, spec.gy) : null;
-        if (side) {
-          const hxr = odd ? fp.hz : fp.hx, hzr = odd ? fp.hx : fp.hz;   // extents after rotation
-          const depth = (side === 'N' || side === 'S') ? hzr : hxr;
-          const flush = WORLD.PLATFORM_W / 2 - WORLD.WALL_THICKNESS - depth - 0.01;
-          switch (side) {
-            case 'N': z = cz - flush; break;
-            case 'S': z = cz + flush; break;
-            case 'W': x = cx - flush; break;
-            default:  x = cx + flush; break;   // 'E'
-          }
-        }
-      }
-      obj.position.set(x, 0, z);
-      obj.rotation.y = rot * Math.PI / 2;
-      _scene.add(obj);
-      let aabb = null;
-      if (fp.solid) {
-        const hx = odd ? fp.hz : fp.hx, hz = odd ? fp.hx : fp.hz;
-        aabb = { minX: x - hx, maxX: x + hx, minZ: z - hz, maxZ: z + hz };
-        if (fp.top != null) aabb.top = fp.top;     // standable
-        _walls.push(aabb);
-      }
-      node.props.push({ obj, aabb, kind: spec.kind, gx: spec.gx, gy: spec.gy, x, z, rot, top: fp.top, nodeId: node.project.id });
+      hasPortrait: !!portrait,
+      ceilingY: (node.wallHeight || WORLD.WALL_HEIGHT) - 0.05
     };
 
-    for (const r of runs) {
-      const obj = PG3DProps.make('bookshelf', { ...opts, width: r.cells });
-      if (obj) place(obj, { kind: 'bookshelf', gx: r.centre.gx, gy: r.centre.gy, rot: r.rot, width: r.cells });
-    }
+    // Height a small prop stands at: the top of the surface under its cell.
+    const surfaceTop = (p) => {
+      let y = 0;
+      for (const q of list) {
+        if (!q || !L.SURFACE_KINDS.includes(q.kind)) continue;
+        if (!L.propCells(q).some(([x, z]) => x === p.gx && z === p.gy)) continue;
+        y = Math.max(y, (PG3DProps.footprint(q.kind).top) || 0);
+      }
+      return y;
+    };
+
     list.forEach((p, i) => {
-      if (inRun.has(i)) return;
-      const obj = PG3DProps.make(p.kind, opts);
+      const layer = L.layerOf(p.kind);
+      const rot = p.rot || 0;
+      const odd = rot % 2 === 1;
+      const jf = L.joinFlags(list, i);
+      const isJoined = jf.l || jf.r;
+      const tile = layer === 'rug' && (jf.n || jf.s || jf.e || jf.w);
+      const obj = PG3DProps.make(p.kind, {
+        ...baseOpts,
+        joinL: jf.l, joinR: jf.r, joinN: jf.n, joinS: jf.s, joinE: jf.e, joinW: jf.w,
+        armL: jf.armL, armR: jf.armR
+      });
       if (!obj) return;
       // The keeper's portrait hangs in every frame. The texture comes from the
       // shared cache, so the material is flagged keepMap and _disposeDecor
@@ -3475,7 +3497,59 @@ const Playground3D = (() => {
           mat.needsUpdate = true;
         });
       }
-      place(obj, p);
+      const fp = PG3DProps.footprint(p.kind, isJoined);
+      const local = L.cellToLocal(p.gx, p.gy);
+      // Multi-cell props (bed, bathtub) sit at the midpoint of their cells.
+      const off = L.propCentreOffset(p);
+      let x = cx + local.x + off.dx, z = cz + local.z + off.dy;
+      let y = 0;
+      if (layer === 'hung') {
+        // Hang it on the wall's inner face (walls are inset T/2 from the
+        // platform edge, so the face is HALF - T from the centre), facing in.
+        const face = WORLD.PLATFORM_W / 2 - WORLD.WALL_THICKNESS - 0.01;
+        switch (L.frameWall(p)) {
+          case 'N': z = cz - face; break;
+          case 'S': z = cz + face; break;
+          case 'W': x = cx - face; break;
+          default:  x = cx + face; break;   // 'E'
+        }
+      } else if (layer === 'top') {
+        y = surfaceTop(p);
+      } else if (layer === 'floor') {
+        // Any solid prop on an edge cell hugs that wall: slide it from the
+        // cell centre until its side touches the wall's inner face. Wall-
+        // backed kinds were already turned to face the room by validation,
+        // so it's their back that meets the wall. A piece joined to its
+        // neighbours only slides front-to-back, never along the row.
+        let side = fp.solid ? L.wallHug(p.kind, p.gx, p.gy) : null;
+        if (side && isJoined && ((side === 'N' || side === 'S') === odd)) side = null;
+        if (side) {
+          const hxr = odd ? fp.hz : fp.hx, hzr = odd ? fp.hx : fp.hz;   // extents after rotation
+          const depth = (side === 'N' || side === 'S') ? hzr : hxr;
+          const flush = WORLD.PLATFORM_W / 2 - WORLD.WALL_THICKNESS - depth - 0.01;
+          switch (side) {
+            case 'N': z = cz - flush; break;
+            case 'S': z = cz + flush; break;
+            case 'W': x = cx - flush; break;
+            default:  x = cx + flush; break;   // 'E'
+          }
+        }
+      }
+      obj.position.set(x, y, z);
+      obj.rotation.y = (tile ? 0 : rot) * Math.PI / 2;   // rug tiles use world directions
+      _scene.add(obj);
+      let aabb = null;
+      if (fp.solid && layer === 'floor') {
+        // One box per piece; a joined run of them tiles edge to edge.
+        const hx = odd ? fp.hz : fp.hx, hz = odd ? fp.hx : fp.hz;
+        aabb = { minX: x - hx, maxX: x + hx, minZ: z - hz, maxZ: z + hz };
+        if (fp.top != null) aabb.top = fp.top;     // standable
+        _walls.push(aabb);
+      }
+      const key = `${p.kind}:${p.gx},${p.gy}`;
+      const act = obj.userData.act || null;
+      if (act) act.apply(!!node.propState.get(key));
+      node.props.push({ obj, aabb, act, key, kind: p.kind, gx: p.gx, gy: p.gy, x, z, rot, top: fp.top, nodeId: node.project.id });
     });
 
     // If the local player was sitting on this island and their seat is gone
@@ -3839,6 +3913,7 @@ const Playground3D = (() => {
     }
 
     _tickSeatPrompt();
+    _tickPropAnim(now);
 
     // Local player's own chat bubbles, over the head.
     _tickLocalBubbles();
@@ -3849,22 +3924,31 @@ const Playground3D = (() => {
   function _tickSeatPrompt() {
     _scanSeats();
     const cand = (!_seat && _seatCandidate) ? _seatCandidate : null;
-    if (cand && _hudLayer) {
+    const use = (!_seat && !cand && _useCandidate) ? _useCandidate : null;
+    let label = null, target = null;
+    if (cand) { label = cand.kind === 'bed' ? 'Lie down' : 'Sit'; target = cand; }
+    else if (use) {
+      const node = _worldNodes.get(use.nodeId);
+      label = use.act.label(!!(node && node.propState && node.propState.get(use.key)));
+      target = use;
+    }
+    if (target && _hudLayer) {
       if (!_seatPromptEl) {
         _seatPromptEl = document.createElement('div');
         _seatPromptEl.className = 'pg3d-nodelabel pg3d-seatprompt';
         _hudLayer.appendChild(_seatPromptEl);
       }
-      const label = cand.kind === 'bed' ? 'Lie down' : 'Sit';
       const text = _coarsePointer ? label : `${label} (E)`;
       if (_seatPromptEl.textContent !== text) _seatPromptEl.textContent = text;
-      _hudAnchor.set(cand.x, (cand.top || 0.5) + 0.9, cand.z);
+      // A tall thing (fridge, wardrobe, an overhead fan) gets its prompt higher.
+      const lift = use ? (target.kind === 'fan' ? 1.2 : 2.1) : ((target.top || 0.5) + 0.9);
+      _hudAnchor.set(target.x, lift, target.z);
       _placeHudEl(_seatPromptEl, _hudAnchor, 0);
     } else if (_seatPromptEl) {
       _seatPromptEl.style.display = 'none';
     }
     if (_input && _input.setInteractLabel) {
-      _input.setInteractLabel(_seat ? 'Stand up' : (cand ? (cand.kind === 'bed' ? 'Lie down' : 'Sit') : null));
+      _input.setInteractLabel(_seat ? 'Stand up' : (label || null));
     }
   }
 

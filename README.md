@@ -314,6 +314,18 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-10-06 — Furniture round: ~43 new pieces, pieces that join, things you can use
+
+The /world keeper house and every /home room share one prop set (`WorldHouseLogic` + `PG3DProps`), so this lands in both.
+
+- **52 kinds, 6 rooms in the picker.** New: sofa, armchair, stool, coffee table, desk, dresser, nightstand, workbench, counter, sink, stove, fridge, washer, bin, toilet, bathtub, shower, wardrobe, crib, pet bed, TV, fireplace, piano, aquarium, shoe rack, treadmill; wall: mirror, clock, curtains, towel rack, string lights; ceiling: fan, hanging plant; on a surface: microwave, kettle, pots, fruit bowl, plates, toaster, vase, laptop, console, books. The editor's kind row is now six room tabs (`CATEGORIES`) + 👆 Select.
+- **Layers.** Each kind lives on one layer (`layerOf`: floor / rug / hung / ceil / top) and only competes with its own — a rug runs under a sofa, a picture hangs over a bookshelf, a fan turns over a table. Hung kinds snap to the nearest wall like frames always did (a frame no longer blocks the floor cell under it). **Table-top kinds need a `SURFACE_KINDS` piece in their cell** (table, coffee table, desk, counter, stove, dresser, nightstand, workbench, washer, crate — not the sink); `validateHouse` lists them after their surface, `dependentTops` makes Remove take them along. In the editor, tapping an existing piece with a *different-layer* kind chosen places the new one there (a kettle on the counter); tap with the same layer / 👆 Select to select.
+- **Joins.** `JOIN_GROUP` + `joinFlags(props, i)`: same-group neighbours with the same facing fuse — tables, coffee tables, desks, workbenches, bookshelves, wardrobes, dressers, beds (a double), sofas (arms only on open ends; a sofa turned in front of an end makes an L, `armL/armR`), the kitchen group (counter + sink + stove + fridge + washer = one worktop) and rugs (4-way tiles, one big rug). The engine builds every piece as its own object, exactly one cell wide and flush when joined (so one collision box and one seat per cell); lone pieces keep their roomier width. A new piece placed next to its group adopts the neighbour's facing. This replaces the bookshelf-only run object.
+- **Use them (E).** Same prompt + touch button as sitting, whichever is nearer: sit on sofas / armchairs / stools / toilets (`SEAT_KINDS`); TV, fireplace, stove burners, tap, shower and fan toggle; fridge, wardrobe and dresser open. Builders expose `userData.act = { label(on), apply(on), tick?(on, dt, t), eased? }` and `userData.anim(t)` (clock hands, fish, fairy lights); state is **local to the viewer** (`node.propState`, kept across editor rebuilds), not synced.
+- **Cap 20 → 40** (`C.MAX_PROPS`, AdminConfig defaults, admin sliders). A config document that already stored 20 keeps it — raise it under Admin → Config → Props per house / room.
+- Files: `js/world-house-logic.js` (layers, joins, surfaces, categories), `js/playground3d-props.js` (rewritten: builders, footprints, joins), `js/playground3d.js` (`_buildProps`, `_scanSeats` / `_useProp` / `_tickPropAnim`), `js/house-editor.js`, `styles/legacy/18-world-hud.css`, `test/world-house.test.js`.
+- Dev gallery: `assets/dev/props-preview.html` (gitignored) — every kind + the join demos; run `sh assets/dev/sync-props.sh` after editing the two source files (`/js` isn't served by the dev server).
+
 ### 2026-09-27 — Multiplayer polish from a three-account playtest
 
 Played /world and /home with three accounts at once (two browsers + a socket bot): movement, jumping, chat on every channel, waves, punches, NPC sync, stones + snap, reconnects, sitting, live room saves.

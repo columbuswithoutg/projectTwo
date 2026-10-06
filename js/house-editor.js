@@ -42,7 +42,17 @@ const HouseEditor = (() => {
       for (const f of ROOF_FIELDS) draft[f] = r[f];
     }
     const hex = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
-    const GLYPH = { chair: '🪑', table: '🛋️', frame: '🖼️', plant: '🪴', lamp: '💡', rug: '🟫', bookshelf: '📚', crate: '📦', bed: '🛏️', window: '🪟' };
+    const GLYPH = {
+      chair: '🪑', table: '🍽️', frame: '🖼️', plant: '🪴', lamp: '💡', rug: '🟫', bookshelf: '📚', crate: '📦', bed: '🛏️',
+      sofa: '🛋️', armchair: '💺', stool: '⚪', coffee_table: '☕', desk: '🖥️', dresser: '🗄️', nightstand: '🕯️', workbench: '🔨',
+      counter: '🔪', sink: '🚰', stove: '🍳', fridge: '🧊', washer: '🧺', bin: '🗑️',
+      toilet: '🚽', bathtub: '🛁', shower: '🚿', wardrobe: '👔', crib: '🍼', petbed: '🐾',
+      tv: '📺', fireplace: '🔥', piano: '🎹', aquarium: '🐠', shoerack: '👟', treadmill: '🏃',
+      mirror: '🪞', clock: '🕐', curtains: '🎭', towelrack: '🧻', stringlights: '✨', fan: '🌀', hangplant: '🌿',
+      microwave: '📟', kettle: '🫖', pots: '🥘', fruitbowl: '🍎', plates: '🥣', toaster: '🍞', vase: '💐', laptop: '💻', console: '🎮', books: '📖',
+      select: '👆', window: '🪟'
+    };
+    const kindName = (k) => String(k).replace(/_/g, ' ');
     const maxProps = () => opts.maxProps();
     const roofLabel = sharedRoof ? 'Roof (whole home)' : 'Roof';
     const SLOTS = [['wallColor', 'Walls'], ['roofColor', roofLabel], ['trimColor', 'Trim'], ['lampColor', 'Lamps']];
@@ -73,7 +83,9 @@ const HouseEditor = (() => {
       if (side === 'W') return [CELL / 2, along * CELL];
       return [(RING - 0.5) * CELL, along * CELL];
     };
-    let selectedKind = 'chair';     // a prop kind, or 'window'
+    let selectedKind = 'sofa';      // a prop kind, or 'window' / 'select' (taps only select)
+    let selectedCat = 'living';     // which room's furniture the kind chips show
+    const LAYER_ORDER = { rug: 0, floor: 1, top: 2, ceil: 3, hung: 4 };   // paint order in the plan
     let selectedProp = -1;          // index into draft.props
     let selectedWindow = -1;        // index into draft.windows (explicit mode only)
 
@@ -128,16 +140,16 @@ const HouseEditor = (() => {
           <span class="world-house-portrait-hint" id="world-house-portrait-hint"></span>
         </div>
         <div class="world-house-props">
-          <div class="world-house-kinds">
-            ${L.PROP_KINDS.map(k => `<button type="button" class="world-house-kind" data-kind="${k}" title="${k}">${GLYPH[k] || '▪'} ${k}</button>`).join('')}
-            <button type="button" class="world-house-kind world-house-kind-window" data-kind="window" title="Place a window on the wall ring">${GLYPH.window} window</button>
+          <div class="world-house-cats">
+            ${L.CATEGORIES.map(c => `<button type="button" class="world-house-cat" data-cat="${c.id}">${c.glyph} ${c.label}</button>`).join('')}
           </div>
+          <div class="world-house-kinds" id="world-house-kinds"></div>
           <div class="world-house-tools">
             <button type="button" class="world-house-tool" data-tool="rotate" title="Rotate the selected prop">↻ Rotate</button>
             <button type="button" class="world-house-tool" data-tool="remove" title="Remove the selected prop or window">Remove</button>
             <span class="world-house-count" id="world-house-count"></span>
           </div>
-          <p class="world-house-hint">Tap an empty floor cell to place the chosen prop; tap a prop to select it. Frames hang on the nearest wall; anything on an edge cell stands against that wall (a bookshelf, chair or bed turns its back to it), and bookshelves side by side join into one run. A bed takes two cells. The outer ring is the wall: pick 🪟 and tap it to place windows — side-by-side cells join into one wide window. 🚪 ${unit === 'room' ? 'marks a doorway to the next room' : 'is the door'} — it's fixed. Top of the plan is north.</p>
+          <p class="world-house-hint">Pick a room, pick a piece, tap a floor cell to place it; tap a piece to select it (👆 Select always selects). Furniture on an edge cell stands against that wall. Pieces of one kind side by side <b>join</b> — tables, counters with a sink and stove, sofas (an L makes a sectional), beds, wardrobes, rugs. Rugs go under furniture, pictures and clocks hang on the nearest wall, fans and hanging plants go on the ceiling, and kitchenware, a laptop or a vase stand on a table, counter or desk — tap that cell. Beds, tubs and treadmills take two cells. The outer ring is the wall: pick 🪟 and tap it to place windows. 🚪 ${unit === 'room' ? 'marks a doorway to the next room' : 'is the door'} — it's fixed. Top of the plan is north. Tap a fridge, TV, fire, tap or wardrobe in the 3D view and press E to use it.</p>
           <svg class="world-house-grid" viewBox="0 0 ${RING * CELL} ${RING * CELL}" role="img" aria-label="House floor plan with walls"></svg>
         </div>
         <div class="world-house-actions">
@@ -202,6 +214,16 @@ const HouseEditor = (() => {
       const winKind = overlay.querySelector('.world-house-kind[data-kind="window"]');
       if (winKind) winKind.classList.toggle('dimmed', glass);
     }
+    function renderKindChips() {
+      const cat = L.CATEGORIES.find(c => c.id === selectedCat) || L.CATEGORIES[0];
+      overlay.querySelectorAll('.world-house-cat').forEach((b) => b.classList.toggle('active', b.getAttribute('data-cat') === cat.id));
+      const chip = (k, extra) => `<button type="button" class="world-house-kind${extra || ''}" data-kind="${k}" title="${kindName(k)}">${GLYPH[k] || '▪'} ${kindName(k)}</button>`;
+      overlay.querySelector('#world-house-kinds').innerHTML =
+        cat.kinds.map(k => chip(k)).join('') +
+        chip('select', ' world-house-kind-tool').replace('>👆 select<', '>👆 Select<') +
+        `<button type="button" class="world-house-kind world-house-kind-window" data-kind="window" title="Place a window on the wall ring">${GLYPH.window} window</button>`;
+      if (draft.wallStyle === 'glass') overlay.querySelector('.world-house-kind[data-kind="window"]').classList.add('dimmed');
+    }
     function renderKinds() {
       overlay.querySelectorAll('.world-house-kind').forEach((b) => {
         b.classList.toggle('active', b.getAttribute('data-kind') === selectedKind);
@@ -258,29 +280,60 @@ const HouseEditor = (() => {
           }
         }
       }
-      // Bookshelves side by side render as one run of shelving: a joined
-      // outline behind them, and no per-cell box.
-      const runs = L.propRuns(draft.props, 'bookshelf').filter(r => r.cells > 1);
+      // Pieces of a join group side by side (tables, a kitchen run, sofas…)
+      // render as one joined outline behind them, and no per-cell box.
+      const groups = {};
+      for (const k of Object.keys(L.JOIN_GROUP)) { const g = L.JOIN_GROUP[k]; if (g !== 'rug') (groups[g] = groups[g] || []).push(k); }
       const inRun = new Set();
-      const runRects = runs.map((r) => {
-        for (const i of r.indices) inRun.add(i);
-        const x0 = Math.min(r.from[0], r.to[0]), y0 = Math.min(r.from[1], r.to[1]);
-        const x1 = Math.max(r.from[0], r.to[0]), y1 = Math.max(r.from[1], r.to[1]);
-        return `<rect class="world-house-run" x="${x0 * CELL + 2}" y="${y0 * CELL + 2}" width="${(x1 - x0 + 1) * CELL - 4}" height="${(y1 - y0 + 1) * CELL - 4}" rx="6" />`;
-      }).join('');
-      const props = draft.props.map((p, i) => {
+      let runRects = '';
+      for (const kinds of Object.values(groups)) {
+        for (const r of L.propRuns(draft.props, kinds).filter(r => r.cells > 1)) {
+          const cells = r.indices.flatMap(i => L.propCells(draft.props[i]));
+          for (const i of r.indices) inRun.add(i);
+          const x0 = Math.min(...cells.map(c => c[0])), y0 = Math.min(...cells.map(c => c[1]));
+          const x1 = Math.max(...cells.map(c => c[0])), y1 = Math.max(...cells.map(c => c[1]));
+          runRects += `<rect class="world-house-run" x="${x0 * CELL + 2}" y="${y0 * CELL + 2}" width="${(x1 - x0 + 1) * CELL - 4}" height="${(y1 - y0 + 1) * CELL - 4}" rx="6" />`;
+        }
+      }
+      // Paint order: rugs, floor furniture, things on surfaces, overhead, wall hangings.
+      const order = draft.props.map((p, i) => [i, p]).sort((x, y) => (LAYER_ORDER[L.layerOf(x[1].kind)] - LAYER_ORDER[L.layerOf(y[1].kind)]) || (x[0] - y[0]));
+      const props = order.map(([i, p]) => {
         const cx = (p.gx + 0.5) * CELL, cy = (p.gy + 0.5) * CELL;
         const sel = i === selectedProp ? ' selected' : '';
         const run = inRun.has(i) ? ' in-run' : '';
-        // Multi-cell props (bed): the box spans every cell, glyph + arrow on the anchor.
+        const layer = L.layerOf(p.kind);
+        const glyph = GLYPH[p.kind] || '▪';
+        const half = CELL / 2;
+        if (layer === 'hung') {
+          // A band on the wall side of the cell, so it reads as hanging over a piece of furniture.
+          const side = L.frameWall(p);
+          const [rx, ry, rw, rh, gx, gy] = side === 'N' ? [-half + 3, -half + 1, CELL - 6, 10, 0, -half + 6]
+            : side === 'S' ? [-half + 3, half - 11, CELL - 6, 10, 0, half - 6]
+            : side === 'W' ? [-half + 1, -half + 3, 10, CELL - 6, -half + 6, 0]
+            : [half - 11, -half + 3, 10, CELL - 6, half - 6, 0];
+          return `<g class="world-house-prop is-hung${sel}" data-i="${i}" transform="translate(${cx} ${cy})"><title>${esc(kindName(p.kind))}</title>
+            <rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" rx="3" />
+            <text x="${gx}" y="${gy + 1}" text-anchor="middle" dominant-baseline="middle" font-size="9">${glyph}</text>
+          </g>`;
+        }
+        if (layer === 'ceil' || layer === 'top') {
+          const [gx, gy] = layer === 'ceil' ? [half - 9, -half + 9] : [-half + 9, half - 9];
+          return `<g class="world-house-prop is-${layer}${sel}" data-i="${i}" transform="translate(${cx} ${cy})"><title>${esc(kindName(p.kind))}${layer === 'ceil' ? ' (ceiling)' : ' (on the surface)'}</title>
+            <rect x="${gx - 8}" y="${gy - 8}" width="16" height="16" rx="8" />
+            <text x="${gx}" y="${gy + 1}" text-anchor="middle" dominant-baseline="middle" font-size="11">${glyph}</text>
+          </g>`;
+        }
+        // Floor pieces and rugs. Multi-cell props: the box spans every cell,
+        // glyph + arrow on the anchor.
         const cells = L.propCells(p);
         const xs = cells.map(c => c[0]), ys = cells.map(c => c[1]);
         const bx = (Math.min(...xs) - p.gx) * CELL - CELL / 2 + 2, by = (Math.min(...ys) - p.gy) * CELL - CELL / 2 + 2;
         const bw = (Math.max(...xs) - Math.min(...xs) + 1) * CELL - 4, bh = (Math.max(...ys) - Math.min(...ys) + 1) * CELL - 4;
-        return `<g class="world-house-prop${sel}${run}" data-i="${i}" transform="translate(${cx} ${cy})">
+        const arrow = layer === 'rug' ? '' : `<path d="M0,-${CELL / 2 - 3} l4,5 h-8 z" transform="rotate(${(p.rot || 0) * 90})" />`;
+        return `<g class="world-house-prop${layer === 'rug' ? ' is-rug' : ''}${sel}${run}" data-i="${i}" transform="translate(${cx} ${cy})"><title>${esc(kindName(p.kind))}</title>
           <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="5" />
-          <text x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-size="18">${GLYPH[p.kind] || '▪'}</text>
-          <path d="M0,-${CELL / 2 - 3} l4,5 h-8 z" transform="rotate(${(p.rot || 0) * 90})" />
+          <text x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-size="18">${glyph}</text>
+          ${arrow}
         </g>`;
       }).join('');
       const propsSvg = runRects + props;
@@ -305,7 +358,7 @@ const HouseEditor = (() => {
     }
     function ensureFrame() {
       if (draft.props.some(p => p.kind === 'frame') || draft.props.length >= maxProps()) return;
-      const taken = new Set(draft.props.map(p => `${p.gx},${p.gy}`));
+      const taken = new Set(draft.props.filter(p => L.layerOf(p.kind) === 'hung').map(p => `${p.gx},${p.gy}`));
       // Wall cells, north wall first (the picture then faces the room).
       for (const [gx, gy] of [[4, 1], [7, 1], [3, 1], [8, 1], [1, 5], [10, 5], [4, 10], [7, 10]]) {
         if (!taken.has(`${gx},${gy}`)) { draft.props.push({ kind: 'frame', ...L.snapFrameToWall(gx, gy) }); return; }
@@ -336,7 +389,7 @@ const HouseEditor = (() => {
     });
     removeBtn.addEventListener('click', () => { draft.portrait = ''; renderPortrait(); preview(); });
 
-    function renderAll() { renderSwatches(); renderChips(); renderKinds(); renderGrid(); renderPortrait(); }
+    function renderAll() { renderSwatches(); renderChips(); renderKindChips(); renderKinds(); renderGrid(); renderPortrait(); }
     renderAll();
     preview();
 
@@ -369,6 +422,8 @@ const HouseEditor = (() => {
         renderChips(); renderKinds(); renderGrid(); preview();
         return;
       }
+      const cat = e.target.closest('.world-house-cat');
+      if (cat) { selectedCat = cat.getAttribute('data-cat'); renderKindChips(); renderKinds(); return; }
       const kind = e.target.closest('.world-house-kind');
       if (kind) { selectedKind = kind.getAttribute('data-kind'); selectedProp = -1; selectedWindow = -1; renderKinds(); renderGrid(); return; }
       const tool = e.target.closest('.world-house-tool');
@@ -386,13 +441,13 @@ const HouseEditor = (() => {
         if (tool.getAttribute('data-tool') === 'rotate') {
           // A frame's facing is fixed by the wall it hangs on.
           const sp = draft.props[selectedProp];
-          if (sp.kind === 'frame') {
-            if (typeof toast === 'function') toast('Frames face into the room from their wall — move it to another wall instead.', 'info');
+          if (L.layerOf(sp.kind) === 'hung') {
+            if (typeof toast === 'function') toast(`A ${kindName(sp.kind)} faces into the room from its wall — move it to another wall instead.`, 'info');
             return;
           }
           // A bookshelf / chair / bed on an edge cell keeps its back to that wall.
           if (L.wallBackedRot(sp.kind, sp.gx, sp.gy) != null) {
-            if (typeof toast === 'function') toast(`A ${sp.kind} against the wall keeps its back to it — place it a cell further in to turn it.`, 'info');
+            if (typeof toast === 'function') toast(`A ${kindName(sp.kind)} against the wall keeps its back to it — place it a cell further in to turn it.`, 'info');
             return;
           }
           // Turn to the next facing whose cells are free (a bed needs the
@@ -407,14 +462,24 @@ const HouseEditor = (() => {
             return;
           }
         } else {
-          draft.props.splice(selectedProp, 1);
+          // Take whatever stands on a surface along with it (no floating kettles).
+          const gone = [selectedProp, ...L.dependentTops(draft.props, selectedProp)].sort((x, y) => y - x);
+          for (const i of gone) draft.props.splice(i, 1);
+          if (gone.length > 1 && typeof toast === 'function') toast(`Removed it and the ${gone.length - 1} thing${gone.length > 2 ? 's' : ''} on it.`, 'info');
           selectedProp = -1;
         }
         renderKinds(); renderGrid(); renderPortrait(); preview();
         return;
       }
       const propEl = e.target.closest('.world-house-prop');
-      if (propEl) { selectedProp = Number(propEl.getAttribute('data-i')); selectedWindow = -1; renderKinds(); renderGrid(); return; }
+      if (propEl) {
+        const hit = draft.props[Number(propEl.getAttribute('data-i'))];
+        // Another layer than the chosen kind (a kettle over a counter, a rug under a sofa)
+        // → the tap places the chosen piece in that cell; if it can't go there, select instead.
+        if (hit && selectedKind !== 'window' && selectedKind !== 'select' && L.layerOf(selectedKind) !== L.layerOf(hit.kind)
+          && placeAt(hit.gx, hit.gy, true)) return;
+        selectedProp = Number(propEl.getAttribute('data-i')); selectedWindow = -1; renderKinds(); renderGrid(); return;
+      }
       const winEl = e.target.closest('.world-house-window');
       if (winEl && winEl.hasAttribute('data-w')) { selectedWindow = Number(winEl.getAttribute('data-w')); selectedProp = -1; renderKinds(); renderGrid(); return; }
       // The wall ring: windows only (and never on the door).
@@ -449,26 +514,43 @@ const HouseEditor = (() => {
           if (typeof toast === 'function') toast('Windows go on the wall — tap the outer ring.', 'info');
           return;
         }
-        if (draft.props.length >= maxProps()) {
-          if (typeof toast === 'function') toast(`That's the limit — ${maxProps()} props per ${unit}.`, 'warn');
-          return;
-        }
-        // canPlaceProp snaps frames to the nearest wall, turns wall-backed
-        // props (bookshelf / chair / bed) on an edge cell to face the room,
-        // and checks every cell a prop covers (a bed takes two).
-        const r = L.canPlaceProp(draft.props, { kind: selectedKind, gx, gy, rot: 0 }, { maxProps: maxProps() });
-        if (!r.ok) {
-          const msg = /share cell/.test(r.error) ? (selectedKind === 'frame' ? 'That wall spot is taken — tap nearer a free stretch of wall.' : 'That spot is taken.')
-            : /cell in front/.test(r.error) ? 'A bed needs the cell in front of it too — tap a spot with room.'
-            : r.error;
-          if (typeof toast === 'function') toast(msg, 'warn');
-          return;
-        }
-        draft.props.push(r.placed);
-        selectedProp = draft.props.length - 1;
-        renderKinds(); renderGrid(); renderPortrait(); preview();
+        if (selectedKind === 'select') return;
+        placeAt(gx, gy, false);
       }
     });
+    // A new piece next to one of its own group adopts its facing, so a row of
+    // counters / sofas / beds lines up without rotating each one.
+    function adoptRot(kind, gx, gy) {
+      const group = L.JOIN_GROUP[kind];
+      if (!group || group === 'rug') return 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const q = draft.props.find(p => L.JOIN_GROUP[p.kind] === group && p.gx === gx + dx && p.gy === gy + dy);
+        if (q) return q.rot || 0;
+      }
+      return 0;
+    }
+    // Put the chosen kind at a cell. `quiet` = a try (the layered tap on an
+    // existing piece): no toast on refusal, returns whether it was placed.
+    function placeAt(gx, gy, quiet) {
+      const say = (msg, tone) => { if (!quiet && typeof toast === 'function') toast(msg, tone); };
+      if (draft.props.length >= maxProps()) { say(`That's the limit — ${maxProps()} props per ${unit}.`, 'warn'); return false; }
+      // canPlaceProp snaps wall hangings to the nearest wall, turns wall-backed
+      // furniture on an edge cell to face the room, and checks every cell a
+      // piece covers (a bed takes two) on ITS layer.
+      const r = L.canPlaceProp(draft.props, { kind: selectedKind, gx, gy, rot: adoptRot(selectedKind, gx, gy) }, { maxProps: maxProps() });
+      if (!r.ok) {
+        const name = kindName(selectedKind);
+        const msg = /share cell/.test(r.error) ? (L.layerOf(selectedKind) === 'hung' ? 'That wall spot is taken — tap nearer a free stretch of wall.' : 'That spot is taken.')
+          : /cell in front/.test(r.error) ? `A ${name} needs the cell in front of it too — tap a spot with room.`
+          : r.error;
+        say(msg, 'warn');
+        return false;
+      }
+      draft.props.push(r.placed);
+      selectedProp = draft.props.length - 1;
+      renderKinds(); renderGrid(); renderPortrait(); preview();
+      return true;
+    }
     signInput.addEventListener('input', () => { draft.sign = L.sanitizeSign(signInput.value); preview(); });
 
     // Every way out (✕, Cancel, Escape, backdrop, a failed save) puts the
