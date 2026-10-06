@@ -49,7 +49,7 @@ const CustomizeView = {
               <button class="pg-btn" type="button" id="cz-reset">↺ Reset</button>
             </div>
           </div>
-          <div class="cz-tabs" id="cz-tabs"></div>
+          <div class="cz-tabs" id="cz-tabs" role="tablist" aria-label="Customize categories"></div>
           <div class="cz-slot-pills" id="cz-slot-pills"></div>
           <div class="cz-options" id="cz-options"></div>
           <p class="pg-builder-error" id="cz-error" hidden></p>
@@ -75,6 +75,8 @@ const CustomizeView = {
 
     CustomizeView._overlayRoot = container;
     CustomizeView._previewHandle = null;
+    // Save stays off until the saved character has loaded.
+    CustomizeView._setSaveEnabled(false);
     CustomizeView._load();
 
     // The realistic bodies (js/playground3d-humanoid.js) stream in after boot.
@@ -97,6 +99,7 @@ const CustomizeView = {
   async _load() {
     const base = Playground.defaultCharacter();
     let saved = null;
+    let failed = false;
     try {
       const res = await fetch(`${API}/profile/home-character`, {
         headers: { Authorization: `Bearer ${Auth.getToken()}` }
@@ -104,12 +107,20 @@ const CustomizeView = {
       if (res.ok) {
         const data = await res.json();
         if (data.homeCharacter && data.homeCharacter.skin != null) saved = data.homeCharacter;
+      } else if (res.status !== 404) {
+        failed = true;
       }
-    } catch (_) { /* offline — fall back to defaults */ }
+    } catch (_) { failed = true; }
 
     // Guard against the view having been unmounted while the fetch was in
     // flight (fast navigation away).
     if (!CustomizeView._overlayRoot || !CustomizeView._overlayRoot.isConnected) return;
+
+    // Couldn't read the saved character: say so and keep Save off — saving
+    // the defaults shown here would overwrite the real one.
+    CustomizeView._loadFailed = failed;
+    CustomizeView._setSaveEnabled(!failed);
+    CustomizeView._showLoadError(failed);
 
     CustomizeView._initial = { ...base, ...(saved || {}) };
     CustomizeView._current = { ...CustomizeView._initial };
@@ -149,7 +160,7 @@ const CustomizeView = {
   // Slot-level entries win; otherwise the section decides; anything else shows
   // the whole figure. Region names are Playground3D's PREVIEW_REGIONS.
   _SLOT_REGION: {
-    mask: 'head', helmet: 'head', helmetColor: 'head',
+    mask: 'head', helmet: 'head', helmetColor: 'head', hat: 'head', glasses: 'head',
     gloves: 'hands', prop: 'hands', propColor: 'hands',
     belt: 'waist',
     emblem: 'chest', emblemColor: 'chest'
@@ -172,11 +183,11 @@ const CustomizeView = {
     if (h && h.focus) h.focus(CustomizeView._activeRegion());
   },
 
-  // Schema sections, plus a trailing "Presets" pseudo-tab (it has no slots —
-  // its tab shows the full-look preset buttons instead of a slot editor).
+  // A leading "Presets" pseudo-tab (it has no slots — it shows the full-look
+  // preset tiles instead of a slot editor), then the schema sections.
   _tabList() {
     const base = CustomizeView._sections || [];
-    return CustomizeView._hasPresets ? base.concat(['Presets']) : base.slice();
+    return CustomizeView._hasPresets ? ['Presets'].concat(base) : base.slice();
   },
 
   // ── panel: tabs → slot pills → options ──
@@ -189,24 +200,43 @@ const CustomizeView = {
   _renderTabs() {
     const host = document.getElementById('cz-tabs');
     if (!host) return;
-    host.innerHTML = CustomizeView._tabList().map(sec =>
-      `<button type="button" class="cz-tab${sec === CustomizeView._activeSection ? ' active' : ''}" data-section="${sec}">${sec}</button>`
-    ).join('');
-    host.querySelectorAll('.cz-tab').forEach(btn => {
-      btn.addEventListener('click', () => {
-        CustomizeView._activeSection = btn.dataset.section;
-        if (CustomizeView._activeSection === 'Presets') {
-          CustomizeView._activeSlot = null;
-        } else {
-          const slots = CustomizeView._slotsIn(CustomizeView._activeSection);
-          CustomizeView._activeSlot = slots.length ? slots[0].key : null;
-        }
-        CustomizeView._renderTabs();
-        CustomizeView._renderSlotPills();
-        CustomizeView._renderOptions();
-        CustomizeView._applyFocus();
+    host.innerHTML = CustomizeView._tabList().map(sec => {
+      const on = sec === CustomizeView._activeSection;
+      return `<button type="button" role="tab" id="cz-tab-${esc(sec)}" aria-selected="${on}" tabindex="${on ? 0 : -1}" aria-controls="cz-options" class="cz-tab${on ? ' active' : ''}" data-section="${esc(sec)}">${esc(sec)}</button>`;
+    }).join('');
+    const tabs = [...host.querySelectorAll('.cz-tab')];
+    tabs.forEach((btn, i) => {
+      btn.addEventListener('click', () => CustomizeView._selectSection(btn.dataset.section));
+      // Arrow keys / Home / End move between categories (WAI-ARIA tabs).
+      btn.addEventListener('keydown', (e) => {
+        const to = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1
+          : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : null;
+        if (to == null) return;
+        e.preventDefault();
+        const next = tabs[(to + tabs.length) % tabs.length];
+        CustomizeView._selectSection(next.dataset.section, true);
       });
     });
+    const active = host.querySelector('.cz-tab.active');
+    if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  },
+
+  _selectSection(section, focusTab) {
+    CustomizeView._activeSection = section;
+    if (section === 'Presets') {
+      CustomizeView._activeSlot = null;
+    } else {
+      const slots = CustomizeView._slotsIn(section);
+      CustomizeView._activeSlot = slots.length ? slots[0].key : null;
+    }
+    CustomizeView._renderTabs();
+    CustomizeView._renderSlotPills();
+    CustomizeView._renderOptions();
+    CustomizeView._applyFocus();
+    if (focusTab) {
+      const t = document.querySelector(`#cz-tabs .cz-tab[data-section="${section}"]`);
+      if (t) t.focus();
+    }
   },
 
   // Slots of the active section. Slots whose output is fully hidden by another
@@ -349,6 +379,9 @@ const CustomizeView = {
       const base = { ...CustomizeView._current };
       // Tiles frame the part this slot changes (eyes → head, shoes → feet).
       const focus = CustomizeView._regionFor(key, entry.section);
+      const size = CustomizeView._tileRenderSize();
+      // Pieces worn on the back (the cape, the quiver) are shown from behind.
+      const backView = CustomizeView._BACK_VIEW[key] || [];
       let i = 0;
       // A few per tick so the grid paints instantly. setTimeout (not rAF) so the
       // run still completes if the tab is backgrounded mid-render.
@@ -361,7 +394,8 @@ const CustomizeView = {
         for (; i < end; i++) {
           const j = jobs[i];
           try {
-            const url = Playground3D.renderThumbnail({ ...base, [key]: j.idx }, { focus });
+            const url = Playground3D.renderThumbnail({ ...base, [key]: j.idx },
+              { focus, w: size.w, h: size.h, yaw: backView.includes(j.idx) ? 2.6 : undefined });
             if (url) j.img.src = url;
           } catch (_) { /* skip a bad tile */ }
         }
@@ -473,7 +507,8 @@ const CustomizeView = {
         const end = Math.min(i + 4, jobs.length);
         for (; i < end; i++) {
           try {
-            const url = Playground3D.renderThumbnail(jobs[i].char);
+            const size = CustomizeView._tileRenderSize();
+            const url = Playground3D.renderThumbnail(jobs[i].char, { w: size.w, h: size.h });
             if (url) jobs[i].img.src = url;
           } catch (_) { /* skip a bad tile */ }
         }
@@ -536,12 +571,17 @@ const CustomizeView = {
         },
         body: JSON.stringify(CustomizeView._current)
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      let data = {};
+      try { data = await res.json(); } catch (_) { /* an HTML error page */ }
+      if (!res.ok) throw new Error(data.error || `Couldn't save (HTTP ${res.status})`);
+      // Saved: nothing left to lose, so leaving doesn't ask.
+      CustomizeView._initial = { ...CustomizeView._current };
       CustomizeView._leave();
     } catch (e) {
+      const msg = (e && e.message && !/fetch|network/i.test(e.message)) ? e.message : "Couldn't save — check your connection and try again.";
       if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
-      if (err) { err.hidden = false; err.textContent = e.message; }
+      if (err) { err.hidden = false; err.textContent = msg; }
+      if (typeof toast === 'function') toast(msg, 'error');
     }
   },
 
@@ -554,25 +594,15 @@ const CustomizeView = {
     return false;
   },
 
-  // Back button — warn before discarding unsaved changes.
-  async _back() {
-    if (CustomizeView._isDirty()) {
-      let ok;
-      if (typeof confirmDialog === 'function') {
-        ok = await confirmDialog({
-          title: 'Leave without saving?',
-          message: "You've changed your character but haven't saved yet. Your changes will be lost if you leave now.",
-          confirmLabel: 'Leave',
-          cancelLabel: 'Keep editing',
-          danger: true
-        });
-      } else {
-        ok = window.confirm('You have unsaved changes. Leave without saving?');
-      }
-      if (!ok) return;
-    }
-    CustomizeView._leave();
+  // Router hooks: every way out (← Back, header links, the drawer, browser
+  // back, closing the tab) asks before discarding unsaved changes.
+  isDirty() { return CustomizeView._isDirty(); },
+  async canLeave() {
+    if (!CustomizeView._isDirty()) return true;
+    return Router.confirmLeave("You've changed your character but haven't saved yet. Your changes will be lost if you leave now.");
   },
+
+  _back() { CustomizeView._leave(); },
 
   _leave() {
     Router.go(CustomizeView._return || '/home');
@@ -594,5 +624,39 @@ const CustomizeView = {
     CustomizeView._overlayRoot = null;
     CustomizeView._current = null;
     CustomizeView._initial = null;
+    CustomizeView._loadFailed = false;
+  },
+
+  // Option tiles render at the tile's on-screen size × the device pixel
+  // ratio (capped at 2×) — they were upscaled and soft on hi-DPI screens.
+  _tileRenderSize() {
+    const narrow = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 720px)').matches;
+    const cssW = narrow ? 76 : 96, cssH = narrow ? 100 : 128;
+    const dpr = Math.min(2, Math.max(1, (typeof window !== 'undefined' && window.devicePixelRatio) || 1));
+    return { w: Math.round(cssW * Math.max(1.5, dpr)), h: Math.round(cssH * Math.max(1.5, dpr)) };
+  },
+  // Option indices shown from behind: the Cape layer, Bow + quiver.
+  _BACK_VIEW: { outerwear: [6], prop: [6] },
+
+  _setSaveEnabled(on) {
+    const btn = document.getElementById('cz-save');
+    if (!btn) return;
+    btn.disabled = !on;
+    btn.title = on ? '' : "Your saved character couldn't be loaded";
+  },
+  _showLoadError(on) {
+    const err = document.getElementById('cz-error');
+    if (!err) return;
+    if (!on) { err.hidden = true; err.textContent = ''; return; }
+    err.hidden = false;
+    err.innerHTML = 'Couldn\u2019t load your saved character, so saving is off (it would replace it with these defaults). '
+      + '<button type="button" class="pg-btn" id="cz-retry">Retry</button>';
+    const retry = document.getElementById('cz-retry');
+    if (retry) retry.addEventListener('click', () => {
+      retry.disabled = true;
+      retry.textContent = 'Loading…';
+      CustomizeView._previewHandle && CustomizeView._previewHandle.setCharacter && CustomizeView._previewHandle.setCharacter(Playground.defaultCharacter());
+      CustomizeView._load();
+    });
   }
 };

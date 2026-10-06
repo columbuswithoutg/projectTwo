@@ -906,12 +906,9 @@ const Playground3D = (() => {
   const _palette = PG3DAvatar.palette;
   const _buildBoxPlayer = PG3DAvatar.buildBoxPlayer;
   const _buildProceduralPlayer = PG3DAvatar.buildProceduralPlayer;
-  const _buildHat = PG3DAvatar.buildHat;
-  const _buildGlasses = PG3DAvatar.buildGlasses;
   const _buildHelmet = PG3DAvatar.buildHelmet;
   const _buildEmblem = PG3DAvatar.buildEmblem;
   const _buildProp = PG3DAvatar.buildProp;
-  const _buildAccessories = PG3DAvatar.buildAccessories;
 
   // Walk a subtree and dispose every geometry + material it owns. Used
   // both by the engine's destroy() (on the whole scene) and by createPreview's
@@ -967,7 +964,8 @@ const Playground3D = (() => {
 
   // Playground.SHIRT_STYLES / PANTS_STYLES → how far the cloth runs down the limb.
   const _SLEEVES = ['short', 'none', 'long', 'long', 'short', 'short', 'long', 'short', 'none'];
-  const _LEGS = ['long', 'long', 'long', 'short', 'short', 'long', 'long'];
+  // Slim is cropped above the ankle (Pants are loose, creased, turned up).
+  const _LEGS = ['long', 'crop', 'long', 'short', 'short', 'long', 'long'];
 
   // Character slots → PG3DHumanoid look. Clothing is tinted onto the body
   // (the CC0 pack ships no garments), so styles map to colours + hems.
@@ -983,10 +981,13 @@ const Playground3D = (() => {
     const garments = (typeof PG3DHumanoidLogic !== 'undefined' && PG3DHumanoidLogic.garmentsFor)
       ? PG3DHumanoidLogic.garmentsFor(c) : null;
     if (garments) {
+      // An unknown slot resolves to null (the piece is skipped) — it used to
+      // fall back to the trousers' colour.
       const hexOf = (slot) => slot === 'suit' ? _palette('SUIT_COLORS', c.suitColor)
         : slot === 'outer' ? _palette('SHIRT_COLORS', c.outerwearColor)
         : slot === 'accessory' ? _palette('ACCESSORY_COLORS', c.accessoryColor)
-        : _palette('PANTS_COLORS', c.pantsColor);
+        : slot === 'bottom' ? _palette('PANTS_COLORS', c.pantsColor)
+        : null;
       for (const piece of [garments.shell, garments.skirt, garments.cape]) {
         if (piece) piece.hex = hexOf(piece.color);
       }
@@ -1001,7 +1002,16 @@ const Playground3D = (() => {
         const r = Math.round(((hex >> 16) & 255) * k), g = Math.round(((hex >> 8) & 255) * k), b = Math.round((hex & 255) * k);
         return (r << 16) | (g << 8) | b;
       };
+      // "Auto" trims that read against the cloth: a tone of it (pockets,
+      // collars, cuffs, zips) or a contrast (jersey stripes) — they used to
+      // equal the base colour, so a Polo looked like a plain Tee.
+      const auto = (hex, mode) => (typeof PG3DGearLogic !== 'undefined')
+        ? PG3DGearLogic.autoAccent(hex, mode) : shade(hex, 0.7);
       const detailHex = {
+        shirtTone: () => auto(_palette('SHIRT_COLORS', c.shirtColor), 'tone'),
+        shirtContrast: () => auto(_palette('SHIRT_COLORS', c.shirtColor), 'contrast'),
+        pantsTone: () => auto(_palette('PANTS_COLORS', c.pantsColor), 'tone'),
+        outerTone: () => auto(_palette('SHIRT_COLORS', c.outerwearColor), 'tone'),
         shoe: () => _palette('SHOE_COLORS', c.shoeColor),
         shoeAccent: () => accent('SHOE_COLORS', c.shoeColor2),
         shirt: () => _palette('SHIRT_COLORS', c.shirtColor),
@@ -1040,8 +1050,9 @@ const Playground3D = (() => {
       // Sandals leave the foot bare (the sole + strap are detail layers).
       shoes: (ripped || (c.shoeStyle ?? 0) === 6) ? null : _palette('SHOE_COLORS', c.shoeColor),
       gloves: (c.gloves ?? 0) > 0 ? accessoryHex : null,
-      // Fingerless gloves stop at the knuckles.
-      glovesCut: (c.gloves ?? 0) === 1 ? 0.5 : 2,
+      // Fingerless gloves: the palm and the fingers' first knuckle (the hand
+      // runs 0..1 to the knuckles, the fingers 1..2 to their tips).
+      glovesCut: (c.gloves ?? 0) === 1 ? 1.2 : 2,
       // Gauntlets run up the forearm: Thor's vambraces, Widow's bracers.
       bracers: (c.gloves ?? 0) === 3 ? accessoryHex : null,
       hair: _palette('HAIR_COLORS', c.hairColor),
@@ -1058,7 +1069,12 @@ const Playground3D = (() => {
       // Hair, facial hair and eye shape: see PG3DHumanoidLogic.hairSpec / beardSpec /
       // eyeShapeFor (pack meshes, clipped or topped up with procedural pieces).
       hairStyle: hidden.hairStyle ? null : PG3DHumanoidLogic.hairSpec(c.hairStyle),
-      beard: hidden.facialHairStyle ? null : PG3DHumanoidLogic.beardSpec(c.facialHairStyle),
+      // Beanie / Cap / Top hat: the hair is cut at the hat's rim (fitted to the
+      // measured head in PG3DHumanoid setHair).
+      hat: hidden.hat ? 0 : (c.hat ?? 0),
+      // The Bandana covers the lower face, so a beard would poke through it.
+      beard: (hidden.facialHairStyle || (!hidden.mask && (c.mask ?? 0) === 4)) ? null
+        : PG3DHumanoidLogic.beardSpec(c.facialHairStyle),
       beardColor: _palette('HAIR_COLORS', c.facialHairColor ?? c.hairColor),
       eyeShape: hidden.eyeShape ? null : PG3DHumanoidLogic.eyeShapeFor(c.eyeShape)
     };
@@ -1109,25 +1125,13 @@ const Playground3D = (() => {
     requestAnimationFrame(step);
   }
 
-  // Re-mount the procedural hero pieces (hat / helmet / glasses / chest emblem
-  // / held prop) onto the rigged body's bones, so they follow the animation.
-  // They were authored around a 0.55u cube head and a blocky torso, hence the
-  // per-slot scale. Gloves are a hand tint (see _lookFor); belt + mask still
-  // need re-fitting and stay off for now.
+  // Gear on the rigged body's bones, so it follows the animation. Most of it
+  // is fitted to the measured body (js/playground3d-gear.js); the Iron Man,
+  // Knight and Soldier helmets and the held props are still the Box pieces,
+  // authored round a 0.55u cube head and a blocky arm, hence the per-slot
+  // scale. Gloves are a hand tint (see _lookFor).
   const GEAR_HEAD_SZ = 0.55;     // head size the procedural pieces assume
   const GEAR_ARM_LEN = 0.7;      // hand hangs at y = −ARM_LEN in prop space
-
-  // _buildAccessories takes one ctx of parents + dims; on a rigged body every
-  // piece mounts on its own slot, so the same slot stands in for each parent
-  // and the unused dimensions are zeroed.
-  function _gearCtx(slot, dims, styles, mat) {
-    return {
-      head: slot, torso: slot, leftArm: slot, rightArm: slot,
-      dims: Object.assign({ HEAD_SZ: 0, TORSO_W: 0, TORSO_H: 0, TORSO_D: 0, ARM_LEN: 0, ARM_W: 0, ARM_D: 0 }, dims),
-      styles: Object.assign({ gloves: 0, belt: 0, mask: 0 }, styles),
-      mat
-    };
-  }
 
   function _attachRealisticGear(root, c, inst) {
     if (!inst || !inst.attachSlot) return;
@@ -1136,43 +1140,26 @@ const Playground3D = (() => {
       ? Playground.characterHidden(c) : {};
     const mat = (pal, idx, o) => _gearMat(_palette(pal, idx), o);
 
-    const accMat = mat('ACCESSORY_COLORS', c.accessoryColor, { metal: 0.3, rough: 0.55 });
-    const maskIdx = hidden.mask ? 0 : (c.mask ?? 0);
-    // Centred on the real head and scaled to its width (the pieces assume a
-    // 0.55u cube head), so it fits both the male and female bodies.
-    const headSlot = inst.attachSlot('head', { center: true, fit: GEAR_HEAD_SZ });
-    if (headSlot) {
-      if (!hidden.hat) {
-        const hat = _buildHat(c.hat ?? 0, GEAR_HEAD_SZ, _palette('SHIRT_COLORS', c.shirtColor));
-        if (hat) headSlot.add(hat);
-      }
-      if (!hidden.glasses) {
-        const glasses = _buildGlasses(c.glasses ?? 0, GEAR_HEAD_SZ);
-        if (glasses) headSlot.add(glasses);
-      }
-      const helmet = _buildHelmet(c.helmet ?? 0, mat('SHIRT_COLORS', c.helmetColor, { metal: 0.7, rough: 0.35 }), GEAR_HEAD_SZ);
-      if (helmet) headSlot.add(helmet);
-      if (maskIdx) _buildAccessories(_gearCtx(headSlot, { HEAD_SZ: GEAR_HEAD_SZ }, { mask: maskIdx }, accMat));
-      if (!headSlot.children.length) headSlot.removeFromParent();
-    }
-
-    // Belt at the waist; a sash lies across the chest instead. Dimensions are
-    // the realistic body's, so the builder's torso-relative maths still lands.
-    const beltIdx = c.belt ?? 0;
-    if (beltIdx) {
-      const sash = beltIdx === 3;
-      const slot = inst.attachSlot(sash ? 'chest' : 'pelvis', { center: true, y: sash ? 0.04 : 0.06, scale: 1 });
-      if (slot) {
-        _buildAccessories(_gearCtx(slot, { TORSO_W: 0.30, TORSO_H: 0.08, TORSO_D: 0.22 }, { belt: beltIdx }, accMat));
+    // Fitted pieces (js/playground3d-gear.js), built from THIS body's
+    // measurements: hats and the hood, glasses, masks, the cowl and the dome
+    // helmets, belts and the sash, chest emblems, the folded hood, the bow tie.
+    let fitted = { helmetBuilt: false };
+    if (typeof PG3DGear !== 'undefined' && inst.measure && inst.mountRigid && inst.addShell) {
+      try {
+        fitted = PG3DGear.attach(inst, c, { gearMat: _gearMat, palette: _palette, hidden, buildEmblem: _buildEmblem });
+      } catch (err) {
+        console.warn('[pg3d] realistic gear failed', err);
       }
     }
-
-    if ((c.emblem ?? 0) > 0) {
-      // Scaled to the chest's width; TORSO_D then puts it just proud of the
-      // sternum (the builder offsets by TORSO_D/2 + 0.14).
-      const chestSlot = inst.attachSlot('chest', { center: true, y: 0.04, fit: 0.85 });
-      const emblem = chestSlot && _buildEmblem(c.emblem, mat('SHIRT_COLORS', c.emblemColor), { TORSO_D: 0.30 });
-      if (emblem) chestSlot.add(emblem); else if (chestSlot) chestSlot.removeFromParent();
+    // Iron Man, Knight and Soldier keep the classic helmets, centred on the
+    // real head and scaled to it per axis (they cover the whole head).
+    const helmIdx = c.helmet ?? 0;
+    if (helmIdx && !fitted.helmetBuilt) {
+      const headSlot = inst.attachSlot('head', { center: true, fit: GEAR_HEAD_SZ });
+      const helmet = headSlot && _buildHelmet(helmIdx, mat('SHIRT_COLORS', c.helmetColor, { metal: 0.7, rough: 0.35 }), GEAR_HEAD_SZ);
+      // One mesh per material (the Iron Man helm alone was 6 draw calls).
+      if (helmet) headSlot.add(typeof PG3DGear !== 'undefined' ? PG3DGear.compact(helmet) : helmet);
+      else if (headSlot) headSlot.removeFromParent();
     }
 
     // Heels (shoe style 5): a tapered heel block behind each heel. The rigged
@@ -1194,45 +1181,6 @@ const Playground3D = (() => {
         // Centred just behind the heel so most of it shows (inside the foot it vanished).
         heel.position.set(0, footBox.min[1] + h / 2 - ankle.y, footBox.min[2] - 0.006 - ankle.z);
         slot.add(heel);
-      }
-    }
-
-    // Hoodie (top style or outerwear): a smooth hood lying at the back of the
-    // neck — a bowl opening forward, the Box body's hood block made round.
-    const outerHood = (c.outerwear ?? 0) === 4;
-    const hoodHex = outerHood ? _palette('SHIRT_COLORS', c.outerwearColor)
-      : (!suitOn && (c.shirtStyle ?? 0) === 3) ? _palette('SHIRT_COLORS', c.shirtColor) : null;
-    const torsoBox = inst.partBox && inst.partBox('torso');
-    if (hoodHex != null && torsoBox) {
-      const slot = inst.attachSlot('chest', { center: true, scale: 1 });
-      if (slot) {
-        const w = torsoBox.size[0];
-        const hood = new THREE.Mesh(
-          new THREE.SphereGeometry(1, 22, 12, Math.PI, Math.PI, 0, Math.PI * 0.72),
-          new THREE.MeshStandardMaterial({ color: hoodHex, roughness: 0.85, side: THREE.DoubleSide })
-        );
-        hood.name = 'gear:hood';
-        hood.castShadow = true;
-        hood.scale.set(w * 0.4, w * 0.38, w * 0.36);
-        hood.position.set(0, torsoBox.size[1] * 0.5 - 0.09, -torsoBox.size[2] * 0.5 + 0.02);
-        hood.rotation.x = 0.35;                         // tip back so it lies on the shoulders
-        slot.add(hood);
-      }
-    }
-
-    // Polo with an accent colour: a bow tie at the collar (as on the Box body).
-    if (!suitOn && (c.shirtStyle ?? 0) === 4 && (c.shirtColor2 ?? 0) > 0 && torsoBox) {
-      const slot = inst.attachSlot('chest', { center: true, scale: 1 });
-      if (slot) {
-        const tieMat = _gearMat(_palette('SHIRT_COLORS', c.shirtColor2 - 1), { rough: 0.6 });
-        const y = torsoBox.size[1] * 0.5 - 0.06, z = torsoBox.size[2] * 0.5 + 0.005;
-        for (const s of [-1, 1]) {
-          const wing = new THREE.Mesh(new THREE.ConeGeometry(0.026, 0.05, 10), tieMat);
-          wing.name = 'gear:bowtie';
-          wing.rotation.z = s * Math.PI / 2;          // point inward to the knot
-          wing.position.set(s * 0.025, y, z);
-          slot.add(wing);
-        }
       }
     }
 
@@ -1270,6 +1218,8 @@ const Playground3D = (() => {
           leftArm: l, rightArm: r, torso: back, dims: { ARM_LEN: GEAR_ARM_LEN }
         });
         if (back && !back.children.length) back.removeFromParent();
+        // The quiver sits on the measured back, with its strap (js/playground3d-gear.js).
+        else if (back && (c.prop ?? 0) === 6 && typeof PG3DGear !== 'undefined') PG3DGear.seatQuiver(inst, back.children[0], 0.02, c);
         // The builder grips at y = −ARM_LEN and offsets sideways/forward for a
         // chunky blocky arm. Slide the grip onto the palm (the slot origin) and
         // tuck those offsets in, or the prop floats beside a slim real wrist.
@@ -4745,7 +4695,10 @@ const Playground3D = (() => {
   // showed the whole figure before looks different now.
   function _frameCamera(region, fovDeg, aspect, zoom) {
     zoom = zoom || 1;
-    const spec = (_frameBox.blocky ? PREVIEW_REGIONS_BOX : PREVIEW_REGIONS)[region];
+    // A region name, or a spec of the same shape (contact sheets frame a
+    // hand or a foot this way).
+    const spec = region && typeof region === 'object' ? region
+      : (_frameBox.blocky ? PREVIEW_REGIONS_BOX : PREVIEW_REGIONS)[region];
     if (!spec) {
       const p = PREVIEW_FULL.pos, l = PREVIEW_FULL.look;
       // Zoom toward the look-at point along the classic view line.
@@ -4845,6 +4798,10 @@ const Playground3D = (() => {
 
       rotGroup = new THREE.Group();
       scene.add(rotGroup);
+      // Live BEFORE the gate: when the models are already loaded (after a
+      // visit to /world or /home) the gate calls back synchronously, and the
+      // `!alive` check below used to drop the body — an empty preview.
+      alive = true;
       // The body appears once the realistic models are ready — a spinner
       // until then instead of the procedural stand-in (setCharacter just
       // updates `pending` meanwhile).
@@ -4853,28 +4810,39 @@ const Playground3D = (() => {
         if (!alive || rig || !rotGroup) return;
         rig = _buildPlayer(pending);
         rotGroup.add(rig);
+        _applyHeldPose();
         measureAt = 0;
       });
 
       _attachPointer();
       _attachResize();
 
-      alive = true;
       let last = performance.now();
       const loop = (now) => {
         if (!alive) return;
         const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
         last = now;
-        if (!dragging) yaw += autoYawVel * dt;
-        rotGroup.rotation.y = yaw;
-        // Rigged characters breathe/idle in the customiser preview.
-        const inst = rig && rig.userData.humanoid;
-        if (inst) inst.update(dt);
-        _updateCamera(now, dt);
-        renderer.render(scene, camera);
+        _frame(now, dt);
         rafId = requestAnimationFrame(loop);
       };
       rafId = requestAnimationFrame(loop);
+    }
+
+    // One preview frame. `frozen` (verification) stops the spin and holds the
+    // pose set by debug.pose().
+    let frozen = false, heldPose = null;
+    function _frame(now, dt) {
+      if (!dragging && !frozen) yaw += autoYawVel * dt;
+      rotGroup.rotation.y = yaw;
+      // Rigged characters breathe/idle in the customiser preview.
+      const inst = rig && rig.userData.humanoid;
+      if (inst && !heldPose) inst.update(dt);
+      _updateCamera(now, dt);
+      renderer.render(scene, camera);
+    }
+    function _applyHeldPose() {
+      const inst = rig && rig.userData.humanoid;
+      if (inst && heldPose && inst.poseAt) inst.poseAt(heldPose.state, heldPose.t);
     }
 
     // Glide the camera toward the pose that frames the current region at the
@@ -5001,6 +4969,7 @@ const Playground3D = (() => {
       _disposeActor(rig);       // marks it discarded so a pending model upgrade skips it
       rig = _buildPlayer(c);
       rotGroup.add(rig);
+      _applyHeldPose();
       measureAt = 0;   // a new body may be a different height/build
     }
 
@@ -5038,10 +5007,24 @@ const Playground3D = (() => {
 
     // `_debug` — measurement + camera readback for verification scripts.
     const _debug = () => ({
-      region, zoom, box: { ..._measureRig(rig) },
+      region, zoom, yaw, frozen, box: { ..._measureRig(rig) },
       cam: camera ? camera.position.toArray() : null, look: { ...camLook }
     });
-    return { setCharacter, focus, zoomBy, setZoom, getZoom, destroy, _debug };
+    // Verification hooks (the browser pane never runs rAF): stop the spin,
+    // face a given way, hold a clip frame, draw one frame synchronously.
+    const debug = {
+      freeze(on) { frozen = on !== false; },
+      setYaw(r) { yaw = +r || 0; },
+      pose(state, t) { heldPose = state ? { state, t: t || 0 } : null; _applyHeldPose(); },
+      renderOnce(dt) {
+        if (!renderer || !rig) return false;
+        measureAt = 0;
+        snapCam = true;
+        _frame(performance.now(), dt || 0);
+        return true;
+      }
+    };
+    return { setCharacter, focus, zoomBy, setZoom, getZoom, destroy, _debug, debug };
   }
 
   // ── shared offscreen thumbnail renderer ──
@@ -5097,6 +5080,13 @@ const Playground3D = (() => {
     const rig = _buildPlayer(character);
     _thumbGroup.rotation.y = (opts.yaw != null) ? opts.yaw : 0.42;  // gentle 3/4 view
     _thumbGroup.add(rig);
+    // A fixed clip frame (default: the first idle frame) so every tile shows
+    // the same moment. opts.pose = { state: 'idle' | 'walk' | …, t: 0..1 }.
+    const inst = rig.userData.humanoid;
+    if (inst && inst.poseAt) {
+      const p = opts.pose || { state: 'idle', t: 0 };
+      inst.poseAt(p.state, p.t);
+    }
     _measureRig(rig);
     const pose = _frameCamera(opts.focus || 'full', _thumbCam.fov, _thumbCam.aspect, 1);
     _thumbCam.position.set(pose.pos[0], pose.pos[1], pose.pos[2]);
@@ -5433,6 +5423,54 @@ const Playground3D = (() => {
       seatCandidate() { return _seatCandidate; },
       // Is the off-screen /customize thumbnail renderer (a WebGL context) alive?
       thumbAlive() { return !!_thumbR; },
+      // GPU objects the thumbnail renderer holds (should stay flat across tiles).
+      thumbInfo() { return _thumbR ? { ..._thumbR.info.memory, programs: (_thumbR.info.programs || []).length } : null; },
+      // Verification contact sheet: a labelled grid of thumbnails drawn over
+      // the page. rows / cols: [{ label, patch, yaw?, pose?, focus? }] — each
+      // tile renders { ...base, ...row.patch, ...col.patch } with the column's
+      // (else the row's, else the sheet's) view. → number of tiles.
+      sheet(spec) {
+        const s = spec || {};
+        const rows = s.rows || [{ label: '', patch: {} }];
+        const cols = s.cols || [{ label: '', patch: {} }];
+        const w = s.w || 150, h = s.h || 200;
+        let el = document.getElementById('pg-qa-sheet');
+        if (!el) { el = document.createElement('div'); el.id = 'pg-qa-sheet'; document.body.appendChild(el); }
+        el.style.cssText = 'position:fixed;inset:0;z-index:99999;overflow:auto;background:#1b1d24;color:#ddd;' +
+          'font:11px/1.2 system-ui,sans-serif;padding:6px;';
+        let html = `<div style="font-weight:700;margin:2px 0 6px">${esc(s.title || '')}</div>` +
+          `<table style="border-collapse:collapse"><tr><th></th>` +
+          cols.map(c => `<th style="padding:2px 4px;font-weight:600">${esc(c.label || '')}</th>`).join('') + '</tr>';
+        let n = 0;
+        for (const r of rows) {
+          html += `<tr><th style="text-align:right;padding:2px 6px;white-space:nowrap">${esc(r.label || '')}</th>`;
+          for (const c of cols) {
+            const ch = Object.assign({}, s.base || {}, r.patch || {}, c.patch || {});
+            const pick = (k) => (c[k] != null ? c[k] : r[k] != null ? r[k] : s[k]);
+            const url = renderThumbnail(ch, { w, h, yaw: pick('yaw') != null ? pick('yaw') : 0.42, pose: pick('pose'), focus: pick('focus') });
+            html += `<td style="padding:1px"><img src="${url || ''}" width="${w}" height="${h}" style="display:block;background:#2a2d37"></td>`;
+            n++;
+          }
+          html += '</tr>';
+        }
+        el.innerHTML = html + '</table>';
+        return n;
+      },
+      clearSheet() { const el = document.getElementById('pg-qa-sheet'); if (el) el.remove(); },
+      // Draw calls one character costs: visible meshes × materials.
+      drawCalls(character) {
+        const rig = _buildPlayer(character);
+        let n = 0, tris = 0;
+        rig.traverse((o) => {
+          if (!o.isMesh || !o.visible) return;
+          const mats = Array.isArray(o.material) ? o.material.length : 1;
+          n += mats;
+          const g = o.geometry;
+          if (g) tris += (g.index ? g.index.count : (g.attributes.position ? g.attributes.position.count : 0)) / 3;
+        });
+        _disposeActor(rig);
+        return { drawCalls: n, triangles: Math.round(tris) };
+      },
       // Where the sun's shadow box is centred right now.
       sun() { return _sunRig ? { x: _sunRig.light.target.position.x, z: _sunRig.light.target.position.z, radius: _sunRig.radius, map: _sunRig.mapSize } : null; },
       stoneCenter() { return { ..._stoneCenter }; },

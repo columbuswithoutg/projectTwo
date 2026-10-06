@@ -125,3 +125,33 @@
 
 /* Colour swatches: an ink ring in Comic. */
 [data-theme="comic"] .pg-swatch { border: 2.5px solid #111111; box-shadow: 2px 2px 0 #111111; }
+
+/* Category tabs: every category visible — two rows on wide panels; below
+   that one row that scrolls sideways under the finger, with faded edges
+   instead of a native scrollbar ("Hero" and "Presets" were cut off). */
+.cz-tabs { scrollbar-width: none; }
+.cz-tabs::-webkit-scrollbar { display: none; }
+@media (min-width: 900px) {
+  .cz-tabs { flex-wrap: wrap; overflow-x: visible; row-gap: 2px; }
+}
+@media (max-width: 899px) {
+  .cz-tabs {
+    padding-inline: 14px;
+    scroll-padding-inline: 14px;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+            mask-image: linear-gradient(to right, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+  }
+}
+.cz-tab:focus-visible { outline: 2px solid var(--highlight); outline-offset: 2px; }
+
+/* Option tiles: bigger previews (rendered at the device's pixel ratio). */
+.cz-tiles { grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); }
+.cz-tile-av { width: 96px; height: 128px; }
+@media (max-width: 720px) {
+  .cz-tiles { grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); }
+  .cz-tile-av { width: 76px; height: 100px; }
+}
+
+/* The saved character couldn't be loaded: Save is off, with a Retry. */
+#cz-error .pg-btn { margin-left: 8px; min-height: 32px; }
+.pg-btn-save:disabled { opacity: 0.45; cursor: not-allowed; }

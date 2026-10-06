@@ -27,6 +27,9 @@ const HomeEditView = (() => {
   let _watchedCount = 0;
   let _watchedIds = [];         // all projectIds the user has watched
   let _saving = false;
+  // The saved layout couldn't be read: Save stays off — saving the empty
+  // working copy would wipe every room the player had placed.
+  let _loadFailed = false;
 
   // ── public API ──
 
@@ -58,6 +61,7 @@ const HomeEditView = (() => {
     _watchedCount = 0;
     _watchedIds = [];
     _saving = false;
+    _loadFailed = false;
   }
 
   // ── data load ──
@@ -65,10 +69,12 @@ const HomeEditView = (() => {
   async function _load() {
     let layout = { rooms: [] };
     let serverIds = null;
+    _loadFailed = false;
     try {
       const res = await fetch(`${API}/profile/home-layout`, {
         headers: { Authorization: `Bearer ${Auth.getToken()}` }
       });
+      if (!res.ok) _loadFailed = true;
       if (res.ok) {
         const data = await res.json();
         layout = data.homeLayout || { rooms: [] };
@@ -76,7 +82,7 @@ const HomeEditView = (() => {
         _watchedCount = data.watchedCount || 0;
         if (Array.isArray(data.watchedIds)) serverIds = data.watchedIds;
       }
-    } catch (_) { /* fall through */ }
+    } catch (_) { _loadFailed = true; }
 
     _layout = (layout.rooms || []).map(r => ({
       projectId: r.projectId, gx: r.gx | 0, gy: r.gy | 0
@@ -287,13 +293,17 @@ const HomeEditView = (() => {
 
     html += `<div class="pg-edit-actions">`;
     html += `<button class="pg-btn pg-btn-cancel" type="button" id="pg-edit-cancel">Cancel</button>`;
-    html += `<button class="pg-btn pg-btn-save" type="button" id="pg-edit-save"${_saving ? ' disabled' : ''}>${_saving ? 'Saving…' : 'Save'}</button>`;
+    html += `<button class="pg-btn pg-btn-save" type="button" id="pg-edit-save"${_saving || _loadFailed ? ' disabled' : ''}>${_saving ? 'Saving…' : 'Save'}</button>`;
     html += `</div>`;
-    html += `<div class="pg-edit-error" id="pg-edit-error"></div>`;
+    html += _loadFailed
+      ? `<div class="pg-edit-error" id="pg-edit-error">Couldn’t load your saved home, so saving is off (it would replace your rooms). <button class="pg-btn" type="button" id="pg-edit-retry">Retry</button></div>`
+      : `<div class="pg-edit-error" id="pg-edit-error"></div>`;
 
     panel.innerHTML = html;
     document.getElementById('pg-edit-cancel').addEventListener('click', () => Router.go('/home'));
     document.getElementById('pg-edit-save').addEventListener('click', _save);
+    const retry = document.getElementById('pg-edit-retry');
+    if (retry) retry.addEventListener('click', () => { retry.disabled = true; retry.textContent = 'Loading…'; _load(); });
   }
 
   // ── interactions ──
@@ -395,7 +405,7 @@ const HomeEditView = (() => {
   }
 
   async function _save() {
-    if (_saving) return;
+    if (_saving || _loadFailed) return;
     const errEl = document.getElementById('pg-edit-error');
     if (errEl) errEl.textContent = '';
     if (_layout.length > _maxRooms) {

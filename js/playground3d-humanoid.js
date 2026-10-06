@@ -384,14 +384,29 @@
       scale[i] = part[j] === PART.hand ? [P.hand[0], 1, P.hand[2]] : scale[j];
     }
     const axis = bones.map(_lengthAxis);
+    const handBones = new Set([].concat(cls['hand.L'] || [], cls['hand.R'] || []).map((nm) => idx.get(nm)).filter((i) => i != null));
     // Signed distance to the child joint along that axis — normalises each
     // vertex's position along its bone (0 at this joint, 1 at the next) so
-    // sleeves and trouser legs can end part-way down a limb.
+    // sleeves and trouser legs can end part-way down a limb. The hand runs to
+    // its farthest finger base (its first child may be the thumb, near the wrist).
     const reach = bones.map((b, i) => {
-      const child = b.children.find((c) => c.isBone);
-      return child ? child.position.getComponent(axis[i]) : 0;
+      const kids = b.children.filter((c) => c.isBone);
+      if (!kids.length) return 0;
+      if (!handBones.has(i)) return kids[0].position.getComponent(axis[i]);
+      return kids.reduce((m, c) => { const v = c.position.getComponent(axis[i]); return Math.abs(v) > Math.abs(m) ? v : m; }, 0);
     });
-    return { cls, idx, part, scale, axis, reach };
+    // Finger bones: joints out from the hand (0 = a finger's base), else −1.
+    const finger = bones.map((b, i) => {
+      if (part[i] !== PART.hand || handBones.has(i)) return -1;
+      let d = 0;
+      for (let p = b.parent; p; p = p.parent) {
+        const k = idx.get(p.name);
+        if (k == null || handBones.has(k)) break;
+        d++;
+      }
+      return d;
+    });
+    return { cls, idx, part, scale, axis, reach, finger };
   }
 
   // Move a bone's rest position sideways (world X, the model is symmetric about
@@ -457,7 +472,11 @@
       const bi = jointMap[best];
       outPart[i] = rig.part[bi];
       const r = rig.reach[bi];
-      outAlong[i] = r ? t.copy(v).applyMatrix4(Lm[best]).getComponent(rig.axis[bi]) / r : 0;
+      let along = r ? t.copy(v).applyMatrix4(Lm[best]).getComponent(rig.axis[bi]) / r : 0;
+      // Fingers continue the hand's 0..1: 1 at the knuckles, 2 at the tips. On
+      // their own 0..1 a fingerless glove (cut below 1) striped every finger.
+      if (rig.finger && rig.finger[bi] >= 0) along = 1 + Math.min(3, rig.finger[bi] + Math.max(0, Math.min(1, along))) / 3;
+      outAlong[i] = along;
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(outP, 3));
@@ -639,12 +658,115 @@
     };
     const hipsY = jointY(rig.cls.hips);
     const waistY = hipsY + (jointY(rig.cls.spine[0]) - hipsY) * WAIST_K;
+    // Bone length per part (metres): turns a cut along the bone into a
+    // distance, for the garment seams.
+    const partLen = new Array(PART_COUNT).fill(0);
+    rig.part.forEach((p, i) => {
+      if (p < 0 || /index|middle|ring|pinky|thumb|leaf/i.test(bones[i].name)) return;
+      partLen[p] = Math.max(partLen[p], Math.abs(rig.reach[i]));
+    });
     const variant = {
       key, model, build, shape, template: tpl, A, rig, posture, lean, sit, strideRest, waistY, hipsY, eyes,
-      partBox: _partBoxes(body.geometry), hairGeo: new Map()
+      partBox: _partBoxes(body.geometry), hairGeo: new Map(), partLen, bodyGeo: body.geometry, bones: Wp
     };
     _variants.set(key, variant);
     return variant;
+  }
+
+  // Measurements for fitting gear to THIS body (bind pose, body units),
+  // computed on first use and shared by every character of the variant:
+  // the head (skull, eyes, brow, chin, face profile) and the torso surface
+  // (radius per height × angle) — see js/playground3d-gear-logic.js.
+  function _measure(variant) {
+    if (variant.measure) return variant.measure;
+    const G = root.PG3DGearLogic;
+    const g = variant.bodyGeo;
+    const pos = g.attributes.position.array, parts = g.attributes.aPart.array;
+    const index = g.index ? g.index.array : null;
+    const head = G.measureHead(pos, parts, variant.eyes, index);
+    const torso = G.measureTorso(pos, parts, { dy: 0.01, nA: 48, index });
+    const neckTable = G.measureTorso(pos, parts, { dy: 0.005, nA: 32, parts: [G.PART.neck], index });
+    // Hips and legs (skirts, capes and coat tails clear them).
+    const legs = G.measureTorso(pos, parts, { dy: 0.02, nA: 40, parts: [G.PART.pelvis, G.PART.thigh, G.PART.shin], index });
+    const lm = torso ? G.torsoLandmarks(torso, { waistY: variant.waistY }) : {};
+    const bonePos = (key) => {
+      const nm = variant.rig.cls[key] != null ? [].concat(variant.rig.cls[key])[0] : null;
+      const i = nm != null ? variant.rig.idx.get(nm) : null;
+      return i == null ? null : new (T().Vector3)().setFromMatrixPosition(variant.bones[i]).toArray();
+    };
+    const neck = variant.rig.cls.neck || [];
+    variant.measure = {
+      head, torso, neck: neckTable, legs,
+      chestY: lm.chestY, waistY: variant.waistY, hipsY: variant.hipsY,
+      neckY: neck.length ? bonePos('neck') && bonePos('neck')[1] : null,
+      headPos: bonePos('head'),
+      shoulders: [bonePos('upperArm.L'), bonePos('upperArm.R')],
+      partBox: variant.partBox
+    };
+    return variant.measure;
+  }
+
+  // Spatial hash of the variant's body vertices (bind space, 4 cm cells) for
+  // nearest-vertex lookups; built once per body variant.
+  function _surfaceGrid(variant) {
+    if (variant.surfaceGrid) return variant.surfaceGrid;
+    const g = variant.bodyGeo;
+    const pos = g.attributes.position.array;
+    const n = pos.length / 3;
+    const CELL = 0.04;
+    const key = (x, y, z) => ((x + 256) * 512 + (y + 256)) * 512 + (z + 256);
+    const cells = new Map();
+    for (let i = 0; i < n; i++) {
+      const k = key(Math.floor(pos[i * 3] / CELL), Math.floor(pos[i * 3 + 1] / CELL), Math.floor(pos[i * 3 + 2] / CELL));
+      let list = cells.get(k);
+      if (!list) cells.set(k, (list = []));
+      list.push(i);
+    }
+    // Skin attributes as flat arrays (the glTF ones may be interleaved).
+    const si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
+    const sIdx = new Uint16Array(n * 4), sWgt = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) {
+      sIdx[i * 4] = si.getX(i); sIdx[i * 4 + 1] = si.getY(i); sIdx[i * 4 + 2] = si.getZ(i); sIdx[i * 4 + 3] = si.getW(i);
+      sWgt[i * 4] = sw.getX(i); sWgt[i * 4 + 1] = sw.getY(i); sWgt[i * 4 + 2] = sw.getZ(i); sWgt[i * 4 + 3] = sw.getW(i);
+    }
+    const part = Uint8Array.from(g.attributes.aPart.array, (v) => Math.round(v));
+    variant.surfaceGrid = { cells, key, CELL, pos, part, sIdx, sWgt };
+    return variant.surfaceGrid;
+  }
+
+  // Give a bind-space geometry the skin weights of the nearest body vertex
+  // of an allowed part, so it bends exactly like the skin under it.
+  function _skinFromNearest(geom, grid, allow) {
+    const THREE = T();
+    const p = geom.attributes.position;
+    const si = new Uint16Array(p.count * 4), sw = new Float32Array(p.count * 4);
+    const { cells, key, CELL, pos, part, sIdx, sWgt } = grid;
+    const ok = new Uint8Array(PART_COUNT);
+    for (const a of allow) ok[a] = 1;
+    for (let v = 0; v < p.count; v++) {
+      const x = p.getX(v), y = p.getY(v), z = p.getZ(v);
+      const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL), cz = Math.floor(z / CELL);
+      let best = -1, bestD = Infinity;
+      // Grow the search cube until something of an allowed part turns up.
+      for (let r = 1; r <= 4 && best < 0; r++) {
+        for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) for (let k = -r; k <= r; k++) {
+          const list = cells.get(key(cx + i, cy + j, cz + k));
+          if (!list) continue;
+          for (let q = 0; q < list.length; q++) {
+            const b = list[q];
+            if (!ok[part[b]]) continue;
+            const dx = pos[b * 3] - x, dy = pos[b * 3 + 1] - y, dz = pos[b * 3 + 2] - z;
+            const d = dx * dx + dy * dy + dz * dz;
+            if (d < bestD) { bestD = d; best = b; }
+          }
+        }
+      }
+      if (best < 0) { sw[v * 4] = 1; continue; }        // nothing near: bone 0
+      for (let c = 0; c < 4; c++) { si[v * 4 + c] = sIdx[best * 4 + c]; sw[v * 4 + c] = sWgt[best * 4 + c]; }
+    }
+    geom.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+    geom.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+    return geom;
   }
 
   function _hairGeometry(variant, style) {
@@ -665,10 +787,24 @@
     'varying float vAlong;',
     'varying float vHeight;'
   ].join('\n') + '\n';
+  // Cloth coverage per VERTEX (its own part's cut and colour), interpolated
+  // across each triangle. The old per-fragment test used one corner's part
+  // (the flat vPart) against all three corners' "along" values; on the
+  // shoulder seam the torso's (~0.9 up the spine) beat a short sleeve's cut
+  // (0.5 down the arm) and the seam came out as patches of bare skin.
+  const TINT_VERT_COVER = [
+    `uniform float uPartCut[${PART_COUNT}];`,
+    `uniform float uPartSkin[${PART_COUNT}];`,
+    `uniform vec3 uPartColor[${PART_COUNT}];`,
+    'varying float vCover;',
+    'varying vec4 vClothW;'
+  ].join('\n') + '\n';
   const TINT_FRAG_DECL = [
     'flat varying int vPart;',
     'varying float vAlong;',
     'varying float vHeight;',
+    'varying float vCover;',
+    'varying vec4 vClothW;',
     `uniform vec3 uPartColor[${PART_COUNT}];`,
     `uniform float uPartSkin[${PART_COUNT}];`,
     `uniform float uPartCut[${PART_COUNT}];`,
@@ -700,10 +836,11 @@
     // has black underwear painted on, which blotched through at a wider range.
     // Muscle definition comes from the normal map anyway.
     '  float shade = clamp( lum, 0.8, 1.1 );',
-    '  vec3 clothC = uPartColor[ vPart ] * shade;',
+    // The colour of the COVERED corners only (rgb weighted by coverage), so a
+    // glove next to a bare wrist doesn't blend toward the next cloth.
+    '  vec3 clothC = vClothW.rgb / vClothW.a * shade;',
     '  float jag = ( sin( vMapUv.x * 140.0 ) + sin( vMapUv.x * 53.0 + 1.7 ) ) * 0.5;',
-    '  float cut = uPartCut[ vPart ] + jag * uPartRag[ vPart ];',
-    '  float covered = ( 1.0 - uPartSkin[ vPart ] ) * step( vAlong, cut );',
+    '  float covered = step( 0.0, vCover + jag * uPartRag[ vPart ] );',
     '  vec3 beyond = mix( uPartColor2[ vPart ] * shade, skinC, uPartSkin2[ vPart ] );',
     '  vec3 partC = mix( beyond, clothC, covered );',
     // Torso and pelvis split shirt/trousers at a horizontal waistline (bind-
@@ -842,13 +979,15 @@
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, u);
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\n' + TINT_VERT_DECL)
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvPart = int( aPart + 0.5 );\nvAlong = aAlong;\nvHeight = aHeight;');
+        .replace('#include <common>', '#include <common>\n' + TINT_VERT_DECL + TINT_VERT_COVER)
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvPart = int( aPart + 0.5 );\nvAlong = aAlong;\nvHeight = aHeight;\n' +
+          'vCover = uPartSkin[ vPart ] > 0.5 ? -1.0 : uPartCut[ vPart ] - aAlong;\n' +
+          'float clothW = vCover >= 0.0 ? 1.0 : 0.001;\nvClothW = vec4( uPartColor[ vPart ] * clothW, clothW );');
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\n' + TINT_FRAG_DECL)
         .replace('#include <map_fragment>', TINT_MAP);
     };
-    mat.customProgramCacheKey = () => 'pg3d-humanoid-tint';
+    mat.customProgramCacheKey = () => 'pg3d-humanoid-tint-v2';
     mat.needsUpdate = true;
     return u;
   }
@@ -870,13 +1009,15 @@
 
   // look: { skin, top, bottom, shoes, gloves, bracers, hair (hex; null top/
   //         bottom/shoes/gloves/bracers = bare), sleeves: 'none'|'short'|'long',
-  //         legs: 'bare'|'short'|'torn'|'long', hairStyle: style name|null, beard }
+  //         legs: 'bare'|'short'|'torn'|'crop'|'long', hairStyle: style name|null, beard }
   // `bracers` paints the forearms (gauntlets / vambraces) over any sleeve.
   function _paintBody(u, look) {
     u.uSkinColor.value.set(look.skin != null ? look.skin : 0xc68642);
-    const put = (p, hex, cut, rag) => {
+    // `near`: a bare part's colour is still the cloth next to it — coverage
+    // is blended across seam triangles, and their covered side takes it.
+    const put = (p, hex, cut, rag, near) => {
       const bare = hex == null || !cut;
-      u.uPartColor.value[p].set(bare ? 0xffffff : hex);
+      u.uPartColor.value[p].set(bare ? (near != null ? near : 0xffffff) : hex);
       u.uPartSkin.value[p] = bare ? 1 : 0;
       u.uPartCut.value[p] = bare ? 0 : cut;
       u.uPartRag.value[p] = rag || 0;
@@ -886,23 +1027,24 @@
     const top = look.top, bottom = look.bottom;
     const sleeves = look.sleeves || 'short';
     const legs = look.legs || 'long';
-    put(PART.head, null);
-    put(PART.neck, null);
-    put(PART.torso, top, 2);
-    put(PART.upperArm, top, sleeves === 'long' ? 2 : sleeves === 'short' ? 0.5 : 0);
+    const upper = top != null ? top : bottom;
+    put(PART.head, null, 0, 0, upper);
+    put(PART.neck, null, 0, 0, upper);
+    put(PART.torso, top, 2, 0, bottom);
+    put(PART.upperArm, top, sleeves === 'long' ? 2 : sleeves === 'short' ? 0.5 : 0, 0, upper);
     if (look.bracers != null) put(PART.forearm, look.bracers, 2);
-    else put(PART.forearm, top, sleeves === 'long' ? 2 : 0);
-    put(PART.hand, look.gloves, look.glovesCut != null ? look.glovesCut : 2);
-    put(PART.pelvis, bottom, 2);
+    else put(PART.forearm, top, sleeves === 'long' ? 2 : 0, 0, upper);
+    put(PART.hand, look.gloves, look.glovesCut != null ? look.glovesCut : 2, 0, look.bracers != null ? look.bracers : upper);
+    put(PART.pelvis, bottom, 2, 0, upper);
     // Torso + pelvis use the horizontal waistline: trousers below, shirt above.
     for (let p = 0; p < PART_COUNT; p++) u.uPartWaist.value[p] = p === PART.torso || p === PART.pelvis ? 1 : 0;
     u.uWaistTop.value.set(top != null ? top : 0xffffff);
     u.uWaistTopSkin.value = top != null ? 0 : 1;
     u.uWaistBottom.value.set(bottom != null ? bottom : 0xffffff);
     u.uWaistBottomSkin.value = bottom != null ? 0 : 1;
-    put(PART.thigh, bottom, legs === 'bare' ? 0 : legs === 'short' ? 0.75 : 2);
-    put(PART.shin, bottom, legs === 'long' ? 2 : legs === 'torn' ? 0.55 : 0, legs === 'torn' ? 0.09 : 0);
-    put(PART.foot, look.shoes, 2);
+    put(PART.thigh, bottom, legs === 'bare' ? 0 : legs === 'short' ? 0.75 : 2, 0, bottom);
+    put(PART.shin, bottom, legs === 'long' ? 2 : legs === 'crop' ? 0.84 : legs === 'torn' ? 0.55 : 0, legs === 'torn' ? 0.09 : 0, bottom);
+    put(PART.foot, look.shoes, 2, 0, bottom);
   }
 
   // ── garments ──
@@ -915,6 +1057,7 @@
   // body space keep only one patch. Planes test
   // (|x|, y, z) — every region is mirrored left/right, like the clothes.
   const MAX_PLANES = 6;
+  const MAX_HOLES = 2;
   const SHELL_FRAG_DECL = [
     'flat varying int vPart;',
     'varying float vAlong;',
@@ -922,25 +1065,51 @@
     'varying vec3 vBind;',
     `uniform float uCover[${PART_COUNT}];`,
     `uniform float uCoverCut[${PART_COUNT}];`,
+    `uniform float uPartLen[${PART_COUNT}];`,
     `uniform float uAccent[${PART_COUNT}];`,
     'uniform vec3 uAccentColor;',
-    'uniform float uHemY;',
     `uniform vec4 uPlanes[${MAX_PLANES}];`,
+    `uniform float uPlaneMirror[${MAX_PLANES}];`,
     `uniform float uRegionPart[${PART_COUNT}];`,
     'uniform int uPlaneCount;',
-    'uniform float uRag;'
+    'uniform float uRag;',
+    `uniform vec4 uHole[${MAX_HOLES}];`,
+    `uniform float uHoleZ[${MAX_HOLES}];`,
+    'uniform int uHoleCount;',
+    'uniform vec2 uSeam;'
   ].join('\n') + '\n';
-  // Discard outside the region planes. `uRag` makes the first plane's edge
-  // jagged (torn cloth).
+  // Coverage: the part must be covered and the fragment before the part's
+  // cut; inside the region planes (mirrored in x unless the plane says not —
+  // a sash runs one shoulder to the other hip) and outside any elliptical
+  // hole (eye holes, a hood's face opening). `pgEdge` is the distance in
+  // metres to the nearest of those edges: the colour darkens within uSeam.x
+  // of it, so patches read as sewn-on cloth (hems, cuffs, pocket outlines)
+  // instead of floating cards. `uRag` jags the first plane's edge (torn cloth).
   const SHELL_REGION = [
+    'if ( uCover[ vPart ] < 0.5 ) discard;',
+    'float pgEdge = 1e3;',
+    'float pgCut = ( uCoverCut[ vPart ] - vAlong ) * uPartLen[ vPart ];',
+    'if ( pgCut < 0.0 ) discard;',
+    'if ( uCoverCut[ vPart ] < 1.9 ) pgEdge = pgCut;',
     'if ( uRegionPart[ vPart ] > 0.5 ) {',
-    'vec3 rp = vec3( abs( vBind.x ), vBind.y, vBind.z );',
-    `for ( int i = 0; i < ${MAX_PLANES}; i++ ) {`,
-    '  if ( i >= uPlaneCount ) break;',
-    '  float jagP = i == 0 ? ( sin( vBind.x * 90.0 ) + sin( vBind.x * 37.0 + 1.3 ) ) * 0.5 * uRag : 0.0;',
-    '  if ( dot( uPlanes[ i ].xyz, rp ) < uPlanes[ i ].w + jagP ) discard;',
+    `  for ( int i = 0; i < ${MAX_PLANES}; i++ ) {`,
+    '    if ( i >= uPlaneCount ) break;',
+    '    vec3 rp = vec3( uPlaneMirror[ i ] > 0.5 ? abs( vBind.x ) : vBind.x, vBind.y, vBind.z );',
+    '    float jagP = i == 0 ? ( sin( vBind.x * 90.0 ) + sin( vBind.x * 37.0 + 1.3 ) ) * 0.5 * uRag : 0.0;',
+    '    float d = dot( uPlanes[ i ].xyz, rp ) - uPlanes[ i ].w - jagP;',
+    '    if ( d < 0.0 ) discard;',
+    '    pgEdge = min( pgEdge, d );',
+    '  }',
+    `  for ( int i = 0; i < ${MAX_HOLES}; i++ ) {`,
+    '    if ( i >= uHoleCount ) break;',
+    '    if ( vBind.z < uHoleZ[ i ] ) continue;',
+    '    vec2 q = ( vec2( abs( vBind.x ), vBind.y ) - uHole[ i ].xy ) / uHole[ i ].zw;',
+    '    float e = length( q ) - 1.0;',
+    '    if ( e < 0.0 ) discard;',
+    '    pgEdge = min( pgEdge, e * min( uHole[ i ].z, uHole[ i ].w ) );',
+    '  }',
     '}',
-    '}'
+    'float pgSeam = 1.0 - smoothstep( uSeam.x * 0.35, uSeam.x, pgEdge );'
   ].join('\n');
 
   function _shellMaterial(hex, spec) {
@@ -951,72 +1120,56 @@
       roughness: spec.rough != null ? spec.rough : 0.8,
       side: THREE.DoubleSide            // thin layer: the inside shows at hems
     });
+    // Flush layers (prints, very low offsets) win the depth test against the
+    // tinted body without z-fighting.
+    if ((spec.inflate != null ? spec.inflate : 0.014) < 0.004) {
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -1;
+      mat.polygonOffsetUnits = -2;
+    }
     const u = {
       uCover: { value: new Array(PART_COUNT).fill(0) },
       uCoverCut: { value: new Array(PART_COUNT).fill(2) },
+      uPartLen: { value: new Array(PART_COUNT).fill(0.25) },
       // Two-tone: parts flagged in uAccent render in uAccentColor instead of
       // the material colour (Iron Man's gold biceps/thighs).
       uAccent: { value: new Array(PART_COUNT).fill(0) },
       uAccentColor: { value: new THREE.Color(spec.accentHex != null ? spec.accentHex : hex) },
-      uHemY: { value: -1e3 },
       uInflate: { value: spec.inflate != null ? spec.inflate : 0.014 },
       uPlanes: { value: Array.from({ length: MAX_PLANES }, () => new THREE.Vector4()) },
+      uPlaneMirror: { value: new Array(MAX_PLANES).fill(1) },
       uPlaneCount: { value: 0 },
       // Which parts the region clips (a jacket's straight hem must not cut the sleeves).
       uRegionPart: { value: new Array(PART_COUNT).fill(1) },
-      uRag: { value: spec.rag || 0 }
+      uRag: { value: spec.rag || 0 },
+      uHole: { value: Array.from({ length: MAX_HOLES }, () => new THREE.Vector4(0, 0, 1, 1)) },
+      uHoleZ: { value: new Array(MAX_HOLES).fill(1e3) },
+      uHoleCount: { value: 0 },
+      uSeam: { value: new THREE.Vector2(spec.seam != null ? spec.seam : 0.006, spec.seamDark != null ? spec.seamDark : 0.38) }
     };
     mat.userData.shell = u;
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, u);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nuniform float uInflate;\nvarying vec3 vBind;\n' + TINT_VERT_DECL)
+        // Push out along the BIND-pose normal: <skinning_vertex> poses the
+        // offset with the vertex. objectNormal is already skinned here, so
+        // using it rotated the offset twice — hanging sleeves barely
+        // inflated (z-fighting) and chest pieces tilted ~30°.
         .replace('#include <begin_vertex>',
-          '#include <begin_vertex>\nvPart = int( aPart + 0.5 );\nvAlong = aAlong;\nvHeight = aHeight;\nvBind = position;\ntransformed += objectNormal * uInflate;');
+          '#include <begin_vertex>\nvPart = int( aPart + 0.5 );\nvAlong = aAlong;\nvHeight = aHeight;\nvBind = position;\ntransformed += normalize( normal ) * uInflate;');
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\n' + SHELL_FRAG_DECL)
-        .replace('#include <clipping_planes_fragment>',
-          '#include <clipping_planes_fragment>\n' +
-          'if ( uCover[ vPart ] < 0.5 ) discard;\n' +
-          'if ( vAlong > uCoverCut[ vPart ] ) discard;\n' +
-          'if ( vHeight < uHemY ) discard;\n' + SHELL_REGION)
+        .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n' + SHELL_REGION)
         .replace('#include <color_fragment>',
-          '#include <color_fragment>\nif ( uAccent[ vPart ] > 0.5 ) diffuseColor.rgb = uAccentColor;');
+          '#include <color_fragment>\n' +
+          'if ( uAccent[ vPart ] > 0.5 ) diffuseColor.rgb = uAccentColor;\n' +
+          'diffuseColor.rgb *= 1.0 - uSeam.y * pgSeam;\n' +
+          // The inside of a garment (seen at hems and openings) is in shadow.
+          'if ( !gl_FrontFacing ) diffuseColor.rgb *= 0.55;');
     };
-    mat.customProgramCacheKey = () => 'pg3d-humanoid-shell';
+    mat.customProgramCacheKey = () => 'pg3d-humanoid-shell-v2';
     return mat;
-  }
-
-  // Open cone hanging from the waist: skirt, dress, robe, coat tails.
-  function _skirtGeometry(waistR, hemR, length) {
-    const THREE = T();
-    const pts = [];
-    const N = 7;
-    for (let i = 0; i <= N; i++) {
-      const t = i / N;
-      pts.push(new THREE.Vector2(waistR + (hemR - waistR) * Math.pow(t, 1.4), -length * t));
-    }
-    const g = new THREE.LatheGeometry(pts, 28);
-    g.computeVertexNormals();
-    return g;
-  }
-
-  // Cape: a tapered sheet hanging from the shoulders, swept back and wrapped
-  // slightly around the body. Hangs from y = 0 down to −length.
-  function _capeGeometry(width, length, sweep) {
-    const THREE = T();
-    const g = new THREE.PlaneGeometry(width, length, 8, 14);
-    const pos = g.attributes.position;
-    const v = new THREE.Vector3();
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i);
-      const t = (length / 2 - v.y) / length;            // 0 at the collar, 1 at the hem
-      // Narrow at the collar, gently wider at the hem, and wrapped around the
-      // shoulders at the top so it sits on the back rather than floating.
-      pos.setXYZ(i, v.x * (0.78 + t * 0.42), v.y - length / 2, -sweep * t * t - Math.abs(v.x) * 0.22 * (1 - t));
-    }
-    g.computeVertexNormals();
-    return g;
   }
 
   // ── Instances ──
@@ -1069,12 +1222,12 @@
     // pack's one beard mesh, once per clip region (mustache, goatee, chinstrap).
     const hairMeshes = [];
     let _opacity = 1;                          // last setOpacity (fades keep faint stubble faint)
-    function _hairMesh(style, hex, region, opacity) {
+    function _hairMesh(style, hex, region, opacity, extraPlanes) {
       const g = style && _hairGeometry(variant, style);
       if (!g) return;
       const mat = _hair.meshes.get(style).material.clone();
       _setAll(_installTint(mat, _hair.avg), hex);
-      const planes = _regionPlanes(region);
+      const planes = _regionPlanes(region).concat(extraPlanes || []).slice(0, MAX_PLANES);
       if (planes.length) _addHairClip(mat, planes);
       if (opacity != null && opacity < 1) mat.userData.baseOpacity = opacity;
       const hm = new THREE.SkinnedMesh(g, mat);
@@ -1103,9 +1256,23 @@
       }
       const hex = look.hair != null ? look.hair : 0x3b2a20;
       if (typeof spec === 'string') spec = { mesh: spec };
+      // Under a hat (look.hatClip: the hat's rim plane, kept BELOW it) hair is
+      // cut at the rim, so long hair, buns and ponytails still show beneath it
+      // while nothing pokes through the crown. Procedural crown pieces
+      // (spikes, crest, curls, afro, topknot, bowl) go entirely.
+      // `look.hat` (Beanie/Cap/Top hat) derives that plane from THIS head.
+      let rim = look.hatClip || null;
+      if (!rim && look.hat >= 1 && look.hat <= 3 && root.PG3DGearLogic) {
+        rim = root.PG3DGearLogic.hatFit(_measure(variant).head, look.hat, { bald: !spec }).hairClip;
+      }
+      const hatClip = rim ? [[-rim[0], -rim[1], -rim[2], -rim[3]]] : null;
       if (spec) {
-        if (spec.mesh) _hairMesh(spec.mesh, hex, spec.clip, null);
-        if (spec.extras && spec.extras.length) _hairExtras(spec.extras, hex);
+        // Styles made only of crown pieces (Afro, Cap, Mohawk) keep short hair
+        // below a hat's rim instead of going bald there.
+        const mesh = spec.mesh || (hatClip && spec.extras && spec.extras.length ? 'Hair_Buzzed' : null);
+        if (mesh) _hairMesh(mesh, hex, spec.mesh ? spec.clip : null, null, hatClip);
+        const extras = (spec.extras || []).filter((k) => !hatClip || k === 'ponytail');
+        if (extras.length) _hairExtras(extras, hex);
       }
       if (beard === true) beard = { clips: [null] };
       if (beard) {
@@ -1235,6 +1402,10 @@
     // ── garments: shells (jacket / armour), skirts, capes ──
     const garments = [];
     let capeMesh = null;
+    // The cape hangs in the character's frame and only follows the chest's
+    // POSITION: hung on the chest bone, the idle pose's spine pitch and twist
+    // swung its hem half a metre back and to the side.
+    let capeFollow = null;
     function _clearGarments() {
       for (const g of garments.splice(0)) {
         g.removeFromParent();
@@ -1246,41 +1417,75 @@
         }
       }
       capeMesh = null;
+      capeFollow = null;
     }
 
     // Region (see PG3DHumanoidLogic.garmentsFor) → clip planes in bind-pose
-    // body space. Fractions are of the `ref` part's bounding box: y 0 = its
-    // bottom, z 0 = its back, x is |x| over the box's half-width (0 = the
-    // body's centre line). Kept where dot(n, (|x|, y, z)) >= d.
+    // body space, as [nx, ny, nz, d, mirror] with a unit normal (so the
+    // shader's distance-to-edge is in metres). Fractions are of the `ref`
+    // part's bounding box: y 0 = its bottom, z 0 = its back, x is |x| over the
+    // box's half-width (0 = the body's centre line). Kept where
+    // dot(n, (|x|, y, z)) >= d — or (x, y, z) for planes with mirror 0.
+    // `region.planes` adds absolute planes ([nx, ny, nz, d] + optional
+    // mirror flag), computed by js/playground3d-gear.js from measurements.
     function _regionPlanes(region) {
       const out = [];
       if (!region) return out;
+      const unit = (p, mirror) => {
+        const len = Math.hypot(p[0], p[1], p[2]) || 1;
+        return [p[0] / len, p[1] / len, p[2] / len, p[3] / len, mirror === false || mirror === 0 ? 0 : 1];
+      };
       const b = variant.partBox[PART[region.ref || 'torso']];
-      if (!b) return out;
-      const at = (axis, f) => b.min[axis] + (b.max[axis] - b.min[axis]) * f;
-      const halfW = Math.max(Math.abs(b.min[0]), Math.abs(b.max[0]));
-      const push = (x, y, z, d) => out.push([x, y, z, d]);
-      // The vee goes first so a torn hem (rag) can't jag the neckline.
-      if (region.vee) {
-        const v = region.vee;
-        push(-v.slope, 1, 0, at(1, v.top) - v.depth * (b.max[1] - b.min[1]));
+      if (b && (region.vee || region.under || region.armhole || region.y || region.xAbs || region.z)) {
+        for (const p of PG3DGearLogic.regionPlanesFromBox(region, b)) out.push(unit(p, true));
       }
-      // Below a line rising from the centre out to the sides (a jawline):
-      // y <= at(y) + slope * |x|.
-      if (region.under) push(region.under.slope, -1, 0, -at(1, region.under.y));
-      if (region.y) {
-        if (region.y[0] != null) push(0, 1, 0, at(1, region.y[0]));
-        if (region.y[1] != null) push(0, -1, 0, -at(1, region.y[1]));
-      }
-      if (region.xAbs) {
-        if (region.xAbs[0] != null) push(1, 0, 0, halfW * region.xAbs[0]);
-        if (region.xAbs[1] != null) push(-1, 0, 0, -halfW * region.xAbs[1]);
-      }
-      if (region.z) {
-        if (region.z[0] != null) push(0, 0, 1, at(2, region.z[0]));
-        if (region.z[1] != null) push(0, 0, -1, -at(2, region.z[1]));
-      }
+      for (const p of region.planes || []) out.push(unit(p, p[4] == null ? true : !!p[4]));
       return out.slice(0, MAX_PLANES);
+    }
+
+    // Draw only the triangles a shell can cover: its parts, before their
+    // cut, and not wholly outside one region plane. A shell used to redraw
+    // all ~15k body triangles and discard most of them. Cached per variant.
+    function _shellGeometry(sh, planes, regionParts) {
+      const key = JSON.stringify([sh.parts, sh.cut || null, planes.map((p) => p.map((v) => +v.toFixed(4))), regionParts]);
+      variant.shellGeo = variant.shellGeo || new Map();
+      if (variant.shellGeo.has(key)) return variant.shellGeo.get(key);
+      const g = bodyMesh.geometry;
+      const index = g.index ? g.index.array : null;
+      const pos = g.attributes.position.array, part = g.attributes.aPart.array, along = g.attributes.aAlong.array;
+      const cover = new Array(PART_COUNT).fill(false), cut = new Array(PART_COUNT).fill(2);
+      for (const p of sh.parts || []) {
+        if (PART[p] == null) continue;
+        cover[PART[p]] = true;
+        cut[PART[p]] = (sh.cut && sh.cut[p] != null) ? sh.cut[p] : 2;
+      }
+      const inRegion = new Array(PART_COUNT).fill(true);
+      if (regionParts) { inRegion.fill(false); for (const p of regionParts) if (PART[p] != null) inRegion[PART[p]] = true; }
+      const keepV = (v) => { const p = Math.round(part[v]); return cover[p] && along[v] <= cut[p] + 0.02; };
+      const outside = (v, pl) => {
+        if (!inRegion[Math.round(part[v])]) return false;
+        const x = pl[4] ? Math.abs(pos[v * 3]) : pos[v * 3];
+        return pl[0] * x + pl[1] * pos[v * 3 + 1] + pl[2] * pos[v * 3 + 2] < pl[3] - 0.012;
+      };
+      const out = [];
+      const nTri = (index ? index.length : pos.length / 3) / 3;
+      for (let t = 0; t < nTri; t++) {
+        const a = index ? index[t * 3] : t * 3, b = index ? index[t * 3 + 1] : t * 3 + 1, c = index ? index[t * 3 + 2] : t * 3 + 2;
+        if (!keepV(a) && !keepV(b) && !keepV(c)) continue;
+        let dropped = false;
+        for (const pl of planes) {
+          if (outside(a, pl) && outside(b, pl) && outside(c, pl)) { dropped = true; break; }
+        }
+        if (!dropped) out.push(a, b, c);
+      }
+      const sub = new THREE.BufferGeometry();
+      for (const [name, attr] of Object.entries(g.attributes)) sub.setAttribute(name, attr);
+      sub.setIndex(out);
+      sub.boundingBox = g.boundingBox;
+      sub.boundingSphere = g.boundingSphere;
+      sub.userData.shared = true;
+      variant.shellGeo.set(key, sub);
+      return sub;
     }
 
     // One shell layer (see _shellMaterial): a jacket, armour, or a clipped
@@ -1288,6 +1493,7 @@
     function _addShell(sh) {
       const mat = _shellMaterial(sh.hex, sh);
       const u = mat.userData.shell;
+      for (let i = 0; i < PART_COUNT; i++) u.uPartLen.value[i] = variant.partLen[i] || 0.25;
       for (const p of sh.parts || []) {
         if (PART[p] == null) continue;
         u.uCover.value[PART[p]] = 1;
@@ -1297,21 +1503,57 @@
         for (const p of sh.accentParts || []) if (PART[p] != null) u.uAccent.value[PART[p]] = 1;
       }
       const planes = _regionPlanes(sh.region);
-      planes.forEach((p, i) => u.uPlanes.value[i].set(p[0], p[1], p[2], p[3]));
+      planes.forEach((p, i) => { u.uPlanes.value[i].set(p[0], p[1], p[2], p[3]); u.uPlaneMirror.value[i] = p[4]; });
       u.uPlaneCount.value = planes.length;
-      if (sh.region && sh.region.parts) {
+      const regionParts = sh.region && sh.region.parts ? sh.region.parts : null;
+      if (regionParts) {
         for (let i = 0; i < PART_COUNT; i++) u.uRegionPart.value[i] = 0;
-        for (const p of sh.region.parts) if (PART[p] != null) u.uRegionPart.value[PART[p]] = 1;
+        for (const p of regionParts) if (PART[p] != null) u.uRegionPart.value[PART[p]] = 1;
       }
-      const mesh = new THREE.SkinnedMesh(bodyMesh.geometry, mat);
+      const holes = ((sh.region && sh.region.holes) || []).slice();
+      // `frontGap`: an open front — a strip that wide (a fraction of the ref
+      // part's half-width) down the whole front, e.g. an unzipped jacket.
+      if (sh.region && sh.region.frontGap) {
+        const b = variant.partBox[PART[sh.region.ref || 'torso']];
+        if (b) holes.push({ cx: 0, cy: b.center[1], rx: sh.region.frontGap * Math.max(Math.abs(b.min[0]), Math.abs(b.max[0])), ry: b.size[1], zMin: b.center[2] });
+      }
+      holes.length = Math.min(holes.length, MAX_HOLES);
+      holes.forEach((h, i) => { u.uHole.value[i].set(h.cx, h.cy, h.rx, h.ry); u.uHoleZ.value[i] = h.zMin != null ? h.zMin : -1e3; });
+      u.uHoleCount.value = holes.length;
+      const mesh = new THREE.SkinnedMesh(_shellGeometry(sh, planes, regionParts), mat);
       mesh.name = 'garment:' + sh.kind;
       mesh.frustumCulled = false;
-      mesh.castShadow = true;
+      // The body already casts this silhouette; a garment only receives.
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
       body.add(mesh);
       mesh.bind(skeleton, new THREE.Matrix4());
       garments.push(mesh);
       mats.push(mat);
       return { mesh, mat };
+    }
+
+    // Hang the cape from where the chest is now. It stays upright through
+    // ordinary poses and only swings with the spine (hips → chest) once that
+    // tilts a long way — lying or knocked down — so it never sticks up into
+    // the air. (The chest bone is ~30° off its bind orientation even in the
+    // standing idle, so its rotation can't tell standing from lying.)
+    const _capeQ = new THREE.Quaternion(), _capeV = new THREE.Vector3(), _capeH = new THREE.Vector3();
+    const _UP = new THREE.Vector3(0, 1, 0);
+    function _hangCape() {
+      const { hang, bone, hips, rest, spineRest } = capeFollow;
+      bone.updateWorldMatrix(true, false);
+      const now = body.worldToLocal(bone.getWorldPosition(_capeV));
+      let k = 0;
+      if (hips) {
+        hips.updateWorldMatrix(true, false);
+        const spine = body.worldToLocal(hips.getWorldPosition(_capeH)).negate().add(now).normalize();
+        const tilt = Math.acos(Math.max(-1, Math.min(1, spine.dot(_UP))));
+        k = Math.max(0, Math.min(1, (tilt - 0.7) / 0.55));
+        _capeQ.setFromUnitVectors(spineRest, spine);
+      }
+      hang.quaternion.identity().slerp(_capeQ, k * k * (3 - 2 * k));
+      hang.position.copy(rest).applyQuaternion(hang.quaternion).negate().add(now);
     }
 
     function setGarments(spec) {
@@ -1340,47 +1582,199 @@
           }
         }
       }
-      // Hangs from the waist: skirt, dress, robe, coat tails.
+      // Hangs from the waist: skirt, dress, robe, coat tails — fitted to this
+      // body and skinned to the hips and thighs (see _skirtFitted).
       if (spec.skirt && spec.skirt.hex != null) {
         const sk = spec.skirt;
-        const slot = attachSlot('pelvis', { center: true, y: 0.055, scale: 1 });
-        if (slot) {
-          const waistR = (box[PART.pelvis] ? box[PART.pelvis].size[0] * 0.5 : 0.16) * 1.02;
-          const mesh = new THREE.Mesh(
-            _skirtGeometry(waistR, waistR * (sk.flare || 1.6), sk.length || 0.35),
-            new THREE.MeshStandardMaterial({ color: sk.hex, roughness: 0.85, side: THREE.DoubleSide })
-          );
+        const g = _skirtFitted(sk);
+        if (g) {
+          const mat = new THREE.MeshStandardMaterial({ color: sk.hex, roughness: 0.85, side: THREE.DoubleSide, vertexColors: true });
+          const mesh = new THREE.SkinnedMesh(g, mat);
           mesh.name = 'garment:' + sk.kind;
           mesh.castShadow = true;
+          mesh.userData.castsShadow = true;
           mesh.frustumCulled = false;
           mesh.userData.ownGeometry = true;
-          slot.add(mesh);
+          body.add(mesh);
+          mesh.bind(skeleton, new THREE.Matrix4());
           garments.push(mesh);
-          mats.push(mesh.material);
+          mats.push(mat);
         }
       }
-      // Hangs from the upper back (Thor's cape).
+      // Hangs from the upper back (Thor's cape): wrapped onto the shoulders
+      // and clear of the back (see _capeFitted).
       if (spec.cape && spec.cape.hex != null) {
         const cp = spec.cape;
-        const slot = attachSlot('chest', { center: true, y: 0.17, scale: 1 });
-        if (slot) {
-          const chest = box[PART.torso];
-          const w = Math.max(cp.width || 0, (chest ? chest.size[0] : 0.42) * 1.02);
-          const mesh = new THREE.Mesh(
-            _capeGeometry(w, cp.length || 1, cp.sweep || 0.12),
-            new THREE.MeshStandardMaterial({ color: cp.hex, roughness: 0.9, side: THREE.DoubleSide })
-          );
+        const built = _capeFitted(cp);
+        if (built) {
+          const { geometry, pivot: at } = built;
+          const mat = new THREE.MeshStandardMaterial({ color: cp.hex, roughness: 0.9, side: THREE.DoubleSide, vertexColors: true });
+          const mesh = new THREE.Mesh(geometry, mat);
           mesh.name = 'garment:cape';
           mesh.castShadow = true;
+          mesh.userData.castsShadow = true;
           mesh.frustumCulled = false;
           mesh.userData.ownGeometry = true;
-          mesh.position.z = -((chest ? chest.size[2] : 0.24) * 0.5) - 0.02;
-          slot.add(mesh);
-          garments.push(mesh);
-          mats.push(mesh.material);
-          capeMesh = mesh;
+          // Sways about its top edge: a pivot there, the sheet relative to it.
+          const sway = new THREE.Group();
+          sway.name = 'cape:pivot';
+          sway.position.set(at[0], at[1], at[2]);
+          mesh.position.set(-at[0], -at[1], -at[2]);
+          sway.add(mesh);
+          const chest = anchors.chest;
+          const ci = chest ? skeleton.bones.indexOf(chest) : -1;
+          if (ci >= 0) {
+            const hang = new THREE.Group();
+            hang.name = 'cape:root';
+            hang.add(sway);
+            body.add(hang);
+            const hipsBone = anchors.pelvis;
+            const hi = hipsBone ? skeleton.bones.indexOf(hipsBone) : -1;
+            const rest = new THREE.Vector3().setFromMatrixPosition(variant.bones[ci]);
+            const hipsRest = hi >= 0 ? new THREE.Vector3().setFromMatrixPosition(variant.bones[hi]) : rest.clone().setY(rest.y - 0.4);
+            capeFollow = { hang, bone: chest, hips: hi >= 0 ? hipsBone : null, rest, spineRest: rest.clone().sub(hipsRest).normalize() };
+            garments.push(mesh);
+            mats.push(mat);
+            capeMesh = sway;
+          } else {
+            geometry.dispose();
+            mat.dispose();
+          }
         }
       }
+    }
+
+    // A skirt / dress / robe / coat tails fitted to THIS body: the waist is
+    // the measured cross-section (a round cone left a ~4 cm gap front and
+    // back), every row clears the hips and thighs, and it flares to the hem.
+    // Skinned to the hips and, toward the hem, to the thigh on its side, so
+    // the legs stay inside it when walking. Coat tails are open at the front.
+    function _skirtFitted(sk) {
+      const G = root.PG3DGearLogic;
+      const M = _measure(variant);
+      const Tt = M.torso, Lg = M.legs;
+      if (!G || !Tt) return null;
+      const yTop = M.waistY + (sk.kind === 'coat' ? -0.005 : 0.025);
+      const len = sk.length || 0.35, flare = sk.flare || 1.6;
+      const NA = 48, NR = 14;
+      const s0 = G.surfaceAt(Tt, yTop, 0);
+      const c0 = s0.z - s0.r;                          // the body's centre line at the waist
+      const reach = (tbl, y, th) => {
+        if (!tbl || y < tbl.y0 - 0.01 || y > tbl.yMax + 0.01) return 0;
+        const s = G.surfaceAt(tbl, y, th);
+        return Math.sin(th) * s.x + Math.cos(th) * (s.z - c0);
+      };
+      const bodyAt = (y, th) => Math.max(reach(Tt, y, th), reach(Lg, y, th));
+      const open = sk.kind === 'coat' ? 0.3 : 0;      // half-width of the front opening (radians)
+      const hips = boneIndexOf('hips'), tL = boneIndexOf('thigh.L'), tR = boneIndexOf('thigh.R');
+      const pos = [], col = [], si = [], sw = [], idx = [];
+      const prev = new Array(NA + 1).fill(0);
+      const top = [];
+      for (let j = 0; j <= NA; j++) top.push(bodyAt(yTop, (j / NA) * Math.PI * 2 - Math.PI) + 0.006);
+      for (let k = 0; k <= NR; k++) {
+        const t = k / NR, y = yTop - len * t;
+        const clr = 0.008 + 0.035 * t;
+        for (let j = 0; j <= NA; j++) {
+          const th = (j / NA) * Math.PI * 2 - Math.PI;
+          let r = Math.max(top[j] * (1 + (flare - 1) * Math.pow(t, 1.4)), bodyAt(y, th) + clr);
+          r = Math.max(r, prev[j]);
+          prev[j] = r;
+          const x = Math.sin(th) * r;
+          pos.push(x, y, c0 + Math.cos(th) * r);
+          // A darker waistband and hem.
+          const shade = 1 - 0.18 * Math.max(0, (t - 0.92) / 0.08) - 0.12 * Math.max(0, 1 - t / 0.07);
+          col.push(shade, shade, shade);
+          const wT = (tL >= 0 && tR >= 0) ? 0.6 * Math.max(0, Math.min(1, (t - 0.1) / 0.9)) ** 1.5 : 0;
+          const sL = Math.max(0, Math.min(1, 0.5 + x / 0.16));
+          si.push(Math.max(0, hips), Math.max(0, tL), Math.max(0, tR), 0);
+          sw.push(1 - wT, wT * sL, wT * (1 - sL), 0);
+        }
+      }
+      const W = NA + 1;
+      for (let k = 0; k < NR; k++) {
+        for (let j = 0; j < NA; j++) {
+          const th = ((j + 0.5) / NA) * Math.PI * 2 - Math.PI;
+          if (open && Math.abs(th) < open) continue;
+          const a = k * W + j, b = a + 1, c = a + W, d = c + 1;
+          idx.push(a, c, b, b, c, d);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+      g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      return g;
+    }
+
+    // Thor's cape fitted to THIS body: the top edge follows the upper back
+    // just above the shoulder blades and wraps onto the backs of the
+    // shoulders; below that it falls clear of the back, hips and legs,
+    // widening and sweeping back toward the hem. → { geometry (body space),
+    // pivot: the top edge's centre, for the sway }.
+    function _capeFitted(cp) {
+      const G = root.PG3DGearLogic;
+      const M = _measure(variant);
+      const Tt = M.torso, Lg = M.legs;
+      if (!G || !Tt) return null;
+      const sh = M.shoulders && M.shoulders[0];
+      const yTop = (sh ? sh[1] : (M.neckY || 1.5) - 0.06) + 0.03;
+      const len = cp.length || 1, sweep = cp.sweep != null ? cp.sweep : 0.1;
+      const th0 = Math.PI / 2 + 0.34, th1 = Math.PI * 1.5 - 0.34;
+      const NC = 26, NR = 20;
+      const backAt = (y, th) => {
+        let z = Infinity;
+        for (const tbl of [Tt, Lg]) {
+          if (!tbl || y < tbl.y0 - 0.01 || y > tbl.yMax + 0.01) continue;
+          z = Math.min(z, G.surfaceAt(tbl, y, th).z);
+        }
+        return z;
+      };
+      const pos = [], col = [], idx = [];
+      const tops = [];
+      for (let i = 0; i <= NC; i++) {
+        const th = th0 + (th1 - th0) * (i / NC);
+        const s = G.surfaceAt(Tt, yTop, th);
+        tops.push([s.x + s.nx * 0.022, s.z + s.nz * 0.022]);
+      }
+      for (let k = 0; k <= NR; k++) {
+        const t = k / NR, y = yTop - len * t;
+        for (let i = 0; i <= NC; i++) {
+          const th = th0 + (th1 - th0) * (i / NC);
+          const [x0, z0] = tops[i];
+          const x = x0 * (1 + 0.28 * t);
+          let z = z0 - sweep * t * t - 0.02 * t;
+          // Stay behind the body here (buttocks, calves) by at least 3 cm.
+          const zb = backAt(y, th);
+          if (isFinite(zb)) z = Math.min(z, zb - 0.03);
+          pos.push(x, y, z);
+          const shade = 1 - 0.15 * Math.max(0, (t - 0.94) / 0.06);
+          col.push(shade, shade, shade);
+        }
+      }
+      const W = NC + 1;
+      for (let k = 0; k < NR; k++) {
+        for (let i = 0; i < NC; i++) {
+          const a = k * W + i, b = a + 1, c = a + W, d = c + 1;
+          idx.push(a, b, c, b, d, c);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      const mid = tops[Math.floor(NC / 2)];
+      return { geometry: g, pivot: [0, yTop, mid[1]] };
+    }
+    // Skeleton index of a classified bone (shared by the fitted garments).
+    function boneIndexOf(key) {
+      const v = variant.rig.cls[key];
+      const nm = v == null ? null : [].concat(v)[0];
+      const i = nm != null ? variant.rig.idx.get(nm) : null;
+      return i == null ? -1 : i;
     }
 
     const mixer = new THREE.AnimationMixer(body);
@@ -1410,6 +1804,28 @@
       // layered on top, so posture eases off while they run.
       if (opts.once) softUntil = mixer.time + clip.duration;
       return a;
+    }
+
+    // Hold one frame of a state's clip — `frac` is 0..1 through the clip — with
+    // no cross-fade and no random idle start. Thumbnails and verification
+    // sheets use it so every tile shows the same moment (tiles used to land
+    // on a random idle phase).
+    function poseAt(state, frac) {
+      const name = STATE_CLIPS[state] || state;
+      const clip = clips.get(name);
+      if (!clip) return false;
+      mixer.stopAllAction();
+      const a = mixer.clipAction(clip);
+      a.reset();
+      a.setLoop(THREE.LoopRepeat, Infinity);
+      a.setEffectiveWeight(1);
+      a.setEffectiveTimeScale(1);
+      a.play();
+      a.time = Math.max(0, Math.min(1, frac || 0)) * clip.duration;
+      current = a;
+      currentState = STATE_CLIPS[state] ? state : null;
+      handle.update(0);
+      return true;
     }
 
     // force: restart even if it's already the current state — used to resume
@@ -1480,6 +1896,80 @@
       shadows = on;
       for (const m of meshes) m.castShadow = on;
       for (const h of hairMeshes) h.castShadow = on;
+      // Gear that changes the silhouette (hats, hoods, capes, skirts, props)
+      // follows the level of detail too — it used to cast at every distance.
+      pivot.traverse((o) => { if (o.userData && o.userData.castsShadow) o.castShadow = on; });
+    }
+
+    // ── gear mounting (js/playground3d-gear.js) ──
+    // Pieces are authored directly in BIND-POSE BODY SPACE (the same space as
+    // measure()), then either hung rigidly on one bone or skinned to several.
+    // The slot's matrix is the bone's inverse BIND matrix — exactly what
+    // skinning applies to a vertex weighted fully to that bone — so the piece
+    // lands where it was authored whatever pose the body is in right now.
+    function mountRigid(anchor, obj) {
+      const bone = anchors[anchor];
+      const i = bone ? skeleton.bones.indexOf(bone) : -1;
+      if (!obj || i < 0) return null;
+      const slot = new THREE.Group();
+      slot.name = 'slot:' + anchor;
+      slot.matrixAutoUpdate = false;
+      slot.matrix.copy(skeleton.boneInverses[i]);
+      bone.add(slot);
+      slot.add(obj);
+      return slot;
+    }
+    // A clipped shell layer from js/playground3d-gear.js (masks, the cowl,
+    // belts, the sash) — same spec as PG3DHumanoidLogic.garmentsFor details.
+    function addShell(sh) {
+      return sh && sh.hex != null ? _addShell(sh).mesh : null;
+    }
+    // A SkinnedMesh whose geometry carries skinIndex/skinWeight for this
+    // skeleton (see boneIndex), in bind space like the garment shells.
+    function mountSkinned(geometry, material, name) {
+      const m = new THREE.SkinnedMesh(geometry, material);
+      m.name = name || 'gear:skinned';
+      m.frustumCulled = false;
+      m.castShadow = true;
+      m.userData.castsShadow = true;
+      m.userData.ownGeometry = true;
+      body.add(m);
+      m.bind(skeleton, new THREE.Matrix4());
+      garments.push(m);
+      if (material) mats.push(material);
+      return m;
+    }
+    // Gear lying ON the body (emblems, buckles, pouches, the folded hood, the
+    // bow tie), authored in bind space like mountRigid, but skinned like the
+    // nearest skin of `partNames`, so it bends with the spine and breathes
+    // with the chest. Hung rigidly on the chest bone, a belly-long emblem
+    // swung into the stomach of the forward-leaning Huge build.
+    function mountSurface(obj, partNames) {
+      if (!obj) return [];
+      obj.updateMatrixWorld(true);
+      const grid = _surfaceGrid(variant);
+      const allow = new Set((partNames || ['torso', 'pelvis', 'neck']).map((p) => PART[p]).filter((i) => i != null));
+      const out = [];
+      obj.traverse((o) => {
+        if (!o.isMesh) return;
+        const g = o.geometry.clone().applyMatrix4(o.matrixWorld);
+        _skinFromNearest(g, grid, allow);
+        const m = mountSkinned(g, o.material, o.name || obj.name);
+        m.castShadow = false;
+        m.userData.castsShadow = false;
+        out.push(m);
+      });
+      obj.traverse((o) => { if (o.isMesh && o.geometry) o.geometry.dispose(); });
+      return out;
+    }
+    // Skeleton index of a classified bone ('head', 'neck', 'spine', …).
+    function boneIndex(key, which) {
+      const v = variant.rig.cls[key];
+      if (v == null) return -1;
+      const list = [].concat(v);
+      const nm = list[which === 'last' ? list.length - 1 : (which | 0)];
+      const i = nm != null ? variant.rig.idx.get(nm) : null;
+      return i == null ? -1 : i;
     }
 
     function setOpacity(o) {
@@ -1515,21 +2005,44 @@
     // (onBeforeCompile only rewrites the diffuse sample), so it's one loop.
     let flash = 0;
     const FLASH_HEX = 0xff2a2a;
+    // Glowing gear (an arc reactor, the Widow's hourglass) gets its own glow
+    // back afterwards — it used to be reset to black by the first punch.
     function setHitFlash(strength) {
       flash = Math.max(flash, strength == null ? 1 : strength);
-      for (const m of mats) if (m.emissive) { m.emissive.setHex(FLASH_HEX); m.emissiveIntensity = flash * 0.8; }
+      for (const m of mats) {
+        if (!m.emissive) continue;
+        if (m.userData.flashBase === undefined) m.userData.flashBase = [m.emissive.getHex(), m.emissiveIntensity];
+        m.emissive.setHex(FLASH_HEX);
+        m.emissiveIntensity = flash * 0.8;
+      }
     }
     function _decayFlash(dt) {
       if (flash <= 0) return;
       flash = Math.max(0, flash - dt / 0.25);
       for (const m of mats) if (m.emissive) m.emissiveIntensity = flash * 0.8;
-      if (flash === 0) for (const m of mats) if (m.emissive) m.emissive.setHex(0x000000);
+      if (flash === 0) {
+        for (const m of mats) {
+          if (!m.emissive) continue;
+          const base = m.userData.flashBase;
+          m.emissive.setHex(base ? base[0] : 0x000000);
+          m.emissiveIntensity = base ? base[1] : 1;
+        }
+      }
     }
 
     function dispose() {
       _clearGarments();
       mixer.stopAllAction();
       mixer.uncacheRoot(body);
+      // Gear on the bones (mountRigid / attachSlot pieces, hair extras) owns
+      // its geometry and materials unless a cache marks them shared — every
+      // /customize tile used to leak its hat, glasses and emblem.
+      const own = new Set(mats);
+      pivot.traverse((o) => {
+        if (!o.isMesh || o.isSkinnedMesh) return;
+        if (o.geometry && !(o.geometry.userData && o.geometry.userData.shared)) o.geometry.dispose();
+        for (const m of [].concat(o.material || [])) if (!own.has(m)) m.dispose();
+      });
       for (const m of mats) m.dispose();
       // Every instance owns its cloned skeleton (SkeletonUtils.clone). three
       // r160 backs each skinned skeleton with a GPU bone texture that only
@@ -1597,8 +2110,6 @@
       const target = down ? 0 : (mixer.time < softUntil ? 0.35 : 1);
       postureW += (target - postureW) * (1 - Math.exp(-dt * 8));
       if (postureW < 0.001) return;
-      // A cape drifts as the character breathes and walks.
-      if (capeMesh) capeMesh.rotation.x = 0.05 + Math.sin(mixer.time * 1.7) * 0.045;
       for (const p of posture) {
         p.clean.copy(p.bone.quaternion);
         p.bone.quaternion.premultiply(postureQ.identity().slerp(p.q, postureW));
@@ -1719,7 +2230,8 @@
     applyLook(look);
     const handle = {
       object: pivot, body, mixer, shape: variant.shape, anchors,
-      setState, play, applyLook, setOpacity, setShadows, attachSlot, setFist, setHitFlash, setBackpedal, setPose, dispose,
+      setState, play, poseAt, applyLook, setOpacity, setShadows, attachSlot, setFist, setHitFlash, setBackpedal, setPose, dispose,
+      mountRigid, mountSkinned, mountSurface, addShell, boneIndex, measure: () => _measure(variant), skeleton,
       update(dt) {
         _decayFlash(dt);
         // Put the clean (animation-only) rotations back before the mixer runs.
@@ -1746,6 +2258,10 @@
         _applyPosture(dt);
         _applyLean(dt);
         _applyPoseLayer(dt);
+        // The cape last, from the final pose (knocked down included); it
+        // drifts as the character breathes and walks.
+        if (capeMesh) capeMesh.rotation.x = 0.05 + Math.sin(mixer.time * 1.7) * 0.045;
+        if (capeFollow) _hangCape();
       },
       get backpedal() { return leanW; },
       get pose() { return poseW; },

@@ -69,8 +69,9 @@ const CHUNKS = {
     // reads PG3DPhysics / WorldNpcLogic constants when its IIFE runs
     'js/playground3d-physics.js', 'js/world-net-logic.js', 'js/world-npc-logic.js', 'js/world-chat-logic.js',
     'js/world-house-logic.js',
-    'js/playground3d-humanoid-logic.js', 'js/playground3d-humanoid.js',
-    'js/playground3d-avatar.js', 'js/playground3d-input-logic.js', 'js/playground3d-input.js', 'js/playground3d-occlusion.js',
+    // gear-logic: measured fits for the realistic body's clothes (humanoid reads it)
+    'js/playground3d-humanoid-logic.js', 'js/playground3d-gear-logic.js', 'js/playground3d-humanoid.js',
+    'js/playground3d-avatar.js', 'js/playground3d-gear.js', 'js/playground3d-input-logic.js', 'js/playground3d-input.js', 'js/playground3d-occlusion.js',
     'js/playground3d-props.js', 'js/playground3d-house.js', 'js/pg-orientation.js', 'js/playground3d-scene.js',
     'js/playground3d.js',
     'js/home-socket.js', 'js/scene-guess.js', 'js/voice-chat.js', 'js/house-editor.js',
@@ -103,8 +104,8 @@ const EXPECT_GLOBALS = {
 const EXPECT_ATTACHED = {
   core: ['MessagingLogic', 'HumanoidPrefetch', 'SceneGuessLogic', 'PanZoomLogic'],
   admin: ['ProjectLogic'],
-  world: ['PG3DPhysics', 'WorldNetLogic', 'PG3DInputLogic', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid',
-          'PG3DAvatar', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation', 'PG3DScene']
+  world: ['PG3DPhysics', 'WorldNetLogic', 'PG3DInputLogic', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid', 'PG3DGearLogic',
+          'PG3DAvatar', 'PG3DGear', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation', 'PG3DScene']
 };
 // Must stay `var` (window properties): js/boot.js does window[key] = items.
 const VAR_GLOBALS = ['projects', 'characters', 'LOCATIONS'];

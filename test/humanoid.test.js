@@ -335,10 +335,59 @@ test('garmentsFor: a cape hangs and is not a shell (Thor)', () => {
 test('garmentsFor: outerwear is worn over a suit; nothing selected → nothing built', () => {
   const over = H.garmentsFor({ suit: 4, outerwear: 1 });
   assert.equal(over.shell.kind, 'jacket', 'the jacket is the outer layer');
-  // The default outfit (Pants) only adds the loose trouser layer.
-  const plain = { shell: null, skirt: null, cape: null, hood: false, details: [{ kind: 'trousers', parts: ['thigh', 'shin'], inflate: 0.012, color: 'pants' }] };
-  assert.deepEqual(H.garmentsFor({}), plain);
-  assert.deepEqual(H.garmentsFor(null), plain);
+  // The default outfit (Pants) only adds the loose trousers: the layer, its
+  // creases and turned-up hems.
+  for (const c of [{}, null]) {
+    const g = H.garmentsFor(c);
+    assert.deepEqual([g.shell, g.skirt, g.cape, g.hood], [null, null, null, false]);
+    assert.deepEqual(g.details.map((d) => d.kind), ['trousers', 'crease', 'crease', 'turn-up']);
+    assert.deepEqual(g.details[0], { kind: 'trousers', parts: ['thigh', 'shin'], inflate: H.LAYER.base, color: 'pants' });
+  }
+  // Slim is just the tint: nothing to build.
+  assert.deepEqual(H.garmentsFor({ pantsStyle: 1 }).details, []);
+});
+
+// ── Clothing layers: fixed offsets, so nothing z-fights or floats ──
+
+test('layers: each clothing layer clears the one it covers by at least 3 mm', () => {
+  const L = H.LAYER;
+  const order = [['skin', 0], ['print', L.print], ['patch', L.patch], ['base', L.base], ['mid', L.mid], ['outer', L.outer], ['puffy', L.puffy]];
+  for (let i = 1; i < order.length; i++) {
+    assert.ok(order[i][1] - order[i - 1][1] >= 0.0025, `${order[i][0]} clears ${order[i - 1][0]}`);
+  }
+  assert.ok(L.armor - L.mid >= 0.003, 'armour over greaves and turtlenecks');
+  assert.ok(L.trim >= 0.003, 'a trim stands proud of what it trims');
+  assert.ok(L.puffy <= 0.025, 'nothing floats like the old 2–3.5 cm layers');
+});
+
+test('layers: boots cover the trousers, trims sit on their garment', () => {
+  const inflate = (c, kind) => H.garmentsFor(c).details.find((d) => d.kind === kind).inflate;
+  const boots = { shoeStyle: 3, shoeColor2: 2 };
+  assert.ok(inflate(boots, 'boot') - inflate(boots, 'trousers') >= 0.003, 'trousers tuck into boots');
+  assert.ok(inflate(boots, 'boot-cuff') - inflate(boots, 'boot') >= 0.003);
+  // (A Jacket only has a zip when an emblem closes it.)
+  for (const c of [{ outerwear: 1, emblem: 1 }, { outerwear: 2 }, { outerwear: 3 }, { outerwear: 5 }]) {
+    const g = H.garmentsFor(c);
+    assert.ok(inflate(c, 'seam') - g.shell.inflate >= 0.003, `zip on outerwear ${c.outerwear}`);
+  }
+  assert.ok(inflate({ outerwear: 1 }, 'lapel') - H.garmentsFor({ outerwear: 1 }).shell.inflate >= 0.003, 'lapels on the jacket');
+  assert.ok(inflate({ outerwear: 3 }, 'coat-belt') - H.garmentsFor({ outerwear: 3 }).shell.inflate >= 0.003, 'trench belt');
+  assert.ok(inflate({ outerwear: 2 }, 'hem') - H.garmentsFor({ outerwear: 2 }).shell.inflate >= 0.003, 'bomber rib hem');
+  assert.ok(inflate({ shirtStyle: 3 }, 'pocket') <= H.LAYER.patch, 'the hoodie pocket lies on the shirt');
+});
+
+test('outerLayer: gear stands on the outermost layer over the chest / waist', () => {
+  assert.equal(H.outerLayer({}, 'chest'), 0);
+  assert.equal(H.outerLayer(null, 'waist'), 0);
+  for (const outerwear of [1, 2, 3, 4, 5]) {
+    const shell = H.garmentsFor({ outerwear }).shell.inflate;
+    assert.ok(H.outerLayer({ outerwear }, 'chest') >= shell, `over outerwear ${outerwear}`);
+    const seam = H.garmentsFor({ outerwear }).details.find((d) => d.kind === 'seam');
+    if (seam) assert.ok(H.outerLayer({ outerwear }, 'chest') >= seam.inflate, 'and over its zip');
+  }
+  assert.equal(H.outerLayer({ suit: 4 }, 'chest'), H.LAYER.armor);
+  assert.equal(H.outerLayer({ suit: 1 }, 'waist'), H.LAYER.patch, 'a gear belt goes over the suit belt');
+  assert.equal(H.outerLayer({ outerwear: 6 }, 'chest'), 0, 'a cape is not over the chest');
 });
 
 // ── Detail layers: every Box style has a realistic counterpart ──
@@ -377,7 +426,11 @@ test('details: top styles, outerwear trims and suit trims', () => {
   assert.deepEqual(kinds({ pantsStyle: 1, shirtStyle: 5 }), ['v-neck']);
   assert.deepEqual(kinds({ pantsStyle: 1, shirtStyle: 6 }), ['turtleneck']);
   assert.deepEqual(kinds({ pantsStyle: 1, shirtStyle: 7 }), ['stripe']);
-  assert.deepEqual(kinds({ pantsStyle: 1, outerwear: 1 }), ['seam']);
+  assert.deepEqual(kinds({ pantsStyle: 1, outerwear: 1 }), ['lapel', 'collar']);                  // open front
+  assert.deepEqual(kinds({ pantsStyle: 1, outerwear: 1, emblem: 2 }), ['seam', 'lapel', 'collar']); // closed by the emblem
+  assert.equal(H.garmentsFor({ outerwear: 1 }).shell.region.frontGap > 0, true, 'the jacket hangs open');
+  assert.equal(H.garmentsFor({ outerwear: 1, emblem: 2 }).shell.region.frontGap, undefined, 'an emblem closes it');
+  assert.deepEqual(kinds({ pantsStyle: 1, outerwear: 3 }), ['seam', 'coat-belt']);
   assert.deepEqual(kinds({ pantsStyle: 1, outerwear: 2 }), ['seam', 'hem']);
   assert.deepEqual(kinds({ pantsStyle: 1, outerwear: 4 }), []);            // hood (engine)
   assert.deepEqual(kinds({ suit: 1 }), ['seam', 'belt']);
