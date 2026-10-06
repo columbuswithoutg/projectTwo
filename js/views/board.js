@@ -120,7 +120,7 @@ const BoardView = (() => {
     return `
       <article class="kb-card" data-id="${esc(p.id)}" tabindex="-1">
         <button type="button" class="kb-grip" aria-label="Drag ${esc(p.title)}" title="Drag to move">⋮⋮</button>
-        <div class="kb-poster">${p.image ? `<img src="${esc(CONFIG.IMAGE_BASE + p.image)}" alt="" loading="lazy" />` : ''}</div>
+        <div class="kb-poster">${PosterArt.html(p)}</div>
         <div class="kb-body">
           <h3 class="kb-title">${esc(p.title)}</h3>
           <div class="kb-tags">${phase}${series}${rewatch}${ago}</div>

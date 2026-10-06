@@ -4,6 +4,7 @@
 const AppView = {
   title: 'Universe Map',
   _initialized: false,
+  _mountSeq: 0,
 
   mount(container) {
     if (!Auth.isLoggedIn()) {
@@ -95,11 +96,12 @@ const AppView = {
   },
 
   async _setup() {
-    // Only load state once across navigations
-    if (!this._initialized) {
-      await state.load();
-      this._initialized = true;
-    }
+    const seq = ++AppView._mountSeq;
+    await state.ensureLoaded();
+    // Superseded while progress loaded (remounted by boot's content refresh,
+    // or left): only the latest mount may build the map.
+    if (seq !== AppView._mountSeq) return;
+    this._initialized = true;
     // ...but re-derive the project fields on every mount: boot.js swaps
     // `projects` for the DB copy in the background and that array carries no
     // phaseNum/unlocks, which makes isUnlocked() false for everything and
@@ -223,6 +225,7 @@ const AppView = {
 
     // Init walkers
     await Walkers.init();
+    if (seq !== AppView._mountSeq) return;
     // Track the deploy delay so unmount can cancel it — otherwise a fast
     // logout within 500ms triggers deploy() against a destroyed renderer.
     AppView._deployTimer = setTimeout(() => {
@@ -239,6 +242,7 @@ const AppView = {
   },
 
   unmount() {
+    AppView._mountSeq++;   // a setup still awaiting progress must not finish
     if (AppView._deployTimer) {
       clearTimeout(AppView._deployTimer);
       AppView._deployTimer = null;

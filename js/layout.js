@@ -8,6 +8,7 @@
  ************************************************/
 const LayoutSystem = (() => {
   const ROAD_HALF_W = 13;
+  const _warnedLocations = new Set();   // project ids already warned about an unmapped location
   // Road endpoints push INTO the cluster AABB by this many px. The location
   // card renders above the roads SVG, so an endpoint tucked inside the AABB
   // is naturally covered by the card — the road reads as "entering" the
@@ -51,7 +52,11 @@ const LayoutSystem = (() => {
     visible.forEach(p => {
       const locId = p.location;
       if (!LOCATION_BY_ID.has(locId)) {
-        console.warn(`[layout] project ${p.id} has unmapped location "${locId}"`);
+        // Once per project, not on every relayout.
+        if (!_warnedLocations.has(p.id)) {
+          _warnedLocations.add(p.id);
+          console.warn(`[layout] project ${p.id} has unmapped location "${locId}"`);
+        }
         return;
       }
       if (!byLocation.has(locId)) byLocation.set(locId, []);

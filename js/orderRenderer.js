@@ -3,9 +3,10 @@
  * Positions all projects on a 2D grid using their gridX/gridY values
  * and draws SVG arrows between prerequisites.
  *
- * Navigation is native browser scroll plus a zoom layer:
+ * Navigation is drag-to-move + wheel-to-zoom (js/pan-zoom.js) over a native
+ * scroll container whose scrollbars are hidden, plus a zoom layer:
  *
- *   .flow-wrapper   overflow:auto — owns the scrollbars
+ *   .flow-wrapper   overflow:auto — its scroll offsets are the camera
  *     .flow-canvas  the SIZER. width/height = content × zoom, no transform.
  *       .flow-zoom  the transformed layer. Natural content size, scale(zoom).
  *         .flow-arrows / .flow-nodes / .flow-walkers
@@ -87,80 +88,22 @@ class OrderRenderer {
     this._listeners.push({ target: this.nodesContainer, event: "click", handler: onClick });
   }
 
-  // Mouse-drag pan over the flow canvas — same hand-grab feel as the map.
-  // Native scrollwheel/touchpad still work via the wrapper's overflow:auto;
-  // this just adds click-and-drag for users who expect to grab the canvas.
+  // Drag to move, wheel to zoom (js/pan-zoom.js). A drag may start anywhere —
+  // on a poster too (posters cover most of the chart); a press that doesn't
+  // move still clicks the poster open. The wrapper keeps overflow:auto — its
+  // scroll offsets are the camera the walker-fight framing drives as well —
+  // but hides its scrollbars: the chart only moves by dragging.
   setupPanControls() {
-    const wrapper = this.wrapper;
-    if (!wrapper) return;
-
-    let panning = false;
-    let dragged = false;
-    let pointerId = null;
-    let startX = 0, startY = 0;
-    let startScrollLeft = 0, startScrollTop = 0;
-    const DRAG_THRESHOLD = 4;
-
-    const onDown = (e) => {
-      // Don't initiate a drag on a card — the user is trying to click it.
-      if (e.target.closest('.flow-cell')) return;
-      // Don't pan during a fight (wrapper's scroll is supposed to be locked).
-      if (wrapper.classList.contains('fight-zoom')) return;
-      // Only respond to primary pointer (left mouse / touch). Avoids
-      // hijacking right-click context menus or middle-click autoscroll.
-      if (e.button !== undefined && e.button !== 0) return;
-
-      panning = true;
-      dragged = false;
-      pointerId = e.pointerId;
-      startX = e.clientX;
-      startY = e.clientY;
-      startScrollLeft = wrapper.scrollLeft;
-      startScrollTop = wrapper.scrollTop;
-      try { wrapper.setPointerCapture(e.pointerId); } catch (_) {}
-      wrapper.classList.add('panning');
-    };
-
-    const onMove = (e) => {
-      if (!panning || e.pointerId !== pointerId) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      if (!dragged && Math.hypot(dx, dy) > DRAG_THRESHOLD) dragged = true;
-      wrapper.scrollLeft = startScrollLeft - dx;
-      wrapper.scrollTop = startScrollTop - dy;
-    };
-
-    const onUp = (e) => {
-      if (!panning || e.pointerId !== pointerId) return;
-      panning = false;
-      pointerId = null;
-      try { wrapper.releasePointerCapture(e.pointerId); } catch (_) {}
-      wrapper.classList.remove('panning');
-
-      // Suppress the click that follows pointerup if we actually dragged —
-      // otherwise releasing on a card would open its popup.
-      if (dragged) {
-        const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
-        document.addEventListener('click', swallow, { capture: true, once: true });
-        // Safety net: if no click event fires (touch with no follow-up
-        // click) remove the listener so it doesn't eat a future click.
-        setTimeout(() => {
-          document.removeEventListener('click', swallow, { capture: true });
-        }, 80);
-      }
-    };
-
-    wrapper.addEventListener('pointerdown', onDown);
-    wrapper.addEventListener('pointermove', onMove);
-    wrapper.addEventListener('pointerup', onUp);
-    wrapper.addEventListener('pointercancel', onUp);
-
-    this._listeners.push(
-      { target: wrapper, event: 'pointerdown', handler: onDown },
-      { target: wrapper, event: 'pointermove', handler: onMove },
-      { target: wrapper, event: 'pointerup', handler: onUp },
-      { target: wrapper, event: 'pointercancel', handler: onUp },
-    );
+    if (!this.wrapper) return;
+    if (this._panZoom) this._panZoom.destroy();
+    this._panZoom = PanZoom.attach(this.wrapper, {
+      min: ORDER_ZOOM.min,
+      max: ORDER_ZOOM.max,
+      getZoom: () => this.zoom,
+      setZoom: (z, ax, ay) => this.setZoom(z, ax, ay),
+      // A walker fight owns the transform and the scroll offsets.
+      isLocked: () => this.wrapper.classList.contains('fight-zoom')
+    });
   }
 
   // Compute pixel position for a project on the flowchart canvas.
@@ -221,8 +164,12 @@ class OrderRenderer {
     } catch (_) { return 1; }
   }
 
+  // Debounced: a trackpad pinch or a wheel spin fires dozens of zoom steps.
   _saveZoom() {
-    try { localStorage.setItem(ORDER_ZOOM.storageKey, String(this.zoom)); } catch (_) {}
+    clearTimeout(this._saveZoomTimer);
+    this._saveZoomTimer = setTimeout(() => {
+      try { localStorage.setItem(ORDER_ZOOM.storageKey, String(this.zoom)); } catch (_) {}
+    }, 250);
   }
 
   // Push the current zoom onto the transform layer. Skipped while a walker
@@ -287,56 +234,11 @@ class OrderRenderer {
     };
     const locked = () => wrapper.classList.contains('fight-zoom');
 
-    // Ctrl/⌘ + wheel zooms; a plain wheel keeps scrolling the chart, which is
-    // still the main way around a flowchart this tall. Trackpad pinch arrives
-    // as ctrl+wheel too, so pinching on a laptop lands here for free.
-    on(wrapper, 'wheel', (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      if (locked()) return;
-      // deltaMode 1 = lines, 2 = pages. Normalise to pixels or a line-mode
-      // mouse jumps several zoom steps per notch.
-      let dy = e.deltaY;
-      if (e.deltaMode === 1) dy *= 16;
-      else if (e.deltaMode === 2) dy *= wrapper.clientHeight;
-      const factor = Math.min(2, Math.max(0.5, Math.exp(-dy * 0.0025)));
-      const rect = wrapper.getBoundingClientRect();
-      this.zoomBy(factor, e.clientX - rect.left, e.clientY - rect.top);
-    }, { passive: false });
-
-    // Two-finger pinch. Touch events rather than pointer events: the wrapper
-    // keeps its default touch-action so one-finger scrolling still gets native
-    // momentum, and we only preventDefault once a second finger lands — at
-    // which point the browser hasn't committed to a scroll yet.
-    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    const mid = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
-    let pinchDist = null;
-    let pinchZoom = 1;
-
-    on(wrapper, 'touchstart', (e) => {
-      if (e.touches.length !== 2 || locked()) { pinchDist = null; return; }
-      pinchDist = dist(e.touches);
-      pinchZoom = this.zoom;
-      e.preventDefault();
-    }, { passive: false });
-
-    on(wrapper, 'touchmove', (e) => {
-      if (pinchDist == null || e.touches.length !== 2) return;
-      e.preventDefault();
-      const d = dist(e.touches);
-      if (d <= 0) return;
-      const m = mid(e.touches);
-      const rect = wrapper.getBoundingClientRect();
-      this.setZoom(pinchZoom * (d / pinchDist), m.x - rect.left, m.y - rect.top);
-    }, { passive: false });
-
-    const endPinch = (e) => { if (!e.touches || e.touches.length < 2) pinchDist = null; };
-    on(wrapper, 'touchend', endPinch);
-    on(wrapper, 'touchcancel', endPinch);
-
-    // Keyboard: +/- to step, 0 to reset. Matches the map view's bindings.
+    // Wheel (zoom at the cursor) and two-finger pinch live in js/pan-zoom.js
+    // (setupPanControls). Keyboard: +/- to step, 0 to reset — never while
+    // typing or behind an open dialog.
     on(window, 'keydown', (e) => {
-      if (e.target.matches && e.target.matches('input, textarea, [contenteditable]')) return;
+      if (shouldIgnoreGlobalKey(e)) return;
       if (locked()) return;
       // Ctrl/⌘ +/- is the browser's own page zoom — don't steal it.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -351,8 +253,9 @@ class OrderRenderer {
     });
   }
 
-  // Floating −/100%/+ cluster. Built here (not in the view markup) so every
-  // view that mounts the flowchart gets it, and torn down in destroy().
+  // Floating − / + buttons (no percentage readout; the 0 key still resets).
+  // Built here (not in the view markup) so every view that mounts the
+  // flowchart gets them, and torn down in destroy().
   _buildZoomUi() {
     if (!this.wrapper || !this.wrapper.parentNode) return;
     this.wrapper.parentNode.querySelectorAll('.flow-zoom-ui').forEach(el => el.remove());
@@ -360,17 +263,14 @@ class OrderRenderer {
     const ui = document.createElement('div');
     ui.className = 'flow-zoom-ui';
     ui.innerHTML = `
-      <button type="button" class="flow-zoom-btn" data-act="out" aria-label="Zoom out">−</button>
-      <button type="button" class="flow-zoom-level" data-act="reset" aria-label="Reset zoom to 100%" title="Reset zoom (0)">100%</button>
-      <button type="button" class="flow-zoom-btn" data-act="in" aria-label="Zoom in">+</button>
+      <button type="button" class="flow-zoom-btn" data-act="out" aria-label="Zoom out" title="Zoom out (−)">−</button>
+      <button type="button" class="flow-zoom-btn" data-act="in" aria-label="Zoom in" title="Zoom in (+)">+</button>
     `;
     const onClick = (e) => {
       const btn = e.target.closest('[data-act]');
       if (!btn) return;
-      const act = btn.dataset.act;
-      if (act === 'in') this.zoomBy(ORDER_ZOOM.step);
-      else if (act === 'out') this.zoomBy(1 / ORDER_ZOOM.step);
-      else this.resetZoom();
+      if (btn.dataset.act === 'in') this.zoomBy(ORDER_ZOOM.step);
+      else this.zoomBy(1 / ORDER_ZOOM.step);
     };
     ui.addEventListener('click', onClick);
     this._listeners.push({ target: ui, event: 'click', handler: onClick });
@@ -382,8 +282,6 @@ class OrderRenderer {
 
   _syncZoomUi() {
     if (!this._zoomUi) return;
-    const level = this._zoomUi.querySelector('.flow-zoom-level');
-    if (level) level.textContent = `${Math.round(this.zoom * 100)}%`;
     const out = this._zoomUi.querySelector('[data-act="out"]');
     const inn = this._zoomUi.querySelector('[data-act="in"]');
     if (out) out.disabled = this.zoom <= ORDER_ZOOM.min + 0.0005;
@@ -629,6 +527,10 @@ class OrderRenderer {
       target.removeEventListener(event, handler, opts);
     });
     this._listeners = [];
+    if (this._panZoom) {
+      this._panZoom.destroy();
+      this._panZoom = null;
+    }
     if (this._zoomUi) {
       this._zoomUi.remove();
       this._zoomUi = null;

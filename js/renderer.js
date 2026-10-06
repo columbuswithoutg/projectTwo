@@ -114,35 +114,47 @@ class MapRenderer {
       this._listeners.push({ target, event, handler, opts });
     };
 
-    // Wheel zoom
+    // Wheel zoom at the cursor. Normalised (js/pan-zoom-logic.js): it used to
+    // be ±12 % per EVENT, so a trackpad — dozens of tiny events per swipe —
+    // flew from world view to street level in a flick.
     on(wrapper, "wheel", (e) => {
       e.preventDefault();
       if (this.cameraLocked) return;
+      const w = PanZoomLogic.normalizeWheel(e, { pageHeight: wrapper.clientHeight });
+      if (w.horizontal || !w.dy) return;
       const rect = wrapper.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-      const dir = e.deltaY > 0 ? -1 : 1;
-      const factor = 1 + dir * 0.12;
-      this._zoomAt(this.worldZoom * factor, mouseX, mouseY);
+      this._zoomAt(this.worldZoom * PanZoomLogic.wheelZoomFactor(w.dy, w), e.clientX - rect.left, e.clientY - rect.top);
       this._cancelTween();
     }, { passive: false });
 
-    // Pointer drag pan + pinch zoom
+    // Pointer drag pan + pinch zoom. The pointer is only captured once a
+    // press has actually moved (or a second finger lands): capturing on
+    // pointerdown retargeted every click to the wrapper, so location frames,
+    // region labels and the 🌍 button never received theirs.
     const activePointers = new Map();
     let lastPinchDist = null;
     let lastPanX = 0, lastPanY = 0;
-    let panning = false;
+    let downX = 0, downY = 0;
+    let panning = false;     // a single press that may become a drag
+    let dragged = false;     // …and has moved past the threshold
 
     on(wrapper, "pointerdown", (e) => {
       if (this.cameraLocked) return;
-      if (e.target.closest(".node")) return;
-      wrapper.setPointerCapture(e.pointerId);
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      // Pins and controls keep their own clicks.
+      if (e.target.closest(".node, button, a[href], input, select, textarea")) return;
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (activePointers.size === 1) {
         panning = true;
-        lastPanX = e.clientX;
-        lastPanY = e.clientY;
-        wrapper.classList.add("panning");
+        dragged = false;
+        lastPanX = downX = e.clientX;
+        lastPanY = downY = e.clientY;
+      } else if (activePointers.size === 2) {
+        // A pinch keeps both fingers even when they leave the wrapper.
+        for (const id of activePointers.keys()) {
+          try { wrapper.setPointerCapture(id); } catch (_) {}
+        }
+        dragged = true;
       }
     });
 
@@ -150,6 +162,12 @@ class MapRenderer {
       if (this.cameraLocked) return;
       if (!activePointers.has(e.pointerId)) return;
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (panning && !dragged && activePointers.size === 1) {
+        if (!PanZoomLogic.pastThreshold(e.clientX - downX, e.clientY - downY)) return;
+        dragged = true;
+        try { wrapper.setPointerCapture(e.pointerId); } catch (_) {}
+        wrapper.classList.add("panning");
+      }
 
       if (activePointers.size === 2) {
         // Pinch zoom
@@ -176,14 +194,23 @@ class MapRenderer {
     });
 
     const endPointer = (e) => {
-      if (activePointers.has(e.pointerId)) {
-        activePointers.delete(e.pointerId);
-      }
+      if (!activePointers.has(e.pointerId)) return;
+      activePointers.delete(e.pointerId);
+      try { wrapper.releasePointerCapture(e.pointerId); } catch (_) {}
       if (activePointers.size < 2) lastPinchDist = null;
       if (activePointers.size === 0) {
+        const wasDrag = dragged;
         panning = false;
+        dragged = false;
         wrapper.classList.remove("panning");
         this.viewport.classList.remove("interacting");
+        // A pan that started on a location frame or label must not also
+        // snap the camera to it on release.
+        if (wasDrag && e.type === "pointerup") {
+          const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+          wrapper.addEventListener("click", swallow, { capture: true, once: true });
+          setTimeout(() => wrapper.removeEventListener("click", swallow, { capture: true }), 80);
+        }
       }
     };
     on(wrapper, "pointerup", endPointer);
@@ -191,8 +218,9 @@ class MapRenderer {
 
     // Keyboard navigation
     on(window, "keydown", (e) => {
-      // Don't hijack typing in inputs
-      if (e.target.matches("input, textarea, [contenteditable]")) return;
+      // Not while typing, and never behind an open dialog (Esc closing the
+      // project popup used to zoom the map out as well).
+      if (shouldIgnoreGlobalKey(e)) return;
       if (this.cameraLocked) return;
 
       const PAN_STEP = 80;
@@ -232,6 +260,10 @@ class MapRenderer {
     });
 
     // Cluster-label clicks (delegated)
+    // The labels layer spans the whole map above the pins, so it stays
+    // pointer-events:none; only the labels themselves take clicks
+    // (styles/pages/map.css). Setting the LAYER to auto here swallowed every
+    // pin and location-frame click on /map.
     on(this.labelsContainer, "click", (e) => {
       if (this.cameraLocked) return;
       const label = e.target.closest(".cluster-label");
@@ -239,7 +271,6 @@ class MapRenderer {
       const locId = label.dataset.location;
       if (locId) this.goToRegion(locId);
     });
-    this.labelsContainer.style.pointerEvents = "auto";
 
     // Location frame clicks — snap-zoom to that location. The frame has
     // pointer-events:auto in CSS while its parent glows container stays
@@ -386,6 +417,8 @@ class MapRenderer {
     const z = this.worldZoom;
     const opacity = Math.max(0, Math.min(1, (0.9 - z) / 0.3));
     this.labelsContainer.style.opacity = opacity.toFixed(3);
+    // Labels faded (nearly) out must not catch clicks meant for the frames.
+    this.labelsContainer.classList.toggle("is-faded", opacity < 0.15);
   }
 
   goToWorldView() {
@@ -409,7 +442,10 @@ class MapRenderer {
     this.renderUpNextShelf();
     this.updatePhaseIndicator();
 
+    const nodes = this.nodesContainer;
     requestAnimationFrame(() => {
+      // The map may have been left (or remounted) before this frame ran.
+      if (this.nodesContainer !== nodes || !nodes.isConnected || !this.svg) return;
       this.renderArrows();
       this.renderClusterLabels();
       this.renderRegionGlows();

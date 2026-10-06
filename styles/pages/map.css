@@ -1,0 +1,14 @@
+/************************************************
+ * /map — the world map (js/renderer.js)
+ *
+ * The region-label layer spans the whole map ABOVE the pins, so the layer
+ * itself never takes clicks — only the label text does, and only while the
+ * labels are visible (renderer._updateLabelsForZoom sets .is-faded once
+ * they've faded out on zooming in).
+ ************************************************/
+#cluster-labels { pointer-events: none; }
+#cluster-labels .cluster-label {
+  pointer-events: auto;
+  cursor: pointer;
+}
+#cluster-labels.is-faded .cluster-label { pointer-events: none; }

@@ -7,8 +7,12 @@
  ************************************************/
 .flow-wrapper {
   background: transparent;       /* the page canvas (html) shows through */
-  scrollbar-color: rgba(var(--ink), 0.25) transparent;
+  /* The chart moves only by dragging (js/pan-zoom.js) — no scrollbars. */
+  scrollbar-width: none;
 }
+.flow-wrapper::-webkit-scrollbar { display: none; }
+/* No hover flicker on posters while the chart slides under the cursor. */
+.flow-wrapper.panning .flow-cell { pointer-events: none; }
 
 /* ── Roads ── */
 [data-theme="cinematic"] .flow-road-base { stroke: rgba(214, 178, 94, 0.1); }
@@ -97,4 +101,3 @@
   -webkit-backdrop-filter: blur(var(--hud-blur));
 }
 .flow-zoom-ui button { color: var(--hud-text); }
-.flow-zoom-level { color: var(--hud-muted); font-family: var(--font-ui); }

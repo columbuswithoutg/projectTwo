@@ -11,15 +11,9 @@ const NodeFactory = (() => {
     node.dataset.id = project.id;
     node.title = project.title || project.id;
 
-    if (project.image) {
-      const img = document.createElement("img");
-      img.src = CONFIG.IMAGE_BASE + project.image;
-      img.loading = "lazy";
-      img.draggable = false;
-      img.alt = project.title || project.id;
-      img.onerror = () => img.remove();
-      node.appendChild(img);
-    }
+    // Title card underneath, poster on top (js/poster-art.js): a missing
+    // poster file shows the card instead of an empty tile.
+    PosterArt.mount(node, project, { alt: project.title || project.id });
 
     const check = document.createElement("span");
     check.className = "checkmark";

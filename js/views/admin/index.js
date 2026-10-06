@@ -75,6 +75,27 @@ const AdminView = {
     AdminView._activeTab = null;
   },
 
+  // Router leave guard: unsaved board moves (they survive tab switches in
+  // module state) or an edited, unsaved project form.
+  isDirty() {
+    const board = AdminView._projectsBoard;
+    const editor = AdminView._cms && AdminView._cms.projects;
+    return !!((board && board.isDirty && board.isDirty()) ||
+              (editor && editor.isFormDirty && editor.isFormDirty()));
+  },
+
+  async canLeave() {
+    if (!AdminView.isDirty()) return true;
+    const ok = await Router.confirmLeave('You have unsaved project changes — board moves or an open project form.');
+    if (ok) {
+      const board = AdminView._projectsBoard;
+      const editor = AdminView._cms && AdminView._cms.projects;
+      if (board && board.discardAll) board.discardAll();
+      if (editor && editor.forgetForm) editor.forgetForm();
+    }
+    return ok;
+  },
+
   // Populated by individual tab files which assign into AdminView._tabs.
   _tabs: {}
 };
@@ -97,7 +118,12 @@ AdminView.api = async function api(path, opts = {}) {
   let body = null;
   try { body = await res.json(); } catch {}
   if (!res.ok) {
-    throw new Error((body && body.error) || `HTTP ${res.status}`);
+    // status + body ride along so a form can react to details (a 409's
+    // suggested cell, the ids in a prerequisite loop).
+    const err = new Error((body && body.error) || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
   }
   return body;
 };

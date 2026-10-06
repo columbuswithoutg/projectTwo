@@ -63,6 +63,15 @@ function stepCount(p) {
   return eps ? eps.length : 1;
 }
 
+// Required + hidden prerequisites that still exist. A link to a deleted
+// project can never be watched, so it would lock the title forever — it's
+// ignored instead (the project cache is warm whenever these run: callers
+// look the project up through getProject first).
+function lockingPrereqs(p) {
+  const ids = [...(p.prerequisites || []), ...(p.hiddenPrerequisites || [])];
+  return _cache && _cache.size ? ids.filter(id => _cache.has(id)) : ids;
+}
+
 // watched: Set of project ids the user has watched.
 // recommendedPrerequisites are advisory only and never gate availability.
 function isAvailable(p, watched) {
@@ -71,8 +80,7 @@ function isAvailable(p, watched) {
     const unlocker = PHASE_UNLOCKERS[phase];
     if (!unlocker || !watched.has(unlocker)) return false;
   }
-  const prereqs = [...(p.prerequisites || []), ...(p.hiddenPrerequisites || [])];
-  return prereqs.every(id => watched.has(id));
+  return lockingPrereqs(p).every(id => watched.has(id));
 }
 
 // Why a project isn't startable, for the error toast: names the phase
@@ -81,7 +89,7 @@ function lockedReason(p, watched, titleOf = (id) => (_cache && _cache.get(id)?.t
   const phase = parsePhase(p.phase);
   const unlocker = PHASE_UNLOCKERS[phase];
   if (phase !== 1 && unlocker && !watched.has(unlocker)) return `Watch ${titleOf(unlocker)} first to unlock Phase ${phase}`;
-  const missing = [...(p.prerequisites || []), ...(p.hiddenPrerequisites || [])].find(id => !watched.has(id));
+  const missing = lockingPrereqs(p).find(id => !watched.has(id));
   return missing ? `Watch ${titleOf(missing)} first` : 'Not available yet';
 }
 

@@ -1,0 +1,207 @@
+/************************************************
+ * ADMIN — CMS > Projects: the drag-to-move board and the project form
+ *
+ * Board (js/views/admin/cms-projects-board.js): moves like the public
+ * watch-order chart — drag empty space, wheel/pinch to zoom — so the canvas
+ * hides its scrollbars and fills the rest of the window (its height is set
+ * inline by the board). Board mode widens the admin page (.is-wide).
+ ************************************************/
+.admin-page.is-wide { max-width: none; }
+
+.admin-board-canvas {
+  max-height: none;               /* legacy capped it at 70vh with scrollbars */
+  min-height: 420px;
+  scrollbar-width: none;
+  cursor: grab;
+  overscroll-behavior: contain;
+}
+.admin-board-canvas::-webkit-scrollbar { display: none; }
+.admin-board-canvas.panning { cursor: grabbing; }
+.admin-board-svg { display: block; }
+.admin-board-bg { cursor: inherit; }
+.admin-board-node { cursor: pointer; }
+.admin-board-node.is-dragging { cursor: grabbing; }
+
+.admin-board-hint {
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* "+" on the hovered empty cell: click to add a project there. */
+.admin-board-ghost { pointer-events: none; }
+.admin-board-ghost rect {
+  fill: rgba(var(--ink), 0.04);
+  stroke: rgba(var(--ink), 0.28);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+}
+.admin-board-ghost text {
+  fill: var(--text-3);
+  font: 600 30px/1 var(--font-ui);
+}
+
+/* Pending (unsaved) board moves: a dot on the CMS "Projects" sub-tab. */
+.admin-subtab.has-pending::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent-text);
+  vertical-align: middle;
+}
+
+@media (max-width: 720px) {
+  .admin-board-hint { display: none; }
+}
+
+/* "The project database is empty" note above the editor. */
+.admin-cms-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: var(--border-w) solid var(--border-2);
+  background: rgba(var(--highlight-rgb), 0.12);
+  color: var(--text-1);
+  font-size: 13px;
+}
+
+/* ── Project form: prerequisite chips (js/views/admin/prereq-picker.js) ── */
+.prq { display: grid; gap: 14px; }
+.prq-section {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: var(--border-w) solid var(--border-1);
+}
+.prq-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.prq-note { font-size: 12px; color: var(--text-3); }
+.prq-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.prq-empty { margin: 0; font-size: 13px; color: var(--text-3); }
+.prq-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.prq-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 2px 2px 10px;
+  border-radius: var(--radius-full);
+  background: var(--surface-1);
+  border: var(--border-w) solid var(--border-2);
+  color: var(--text-1);
+  font-size: 13px;
+}
+.prq-chip.is-unknown { border-color: var(--accent-text); color: var(--accent-text); }
+.prq-chip.is-problem { border-color: var(--accent-text); box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.25); }
+.prq-chip button {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-full);
+}
+.prq-chip-title {
+  padding: 4px 2px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+button.prq-chip-title:hover { text-decoration: underline; }
+.prq-chip-year { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.prq-chip .prq-chip-move,
+.prq-chip .prq-chip-remove {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-3);
+}
+.prq-chip .prq-chip-move:hover,
+.prq-chip .prq-chip-remove:hover { background: rgba(var(--ink), 0.08); color: var(--text-1); }
+.prq-chip :focus-visible { outline: 2px solid var(--highlight); outline-offset: 1px; }
+
+.prq-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.prq-dot-1 { background: var(--phase-1); }
+.prq-dot-2 { background: var(--phase-2); }
+.prq-dot-3 { background: var(--phase-3); }
+.prq-dot-4 { background: var(--phase-4); }
+.prq-dot-5 { background: var(--phase-5); }
+.prq-dot-6 { background: var(--phase-6); }
+
+.prq-add { position: relative; }
+.prq-input { width: 100%; box-sizing: border-box; }
+.prq-options {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-radius: 10px;
+  background: var(--surface-1);
+  border: var(--border-w) solid var(--border-3);
+  box-shadow: var(--shadow-2);
+}
+.prq-option {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--text-1);
+  font-size: 13px;
+}
+.prq-option.is-active { background: rgba(var(--ink), 0.08); }
+.prq-option.is-disabled { cursor: not-allowed; opacity: 0.55; }
+.prq-option-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prq-option-meta { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.prq-option-why { grid-column: 2 / -1; font-size: 11px; color: var(--accent-text); }
+.prq-none { padding: 8px 10px; font-size: 13px; color: var(--text-3); }
+
+.prq-extra { font-size: 13px; color: var(--text-2); }
+.prq-extra p { margin: 0 0 4px; }
+.prq-extra-label { color: var(--text-3); }
+
+@media (max-width: 720px) {
+  .prq-chip-title { max-width: 180px; }
+}
+
+/* Moderation: photos that exist only on a feed post (episode posts). */
+.admin-mem-pill {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  border: var(--border-w) solid var(--border-2);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}

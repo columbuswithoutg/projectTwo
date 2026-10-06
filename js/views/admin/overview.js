@@ -41,7 +41,8 @@
 
     renderChart(buckets) {
       const container = document.getElementById('admin-signups');
-      if (!buckets || !buckets.length) {
+      // The server sends one bucket per day (zeros included).
+      if (!buckets || !buckets.length || buckets.every(b => !b.count)) {
         container.innerHTML = '<div class="admin-empty">No signups in this window.</div>';
         return;
       }
@@ -60,9 +61,11 @@
         </g>`;
       }).join('');
 
+      const mid = Math.floor((buckets.length - 1) / 2);
       const xLabels = buckets.length <= 10
         ? buckets.map((b, i) => `<text x="${pad + i * barW + barW / 2}" y="${h - 6}" text-anchor="middle" font-size="9" fill="#888">${esc(b._id.slice(5))}</text>`).join('')
         : `<text x="${pad}" y="${h - 6}" font-size="9" fill="#888">${esc(buckets[0]._id)}</text>
+           <text x="${pad + mid * barW + barW / 2}" y="${h - 6}" text-anchor="middle" font-size="9" fill="#888">${esc(buckets[mid]._id.slice(5))}</text>
            <text x="${w - pad}" y="${h - 6}" text-anchor="end" font-size="9" fill="#888">${esc(buckets[buckets.length - 1]._id)}</text>`;
 
       container.innerHTML = `

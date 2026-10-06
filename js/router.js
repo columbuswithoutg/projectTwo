@@ -63,7 +63,15 @@ const Router = (() => {
     appContainer = document.getElementById(containerId);
 
     // Handle browser back/forward
-    window.addEventListener('popstate', () => navigate(location.pathname, false));
+    window.addEventListener('popstate', () => navigate(location.pathname + location.search + location.hash, false));
+
+    // Reload / tab close with unsaved work: the browser's own "Leave site?"
+    // prompt. Views opt in with isDirty().
+    window.addEventListener('beforeunload', (e) => {
+      let dirty = false;
+      try { dirty = !!(currentView && currentView.isDirty && currentView.isDirty()); } catch (_) {}
+      if (dirty) { e.preventDefault(); e.returnValue = ''; }
+    });
 
     // Intercept link clicks for SPA navigation
     document.addEventListener('click', (e) => {
@@ -75,26 +83,51 @@ const Router = (() => {
     });
 
     // Navigate to current URL
-    navigate(location.pathname, false);
+    navigate(location.pathname + location.search + location.hash, false);
   }
 
   // Lazy routes await a chunk download inside navigate(); a navigation that
   // starts while one is in flight supersedes it (see the seq check below).
   let navSeq = 0;
+  // The full URL (path + query + hash) of the mounted view — put back in the
+  // address bar when a Back/Forward is vetoed by the leave guard.
+  let currentUrl = null;
 
-  async function navigate(path, pushState = true) {
+  // opts.force skips the leave guard (a view leaving after its own save).
+  async function navigate(path, pushState = true, opts = {}) {
     const seq = ++navSeq;
-    // Strip query + hash first so "?q=1" and "#section" don't break lookups.
-    const qIdx = path.indexOf('?');
-    if (qIdx !== -1) path = path.slice(0, qIdx);
+    // Route on the bare path, but keep the query + hash for the address bar:
+    // views read location.search (/messages?with=…, /reports?report=…), and
+    // pushing the stripped path used to drop it on every in-app link.
+    let search = '', hash = '';
     const hIdx = path.indexOf('#');
-    if (hIdx !== -1) path = path.slice(0, hIdx);
+    if (hIdx !== -1) { hash = path.slice(hIdx); path = path.slice(0, hIdx); }
+    const qIdx = path.indexOf('?');
+    if (qIdx !== -1) { search = path.slice(qIdx); path = path.slice(0, qIdx); }
+    if (search === '?') search = '';
+    if (hash === '#') hash = '';
 
     // Drop trailing slashes (except for the root "/") so "/profile/" → "/profile".
     if (path.length > 1) path = path.replace(/\/+$/, '');
     // Strip .html suffix and the synthetic /index path.
     if (path.endsWith('.html')) path = path.slice(0, -5);
     if (path === '' || path === '/index' || path === '/index.html') path = '/';
+    const fullUrl = path + search + hash;
+
+    // Leave guard: a view with unsaved work (customize, home editor, the
+    // admin board's pending moves) may ask "Discard changes?" first.
+    if (!opts.force && currentView && currentView.canLeave && fullUrl !== currentUrl) {
+      let ok = true;
+      try { ok = await currentView.canLeave({ to: fullUrl }); } catch (_) { ok = true; }
+      if (seq !== navSeq) return;
+      if (!ok) {
+        // Back/Forward already moved the address bar — put the page we stayed on back.
+        if (!pushState && currentUrl && location.pathname + location.search + location.hash !== currentUrl) {
+          history.pushState(null, '', currentUrl);
+        }
+        return;
+      }
+    }
 
     // Auto-exit FriendView when leaving any /friend/* route. This catches
     // address-bar navigation, browser back/forward, and clicks on
@@ -141,7 +174,7 @@ const Router = (() => {
         view = await entry();
       } catch (err) {
         console.error('[router] chunk load failed for', path, err);
-        _reloadOnce(path);
+        _reloadOnce(fullUrl);
         return;
       }
       if (seq !== navSeq) return;   // superseded while the chunk downloaded
@@ -149,11 +182,13 @@ const Router = (() => {
       try { sessionStorage.removeItem('mcu-chunk-reload'); } catch (_) {}
     }
 
-    // Skip if already on this view AND no params changed (so /friend/kevin →
-    // /friend/elsid still re-mounts even though both resolve to FriendWatchView).
+    // Skip if already on this view AND no params or query changed (so
+    // /friend/kevin → /friend/elsid still re-mounts even though both resolve
+    // to FriendWatchView, and /messages → /messages?with=x opens the thread).
     const sameView = view === currentView;
     const sameParams = sameView && _shallowEqualParams(currentView._params, params);
-    if (sameView && sameParams && pushState) return;
+    const sameSearch = currentUrl != null && currentUrl.split('#')[0] === path + search;
+    if (sameView && sameParams && sameSearch && pushState) return;
 
     if (redirectedToLogin) {
       // Rewrite the URL to /login without a new history entry.
@@ -161,8 +196,12 @@ const Router = (() => {
         history.replaceState(null, '', '/login');
       }
     } else if (pushState) {
-      history.pushState(null, '', path);
+      history.pushState(null, '', fullUrl);
     }
+
+    // A dialog must not float over the next page (a project popup left open
+    // by Back used to stay on screen).
+    if (typeof closeAllModals === 'function') closeAllModals();
 
     // Unmount current view
     if (currentView && currentView.unmount) {
@@ -176,6 +215,7 @@ const Router = (() => {
     // exact-route views ignore the second argument).
     currentView = view;
     currentView._params = params;
+    currentUrl = redirectedToLogin ? '/login' : fullUrl;
     document.title = view.title || 'MCU Tracker';
     view.mount(appContainer, params);
   }
@@ -204,10 +244,23 @@ const Router = (() => {
     return true;
   }
 
-  // Helper for programmatic navigation (replaces window.location.href)
-  function go(path) {
-    navigate(path);
+  // Helper for programmatic navigation (replaces window.location.href).
+  // opts.force skips the current view's leave guard.
+  function go(path, opts) {
+    return navigate(path, true, opts || {});
   }
 
-  return { register, init, navigate, go };
+  // Shared "Discard changes?" for views' canLeave(): resolves true to leave.
+  function confirmLeave(message) {
+    if (typeof confirmDialog !== 'function') return Promise.resolve(true);
+    return confirmDialog({
+      title: 'Discard unsaved changes?',
+      message: message || 'Your changes on this page haven’t been saved.',
+      confirmLabel: 'Discard',
+      cancelLabel: 'Keep editing',
+      danger: true
+    });
+  }
+
+  return { register, init, navigate, go, confirmLeave };
 })();

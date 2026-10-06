@@ -5,6 +5,7 @@
 const WatchOrderView = {
   title: 'Watch Order',
   _initialized: false,
+  _mountSeq: 0,
 
   mount(container) {
     if (!Auth.isLoggedIn()) {
@@ -80,10 +81,13 @@ const WatchOrderView = {
   },
 
   async _setup() {
-    if (!this._initialized) {
-      await state.load();
-      this._initialized = true;
-    }
+    const seq = ++WatchOrderView._mountSeq;
+    await state.ensureLoaded();
+    // Superseded while progress loaded: the view was remounted (boot's
+    // background content refresh) or left. Only the latest mount may build
+    // the chart — two used to render every poster twice and deploy walkers twice.
+    if (seq !== WatchOrderView._mountSeq) return;
+    this._initialized = true;
     // Re-derive on EVERY mount, not just the first. boot.js swaps `projects`
     // for the DB copy in the background; that array has no phaseNum/unlocks,
     // and without them isUnlocked() is false for everything and the flow
@@ -199,6 +203,7 @@ const WatchOrderView = {
 
     // Init + deploy walkers (same lifecycle as the map view).
     await Walkers.init();
+    if (seq !== WatchOrderView._mountSeq) return;
     WatchOrderView._deployTimer = setTimeout(() => {
       WatchOrderView._deployTimer = null;
       Walkers.deploy();
@@ -213,6 +218,7 @@ const WatchOrderView = {
   },
 
   unmount() {
+    WatchOrderView._mountSeq++;   // a setup still awaiting progress must not finish
     if (WatchOrderView._deployTimer) {
       clearTimeout(WatchOrderView._deployTimer);
       WatchOrderView._deployTimer = null;

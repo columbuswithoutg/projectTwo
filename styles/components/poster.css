@@ -1,0 +1,123 @@
+/************************************************
+ * POSTER TITLE CARDS (js/poster-art.js)
+ *
+ * Drawn under every poster image; visible when the poster file is missing
+ * (and while it loads). Sized with container-query units so one card works
+ * from a 30×45 map pin to a 110×150 flowchart poster.
+ *   Cinematic: dark phase gradient, gold hairline, Bebas title.
+ *   Comic: flat phase panel with halftone dots, ink frame, white caption box.
+ ************************************************/
+.poster-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 4%;
+  padding: 9% 9% 10%;
+  overflow: hidden;
+  container-type: inline-size;
+  text-align: left;
+  color: #ffffff;
+  pointer-events: none;
+  --pc: var(--phase-1);
+  background:
+    linear-gradient(165deg,
+      color-mix(in srgb, var(--pc) 78%, #ffffff 22%) 0%,
+      color-mix(in srgb, var(--pc) 70%, #000000 30%) 55%,
+      color-mix(in srgb, var(--pc) 30%, #05060a 70%) 100%);
+}
+.poster-phase-1 { --pc: var(--phase-1); }
+.poster-phase-2 { --pc: var(--phase-2); }
+.poster-phase-3 { --pc: var(--phase-3); }
+.poster-phase-4 { --pc: var(--phase-4); }
+.poster-phase-5 { --pc: var(--phase-5); }
+.poster-phase-6 { --pc: var(--phase-6); }
+
+.poster-card-eyebrow,
+.poster-card-year {
+  font: 700 max(7px, 9.5cqw)/1 var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.poster-card-title {
+  font: 400 max(8px, 16cqw)/1.02 var(--font-display);
+  letter-spacing: 0.01em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+/* Pins and thumbnails too small for words: just the phase colour + a hint. */
+@container (max-width: 52px) {
+  .poster-card { justify-content: center; padding: 6%; }
+  .poster-card-eyebrow,
+  .poster-card-year { display: none; }
+  .poster-card-title { font-size: 7px; -webkit-line-clamp: 3; text-align: center; }
+}
+
+/* The image sits on top of the card. */
+.poster-img { position: relative; z-index: 1; }
+
+/* Cinematic: a gold hairline frame. */
+[data-theme="cinematic"] .poster-card,
+:root:not([data-theme]) .poster-card {
+  box-shadow: inset 0 0 0 1px rgba(214, 178, 94, 0.55);
+}
+
+/* Comic: flat phase panel, halftone, caption box and a yellow year sticker. */
+[data-theme="comic"] .poster-card {
+  background: var(--halftone), var(--pc);
+  background-size: 6px 6px, auto;
+  box-shadow: inset 0 0 0 2px #111111;
+  color: #111111;
+}
+[data-theme="comic"] .poster-card-title {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 3% 5%;
+  background: #ffffff;
+  border: 2px solid #111111;
+  text-shadow: none;
+}
+[data-theme="comic"] .poster-card-eyebrow { color: #ffffff; text-shadow: 1px 1px 0 #111111; opacity: 1; }
+[data-theme="comic"] .poster-card-year {
+  align-self: flex-start;
+  padding: 2% 5%;
+  background: #ffd23f;
+  border: 1.5px solid #111111;
+  opacity: 1;
+}
+@container (max-width: 52px) {
+  [data-theme="comic"] .poster-card-title { align-self: center; padding: 2%; border-width: 1px; }
+}
+
+/* Containers that hold a poster need to anchor the card. (.node already
+   does: absolute on /map, relative on the flowchart — don't override it.) */
+.kb-poster,
+.feed-poster-frame { position: relative; }
+.feed-poster-frame {
+  display: block;
+  width: 44px;
+  height: 66px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-1);
+}
+.feed-poster-frame .feed-poster { width: 100%; height: 100%; box-shadow: none; border-radius: 0; }
+
+/* /home/edit room lists (js/views/home-edit.js). */
+.pg-thumb {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.pg-thumb--sq { width: 36px; height: 36px; }
+.pg-thumb--poster { width: 100%; aspect-ratio: 2 / 3; }
+.pg-thumb .poster-img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 0; }

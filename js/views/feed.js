@@ -121,9 +121,7 @@ const FeedView = (() => {
     const sub = [project.phase, year].filter(Boolean).join(' · ');
     return `
       <div class="feed-project">
-        ${project.image
-          ? `<img class="feed-poster" src="${assetUrl(CONFIG.IMAGE_BASE + project.image)}" alt="" loading="lazy" />`
-          : '<span class="feed-poster feed-poster-blank" aria-hidden="true">🎬</span>'}
+        <span class="feed-poster-frame">${PosterArt.html(project, { cls: 'feed-poster' })}</span>
         <div class="feed-project-text">
           <span class="feed-project-title">${esc(project.title)}</span>
           ${sub ? `<span class="feed-project-sub">${esc(sub)}</span>` : ''}

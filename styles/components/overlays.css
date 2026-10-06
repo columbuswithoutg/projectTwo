@@ -1,0 +1,34 @@
+/************************************************
+ * OVERLAYS — one stacking order + the prompt dialog field
+ *
+ * Bottom → top (tokens/primitives.css --z-*): HUD, header, drawer,
+ * popovers, modals (project popup, friends/goals panels, /world dialogs),
+ * memory lightbox, sheets (post composer, walker picker), confirm/prompt
+ * dialogs, drag ghosts, boot splash, toasts.
+ * The legacy rules used ad-hoc numbers — a confirm at 1200 sat UNDER the
+ * post composer at 3000, so "Discard changes?" was invisible and Esc seemed
+ * to do nothing. Only the overlays whose order changed are listed here; the
+ * modals already sit at 1000 (= --z-modal).
+ ************************************************/
+.memory-lightbox { z-index: var(--z-lightbox); }
+.pc-overlay,
+#walker-picker-overlay { z-index: var(--z-sheet); }
+.confirm-modal { z-index: var(--z-confirm); }
+.kb-ghost { z-index: var(--z-drag); }
+#boot-splash { z-index: var(--z-splash); }
+#app-toast-region,
+.admin-toast { z-index: var(--z-toast); }
+
+/* promptDialog() (js/utils.js) — a field inside the confirm box. */
+.prompt-field {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 14px;
+  text-align: left;
+}
+.prompt-label {
+  font: 600 12px/1.3 var(--font-ui);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}

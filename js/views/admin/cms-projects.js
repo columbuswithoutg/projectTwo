@@ -13,8 +13,10 @@
 
   const Editor = {
     _items: [],
+    _source: 'db',   // 'fallback' = the collection is empty; the site serves projects.js
     _container: null,
     _mode: 'list', // 'list' | 'board'
+    _form: null,     // { isDirty() } while a project form is open
 
     async mount(container) {
       Editor._container = container;
@@ -22,6 +24,7 @@
       try {
         const data = await AdminView.api('/content/projects');
         Editor._items = data.items || [];
+        Editor._source = data.source || 'db';
         Editor.render();
       } catch (e) {
         container.innerHTML = `<div class="admin-error">${esc(e.message)}</div>`;
@@ -29,7 +32,18 @@
     },
 
     render() {
+      if (!Editor._container) return;
+      Editor._form = null;
       Editor._container.innerHTML = '';
+      // Board mode uses the full window width.
+      const page = Editor._container.closest('.admin-page');
+      if (page) page.classList.toggle('is-wide', Editor._mode === 'board');
+      if (Editor._source === 'fallback') {
+        const note = document.createElement('div');
+        note.className = 'admin-cms-banner';
+        note.textContent = 'The project database is empty, so the site is showing the built-in list. Your first change copies that list into the database.';
+        Editor._container.appendChild(note);
+      }
       Editor._container.appendChild(Editor._modeBar());
       const host = document.createElement('div');
       Editor._container.appendChild(host);
@@ -38,6 +52,14 @@
       } else {
         host.appendChild(Editor._buildList());
       }
+    },
+
+    // Router leave guard (AdminView.canLeave).
+    isFormDirty() {
+      return !!(Editor._form && Editor._form.isDirty());
+    },
+    forgetForm() {
+      Editor._form = null;
     },
 
     _modeBar() {
@@ -49,12 +71,27 @@
         <button type="button" class="admin-cms-mode${Editor._mode === 'board' ? ' active' : ''}" data-mode="board">Board${dirty ? ' <span class="admin-board-badge" title="Unsaved moves"></span>' : ''}</button>
       `;
       bar.querySelectorAll('.admin-cms-mode').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
+          if (!(await Editor._confirmDiscardForm())) return;
           Editor._mode = btn.dataset.mode;
           Editor.render();
         });
       });
       return bar;
+    },
+
+    // An open, edited form asks before it is thrown away.
+    async _confirmDiscardForm() {
+      if (!Editor.isFormDirty()) return true;
+      const ok = await confirmDialog({
+        title: 'Discard changes to this project?',
+        message: 'Your edits in the form haven’t been saved.',
+        confirmLabel: 'Discard',
+        cancelLabel: 'Keep editing',
+        danger: true
+      });
+      if (ok) Editor._form = null;
+      return ok;
     },
 
     _buildList() {
@@ -156,10 +193,12 @@
       };
     },
 
-    // coords: optional { gridX, gridY } — set when opened from the board
-    // (an empty-cell click for a new project, or unused for an existing one
-    // whose position already lives in item.gridX/gridY).
-    openForm(item, isNew, coords) {
+    // coords: optional { gridX, gridY } — set when opened from the board (an
+    // empty-cell click for a new project). "+ Add new" from the list gets the
+    // first free cell below the board instead of (0,0), which could sit on
+    // top of another project and block saving the board layout.
+    async openForm(item, isNew, coords) {
+      if (!(await Editor._confirmDiscardForm())) return;
       const wrap = document.createElement('div');
       wrap.className = 'admin-cms-form';
 
@@ -175,15 +214,20 @@
       });
       phaseField.set(item.phase || '');
 
-      // Position is owned by the Board tab now — show it read-only here so
-      // the form still communicates where the project sits, without letting
-      // an admin blind-edit a coordinate they can't see the result of.
-      const gx = coords ? coords.gridX : (item.gridX != null ? item.gridX : 0);
-      const gy = coords ? coords.gridY : (item.gridY != null ? item.gridY : 0);
-      const posField = AdminView._cmsField('Board position', 'text', `${gx}, ${gy}`, {
-        disabled: true,
-        placeholder: coords ? '' : 'Set on the Board tab'
-      });
+      // Position is owned by the Board tab — shown read-only here so the
+      // form still says where the project sits.
+      let cell = coords
+        ? { gx: coords.gridX, gy: coords.gridY }
+        : isNew
+          ? ProjectLogic.defaultNewCell(Editor._items)
+          : { gx: item.gridX != null ? item.gridX : 0, gy: item.gridY != null ? item.gridY : 0 };
+      const posField = AdminView._cmsField('Board position', 'text', `${cell.gx}, ${cell.gy}`, { disabled: true });
+      const posHint = document.createElement('p');
+      posHint.className = 'admin-cms-hint';
+      posHint.textContent = !isNew ? 'Move it on the Board tab.'
+        : coords ? 'The empty cell you clicked on the board.'
+        : 'The first free cell below the board — drag it into place on the Board tab.';
+      posField.wrap.appendChild(posHint);
 
       // Locations dropdown — fetch from the existing window.LOCATIONS or
       // fall back to a free-text input if locations haven't loaded yet.
@@ -196,32 +240,17 @@
 
       const imageField = AdminView._cmsField('Image filename', 'text', item.image || '', { placeholder: 'e.g. ironman.png' });
 
-      // Prerequisites: render as a multi-select of existing project IDs.
-      // Required ones lock the project; recommended ones are only suggested
-      // (dashed road + "optional" list) and never lock it.
-      const prereqMulti = (label, selected) => {
-        const wrap = document.createElement('label');
-        wrap.className = 'admin-cms-field';
-        wrap.innerHTML = `<span class="admin-cms-flabel">${label}</span>`;
-        const select = document.createElement('select');
-        select.multiple = true;
-        select.className = 'admin-cms-input admin-cms-multi';
-        select.size = Math.min(8, Math.max(3, Editor._items.length));
-        Editor._items.forEach(p => {
-          if (p.id === item.id) return; // can't depend on self
-          const opt = document.createElement('option');
-          opt.value = p.id;
-          opt.textContent = `${p.id} — ${p.title}`;
-          if (Array.isArray(selected) && selected.includes(p.id)) opt.selected = true;
-          select.appendChild(opt);
-        });
-        wrap.appendChild(select);
-        return { wrap, select };
-      };
-      const { wrap: prereqWrap, select: prereqSelect } =
-        prereqMulti('Required prerequisites (lock until watched)', item.prerequisites);
-      const { wrap: recWrap, select: recSelect } =
-        prereqMulti('Recommended prerequisites (optional — never lock)', item.recommendedPrerequisites);
+      // Prerequisites: chips of only the chosen projects + a search box
+      // (js/views/admin/prereq-picker.js). Required ones lock the project;
+      // recommended ones are only suggested (dashed road + "optional" list).
+      const prereqs = AdminView._prereqField({
+        selfId: isNew ? null : item.id,
+        items: Editor._items,
+        required: item.prerequisites,
+        recommended: item.recommendedPrerequisites,
+        hidden: item.hiddenPrerequisites,
+        onOpen: (p) => Editor.openForm(p, false)
+      });
 
       const runtime = Editor._runtimeFields(item);
 
@@ -229,7 +258,7 @@
         idField.wrap, titleField.wrap, releaseField.wrap, phaseField.wrap,
         runtime.wrap,
         posField.wrap, locationField.wrap, imageField.wrap,
-        prereqWrap, recWrap
+        prereqs.wrap
       );
 
       const actions = document.createElement('div');
@@ -240,7 +269,9 @@
       const cancelBtn = document.createElement('button');
       cancelBtn.className = 'admin-btn';
       cancelBtn.textContent = 'Cancel';
-      cancelBtn.addEventListener('click', () => Editor.render());
+      cancelBtn.addEventListener('click', async () => {
+        if (await Editor._confirmDiscardForm()) Editor.render();
+      });
       actions.append(saveBtn, cancelBtn);
       if (!isNew) {
         const delBtn = document.createElement('button');
@@ -251,16 +282,12 @@
       }
       wrap.appendChild(actions);
 
-      saveBtn.addEventListener('click', async () => {
+      // Everything the form would send — also the basis of the leave guard.
+      const collect = () => {
         const rt = runtime.value();
-        if (rt.error) { AdminView.toast(rt.error, 'error'); return; }
-        const required = Array.from(prereqSelect.selectedOptions).map(o => o.value);
-        const recommended = Array.from(recSelect.selectedOptions).map(o => o.value);
-        const both = recommended.filter(id => required.includes(id));
-        if (both.length) {
-          AdminView.toast(`${both.join(', ')} kept as required only (picked in both lists)`, 'info');
-        }
-        const payload = {
+        const lists = prereqs.value();
+        return {
+          rtError: rt.error || null,
           runtime: rt.runtime,
           episodes: rt.episodes,
           id: idField.get().trim(),
@@ -269,16 +296,35 @@
           phase: phaseField.get(),
           location: locationField.get(),
           image: imageField.get().trim(),
-          prerequisites: required,
-          recommendedPrerequisites: recommended.filter(id => !required.includes(id))
+          prerequisites: lists.required,
+          recommendedPrerequisites: lists.recommended
         };
-        // Only a brand-new project (placed via an empty-cell click on the
-        // board) carries an explicit position. Editing an existing project
-        // through this form must NOT send gridX/gridY — routes/admin.js
-        // omits absent keys, leaving the board-owned position untouched.
+      };
+      const snapshot = JSON.stringify(collect());
+      Editor._form = { isDirty: () => JSON.stringify(collect()) !== snapshot };
+      const titleOf = (id) => ((Editor._items.find(p => p.id === id) || {}).title) || id;
+
+      saveBtn.addEventListener('click', async () => {
+        const payload = collect();
+        if (payload.rtError) { AdminView.toast(payload.rtError, 'error'); return; }
+        delete payload.rtError;
+        // Only a brand-new project carries an explicit position. Editing an
+        // existing project through this form must NOT send gridX/gridY —
+        // routes/admin.js omits absent keys, leaving the board-owned
+        // position untouched.
         if (isNew) {
-          payload.gridX = gx;
-          payload.gridY = gy;
+          payload.gridX = cell.gx;
+          payload.gridY = cell.gy;
+        }
+        // Lock loops are refused by the server too; catching them here
+        // names the titles before a round trip.
+        const edit = Object.assign({}, isNew ? {} : item, payload, { id: payload.id || item.id });
+        const loop = ProjectLogic.findPrereqCycle(Editor._items, edit,
+          { phaseUnlockers: typeof PHASE_UNLOCKERS !== 'undefined' ? PHASE_UNLOCKERS : undefined });
+        if (loop) {
+          prereqs.showProblem({ cycle: loop.map(s => s.id) });
+          AdminView.toast(ProjectLogic.errorText({ code: 'cycle', path: loop }, titleOf), 'error');
+          return;
         }
         saveBtn.disabled = true;
         try {
@@ -289,8 +335,15 @@
             await AdminView.api('/content/projects/' + encodeURIComponent(item.id), { method: 'PUT', body: JSON.stringify(payload) });
             AdminView.toast('Project saved', 'success');
           }
+          Editor._form = null;
           await Editor.refresh();
         } catch (e) {
+          if (e.status === 409 && e.body && e.body.suggested) {
+            cell = { gx: e.body.suggested.gridX, gy: e.body.suggested.gridY };
+            posField.set(`${cell.gx}, ${cell.gy}`);
+            posHint.textContent = 'That cell was taken — moved to the nearest free one. Press Create again.';
+          }
+          if (e.body) prereqs.showProblem(e.body);
           AdminView.toast(e.message, 'error');
           saveBtn.disabled = false;
         }
@@ -302,9 +355,15 @@
     },
 
     async deleteItem(item) {
+      const linked = Editor._items
+        .filter(p => p.id !== item.id && ['prerequisites', 'recommendedPrerequisites', 'hiddenPrerequisites']
+          .some(k => (p[k] || []).includes(item.id)))
+        .map(p => p.title || p.id);
       const ok = await confirmDialog({
         title: `Permanently delete project "${item.id}"?`,
-        message: 'Anything that lists it as a prerequisite will silently lose that link.',
+        message: linked.length
+          ? `It is removed from the prerequisites of: ${linked.join(', ')} — they no longer wait on it.`
+          : 'No other project lists it as a prerequisite.',
         confirmLabel: 'Delete',
         danger: true
       });
@@ -312,6 +371,7 @@
       try {
         await AdminView.api('/content/projects/' + encodeURIComponent(item.id), { method: 'DELETE' });
         AdminView.toast('Project deleted', 'success');
+        Editor._form = null;
         await Editor.refresh();
       } catch (e) {
         AdminView.toast(e.message, 'error');
@@ -320,17 +380,19 @@
 
     // Adopt a fresh item list already fetched by the caller (the board's
     // bulk-save response returns the authoritative post-write list) so we
-    // don't need a second GET round trip.
-    adoptItems(items) {
+    // don't need a second GET round trip. Unsaved board moves survive a form
+    // save or delete; the board's own save passes { keepMoves: false }.
+    adoptItems(items, opts) {
       Editor._items = items || [];
       if (AdminView._projectsBoard && AdminView._projectsBoard.reseed) {
-        AdminView._projectsBoard.reseed(Editor._items, false);
+        AdminView._projectsBoard.reseed(Editor._items, !(opts && opts.keepMoves === false));
       }
       Editor.render();
     },
 
     async refresh() {
       const data = await AdminView.api('/content/projects');
+      Editor._source = data.source || 'db';
       Editor.adoptItems(data.items || []);
     },
 
@@ -338,6 +400,9 @@
       if (AdminView._projectsBoard && AdminView._projectsBoard.unmount) {
         AdminView._projectsBoard.unmount();
       }
+      const page = Editor._container && Editor._container.closest('.admin-page');
+      if (page) page.classList.remove('is-wide');
+      Editor._form = null;
       Editor._container = null;
     }
   };

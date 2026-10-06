@@ -62,7 +62,7 @@
                 : `<img src="${esc(m.url)}" alt="" loading="lazy" />`}
               <figcaption>
                 <span class="admin-mem-user">${esc(m.username || m.userId)}</span>
-                <span class="admin-mem-proj">${esc(m.projectId)}</span>
+                <span class="admin-mem-proj">${esc(m.projectId)}${m.source === 'post' ? ` <span class="admin-mem-pill" title="Only on a feed post (not in the project's Memories)">post${m.episode ? ` · ep ${esc(m.episode)}` : ''}</span>` : ''}</span>
                 <span class="admin-mem-date">${AdminView.formatDate(m.uploadedAt)}</span>
                 ${m.caption ? `<span class="admin-mem-cap">${esc(m.caption)}</span>` : ''}
               </figcaption>

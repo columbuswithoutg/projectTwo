@@ -307,7 +307,29 @@ class WatchState {
   resetLocal() {
     this.data.clear();
     this.sessions.clear();
+    // The next account loads its own progress (ensureLoaded is per user).
+    this._loadedFor = undefined;
+    this.loadFailed = false;
+    if (this._persistTimer) { clearTimeout(this._persistTimer); this._persistTimer = null; }
     this.listeners.forEach(fn => fn(this.data));
+  }
+
+  // Load progress once per signed-in user. Concurrent callers — a view
+  // remounted while the first load is still in flight (boot's background
+  // content refresh does that) — share ONE request; a failed load is retried
+  // on the next call instead of being remembered.
+  ensureLoaded() {
+    const who = (typeof Auth !== 'undefined' && Auth.isLoggedIn()) ? (Auth.getUsername() || '?') : '';
+    if (this._loadedFor === who && !this.loadFailed) return Promise.resolve();
+    if (this._loading && this._loadingFor === who) return this._loading;
+    this._loadingFor = who;
+    const p = this.load().then(() => {
+      if (!this.loadFailed) this._loadedFor = who;
+    }).finally(() => {
+      if (this._loading === p) this._loading = null;
+    });
+    this._loading = p;
+    return p;
   }
 
   getLastWatchedId() {

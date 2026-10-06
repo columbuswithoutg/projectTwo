@@ -58,12 +58,16 @@
 @import "./components/surfaces.css" layer(components);
 @import "./components/forms.css" layer(components);
 @import "./components/brand.css" layer(components);
+@import "./components/overlays.css" layer(components);
+@import "./components/poster.css" layer(components);
 
 @import "./pages/login.css" layer(pages);
 @import "./pages/profile.css" layer(pages);
 @import "./pages/board.css" layer(pages);
 @import "./pages/feed.css" layer(pages);
 @import "./pages/watchorder.css" layer(pages);
+@import "./pages/map.css" layer(pages);
+@import "./pages/admin-cms.css" layer(pages);
 @import "./pages/customize.css" layer(pages);
 @import "./pages/admin-scenes.css" layer(pages);
 

@@ -10,12 +10,17 @@ const AdminConfig = require('../models/AdminConfig');
 const WorldNpcLogic = require('../js/world-npc-logic');   // NPC_IDS for world.npcBodyTypes
 const Project = require('../models/Project');
 const watchRules = require('../server/watchRules');
+const contentLoader = require('../server/contentLoader');
+const ProjectLogic = require('../js/project-logic');      // prerequisite loops + free board cells
+const { fillDailyBuckets } = require('../server/analytics');
+const { friendFilter } = require('../server/friendship');
 const Character = require('../models/Character');
 const Location = require('../models/Location');
 const Dialogue = require('../models/Dialogue');
 const Report = require('../models/Report');
 const ProjectStay = require('../models/ProjectStay');
 const SceneScore = require('../models/SceneScore');
+const FeedPost = require('../models/FeedPost');
 const SceneData = require('../server/scene-guess-data');
 const Messages = require('../server/messages');
 const feed = require('../server/feed');
@@ -92,7 +97,8 @@ router.get('/users/:id', async (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const [friendCount, pendingCount] = await Promise.all([
-    Friend.countDocuments({ $or: [{ requester: user._id }, { recipient: user._id }], status: 'accepted', type: 'friend' }),
+    // friendFilter also counts older friendships stored without a `type`.
+    Friend.countDocuments(friendFilter(user._id)),
     Friend.countDocuments({ recipient: user._id, status: 'pending' })
   ]);
 
@@ -111,7 +117,8 @@ router.get('/users/stats/signups', async (req, res) => {
     }},
     { $sort: { _id: 1 } }
   ]);
-  res.json({ days, buckets });
+  // One bucket per UTC day, zeros included — the chart's axis means days.
+  res.json({ days, buckets: fillDailyBuckets(buckets, days) });
 });
 
 router.delete('/users/:id', async (req, res) => {
@@ -211,6 +218,30 @@ router.get('/memories', async (req, res) => {
     : null;
 
   const matchStage = userIdFilter ? { _id: userIdFilter } : {};
+  // Photos live in two places: the project's Memories (watchedProjects) and
+  // feed posts. Photos added on a mid-series episode post exist ONLY on the
+  // post, so they were invisible here and couldn't be moderated — both
+  // sources are listed now, de-duplicated by URL (the profile copy wins).
+  const postPipeline = [
+    { $match: { 'memories.0': { $exists: true } } },
+    { $unwind: '$memories' },
+    { $project: {
+        _id: 0,
+        userId: { $ifNull: ['$memories.by', '$author'] },
+        projectId: '$projectId',
+        url: '$memories.url',
+        type: '$memories.type',
+        caption: '$memories.caption',
+        uploadedAt: '$createdAt',
+        episode: '$episode',
+        source: 'post'
+    }},
+    ...(userIdFilter ? [{ $match: { userId: userIdFilter } }] : []),
+    { $lookup: { from: User.collection.name, localField: 'userId', foreignField: '_id', as: 'u',
+                 pipeline: [{ $project: { username: 1 } }] } },
+    { $addFields: { username: { $arrayElemAt: ['$u.username', 0] } } },
+    { $project: { u: 0 } }
+  ];
   const pipeline = [
     { $match: matchStage },
     { $unwind: '$watchedProjects' },
@@ -223,16 +254,22 @@ router.get('/memories', async (req, res) => {
         url: '$watchedProjects.memories.url',
         type: '$watchedProjects.memories.type',
         caption: '$watchedProjects.memories.caption',
-        uploadedAt: '$watchedProjects.memories.uploadedAt'
+        uploadedAt: '$watchedProjects.memories.uploadedAt',
+        source: 'profile'
     }},
-    { $sort: { uploadedAt: -1 } }
+    { $unionWith: { coll: FeedPost.collection.name, pipeline: postPipeline } },
+    { $sort: { source: -1 } },                       // 'profile' before 'post'
+    { $group: { _id: '$url', doc: { $first: '$$ROOT' } } },
+    { $replaceRoot: { newRoot: '$doc' } },
+    { $sort: { uploadedAt: -1, url: 1 } }
   ];
 
-  const [items, totalAgg] = await Promise.all([
-    User.aggregate([...pipeline, { $skip: skip }, { $limit: limit }]),
-    User.aggregate([...pipeline, { $count: 'n' }])
+  const [agg] = await User.aggregate([
+    ...pipeline,
+    { $facet: { items: [{ $skip: skip }, { $limit: limit }], total: [{ $count: 'n' }] } }
   ]);
-  const total = totalAgg[0]?.n || 0;
+  const items = (agg && agg.items) || [];
+  const total = (agg && agg.total[0] && agg.total[0].n) || 0;
   res.json({ items, total, page, limit });
 });
 
@@ -253,11 +290,16 @@ router.delete('/memories', async (req, res) => {
   if (typeof projectId !== 'string' || !projectId) return res.status(400).json({ error: 'Invalid projectId' });
   if (typeof url !== 'string' || !url) return res.status(400).json({ error: 'Invalid url' });
 
-  const result = await User.updateOne(
-    { _id: userId, 'watchedProjects.projectId': projectId },
-    { $pull: { 'watchedProjects.$.memories': { url } } }
-  );
-  if (result.matchedCount === 0) {
+  // The photo may be on the project's Memories, on feed posts, or (episode
+  // posts) only on a post — remove it everywhere it appears.
+  const [result, posts] = await Promise.all([
+    User.updateOne(
+      { _id: userId, 'watchedProjects.projectId': projectId, 'watchedProjects.memories.url': url },
+      { $pull: { 'watchedProjects.$.memories': { url } } }
+    ),
+    FeedPost.updateMany({ 'memories.url': url }, { $pull: { memories: { url } } })
+  ]);
+  if (result.modifiedCount === 0 && posts.modifiedCount === 0) {
     return res.status(404).json({ error: 'Memory not found' });
   }
 
@@ -642,21 +684,14 @@ function sanitizeProject(body, requireId = true) {
   if (typeof body.title !== 'string' || !body.title.trim()) errors.title = 'required';
   else out.title = trimStr(body.title);
   out.release = trimStr(body.release || '', 40);
-  if (Array.isArray(body.prerequisites)) {
-    out.prerequisites = body.prerequisites
-      .filter(p => typeof p === 'string' && ID_REGEX.test(p))
-      .slice(0, PREREQ_MAX);
-  } else {
-    out.prerequisites = [];
-  }
-  // Recommended = optional, never locks. Drop anything already required (or
-  // self) so the same id can't be both.
-  const selfId = body.id;
+  // Prerequisite lists are checked by checkPrereqs() against the real
+  // project list — bad, unknown, self or duplicate-list ids, a list over
+  // PREREQ_MAX and lock loops are all explicit 400s now. (They used to be
+  // dropped or truncated silently, and an unknown id locked a project forever.)
+  out.prerequisites = Array.isArray(body.prerequisites) ? body.prerequisites : (body.prerequisites == null ? [] : body.prerequisites);
   out.recommendedPrerequisites = Array.isArray(body.recommendedPrerequisites)
-    ? [...new Set(body.recommendedPrerequisites)]
-        .filter(p => typeof p === 'string' && ID_REGEX.test(p) && p !== selfId && !out.prerequisites.includes(p))
-        .slice(0, PREREQ_MAX)
-    : [];
+    ? body.recommendedPrerequisites
+    : (body.recommendedPrerequisites == null ? [] : body.recommendedPrerequisites);
   out.phase = trimStr(body.phase || '', 40);
   // Board position is owned by the CMS board editor (PUT
   // /content/projects/bulk/positions). Omit the keys entirely when the
@@ -675,16 +710,81 @@ function sanitizeProject(body, requireId = true) {
   return { out, errors };
 }
 
+// The public site falls back to the built-in projects.js while the
+// collection is empty (routes/content.js). The first admin write must not
+// replace those 84 titles with a one-project database, so every write seeds
+// the collection from the built-in list first.
+async function ensureProjectsSeeded() {
+  if (await Project.exists({})) return;
+  const items = contentLoader.get('projects') || [];
+  if (!items.length) return;
+  try {
+    await Project.insertMany(items, { ordered: false });
+  } catch (err) {
+    // A concurrent seed (two admins at once) only duplicates ids — fine.
+    if (err && err.code !== 11000 && !(err.writeErrors && err.writeErrors.every(e => e.code === 11000))) throw err;
+  }
+  watchRules.invalidate();
+}
+
+// Prerequisite rules on every project write. → { ok, required, recommended }
+// or { status, body } to send. Loops include phase unlockers (Phase N waits
+// for one title) and hidden prerequisites.
+async function checkPrereqs(edit) {
+  const all = await Project.find({}).select('id title phase prerequisites hiddenPrerequisites gridX gridY').lean();
+  const titleOf = (id) => (all.find(p => p.id === id) || {}).title || id;
+  const known = new Set(all.map(p => p.id));
+  const v = ProjectLogic.validatePrereqLists(edit, known, { max: PREREQ_MAX });
+  if (v.errors.length) {
+    const first = v.errors[0];
+    return { status: 400, body: { error: ProjectLogic.errorText(first, titleOf), problems: v.errors, ids: first.ids || [] } };
+  }
+  const cycle = ProjectLogic.findPrereqCycle(all, { ...edit, prerequisites: v.required },
+    { phaseUnlockers: watchRules.PHASE_UNLOCKERS });
+  if (cycle) {
+    return {
+      status: 400,
+      body: { error: ProjectLogic.errorText({ code: 'cycle', path: cycle }, titleOf), cycle: cycle.map(s => s.id) }
+    };
+  }
+  return { ok: true, all, required: v.required, recommended: v.recommended };
+}
+
 router.get('/content/projects', async (req, res) => {
   const items = await Project.find({}).sort({ release: 1, gridY: 1, gridX: 1 }).lean();
-  res.json({ items });
+  if (items.length) return res.json({ source: 'db', items });
+  // Empty collection: show what the site is actually serving (the built-in
+  // list), so the editor and its prerequisite picker aren't blank.
+  const fallback = (contentLoader.get('projects') || []).slice()
+    .sort((a, b) => String(a.release || '').localeCompare(String(b.release || '')));
+  res.json({ source: 'fallback', items: fallback });
 });
 
 router.post('/content/projects', async (req, res) => {
   const { out, errors } = sanitizeProject(req.body || {}, true);
   if (Object.keys(errors).length) return badRequest(res, 'Validation failed', errors);
+  await ensureProjectsSeeded();
   const exists = await Project.exists({ id: out.id });
   if (exists) return badRequest(res, 'A project with that id already exists', { id: 'duplicate' });
+  const check = await checkPrereqs(out);
+  if (!check.ok) return res.status(check.status).json(check.body);
+  out.prerequisites = check.required;
+  out.recommendedPrerequisites = check.recommended;
+  // A cell nobody else uses: the one asked for (409 + a suggestion if it's
+  // taken), or the first free cell below the board.
+  const occ = ProjectLogic.occupiedCells(check.all);
+  if (out.gridX === undefined || out.gridY === undefined) {
+    const cell = ProjectLogic.defaultNewCell(check.all);
+    out.gridX = cell.gx;
+    out.gridY = cell.gy;
+  } else if (occ.has(`${out.gridX},${out.gridY}`)) {
+    const takenBy = check.all.find(p => p.id === occ.get(`${out.gridX},${out.gridY}`));
+    const free = ProjectLogic.firstFreeCell(occ, { anchor: { gx: out.gridX, gy: out.gridY } });
+    return res.status(409).json({
+      error: `Cell (${out.gridX}, ${out.gridY}) is taken by ${(takenBy && takenBy.title) || 'another project'}`,
+      suggested: free ? { gridX: free.gx, gridY: free.gy } : null
+    });
+  }
   await Project.create(out);
   watchRules.invalidate();
   logAudit(req, 'contentEdit', { type: 'project', id: out.id }, { action: 'create' });
@@ -694,8 +794,14 @@ router.post('/content/projects', async (req, res) => {
 router.put('/content/projects/:id', async (req, res) => {
   const { out, errors } = sanitizeProject({ ...(req.body || {}), id: req.params.id }, false);
   if (Object.keys(errors).length) return badRequest(res, 'Validation failed', errors);
+  await ensureProjectsSeeded();
   const before = await Project.findOne({ id: req.params.id }).lean();
   if (!before) return res.status(404).json({ error: 'Not found' });
+  // Checked even when only the phase changed: a phase can close a loop too.
+  const check = await checkPrereqs({ ...out, id: req.params.id, hiddenPrerequisites: before.hiddenPrerequisites || [] });
+  if (!check.ok) return res.status(check.status).json(check.body);
+  out.prerequisites = check.required;
+  out.recommendedPrerequisites = check.recommended;
   const after = await Project.findOneAndUpdate({ id: req.params.id }, out, { new: true }).lean();
   watchRules.invalidate();
   logAudit(req, 'contentEdit', { type: 'project', id: req.params.id }, { action: 'update' });
@@ -703,11 +809,21 @@ router.put('/content/projects/:id', async (req, res) => {
 });
 
 router.delete('/content/projects/:id', async (req, res) => {
+  await ensureProjectsSeeded();
   const r = await Project.deleteOne({ id: req.params.id });
   if (r.deletedCount === 0) return res.status(404).json({ error: 'Not found' });
+  // Unlink it everywhere (the confirm dialog always promised this; nothing
+  // did it, so dependants stayed locked behind a project that no longer exists).
+  const id = req.params.id;
+  const linked = await Project.find({
+    $or: [{ prerequisites: id }, { recommendedPrerequisites: id }, { hiddenPrerequisites: id }]
+  }).select('id').lean();
+  if (linked.length) {
+    await Project.updateMany({}, { $pull: { prerequisites: id, recommendedPrerequisites: id, hiddenPrerequisites: id } });
+  }
   watchRules.invalidate();
-  logAudit(req, 'contentEdit', { type: 'project', id: req.params.id }, { action: 'delete' });
-  res.json({ message: 'Deleted' });
+  logAudit(req, 'contentEdit', { type: 'project', id }, { action: 'delete', unlinked: linked.map(p => p.id) });
+  res.json({ message: 'Deleted', unlinked: linked.map(p => p.id) });
 });
 
 // Bulk position commit for the CMS "board" editor (drag-to-move). One
@@ -748,6 +864,7 @@ router.put('/content/projects/bulk/positions', async (req, res) => {
   }
 
   // --- merge against current DB state -------------------------------------
+  await ensureProjectsSeeded();
   const all = await Project.find({}).select('id gridX gridY').lean();
   const known = new Set(all.map(p => p.id));
   const unknown = [...wanted.keys()].filter(id => !known.has(id));

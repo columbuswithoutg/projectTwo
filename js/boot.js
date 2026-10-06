@@ -53,6 +53,14 @@ async function bootContent() {
   }
   swap(charRes, 'characters');
   swap(locRes, 'LOCATIONS');
+  // LOCATION_BY_ID (locations.js) is a const Map built once from the bundled
+  // list; refill it in place so locations created in the CMS reach /map
+  // (a project placed in one used to vanish from the map).
+  if (locRes && Array.isArray(locRes.items) && locRes.items.length && typeof LOCATION_BY_ID !== 'undefined') {
+    LOCATION_BY_ID.clear();
+    for (const l of window.LOCATIONS) if (l && l.id) LOCATION_BY_ID.set(l.id, l);
+    if (typeof invalidateLayoutCache === 'function') invalidateLayoutCache();
+  }
   if (dialRes && dialRes.data && typeof WALKER_DIALOGUES?.applyData === 'function') {
     // Dialogue swaps never need a view remount — walkers read live.
     WALKER_DIALOGUES.applyData(dialRes.data);

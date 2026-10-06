@@ -273,7 +273,7 @@ const HomeEditView = (() => {
         if (!project) continue;
         const disabled = remaining === 0;
         html += `<li class="pg-edit-avail-item${disabled ? ' is-disabled' : ''}" data-action="hint-avail">`;
-        html += `<img src="${_imageUrl(project)}" alt="" loading="lazy" />`;
+        html += `<div class="pg-thumb pg-thumb--sq">${PosterArt.html(project)}</div>`;
         html += `<span>${_escape(project.title || id)}</span>`;
         html += `</li>`;
       }
@@ -328,7 +328,7 @@ const HomeEditView = (() => {
               const p = _lookupProject(id);
               if (!p) return '';
               return `<li class="pg-picker-item" data-id="${_escape(id)}">
-                <img src="${_imageUrl(p)}" alt="" />
+                <div class="pg-thumb pg-thumb--poster">${PosterArt.html(p)}</div>
                 <span>${_escape(p.title || id)}</span>
               </li>`;
             }).join('')}

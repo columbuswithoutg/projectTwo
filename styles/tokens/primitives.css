@@ -50,15 +50,29 @@
   --radius-xl: 18px;
   --radius-full: 999px;
 
+  /* Phase colours — the same hues as the phase roofs in /world
+     (WorldHouseLogic.PALETTE[1..6]); used by poster title cards and the
+     admin prerequisite chips. */
+  --phase-1: #b5563f;   /* terracotta */
+  --phase-2: #6478a6;   /* slate blue */
+  --phase-3: #6f8f5a;   /* moss */
+  --phase-4: #8a5a86;   /* plum */
+  --phase-5: #3f8f8f;   /* teal */
+  --phase-6: #b98a3f;   /* amber */
+
   /* Stacking order — one scale instead of ad-hoc numbers */
   --z-hud: 50;
   --z-header: 100;
   --z-bottom-nav: 100;
   --z-drawer: 200;
   --z-popover: 300;
-  --z-modal: 1000;
-  --z-toast: 2000;
+  --z-modal: 1000;      /* project popup, panels, /world dialogs */
+  --z-lightbox: 1100;   /* memory photos */
+  --z-sheet: 1200;      /* post composer, walker picker */
+  --z-confirm: 1300;    /* confirm / prompt dialogs — above any sheet */
+  --z-drag: 1400;       /* drag ghosts */
   --z-splash: 3000;
+  --z-toast: 4000;      /* status toasts read over everything */
 
   /* Motion */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
