@@ -1,0 +1,281 @@
+/************************************************
+ * ADMIN — CMS → Scene stills (js/views/admin/cms-scenes.js)
+ * Tokens only (admin pages follow the theme through the shared tokens).
+ ************************************************/
+
+.admin-cms-row.scn-row-playable {
+  border-left: 3px solid var(--color-health-good);
+}
+
+.scn {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scn-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.scn-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 200px;
+}
+.scn-title .admin-h3 { margin: 0; }
+.scn-sub {
+  font-size: 12px;
+  opacity: 0.7;
+}
+.scn-status {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(var(--ink), 0.1);
+  color: var(--color-text-warm);
+}
+.scn-status.is-on {
+  background: rgba(74, 222, 128, 0.2);
+  color: var(--color-health-good);
+}
+
+/* ── master switch banner + this island's switch ── */
+.scn-banner {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  border: 1px solid rgba(255, 196, 0, 0.45);
+  background: rgba(255, 196, 0, 0.1);
+  margin-bottom: 12px;
+}
+.scn .scn-banner { margin-bottom: 0; }
+.scn-banner.is-on {
+  border-color: rgba(74, 222, 128, 0.45);
+  background: rgba(74, 222, 128, 0.08);
+}
+.scn-switch {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-1);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+.scn-switch input {
+  grid-row: span 2;
+  width: 20px;
+  height: 20px;
+  accent-color: var(--color-primary);
+}
+.scn-switch-main { font-weight: 600; }
+.scn-switch-sub { font-size: 12px; opacity: 0.7; }
+.scn-switch.is-live { border-color: rgba(74, 222, 128, 0.55); }
+.scn-switch.is-live .scn-switch-sub { color: var(--color-health-good); opacity: 1; }
+
+/* ── the whole line, one dot per still ── */
+.scn-strip {
+  padding: 18px 8px 22px;
+  background: var(--color-surface);
+  border: 1px solid var(--border-1);
+  border-radius: 8px;
+}
+.scn-strip-line {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background: rgba(var(--ink), 0.12);
+}
+.scn-strip-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 2px solid rgba(var(--ink), 0.35);
+}
+.scn-strip-seg:nth-child(even) { background: rgba(var(--ink), 0.08); }
+.scn-strip-tick {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 1px;
+  background: rgba(var(--ink), 0.35);
+}
+.scn-strip-seg em,
+.scn-strip-tick em {
+  position: absolute;
+  top: 14px;
+  left: 2px;
+  font-size: 10px;
+  font-style: normal;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+.scn-strip-dot {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-surface);
+}
+.scn-strip-dot.is-off { background: rgba(var(--ink), 0.35); }
+
+/* ── adding stills ── */
+.scn-add {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.scn-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 22px 16px;
+  border: 2px dashed var(--border-2);
+  border-radius: 10px;
+  background: var(--color-surface);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+.scn-drop:hover,
+.scn-drop:focus-visible,
+.scn-drop.is-over {
+  border-color: var(--color-primary);
+  background: rgba(var(--ink), 0.04);
+  outline: none;
+}
+.scn-drop-main { font-weight: 600; }
+.scn-drop-sub { font-size: 12px; opacity: 0.65; }
+
+.scn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+}
+.scn-card {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border: 1px solid var(--border-1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.scn-card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: #000;
+}
+.scn-card.is-off img { opacity: 0.4; }
+.scn-card.is-error { border-color: rgba(226, 54, 54, 0.6); }
+.scn-card figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  font-size: 12px;
+}
+.scn-fields,
+.scn-edit,
+.scn-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.scn-edit[hidden],
+.scn-actions[hidden] { display: none; }
+.scn-fields { flex-wrap: nowrap; }
+.scn-fields .scn-time,
+.scn-edit .scn-time {
+  flex: 1;
+  min-width: 64px;
+  font-variant-numeric: tabular-nums;
+}
+.scn-fields .scn-ep,
+.scn-edit .scn-ep {
+  flex: 0 0 auto;
+  max-width: 100px;
+  min-width: 0;
+}
+.scn-fields .scn-drop-one { flex: 0 0 auto; }
+.scn-hint {
+  min-height: 16px;
+  font-size: 12px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+.scn-hint.is-warn { color: var(--color-text-warm); opacity: 1; }
+.scn-hint.is-bad { color: var(--color-red-light); opacity: 1; }
+.scn-progress {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(var(--ink), 0.12);
+  overflow: hidden;
+}
+.scn-progress span {
+  display: block;
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 0.15s;
+}
+
+.scn-saved-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.scn-label {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.scn-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(var(--ink), 0.1);
+}
+.scn-tag.is-warn { background: rgba(255, 196, 0, 0.2); }
+.scn-tag.is-bad { background: rgba(226, 54, 54, 0.25); color: var(--color-red-light); }
+.scn-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+  cursor: pointer;
+}
+
+.scn-board .admin-row { gap: 14px; }
+.scn-rank {
+  min-width: 34px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .scn-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 420px) {
+  .scn-grid { grid-template-columns: 1fr; }
+}

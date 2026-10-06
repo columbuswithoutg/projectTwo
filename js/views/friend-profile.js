@@ -50,10 +50,15 @@ const FriendProfileView = {
             <div class="friend-profile-stat"><strong>${totalSessions}</strong><span>sessions</span></div>
             <div class="friend-profile-stat"><strong>${totalMemories}</strong><span>memories</span></div>
           </div>
+          <div class="profile-champion" hidden></div>
         </div>
       </div>
     `;
     FriendView.wireHeader(container);
+    // Scene Guess island records they hold (js/views/profile.js).
+    if (typeof ProfileView !== 'undefined' && ProfileView.championBadges) {
+      ProfileView.championBadges(container.querySelector('.profile-champion'), friend.username);
+    }
   },
 
   unmount() {

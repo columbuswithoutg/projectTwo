@@ -14,7 +14,8 @@
     { path: 'encounter.cooldown', label: 'Encounter cooldown (ms)', min: 5000,  max: 120000, step: 1000, default: 30000 },
     { path: 'fight.spawnChance',  label: 'Fight spawn chance',      min: 0,     max: 1,      step: 0.05, default: 0.15 },
     { path: 'world.maxProps',     label: 'Props per house (/world)', min: 1,     max: 60,     step: 1,    default: 40, section: 'world' },
-    { path: 'world.homeMaxProps', label: 'Props per room (/home)', min: 1,     max: 60,     step: 1,    default: 40, section: 'world' }
+    { path: 'world.homeMaxProps', label: 'Props per room (/home)', min: 1,     max: 60,     step: 1,    default: 40, section: 'world' },
+    { path: 'world.sceneRoundSec', label: 'Scene Guess seconds per round', min: 15, max: 60,  step: 1,    default: 30, section: 'world' }
   ];
 
   // Mirror of Playground.BODY_TYPES (index = stored value).
@@ -99,7 +100,7 @@
                   min="${s.min}" max="${s.max}" step="${s.step}"
                   value="${v != null ? v : s.default}"
                   data-path="${esc(s.path)}" />
-                <span class="admin-config-val" data-val="${esc(s.path)}">${esc(formatValue(s.path, v))}</span>
+                <span class="admin-config-val" data-val="${esc(s.path)}">${esc(formatValue(s.path, v != null ? v : s.default))}</span>
               </label>
             `;
           }).join('')}
@@ -125,7 +126,12 @@
             <span class="admin-config-label">Infinity Stone hunt + snap enabled</span>
             <input type="checkbox" data-path="flags.worldEventStonesEnabled" ${cfg.flags?.worldEventStonesEnabled ? 'checked' : ''} />
           </label>
+          <label class="admin-config-row admin-config-toggle">
+            <span class="admin-config-label">Scene Guess minigame enabled</span>
+            <input type="checkbox" data-path="flags.sceneGuessEnabled" ${cfg.flags?.sceneGuessEnabled ? 'checked' : ''} />
+          </label>
         </div>
+        <p class="admin-config-help">Scene Guess master switch — off by default. While off, players see no trace of it and any running game ends. When on, only islands you switch on in CMS → Scene stills (each needs 10 stills) show the game. Takes effect on save.</p>
 
         <h3 class="admin-h3">World NPCs — body type</h3>
         <p class="admin-config-help">Pick the body each hero uses in /world. Global — every player sees the same heroes. Players see the change on their next /world entry (page load).</p>
@@ -210,7 +216,8 @@
         world:     {
           npcBodyTypes: { ...(cfg.world?.npcBodyTypes || {}) },
           maxProps: Number.isFinite(cfg.world?.maxProps) ? cfg.world.maxProps : 40,
-          homeMaxProps: Number.isFinite(cfg.world?.homeMaxProps) ? cfg.world.homeMaxProps : 20
+          homeMaxProps: Number.isFinite(cfg.world?.homeMaxProps) ? cfg.world.homeMaxProps : 40,
+          sceneRoundSec: Number.isFinite(cfg.world?.sceneRoundSec) ? cfg.world.sceneRoundSec : 30
         }
       };
       try {

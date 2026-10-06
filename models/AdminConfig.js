@@ -25,7 +25,13 @@ const AdminConfigSchema = new mongoose.Schema({
     // the two above (per-user defaults), this is an authoritative global switch:
     // the server refuses stone grabs/snaps and the client hides the HUD when off.
     // Defaults off — it's an opt-in event the admin turns on.
-    worldEventStonesEnabled: { type: Boolean, default: false }
+    worldEventStonesEnabled: { type: Boolean, default: false },
+    // Global on/off for the /world Scene Guess minigame. Off = players see no
+    // trace of it (no screens, labels, crowns or badges) and the server refuses
+    // every game event; a running game ends. Defaults off so a deploy never
+    // ships it before the admin is ready. Each island ALSO has its own switch
+    // (SceneIsland) and needs enough stills — see server/scene-guess-data.js.
+    sceneGuessEnabled: { type: Boolean, default: false }
   },
   // /world settings. npcBodyTypes: body for each hero NPC, keyed by NPC id
   // (WorldNpcLogic.NPC_IDS, e.g. 'npc_hulk') — 0 = Realistic (rigged human),
@@ -37,7 +43,9 @@ const AdminConfigSchema = new mongoose.Schema({
     // C.MAX_PROPS is the fallback when no setting exists).
     maxProps: { type: Number, default: 40, min: 1, max: 60 },
     // Same cap for each room of a player's /home (edited by the owner only).
-    homeMaxProps: { type: Number, default: 40, min: 1, max: 60 }
+    homeMaxProps: { type: Number, default: 40, min: 1, max: 60 },
+    // Scene Guess: seconds per round (SceneGuessLogic.ROUND_SEC_MIN/MAX).
+    sceneRoundSec: { type: Number, default: 30, min: 15, max: 60 }
   },
   // Bumped on every save so the client can detect staleness. Currently
   // unused for cache busting (the boot-time fetch is fresh per page load),
@@ -54,8 +62,8 @@ AdminConfigSchema.statics.defaults = function () {
     walker:    { speed: 40, pauseMin: 800, pauseMax: 2500 },
     encounter: { dist: 26, cooldown: 30000 },
     fight:     { spawnChance: 0.15 },
-    flags:     { fightsEnabled: false, dialoguesEnabled: true, worldEventStonesEnabled: false },
-    world:     { npcBodyTypes: {}, maxProps: 40, homeMaxProps: 40 }
+    flags:     { fightsEnabled: false, dialoguesEnabled: true, worldEventStonesEnabled: false, sceneGuessEnabled: false },
+    world:     { npcBodyTypes: {}, maxProps: 40, homeMaxProps: 40, sceneRoundSec: 30 }
   };
 };
 

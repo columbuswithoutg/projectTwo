@@ -116,3 +116,14 @@ test('allow: per-key buckets from RATES; unknown keys are unlimited', () => {
   assert.ok(N.allow(store, 'emote', 0), 'separate bucket per key');
   assert.ok(N.allow(store, 'no-such-limit', 0));
 });
+
+test('Scene Guess events each have a bucket (an unknown key would be unlimited)', () => {
+  for (const key of ['sgStart', 'sgJoin', 'sgGuess', 'sgMisc']) {
+    assert.ok(N.RATES[key], key);
+    const store = {};
+    let n = 0;
+    for (let i = 0; i < 50; i++) if (N.allow(store, key, 0)) n++;
+    assert.equal(n, N.RATES[key].cap, `${key}: burst only`);
+  }
+  assert.ok(N.RATES.sgStart.perSec <= 0.1, 'starting a lobby is the tightest');
+});

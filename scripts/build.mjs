@@ -50,7 +50,8 @@ const CHUNKS = {
     // boot.js can reassign window.projects etc. after the live fetch)
     'js/world-config.js', 'projects.js', 'characters.js', 'locations.js',
     'js/config.js', 'js/theme.js', 'js/auth.js', 'js/state.js', 'js/layout.js',
-    'js/utils.js', 'js/messaging-logic.js', 'js/nodeFactory.js', 'js/renderer.js', 'js/orderRenderer.js',
+    // scene-guess-logic: Scene Guess rules, used by the /world HUD and the admin stills tab
+    'js/utils.js', 'js/messaging-logic.js', 'js/scene-guess-logic.js', 'js/nodeFactory.js', 'js/renderer.js', 'js/orderRenderer.js',
     'js/watch-controls.js', 'js/post-composer.js', 'js/popup.js', 'js/goals.js', 'js/friend-view.js', 'js/friends.js',
     'js/messages.js', 'js/reports.js',
     'js/memory.js', 'js/walker-dialogues.js', 'js/walkerView.js', 'js/walkers.js',
@@ -70,16 +71,16 @@ const CHUNKS = {
     'js/world-house-logic.js',
     'js/playground3d-humanoid-logic.js', 'js/playground3d-humanoid.js',
     'js/playground3d-avatar.js', 'js/playground3d-input-logic.js', 'js/playground3d-input.js', 'js/playground3d-occlusion.js',
-    'js/playground3d-props.js', 'js/playground3d-house.js', 'js/pg-orientation.js',
+    'js/playground3d-props.js', 'js/playground3d-house.js', 'js/pg-orientation.js', 'js/playground3d-scene.js',
     'js/playground3d.js',
-    'js/home-socket.js', 'js/voice-chat.js', 'js/house-editor.js',
+    'js/home-socket.js', 'js/scene-guess.js', 'js/voice-chat.js', 'js/house-editor.js',
     'js/views/customize.js', 'js/views/home.js', 'js/views/world.js', 'js/views/friend-home.js'
   ],
   admin: [
     'js/views/admin/index.js', 'js/views/admin/users.js', 'js/views/admin/moderation.js',
     'js/views/admin/config.js', 'js/views/admin/cms.js', 'js/views/admin/cms-projects.js',
     'js/views/admin/cms-projects-board.js', 'js/views/admin/cms-characters.js',
-    'js/views/admin/cms-locations.js', 'js/views/admin/cms-dialogues.js',
+    'js/views/admin/cms-locations.js', 'js/views/admin/cms-dialogues.js', 'js/views/admin/cms-scenes.js',
     'js/views/admin/reports.js', 'js/views/admin/audit.js', 'js/views/admin/overview.js'
   ]
 };
@@ -91,16 +92,16 @@ const EXPECT_GLOBALS = {
   core: ['Router', 'Auth', 'state', 'Chunks', 'CONFIG', 'API', 'Walkers', 'WALKER_DIALOGUES',
          'FriendView', 'WatchOrderView', 'AppView', 'LoginView', 'HomeEditView', 'esc', 'toast',
          'MessagesView', 'ReportsView', 'Messages', 'MessagesBadge', 'Reports', 'showReportDialog'],
-  world: ['Playground', 'Playground3D', 'Multiplayer', 'VoiceManager', 'PG3DProps', 'HouseEditor',
+  world: ['Playground', 'Playground3D', 'Multiplayer', 'VoiceManager', 'PG3DProps', 'HouseEditor', 'SceneGuess',
           'HomeView', 'CustomizeView', 'WorldView', 'FriendHomeView'],
   admin: ['AdminView']
 };
 // Globals attached as properties (`root.PG3DPhysics = api` in the UMD-style
 // files) rather than declared — checked for a `.Name =` assignment instead.
 const EXPECT_ATTACHED = {
-  core: ['MessagingLogic', 'HumanoidPrefetch'],
+  core: ['MessagingLogic', 'HumanoidPrefetch', 'SceneGuessLogic'],
   world: ['PG3DPhysics', 'WorldNetLogic', 'PG3DInputLogic', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid',
-          'PG3DAvatar', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation']
+          'PG3DAvatar', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation', 'PG3DScene']
 };
 // Must stay `var` (window properties): js/boot.js does window[key] = items.
 const VAR_GLOBALS = ['projects', 'characters', 'LOCATIONS'];

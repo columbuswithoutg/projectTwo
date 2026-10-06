@@ -20,6 +20,7 @@
             <button class="admin-subtab" data-cms="characters">Characters</button>
             <button class="admin-subtab" data-cms="locations">Locations</button>
             <button class="admin-subtab" data-cms="dialogues">Dialogues</button>
+            <button class="admin-subtab" data-cms="scenes">Scene stills</button>
           </div>
           <div id="admin-cms-host"></div>
         </div>

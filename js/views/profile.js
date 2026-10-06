@@ -4,6 +4,27 @@
 const ProfileView = {
   title: 'Profile',
 
+  // Scene Guess: "👑 Iron Man 1,773" for every island this user holds the
+  // record on (empty — and hidden — while the game is switched off). Shared
+  // with the friend profile (js/views/friend-profile.js).
+  async championBadges(el, username) {
+    if (!el || !username) return;
+    try {
+      const res = await fetch(`${API}/world/scene/champions?user=${encodeURIComponent(username)}`, {
+        headers: { Authorization: `Bearer ${Auth.getToken()}` }
+      });
+      const data = res.ok ? await res.json() : null;
+      const items = (data && Array.isArray(data.items)) ? data.items : [];
+      if (!items.length || !el.isConnected) return;
+      el.innerHTML = `
+        <p class="profile-section-label">👑 Island champion</p>
+        <div class="profile-champion-list">${items.map(i => `
+          <span class="profile-champion-badge" title="Scene Guess island record">👑 ${esc(i.title)} <b>${Number(i.score).toLocaleString()}</b></span>`).join('')}
+        </div>`;
+      el.hidden = false;
+    } catch (_) { /* no badges is fine */ }
+  },
+
   mount(container) {
     if (!Auth.isLoggedIn()) {
       Router.go('/login');
@@ -48,6 +69,8 @@ const ProfileView = {
             <span class="stat-label">Memories</span>
           </div>
         </div>
+
+        <div id="profile-champion" class="profile-champion" hidden></div>
 
         <div id="profile-cowatcher" style="display:none">
           <p class="profile-section-label">Favourite Co-Watcher</p>
@@ -209,6 +232,7 @@ const ProfileView = {
 
         usernameEl.textContent = data.username;
         setAvatar(data.profilePicture, data.username);
+        ProfileView.championBadges(document.getElementById('profile-champion'), data.username);
 
         statWatched.textContent  = data.stats.totalWatched;
         statSessions.textContent = data.stats.totalSessions;

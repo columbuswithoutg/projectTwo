@@ -450,6 +450,8 @@ const Playground3D = (() => {
     if (_threeReadyHandler) { window.removeEventListener('three-ready', _threeReadyHandler); _threeReadyHandler = null; }
     if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
     if (_input) { _input.detach(); _input = null; }
+    _inputSuspended = false;
+    document.body.classList.remove('pg-input-suspended');
     if (_orient) { _orient.detach(); _orient = null; }   // exits fullscreen + unlocks if we locked
     if (_worldStateUnsub) { try { _worldStateUnsub(); } catch (_) {} _worldStateUnsub = null; }
     if (_renderer) {
@@ -472,6 +474,7 @@ const Playground3D = (() => {
       _disposeActor(rp.rig);
       if (rp.nameEl && rp.nameEl.parentNode) rp.nameEl.parentNode.removeChild(rp.nameEl);
     }
+    _sgReset();            // Scene Guess screens, crowns, effects (before the scene sweep)
     if (_scene) _disposeRig(_scene);
     // World-mode cleanup.
     _clearNpcs();          // removes NPC name-tag DOM nodes + clears _npcs
@@ -659,6 +662,7 @@ const Playground3D = (() => {
 
     // Input.
     _input = PG3DInput.makeInput(_viewport, { orbit: _orbit, CAMERA, minElev: _minElev });
+    if (_inputSuspended && _input.setSuspended) _input.setSuspended(true);
     // Landscape affordances (shared by /home, /world, friend homes). Attached
     // to the container, after the innerHTML wipe above, so its hint survives.
     _orient = (typeof PGOrientation !== 'undefined')
@@ -1791,6 +1795,7 @@ const Playground3D = (() => {
       if (_seat) _standUp();
       else if (_seatCandidate && !_falling && !_down && _player.position.y <= g0 + 0.01) _sitOn(_seatCandidate);
       else if (_useCandidate && !_down) _useProp(_useCandidate);
+      else if (_sg.candidate && _sg.onInteract && !_down) _sg.onInteract(_sg.candidate.projectId);
     }
     const seated = !!_seat;
 
@@ -2005,6 +2010,7 @@ const Playground3D = (() => {
       _tickRemotePlayers(dt, now);
       _tickNpcs(dt, now);
       _tickStones(dt, now);
+      _tickSceneGuess(dt, now);
       _tickRoomCeilings();
       _tickHUD(now);
     } else {
@@ -2932,9 +2938,11 @@ const Playground3D = (() => {
         if (len <= 0.1) continue;
         const firstIdx = node.walls.length;
 
-        const wins = glassWall ? []
+        const wins = (glassWall ? []
           : houseWindows ? picked.filter(p => p.c - p.w / 2 >= s + WM && p.c + p.w / 2 <= e - WM)
-          : (len >= WORLD.WINDOW_MIN_SEG ? [{ c: (s + e) / 2, w: WW, n: 1 }] : []);
+          : (len >= WORLD.WINDOW_MIN_SEG ? [{ c: (s + e) / 2, w: WW, n: 1 }] : []))
+          // No window behind a live island's Scene Guess screen.
+          .filter(p => !_sgCovers(node, sideName, p.c, p.w));
 
         if (!wins.length) {
           addWallPanel(s, e, 0, H);                       // plain solid segment
@@ -3050,6 +3058,13 @@ const Playground3D = (() => {
     for (const s of ['N', 'S', 'E', 'W']) {
       const axisStart = (s === 'N' || s === 'S') ? cx - HALF : cz - HALF;
       out[s] = world[s].map(([a, b]) => [a - axisStart, b - axisStart]);
+    }
+    // A live island's Scene Guess screen, same units: the editor keeps
+    // windows and frames off that stretch of wall.
+    const sg = _sg.islands.has(projectId) ? _sgSpot(node) : null;
+    if (sg) {
+      const start = (sg.side === 'N' || sg.side === 'S') ? cx - HALF : cz - HALF;
+      out.screen = { side: sg.side, from: sg.from - start, to: sg.to - start };
     }
     return out;
   }
@@ -3551,6 +3566,7 @@ const Playground3D = (() => {
       if (act) act.apply(!!node.propState.get(key));
       node.props.push({ obj, aabb, act, key, kind: p.kind, gx: p.gx, gy: p.gy, x, z, rot, top: fp.top, nodeId: node.project.id });
     });
+    _sgHideHung(node);   // frames behind a Scene Guess screen
 
     // If the local player was sitting on this island and their seat is gone
     // (editor preview rebuild / prop removed), stand them up cleanly.
@@ -3625,7 +3641,7 @@ const Playground3D = (() => {
     if (!el) {
       el = document.createElement('div');
       el.className = 'pg3d-nametag pg3d-keeper-tag';
-      el.innerHTML = '<span class="pg3d-keeper-line1"></span><span class="pg3d-keeper-line2"></span>';
+      el.innerHTML = '<span class="pg3d-keeper-line1"></span><span class="pg3d-keeper-line2"></span><span class="pg3d-keeper-sg"></span>';
       el.style.display = 'none';
       _hudLayer.appendChild(el);
       node.keeperEl = el;
@@ -3634,15 +3650,18 @@ const Playground3D = (() => {
     el.classList.toggle('unclaimed', !!tag.unclaimed);
     const l1 = el.querySelector('.pg3d-keeper-line1');
     const l2 = el.querySelector('.pg3d-keeper-line2');
-    if (l1) l1.textContent = tag.line1 || '';
+    if (l1) { l1.textContent = tag.line1 || ''; l1.style.display = tag.line1 ? '' : 'none'; }
     if (l2) { l2.textContent = tag.line2 || ''; l2.style.display = tag.line2 ? '' : 'none'; }
+    // Scene Guess: the island record, or "● LIVE" while a game is on.
+    const l3 = el.querySelector('.pg3d-keeper-sg');
+    if (l3) { l3.textContent = tag.sg || ''; l3.style.display = tag.sg ? '' : 'none'; l3.classList.toggle('live', !!tag.live); }
   }
 
   // Replace every keeper tag at once: { projectId: { line1, line2, mine, unclaimed } }.
   // Text is set via textContent, so usernames never reach innerHTML.
   function setHouseKeepers(tags) {
     _keeperTags = new Map();
-    for (const [id, t] of Object.entries(tags || {})) if (t && t.line1) _keeperTags.set(id, t);
+    for (const [id, t] of Object.entries(tags || {})) if (t && (t.line1 || t.sg)) _keeperTags.set(id, t);
     for (const node of _worldNodes.values()) _syncKeeperTag(node);
   }
 
@@ -3931,6 +3950,11 @@ const Playground3D = (() => {
       const node = _worldNodes.get(use.nodeId);
       label = use.act.label(!!(node && node.propState && node.propState.get(use.key)));
       target = use;
+    } else if (!_seat && _sg.candidate) {
+      // The island's Scene Guess screen — the prompt sits under it.
+      const sp = _sg.candidate.spot;
+      label = 'Scene Guess';
+      target = { x: sp.x, z: sp.z, sgY: sp.y - sp.h / 2 - 0.05 };
     }
     if (target && _hudLayer) {
       if (!_seatPromptEl) {
@@ -3941,14 +3965,15 @@ const Playground3D = (() => {
       const text = _coarsePointer ? label : `${label} (E)`;
       if (_seatPromptEl.textContent !== text) _seatPromptEl.textContent = text;
       // A tall thing (fridge, wardrobe, an overhead fan) gets its prompt higher.
-      const lift = use ? (target.kind === 'fan' ? 1.2 : 2.1) : ((target.top || 0.5) + 0.9);
+      const lift = target.sgY != null ? target.sgY
+        : use ? (target.kind === 'fan' ? 1.2 : 2.1) : ((target.top || 0.5) + 0.9);
       _hudAnchor.set(target.x, lift, target.z);
       _placeHudEl(_seatPromptEl, _hudAnchor, 0);
     } else if (_seatPromptEl) {
       _seatPromptEl.style.display = 'none';
     }
     if (_input && _input.setInteractLabel) {
-      _input.setInteractLabel(_seat ? 'Stand up' : (label || null));
+      _input.setInteractLabel(_seat ? 'Stand up' : (label || null), (!_seat && target && target.sgY != null) ? '🎬' : null);
     }
   }
 
@@ -5086,6 +5111,273 @@ const Playground3D = (() => {
     return url;
   }
 
+  // Scene Guess (js/scene-guess.js): turn the 3D controls off while its
+  // full-screen panels are open, and back on after — see setSuspended in
+  // js/playground3d-input.js. Remembered so a re-init keeps the state.
+  let _inputSuspended = false;
+  function setInputSuspended(on) {
+    _inputSuspended = !!on;
+    if (_input && _input.setSuspended) _input.setSuspended(_inputSuspended);
+  }
+
+  // ── Scene Guess in the world (driven by js/scene-guess.js) ──
+  // The cinema-wall screen inside every live island's house, the champion's
+  // crown, record confetti and the arrival spotlight. Builders + the screen
+  // painter are in js/playground3d-scene.js (PG3DScene). Screens live in
+  // their own map — never node.decor, which the 30 s house poll rebuilds —
+  // and are only built / painted for islands near the player.
+  const _sg = {
+    islands: new Set(),     // live islands (they get a screen)
+    screens: new Map(),     // projectId → PG3DScene.makeScreen() + { key, dirty }
+    views: new Map(),       // projectId → what to show (from SceneGuess)
+    imgs: new Map(),        // url → Image
+    champions: new Map(),   // projectId → username
+    me: '',
+    crowns: new Map(),      // rig → crown group
+    fx: [],                 // { update(dt) → alive, dispose() }
+    onInteract: null,
+    candidate: null,        // { projectId, spot } — the screen you stand in front of
+    lastPaint: 0,
+    lastCrowns: 0
+  };
+
+  // Where an island's screen hangs (cached on the node; the same for everyone).
+  function _sgSpot(node) {
+    if (!node || node.home || typeof PG3DScene === 'undefined' || typeof projects === 'undefined') return null;
+    if (node.sgSpot === undefined) node.sgSpot = PG3DScene.screenSpot(node.project, projects, WORLD, node.wallHeight || WORLD.WALL_HEIGHT);
+    return node.sgSpot;
+  }
+  // Does the screen cover [c − w/2, c + w/2] along wall `side`? Windows and
+  // wall-hung props there are left out (_buildNodeWalls / _buildProps).
+  function _sgCovers(node, side, c, w) {
+    if (!node || !_sg.islands.has(node.project.id)) return false;
+    const s = _sgSpot(node);
+    return !!s && s.side === side && c + w / 2 > s.from - 0.15 && c - w / 2 < s.to + 0.15;
+  }
+  // Hide frames (anything hung on a wall) behind the screen.
+  function _sgHideHung(node) {
+    if (!node || !node.props || !node.mesh) return;
+    const cx = node.mesh.position.x, cz = node.mesh.position.z;
+    for (const pr of node.props) {
+      if (!pr.obj) continue;
+      const hung = typeof WorldHouseLogic !== 'undefined' && WorldHouseLogic.layerOf && WorldHouseLogic.layerOf(pr.kind) === 'hung';
+      if (!hung) continue;
+      const dx = pr.x - cx, dz = pr.z - cz;
+      const side = Math.abs(dz) >= Math.abs(dx) ? (dz < 0 ? 'N' : 'S') : (dx < 0 ? 'W' : 'E');
+      pr.obj.visible = !_sgCovers(node, side, (side === 'N' || side === 'S') ? pr.x : pr.z, 1.3);
+    }
+  }
+
+  // Which islands are live. A change rebuilds those houses' walls so the
+  // window behind a new screen goes (and comes back when it's switched off).
+  function setSceneScreens(list) {
+    const next = new Set(Array.isArray(list) ? list : []);
+    const changed = [];
+    for (const id of _sg.islands) if (!next.has(id)) changed.push(id);
+    for (const id of next) if (!_sg.islands.has(id)) changed.push(id);
+    _sg.islands = next;
+    for (const id of changed) {
+      if (!next.has(id)) _sgDropScreen(id);
+      const node = _worldNodes.get(id);
+      if (node && !node.home && _scene) _applyHouseToNode(node, _houses.get(id) || null);
+    }
+  }
+
+  // What an island's screen shows: { mode, title, record, pickUrl, liveHost,
+  // state, deadline } — see PG3DScene.drawScreen.
+  function setSceneScreenState(projectId, view) {
+    if (view) _sg.views.set(projectId, view); else _sg.views.delete(projectId);
+    // Start loading every still of the game now (they arrive at "get ready"),
+    // so each round's picture is already there when it's shown.
+    if (view && view.state && Array.isArray(view.state.stills)) view.state.stills.forEach(_sgImg);
+    const s = _sg.screens.get(projectId);
+    if (s) s.dirty = true;
+  }
+
+  function setChampions(map, me) {
+    _sg.champions = new Map(Object.entries(map || {}));
+    _sg.me = me || '';
+    _sg.lastCrowns = 0;
+  }
+
+  function setSceneInteractHandler(fn) { _sg.onInteract = typeof fn === 'function' ? fn : null; }
+
+  function _sgImg(url) {
+    if (!url) return null;
+    let img = _sg.imgs.get(url);
+    if (!img) {
+      // crossOrigin first: a still without CORS headers then fails to load
+      // instead of tainting the canvas (which would stop the WebGL upload).
+      img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => { for (const s of _sg.screens.values()) s.dirty = true; };
+      img.src = url;
+      _sg.imgs.set(url, img);
+      if (_sg.imgs.size > 30) {
+        const oldest = _sg.imgs.keys().next().value;
+        if (oldest !== url) _sg.imgs.delete(oldest);
+      }
+    }
+    return img.complete && img.naturalWidth ? img : null;
+  }
+
+  function _sgDropScreen(id) {
+    const s = _sg.screens.get(id);
+    if (!s) return;
+    _sg.screens.delete(id);
+    s.group.traverse(o => { if (o.isMesh) _occlusion.release(o); });
+    PG3DScene.dispose(s.group);
+  }
+
+  // Repaint a screen only when what it shows has changed (4×/s at most).
+  function _sgPaint(id, s) {
+    const view = _sg.views.get(id) || { mode: 'idle', title: (_worldNodes.get(id) || {}).project ? _worldNodes.get(id).project.title : '' };
+    const st = view.state || null;
+    const secs = view.deadline ? Math.max(0, Math.ceil((view.deadline - Date.now()) / 1000)) : 0;
+    const urls = [];
+    if (st && st.stills && (view.mode === 'round' || view.mode === 'reveal')) urls.push(st.stills[st.round]);
+    if (view.mode === 'idle' && view.pickUrl) urls.push(view.pickUrl);
+    const key = JSON.stringify([
+      view.mode, view.title, view.liveHost, view.pickUrl, view.record,
+      st && [st.phase, st.round, st.players, st.ranking, st.record, (st.history || []).length],
+      secs, urls.map(u => !!_sgImg(u))
+    ]);
+    if (key === s.key && !s.dirty) return;
+    s.key = key;
+    s.dirty = false;
+    PG3DScene.drawScreen(s.ctx, view, _sgImg);
+    s.tex.needsUpdate = true;
+  }
+
+  // Champions standing on the island they hold wear the crown.
+  function _sgTickCrowns(now) {
+    const THREE = window.THREE;
+    if (now - _sg.lastCrowns >= 250) {
+      _sg.lastCrowns = now;
+      const want = new Set();
+      const consider = (rig, username, lying) => {
+        if (!rig || !username || lying) return;
+        const id = _nodeAt(rig.position.x, rig.position.z, (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2);
+        if (id && _sg.islands.has(id) && _sg.champions.get(id) === username) want.add(rig);
+      };
+      if (_player) consider(_player, _sg.me, !!(_seat && _seat.kind === 'bed'));
+      for (const rp of _remotePlayers.values()) {
+        consider(rp.rig, rp.username, !!(rp.target && rp.target.pose === 'lie') || (rp.opacity != null && rp.opacity < 0.5));
+      }
+      for (const [rig, crown] of [..._sg.crowns]) {
+        if (want.has(rig)) continue;
+        PG3DScene.dispose(crown);
+        _sg.crowns.delete(rig);
+      }
+      for (const rig of want) {
+        if (_sg.crowns.has(rig)) continue;
+        const crown = PG3DScene.makeCrown(THREE);
+        _scene.add(crown);
+        _sg.crowns.set(rig, crown);
+      }
+    }
+    for (const [rig, crown] of _sg.crowns) {
+      const sc = rig.scale.y || 1;
+      // Just above the hair (the name tag's 2.05 is the top of its box, not the head).
+      crown.position.set(rig.position.x, (rig.position.y || 0) + 1.86 * sc + Math.sin(now / 650) * 0.02, rig.position.z);
+      crown.rotation.y = rig.rotation.y;
+      crown.scale.setScalar(sc);
+    }
+  }
+
+  // The screen you're standing in front of (inside its house, within its
+  // width and ~4 m of the wall) — "Scene Guess (E)".
+  function _sgScanScreen() {
+    _sg.candidate = null;
+    if (!_player || !_sg.onInteract || !_sg.islands.size) return;
+    const px = _player.position.x, pz = _player.position.z;
+    const id = _nodeAt(px, pz, WORLD.PLATFORM_W / 2);
+    if (!id || !_sg.islands.has(id)) return;
+    const s = _sgSpot(_worldNodes.get(id));
+    if (!s) return;
+    const along = (s.side === 'N' || s.side === 'S') ? px : pz;
+    const depth = s.side === 'N' ? pz - s.z : s.side === 'S' ? s.z - pz : s.side === 'W' ? px - s.x : s.x - px;
+    if (along < s.from - 0.6 || along > s.to + 0.6 || depth < 0 || depth > 4.2) return;
+    _sg.candidate = { projectId: id, spot: s };
+  }
+
+  function _tickSceneGuess(dt, now) {
+    if (typeof PG3DScene === 'undefined' || !_scene || !window.THREE) return;
+    if (_sg.islands.size && now - _sg.lastPaint >= 250) {
+      _sg.lastPaint = now;
+      const vic = _player ? _computeVicinity(_player.position.x, _player.position.z) : null;
+      for (const id of _sg.islands) {
+        const node = _worldNodes.get(id);
+        if (!node) continue;
+        const near = !!vic && (vic.inside === id || vic.near.has(id));
+        let s = _sg.screens.get(id);
+        if (!s && near) {
+          const spot = _sgSpot(node);
+          if (!spot) continue;
+          s = PG3DScene.makeScreen(window.THREE, spot);
+          s.key = '';
+          s.dirty = true;
+          _scene.add(s.group);
+          _sg.screens.set(id, s);
+        }
+        if (!s) continue;
+        s.group.visible = near;
+        if (near) _sgPaint(id, s);
+      }
+    }
+    if (_sg.crowns.size || _sg.champions.size) _sgTickCrowns(now);
+    for (let i = _sg.fx.length - 1; i >= 0; i--) {
+      if (_sg.fx[i].update(dt)) continue;
+      _sg.fx[i].dispose();
+      _sg.fx.splice(i, 1);
+    }
+    _sgScanScreen();
+  }
+
+  // A new record: confetti bursts from the island's screen.
+  function playConfetti(projectId) {
+    const node = _worldNodes.get(projectId);
+    if (!node || !_scene || typeof PG3DScene === 'undefined' || !window.THREE) return;
+    const s = _sgSpot(node);
+    const n = s ? { N: [0, 1], S: [0, -1], W: [1, 0], E: [-1, 0] }[s.side] : [0, 0];
+    const x = s ? s.x + n[0] * 1.2 : node.mesh.position.x;
+    const z = s ? s.z + n[1] * 1.2 : node.mesh.position.z;
+    const fx = PG3DScene.makeConfetti(window.THREE, x, s ? s.y - s.h / 2 : 2.2, z);
+    _scene.add(fx.mesh);
+    _sg.fx.push({ update: fx.update, dispose: () => { PG3DScene.dispose(fx.mesh); if (fx.mesh.dispose) fx.mesh.dispose(); } });
+  }
+
+  // The champion is back on their island: a beam of light follows them.
+  function spotlight(target, ms) {
+    if (!_scene || typeof PG3DScene === 'undefined' || !window.THREE) return;
+    const rig = target === 'local' ? _player : ((_remotePlayers.get(target) || {}).rig || null);
+    if (!rig) return;
+    const s = PG3DScene.makeSpotlight(window.THREE);
+    _scene.add(s.group);
+    const life = (ms || 6000) / 1000;
+    _sg.fx.push({
+      update: (dt) => { s.group.position.set(rig.position.x, rig.position.y || 0, rig.position.z); return s.update(dt, life); },
+      dispose: () => PG3DScene.dispose(s.group)
+    });
+  }
+
+  function _sgReset() {
+    if (typeof PG3DScene !== 'undefined') {
+      for (const id of [..._sg.screens.keys()]) _sgDropScreen(id);
+      for (const crown of _sg.crowns.values()) PG3DScene.dispose(crown);
+    }
+    _sg.screens.clear();
+    _sg.crowns.clear();
+    for (const f of _sg.fx) { try { f.dispose(); } catch (_) {} }
+    _sg.fx = [];
+    _sg.islands = new Set();
+    _sg.views.clear();
+    _sg.imgs.clear();
+    _sg.champions = new Map();
+    _sg.candidate = null;
+    _sg.onInteract = null;
+  }
+
   // Release the shared thumbnail context (call when leaving /customize).
   function disposeThumbnails() {
     if (_thumbR) {
@@ -5123,6 +5415,9 @@ const Playground3D = (() => {
     setHouses, applyHouse, getHouse, getHouseLayout, setHouseKeepers, roomAtPlayer,
     setHomeRoof, getHomeRoof, unstackFromPeers,
     setHouseShowcase, clearHouseShowcase,
+    // Scene Guess minigame (js/scene-guess.js).
+    setInputSuspended, setSceneScreens, setSceneScreenState, setChampions,
+    setSceneInteractHandler, playConfetti, spotlight,
     // Debugging aids for the browser preview (same idea as PG3DHumanoid._debug):
     // live NPC records, the local knockdown deadline, and a raw teleport so a
     // fight can be staged without steering the character by hand.
@@ -5141,6 +5436,12 @@ const Playground3D = (() => {
       // Where the sun's shadow box is centred right now.
       sun() { return _sunRig ? { x: _sunRig.light.target.position.x, z: _sunRig.light.target.position.z, radius: _sunRig.radius, map: _sunRig.mapSize } : null; },
       stoneCenter() { return { ..._stoneCenter }; },
+      // Scene Guess: live islands, built screens (+ where they hang), crowns, the E target.
+      sceneGuess() {
+        const spots = {};
+        for (const id of _sg.islands) { const n = _worldNodes.get(id); if (n) spots[id] = _sgSpot(n); }
+        return { islands: [..._sg.islands], screens: [..._sg.screens.keys()], spots, crowns: _sg.crowns.size, fx: _sg.fx.length, candidate: _sg.candidate && _sg.candidate.projectId };
+      },
       // Advance one frame by hand when the tab is throttled (rAF frozen).
       // Cancels the queued frame first so the loop never doubles up.
       step() { if (!_running) return; if (_rafId) cancelAnimationFrame(_rafId); _tick(performance.now()); }

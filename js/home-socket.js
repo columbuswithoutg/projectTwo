@@ -87,7 +87,7 @@ const Multiplayer = (() => {
   function start({ events, joinPayload, character, onStoneChange, onSnapped, onZone, onHouse }) {
     if (typeof io !== 'function') {
       console.warn('[Multiplayer] socket.io client not loaded');
-      return { stop() {}, getSocket: () => null, sendSnap() {}, getProjectId: () => null };
+      return { stop() {}, getSocket: () => null, sendSnap() {}, getProjectId: () => null, postSystem() {} };
     }
 
     const socket = io({ auth: { token: Auth.getToken() } });
@@ -136,6 +136,8 @@ const Multiplayer = (() => {
     function renderChannelLog(el) {
       const myId = socket.id;
       el.innerHTML = chan.logs[chan.active].map((m) => {
+        // A line from the game itself (postSystem) — no speaker, no whisper button.
+        if (m.system) return `<div class="world-chat-line system">${esc(m.text)}</div>`;
         if (m.channel === 'whisper') {
           const mine = m.id === myId;
           const other = mine ? m.to : m.username;
@@ -646,7 +648,14 @@ const Multiplayer = (() => {
       if (events.snap && socket.connected) socket.emit(events.snap);
     }
 
-    return { stop, getSocket: () => socket, sendSnap, getProjectId: () => chan.projectId };
+    // A line from the game itself (e.g. Scene Guess records / arrivals), filed
+    // under a chat channel like any message, rendered without a speaker.
+    function postSystem(text, channel) {
+      if (!events.channels || typeof text !== 'string' || !text) return;
+      fileChannelLine({ channel: channel || 'project', system: true, id: null, username: '', text: text.slice(0, 200) });
+    }
+
+    return { stop, getSocket: () => socket, sendSnap, getProjectId: () => chan.projectId, postSystem };
   }
 
   return { start, WORLD_EVENTS, HOME_EVENTS };

@@ -65,5 +65,7 @@
 @import "./pages/feed.css" layer(pages);
 @import "./pages/watchorder.css" layer(pages);
 @import "./pages/customize.css" layer(pages);
+@import "./pages/admin-scenes.css" layer(pages);
 
 @import "./hud/world.css" layer(hud);
+@import "./hud/scene-guess.css" layer(hud);

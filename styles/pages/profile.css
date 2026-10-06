@@ -51,3 +51,22 @@
 }
 /* Was hard-coded white: invisible on the Comic paper. */
 #cowatcher-name { color: var(--text-1); }
+
+/* Scene Guess island records this user holds (/profile and friend profiles). */
+.profile-champion { margin: 18px 0 6px; }
+.profile-champion[hidden] { display: none; }
+.profile-champion-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 10px; }
+.profile-champion-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(214, 178, 94, 0.55);
+  background: rgba(214, 178, 94, 0.12);
+  color: var(--text-1);
+  font: 600 13px/1.2 var(--font-ui);
+}
+.profile-champion-badge b { color: var(--highlight); font-variant-numeric: tabular-nums; }
+[data-theme="comic"] .profile-champion-badge { border: 2.5px solid #111111; background: #fff6cc; color: #111111; box-shadow: 2px 2px 0 #111111; }
+[data-theme="comic"] .profile-champion-badge b { color: #111111; }

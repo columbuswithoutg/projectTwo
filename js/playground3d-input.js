@@ -31,9 +31,17 @@
     const IL = root.PG3DInputLogic;
     const isTextField = (el) => IL.isTypingTarget(el);
 
+    // Suspended while a full-screen game UI (Scene Guess, js/scene-guess.js)
+    // is open: keys, the joystick, camera drags and the action buttons do
+    // nothing, keys reach the UI untouched (arrows move its slider, Space /
+    // Enter press its buttons), and body.pg-input-suspended hides the touch
+    // controls (styles/hud/scene-guess.css). See setSuspended below.
+    let suspended = false;
+
     // Keys are read by physical position (e.code) so WASD works on any
     // keyboard layout.
     function onKey(e, down) {
+      if (suspended) return;
       const action = IL.actionFor(e);
       if (!action) return;
       const typing = isTextField(document.activeElement);
@@ -78,7 +86,7 @@
     let mouseDragging = false;
     let lastMouse = { x: 0, y: 0 };
     function onMouseDown(e) {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || suspended) return;
       // The joystick's pointerdown handler may have just activated and
       // captured this pointer for itself — don't double-engage the camera.
       if (activeJoyPointerId !== null) return;
@@ -98,7 +106,7 @@
     }
     function onMouseUp() { mouseDragging = false; }
     function onWheel(e) {
-      if (!_orbit) return;
+      if (!_orbit || suspended) return;
       _orbit.distance = Math.max(CAMERA.MIN_DIST,
         Math.min(CAMERA.MAX_DIST, _orbit.distance + e.deltaY * CAMERA.ZOOM_SPEED));
       e.preventDefault();
@@ -182,7 +190,10 @@
     });
     document.body.appendChild(sitEl);
     let sitLabel = null;
-    function setInteractLabel(label) {
+    // `glyph`: what the round button shows (🪑 by default; 🎬 at a Scene Guess screen).
+    function setInteractLabel(label, glyph) {
+      const g = glyph || '🪑';
+      if (sitEl.textContent !== g) sitEl.textContent = g;
       if (label === sitLabel) return;
       sitLabel = label;
       sitEl.classList.toggle('pg-sit--on', !!label);
@@ -337,7 +348,7 @@
     // Hit-test gates engagement to clicks actually inside joyEl's rect,
     // so it never steals clicks from elsewhere.
     const onDocPointerDown = (e) => {
-      if (activeJoyPointerId !== null) return;
+      if (activeJoyPointerId !== null || suspended) return;
       if (engageJoystick(e.clientX, e.clientY, e.pointerId, 'doc-pdown', e)) {
         moveJoystick(e.clientX, e.clientY);
       }
@@ -473,6 +484,7 @@
     window.addEventListener('touchcancel', onTouchEnd);
 
     function getAxis() {
+      if (suspended) return { x: 0, y: 0 };
       if (joyActive) return { x: joyAxis.x, y: joyAxis.y };
       // Typing somewhere: the keyboard isn't steering. (Belt and braces with
       // the focusin reset above — some focus changes fire no event, e.g.
@@ -496,18 +508,21 @@
     // One-shot jump request. Tick reads and clears once per keydown so
     // that hold-space doesn't auto-bounce repeatedly.
     function consumeJump() {
+      if (suspended) return (jumpRequested = false);
       if (!jumpRequested) return false;
       jumpRequested = false;
       return true;
     }
 
     function consumePunch() {
+      if (suspended) return (punchRequested = false);
       if (!punchRequested) return false;
       punchRequested = false;
       return true;
     }
 
     function consumeInteract() {
+      if (suspended) return (interactRequested = false);
       if (!interactRequested) return false;
       interactRequested = false;
       return true;
@@ -545,7 +560,22 @@
       if (sitEl && sitEl.parentNode) sitEl.parentNode.removeChild(sitEl);
     }
 
-    return { getAxis, isOrbiting, consumeJump, consumePunch, consumeInteract, setInteractLabel, setPunchCooldown, denyPunch, resetHeld, detach };
+    // Turn the 3D controls off / back on (see `suspended` above). Turning
+    // them off drops every held key, queued one-shot, joystick and drag.
+    function setSuspended(on) {
+      suspended = !!on;
+      document.body.classList.toggle('pg-input-suspended', suspended);
+      if (!suspended) return;
+      resetHeld();
+      jumpRequested = punchRequested = interactRequested = false;
+      releaseJoystick();
+      activeJoyTouchId = null;
+      activeCamTouchId = null;
+      camTouches.clear();
+      mouseDragging = false;
+    }
+
+    return { getAxis, isOrbiting, consumeJump, consumePunch, consumeInteract, setInteractLabel, setPunchCooldown, denyPunch, resetHeld, setSuspended, detach };
   }
 
   root.PG3DInput = { makeInput };

@@ -1,7 +1,8 @@
 /************************************************
  * WORLD ROUTES — /api/world
  *
- * Keeper-editable project houses for /world.
+ * Keeper-editable project houses for /world, plus the Scene Guess
+ * minigame's read endpoints (bottom of the file).
  *
  *   GET /houses               every decorated house + each island's keeper
  *   PUT /houses/:projectId    save a house — only the island's keeper may
@@ -129,6 +130,92 @@ router.put('/houses/:projectId', auth, async (req, res) => {
   const keeper = { userId: String(req.user.id), username: (me && me.username) || 'You', ms: top.ms };
   WorldSocket.broadcastWorld('world:house', { projectId, house, keeper });
   res.json({ house, keeper });
+});
+
+// ── Scene Guess (server/scene-guess.js) ──
+//
+//   GET /scene                         what /world needs at mount ({ enabled:false } when off)
+//   GET /scene/champions?user=name     profile badges: live islands where `name` holds the record
+//   GET /scene/:projectId/board        an island's top 5 + the caller's best and rank
+//   GET /scene/:projectId/picks        the champion's pick options (their record game's stills)
+//
+// Answers (still times) never appear here; still ids neither (an ObjectId
+// carries its creation time, which follows upload — i.e. film — order).
+const SceneData = require('../server/scene-guess-data');
+const SceneScore = require('../models/SceneScore');
+const SceneStill = require('../models/SceneStill');
+const SceneGuess = require('../server/scene-guess').instance();
+
+const sceneProjectId = (v) => (typeof v === 'string' ? v.slice(0, 80) : '');
+
+router.get('/scene', auth, async (req, res) => {
+  const s = await SceneData.settings.get();
+  if (!s.enabled) return res.json({ enabled: false });
+  const [islands, champs, mine] = await Promise.all([
+    SceneData.liveIslands(),
+    SceneData.champions.get(),
+    SceneScore.find({ userId: req.user.id, best: { $gt: 0 } }).select('projectId best').lean()
+  ]);
+  const records = {};
+  for (const pid of islands) {
+    const c = champs.get(pid);
+    if (c) records[pid] = SceneData.publicRecord(c);
+  }
+  const mineMap = {};
+  for (const r of mine) mineMap[r.projectId] = r.best;
+  res.json({ enabled: true, islands, records, live: SceneGuess.liveSnapshot(), mine: mineMap, roundSec: s.roundSec });
+});
+
+router.get('/scene/champions', auth, async (req, res) => {
+  const name = typeof req.query.user === 'string' ? req.query.user.trim().slice(0, 40).toLowerCase() : '';
+  const s = await SceneData.settings.get();
+  if (!s.enabled || !name) return res.json({ items: [] });
+  const [islands, champs, projects] = await Promise.all([SceneData.liveIslands(), SceneData.champions.get(), SceneData.projects.get()]);
+  const items = [];
+  for (const pid of islands) {
+    const c = champs.get(pid);
+    if (!c || c.username.toLowerCase() !== name) continue;
+    const p = projects.get(pid);
+    items.push({ projectId: pid, title: p ? p.title : pid, score: c.score });
+  }
+  res.json({ items });
+});
+
+router.get('/scene/:projectId/board', auth, async (req, res) => {
+  const projectId = sceneProjectId(req.params.projectId);
+  const s = await SceneData.settings.get();
+  if (!s.enabled || !projectId) return res.json({ top: [], me: null });
+  const [rows, me] = await Promise.all([
+    SceneScore.find({ projectId, best: { $gt: 0 } }).sort({ best: -1, achievedAt: 1 }).limit(5).populate('userId', 'username').lean(),
+    SceneScore.findOne({ projectId, userId: req.user.id }).select('best plays achievedAt').lean()
+  ]);
+  let rank = null;
+  if (me && me.best > 0) {
+    rank = 1 + await SceneScore.countDocuments({
+      projectId,
+      $or: [{ best: { $gt: me.best } }, { best: me.best, achievedAt: { $lt: me.achievedAt } }]
+    });
+  }
+  res.json({
+    top: rows.filter(r => r.userId).map(r => ({ username: r.userId.username, best: r.best, achievedAt: r.achievedAt })),
+    me: me ? { best: me.best, plays: me.plays, rank } : null
+  });
+});
+
+router.get('/scene/:projectId/picks', auth, async (req, res) => {
+  const projectId = sceneProjectId(req.params.projectId);
+  const champ = (await SceneData.champions.get()).get(projectId);
+  if (!champ || champ.userId !== String(req.user.id)) {
+    return res.status(403).json({ error: 'Only the island champion can choose the screen picture' });
+  }
+  const row = await SceneScore.findOne({ userId: req.user.id, projectId }).select('bestStills pick').lean();
+  const ids = (row && row.bestStills) || [];
+  const docs = ids.length ? await SceneStill.find({ _id: { $in: ids } }).select('imageUrl publicId active').lean() : [];
+  const byId = new Map(docs.map(d => [String(d._id), d]));
+  res.json({
+    stills: ids.map(id => { const d = byId.get(String(id)); return d && d.active ? SceneData.stillUrl(d) : null; }),
+    pick: row && row.pick ? ids.findIndex(id => String(id) === String(row.pick)) : -1
+  });
 });
 
 module.exports = router;

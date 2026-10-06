@@ -15,6 +15,8 @@ const Location = require('../models/Location');
 const Dialogue = require('../models/Dialogue');
 const Report = require('../models/Report');
 const ProjectStay = require('../models/ProjectStay');
+const SceneScore = require('../models/SceneScore');
+const SceneData = require('../server/scene-guess-data');
 const Messages = require('../server/messages');
 const feed = require('../server/feed');
 const MessagingLogic = require('../js/messaging-logic');
@@ -127,8 +129,12 @@ router.delete('/users/:id', async (req, res) => {
     Friend.deleteMany({ $or: [{ requester: req.params.id }, { recipient: req.params.id }] }),
     // Island stay time — otherwise a deleted user stays "keeper" of a house
     // and nobody can edit it until someone out-stays them.
-    ProjectStay.deleteMany({ userId: req.params.id })
+    ProjectStay.deleteMany({ userId: req.params.id }),
+    // Scene Guess bests — same reason: a deleted user's record (and crown)
+    // would otherwise sit on the island forever.
+    SceneScore.deleteMany({ userId: req.params.id })
   ]);
+  SceneData.invalidate('board', null);
   auth.invalidateUser(req.params.id);
   logAudit(req, 'deleteUser', req.params.id, { username: user.username });
   res.json({ message: 'User deleted' });
@@ -437,7 +443,8 @@ const CONFIG_RULES = {
   'encounter.cooldown':{ min: 5000, max: 120000 },
   'fight.spawnChance': { min: 0, max: 1 },
   'world.maxProps':    { min: 1, max: 60, integer: true },
-  'world.homeMaxProps':{ min: 1, max: 60, integer: true }
+  'world.homeMaxProps':{ min: 1, max: 60, integer: true },
+  'world.sceneRoundSec':{ min: 15, max: 60, integer: true }
 };
 
 // Per-NPC body type (world.npcBodyTypes): keys must be real NPC ids, values a
@@ -518,6 +525,7 @@ router.put('/config', async (req, res) => {
     if ('fightsEnabled' in body.flags) update['flags.fightsEnabled'] = !!body.flags.fightsEnabled;
     if ('dialoguesEnabled' in body.flags) update['flags.dialoguesEnabled'] = !!body.flags.dialoguesEnabled;
     if ('worldEventStonesEnabled' in body.flags) update['flags.worldEventStonesEnabled'] = !!body.flags.worldEventStonesEnabled;
+    if ('sceneGuessEnabled' in body.flags) update['flags.sceneGuessEnabled'] = !!body.flags.sceneGuessEnabled;
   }
 
   // pauseMin must be < pauseMax — silently swap if both updated and inverted
@@ -546,6 +554,7 @@ router.put('/config', async (req, res) => {
   ).lean();
 
   logAudit(req, 'configChange', null, { diff: diffConfig(before || AdminConfig.defaults(), after) });
+  SceneData.invalidate('settings');   // Scene Guess on/off + round length apply at once
   res.json(after);
 });
 
@@ -561,6 +570,7 @@ router.post('/config/reset', async (req, res) => {
     { upsert: true, new: true, setDefaultsOnInsert: true }
   ).lean();
   logAudit(req, 'configChange', null, { reset: true, diff: diffConfig(before || defaults, after) });
+  SceneData.invalidate('settings');
   res.json(after);
 });
 
@@ -972,5 +982,10 @@ router.put('/content/dialogues', async (req, res) => {
   });
   res.json(after);
 });
+
+// Scene Guess stills + island boards (routes/admin-scenes.js). The audit
+// writer and the Cloudinary URL parser stay private to this file and are
+// handed over rather than moved.
+router.use('/scenes', require('./admin-scenes')({ logAudit, parseCloudinary }));
 
 module.exports = router;

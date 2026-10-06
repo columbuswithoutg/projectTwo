@@ -75,6 +75,7 @@ const WorldView = (() => {
         <button id="world-back" type="button" title="Back">← Back</button>
         <h1 class="world-title">World</h1>
         <div class="world-header-spacer">
+          <span class="world-sg-slot" id="world-sg-slot"></span>
           <span class="world-house-keeper" id="world-house-keeper" hidden></span>
           <button class="world-house-btn" id="world-house-btn" type="button" hidden
                   title="You keep this house — decorate it">Edit house</button>
@@ -231,6 +232,20 @@ const WorldView = (() => {
       });
     }
 
+    // Scene Guess minigame HUD (js/scene-guess.js) — stays dark unless the
+    // admin has it switched on, globally and for the island you stand on.
+    if (typeof SceneGuess !== 'undefined' && _mp && _mp.getSocket && _mp.getSocket()) {
+      SceneGuess.start({
+        socket: _mp.getSocket(),
+        engine: Playground3D,
+        username: Auth.getUsername ? Auth.getUsername() : '',
+        postSystem: (text) => { if (_mp && _mp.postSystem) _mp.postSystem(text); },
+        chipHost: document.getElementById('world-sg-slot'),
+        onTags: _pushKeeperTags
+      });
+      if (_zone) SceneGuess.onZone(_zone);
+    }
+
     _wireVoiceToggle('world');
     const houseBtn = document.getElementById('world-house-btn');
     if (houseBtn) {
@@ -278,6 +293,8 @@ const WorldView = (() => {
     // server re-checks anyway). Ignored while typing in the chat box.
     _snapKeyHandler = (e) => {
       if (_isTextField(document.activeElement)) return;
+      // A Scene Guess panel / game is open: the 3D controls are off.
+      if (document.body.classList.contains('pg-input-suspended')) return;
       if (e.key === 'g' || e.key === 'G') _doSnap();
     };
     window.addEventListener('keydown', _snapKeyHandler);
@@ -496,6 +513,14 @@ const WorldView = (() => {
         : { line1: `🔑 ${k.username} · ${_fmtStay(k.ms)}`,
             line2: (here || mineMs) ? `you ${_fmtStay(mineMs)}` : '' };
     }
+    // Scene Guess adds the island record (or "● LIVE") as one more line — on
+    // live islands only, keeper or not.
+    if (typeof SceneGuess !== 'undefined' && SceneGuess.tagFor) {
+      for (const p of projects) {
+        const sg = p && p.id ? SceneGuess.tagFor(p.id) : null;
+        if (sg) tags[p.id] = Object.assign(tags[p.id] || {}, sg);
+      }
+    }
     Playground3D.setHouseKeepers(tags);
   }
 
@@ -557,6 +582,7 @@ const WorldView = (() => {
     if (_zone && Date.now() - _housesAt > 30000) _loadHouses(_mountSeq);
     _refreshHouseHud();
     if (_voice) _voiceVisual(_voiceState, _voiceMsg);
+    if (typeof SceneGuess !== 'undefined') SceneGuess.onZone(_zone);
   }
 
   function _onHouse(p) {
@@ -963,6 +989,8 @@ const WorldView = (() => {
     // Settle a still-open spawn picker so its awaited promise doesn't dangle.
     if (_spawnPickerResolve) { _spawnPickerResolve(); _spawnPickerResolve = null; }
     document.querySelector('.world-spawn')?.remove();
+    // Scene Guess before multiplayer: it quits a game in progress over the socket.
+    if (typeof SceneGuess !== 'undefined') { try { SceneGuess.stop(); } catch (_) {} }
     if (_mp) { try { _mp.stop(); } catch (_) {} _mp = null; }
     Playground3D.destroy();
     _stage = null;

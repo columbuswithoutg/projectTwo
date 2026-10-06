@@ -118,11 +118,17 @@
   // the server touch the DB and/or fan out to a whole room; emotes and stone
   // grabs fan out too. Chat, punches, snaps and positions keep their existing
   // floors in world-socket.js.
+  // Scene Guess (server/scene-guess.js): starting a lobby reads Mongo on its
+  // close, so it gets the tightest bucket; a guess is once per round anyway.
   const RATES = Object.freeze({
     join:      Object.freeze({ cap: 3, perSec: 0.1 }),
     emote:     Object.freeze({ cap: 4, perSec: 0.5 }),
     announce:  Object.freeze({ cap: 5, perSec: 0.5 }),
-    stoneGrab: Object.freeze({ cap: 6, perSec: 2 })
+    stoneGrab: Object.freeze({ cap: 6, perSec: 2 }),
+    sgStart:   Object.freeze({ cap: 2, perSec: 0.05 }),
+    sgJoin:    Object.freeze({ cap: 4, perSec: 0.5 }),
+    sgGuess:   Object.freeze({ cap: 4, perSec: 1 }),
+    sgMisc:    Object.freeze({ cap: 6, perSec: 0.5 })
   });
 
   function bucket(cap, perSec, now) {

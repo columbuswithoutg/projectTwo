@@ -31,6 +31,9 @@ const MessagingLogic = require('../js/messaging-logic');
 const { PUNCH_COOLDOWN_MS, KNOCKDOWN, punchCheck, stoneSlot, STONE_RING } = require('../js/playground3d-physics');
 const NetLogic = require('../js/world-net-logic');
 const contentLoader = require('../server/contentLoader');
+// Scene Guess minigame — the live games; hooked in below (attach, register,
+// zone changes, retired / reconnecting sockets, punch + snap immunity).
+const SceneGuess = require('../server/scene-guess').instance();
 // The client sends its character on join and the server re-broadcasts it to
 // every other joiner, so it is reduced to the known slots, each an in-range
 // integer (server/character.js — the same ranges the profile PUT enforces).
@@ -457,7 +460,23 @@ module.exports = (io) => {
       .finally(() => { d.watchedLoading = false; d.watchedAt = Date.now(); });
   }
 
+  // The island a player stands on by their last broadcast position, or null.
+  // Only islands they've watched count — mirrors _isProjectUnlocked in
+  // js/playground3d.js: a user with nothing watched yet spawns on the start
+  // island (Iron Man).
+  function zoneOf(socket, p) {
+    const island = ChatLogic.projectAt(p.x, p.z, projectGrid());
+    const watched = socket.data.watched;
+    const allowed = !!watched && (watched.has(island) || (watched.size === 0 && island === 'ironman1'));
+    if (island && !allowed) refreshWatched(socket);
+    return island && allowed ? island : null;
+  }
+
+  SceneGuess.attach(io, { players: worldPlayers, rateOk, touchStay, zoneOf });
+
   io.on('connection', (socket) => {
+    SceneGuess.register(socket);
+
     // Client must emit 'world:join' before broadcasting anything else.
     socket.on('world:join', (raw) => {
       // Each join hits the DB (watched list) and fans out to the whole room.
@@ -507,6 +526,7 @@ module.exports = (io) => {
             const old = io.sockets.sockets.get(sid);
             if (old && old.data) old.data.voiceScope = null;
           }
+          SceneGuess.retire(sid);   // its game seat waits for this new socket (resume below)
           worldPlayers.delete(sid);
           // …and out of the room, or the retired tab keeps receiving
           // everyone's positions and chat.
@@ -534,6 +554,8 @@ module.exports = (io) => {
 
       // Tell everyone else about the new arrival.
       socket.to('world').emit('world:joined', NetLogic.publicPlayer(player));
+      // Back on a new socket mid-game (reload / reconnect / new tab)? Retake the seat.
+      SceneGuess.resume(socket);
     });
 
     socket.on('world:pos', (raw) => {
@@ -550,15 +572,10 @@ module.exports = (io) => {
       // Track which project island they're on; tell the client when it
       // changes so its Project chat tab can relabel / enable itself. The
       // island is also the voice scope and the stay-credit bucket.
-      const island = ChatLogic.projectAt(p.x, p.z, projectGrid());
-      // Only islands the user has watched count (see refreshWatched).
-      // Mirrors _isProjectUnlocked in js/playground3d.js: a user with nothing
-      // watched yet spawns on the start island (Iron Man).
-      const watched = socket.data.watched;
-      const allowed = !!watched && (watched.has(island) || (watched.size === 0 && island === 'ironman1'));
-      if (island && !allowed) refreshWatched(socket);
-      const zone = island && allowed ? island : null;
+      // Only islands the user has watched count (see zoneOf / refreshWatched).
+      const zone = zoneOf(socket, p);
       if (zone !== p.projectId) {
+        const prevZone = p.projectId;
         // Voice: peers are computed from projectId, so snapshot the OLD
         // island's peers before mutating it. Both sides tear down, then the
         // mover gets a fresh snapshot of the new island and its residents get
@@ -570,6 +587,8 @@ module.exports = (io) => {
         p.stay = zone ? Stay.enter(zone, nowPos) : null;
         p.projectId = zone;
         socket.emit('world:zone', { projectId: zone });
+        // After the zone so the client knows its island before the game shows.
+        SceneGuess.onZone(socket, p, prevZone, zone);
         if (inVoice) {
           for (const id of oldPeers) {
             io.to(id).emit('voice:peer-left', { id: socket.id });
@@ -676,6 +695,12 @@ module.exports = (io) => {
       touchStay(p, now);
       if (target) {
         const victim = worldPlayers.get(target);
+        // Mid Scene Guess the player can't move or dodge — a knockdown (or a
+        // shove off the island, which would drop them from the game) is griefing.
+        if (SceneGuess.isPlaying(target)) {
+          socket.to('world').emit('world:punch', { id: socket.id, target: null });
+          return reply({ ok: false, reason: 'busy' });
+        }
         const verdict = punchCheck({ now, attacker: p, victim, range: PUNCH_RANGE });
         if (verdict !== 'ok') {
           socket.to('world').emit('world:punch', { id: socket.id, target: null });
@@ -715,6 +740,7 @@ module.exports = (io) => {
       if (!me) return;
       const npc = raw && raw.npc;
       if (typeof npc !== 'string' || !NPC_IDS.has(npc)) return;
+      if (SceneGuess.isPlaying(socket.id)) return;   // heroes leave Scene Guess players alone too
       const now = Date.now();
       // Still down / getting up from the last hit — the hero waits its turn
       // (same immunity as player punches, so heroes can't chain-stun either).
@@ -766,7 +792,9 @@ module.exports = (io) => {
       p.lastSnap = now;
       touchStay(p, now);
 
-      const others = [...worldPlayers.keys()].filter(id => id !== socket.id);
+      // Scene Guess players are never dusted: the respawn teleports them off
+      // their island, which would drop them from the game.
+      const others = [...worldPlayers.keys()].filter(id => id !== socket.id && !SceneGuess.isPlaying(id));
       // Unbiased random half via a partial Fisher–Yates shuffle.
       for (let i = others.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -1051,6 +1079,7 @@ module.exports = (io) => {
         freeStonesOf(socket.id);   // drop any stones this player was carrying
         releaseNpcTarget(socket.id);
       }
+      SceneGuess.socketGone(socket.id);   // their game seat waits RECONNECT_GRACE_MS
       const home = homePlayers.get(socket.id);
       if (home) {
         homePlayers.delete(socket.id);

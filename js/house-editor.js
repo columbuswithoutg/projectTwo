@@ -69,6 +69,11 @@ const HouseEditor = (() => {
     const doorCells = {};
     for (const side of L.SIDES) doorCells[side] = layout ? L.openingsToCells(layout[side]) : [];
     const isDoorCell = (side, pos) => doorCells[side].some(([a, b]) => pos >= a && pos <= b);
+    // A live island's Scene Guess screen hangs on one stretch of wall (the
+    // engine's layout.screen, same units): no window or frame goes there.
+    const sgScreen = layout && layout.screen ? layout.screen : null;
+    const onSgScreen = (side, lo, hi) => !!sgScreen && sgScreen.side === side && hi > sgScreen.from && lo < sgScreen.to;
+    const SG_SCREEN_TOAST = 'The Scene Guess screen hangs on this stretch of wall — pick another spot.';
     // Wall-ring cell → which wall and how far along it (top row is north).
     const ringCell = (gx, gy) => {
       if (gy === 0 && gx >= 1 && gx <= N) return { side: 'N', pos: gx };
@@ -254,6 +259,12 @@ const HouseEditor = (() => {
               <rect x="${x}" y="${y}" width="${CELL}" height="${CELL}" />
               <text x="${x + CELL / 2}" y="${y + CELL / 2 + 1}" text-anchor="middle" dominant-baseline="middle" font-size="16">🚪</text>
             </g>`);
+          } else if (onSgScreen(rc.side, rc.pos, rc.pos + 1)) {
+            cells.push(`<g class="world-house-wall sg-screen" data-side="${rc.side}" data-pos="${rc.pos}">
+              <title>Scene Guess screen</title>
+              <rect x="${x}" y="${y}" width="${CELL}" height="${CELL}" />
+              <text x="${x + CELL / 2}" y="${y + CELL / 2 + 1}" text-anchor="middle" dominant-baseline="middle" font-size="15">🎬</text>
+            </g>`);
           } else {
             cells.push(`<rect class="world-house-wall" data-side="${rc.side}" data-pos="${rc.pos}" x="${x}" y="${y}" width="${CELL}" height="${CELL}" />`);
           }
@@ -274,6 +285,7 @@ const HouseEditor = (() => {
       } else if (layout) {
         for (const side of L.SIDES) {
           for (const c of L.autoWindowCentres(layout[side])) {
+            if (onSgScreen(side, c - 0.75, c + 0.75)) continue;   // the house skips it too
             const [wx, wy] = ringXY(side, c);
             windows += `<g class="world-house-window auto" transform="translate(${wx} ${wy})"><title>Auto window</title>
               <text x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-size="16">🪟</text></g>`;
@@ -490,6 +502,10 @@ const HouseEditor = (() => {
           if (typeof toast === 'function') toast(opts.doorToast, 'info');
           return;
         }
+        if (wall.classList.contains('sg-screen')) {
+          if (typeof toast === 'function') toast(SG_SCREEN_TOAST, 'info');
+          return;
+        }
         if (selectedKind !== 'window') {
           if (typeof toast === 'function') toast('That\'s the wall — pick 🪟 window to put a window there.', 'info');
           return;
@@ -499,6 +515,10 @@ const HouseEditor = (() => {
           return;
         }
         const current = draft.windows == null ? [] : draft.windows;
+        if (L.windowSpan && onSgScreen(side, ...L.windowSpan(pos))) {
+          if (typeof toast === 'function') toast(SG_SCREEN_TOAST, 'info');
+          return;
+        }
         const can = L.canPlaceWindow(current, side, pos, layout ? layout[side] : []);
         if (!can.ok) { if (typeof toast === 'function') toast(can.error, 'warn'); return; }
         draft.windows = [...current, { side, pos }];   // leaving auto mode keeps only what you place
@@ -545,6 +565,11 @@ const HouseEditor = (() => {
           : r.error;
         say(msg, 'warn');
         return false;
+      }
+      if (sgScreen && L.layerOf(r.placed.kind) === 'hung') {
+        const wall = L.frameWall(r.placed);
+        const along = (wall === 'N' || wall === 'S') ? r.placed.gx : r.placed.gy;
+        if (onSgScreen(wall, along - 0.1, along + 1.1)) { say(SG_SCREEN_TOAST, 'info'); return false; }
       }
       draft.props.push(r.placed);
       selectedProp = draft.props.length - 1;
