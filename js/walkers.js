@@ -26,6 +26,11 @@ const Walkers = (() => {
     WEAPON:     { radius: 18, size: 14, baseSpeed: 3.5, hitCooldown: 300 },
     FIGHT:      { spawnChance: 0.15, villainHpMult: 1.5, defeatDisplayMs: 2000, deployGrace: 5000, noShowTimeoutMs: 8000, maxFightMs: 60000 },
     PROJECTILE: { speed: 120, cooldown: 1400, size: 6 },
+    // Two walkers (or two queues of walkers) meeting head-on on one road:
+    // usually both sides bounce back; sometimes one side wins and shoves the
+    // other back along the road for a moment. A bigger queue shoves more
+    // often and wins more often (its size / both sizes).
+    SHOVE:      { chance: 0.3, chanceUneven: 0.65, speedMult: 0.6, minMs: 1200, maxMs: 2600, team: 1.4 },
   };
 
   // Merge admin-tunable values from the server into PHYSICS. Only the keys
@@ -410,8 +415,15 @@ const Walkers = (() => {
         } else if (w.currentEdge && cachedRoads?.get(w.currentEdge) && w.targetNode) {
           // Mid-road — resume travel toward targetNode.
           w.location = 'road';
-          const targetPos = getNodeCenter(w.targetNode);
-          if (targetPos) {
+          const road = _sampledRoad(w);
+          const targetPos = road ? null : getNodeCenter(w.targetNode);
+          if (road) {
+            // Sampled road: keep walking along it the way they were going
+            // (a rook-style road may first lead AWAY from the target, so
+            // aiming straight at the target could turn them around).
+            const sign = _travelSign(w, road) || (w.targetNode === road.toId ? 1 : -1);
+            _setRoadVelocity(w, road, sign, PHYSICS.WALKER.speed);
+          } else if (targetPos) {
             const dx = targetPos.x - w._cx;
             const dy = targetPos.y - w._cy;
             const len = Math.hypot(dx, dy) || 1;
@@ -506,6 +518,98 @@ const Walkers = (() => {
   // shared source is LayoutSystem.buildRoadGeometry, cached in utils.js as
   // getRoadGeometry — walkers and visible SVG paths never diverge.
   const _sampleAt = LayoutSystem.sampleAt;
+
+  // ── Walkers on sampled roads (map beziers, rook-style flow roads) ──
+  // Their position is derived from `edgeT` (distance along the road) every
+  // frame, so anything that moves them — a collision push — must move edgeT
+  // too, or it's thrown away on the next frame (that's what used to lock two
+  // walkers in place, shoving forever).
+  function _sampledRoad(w) {
+    if (w.location !== 'road' || w.edgeT == null || !cachedRoads) return null;
+    const road = cachedRoads.get(w.currentEdge);
+    return road && road.type !== 'straight' ? road : null;
+  }
+  // +1 moving toward the road's end, -1 toward its start, 0 standing still.
+  function _travelSign(w, road) {
+    const s = _sampleAt(road.samples, w.edgeT);
+    const along = w.vx * s.tx + w.vy * s.ty;
+    return Math.abs(along) < 1e-6 ? 0 : Math.sign(along);
+  }
+  function _setRoadVelocity(w, road, sign, speed) {
+    const s = _sampleAt(road.samples, w.edgeT);
+    w.vx = s.tx * sign * speed;
+    w.vy = s.ty * sign * speed;
+  }
+  // Move a walker by (dx, dy): nodes / straight roads take it as is, sampled
+  // roads take the part along the road.
+  function _nudge(w, dx, dy) {
+    w._cx += dx;
+    w._cy += dy;
+    const road = _sampledRoad(w);
+    if (road) {
+      const s = _sampleAt(road.samples, w.edgeT);
+      w.edgeT += dx * s.tx + dy * s.ty;
+    }
+  }
+  // `lead` plus the walkers queued right behind it on the same road, all
+  // heading `sign` — one side of a meeting.
+  function _teamOf(lead, road, sign) {
+    const team = [lead];
+    const gap = PHYSICS.WALKER.size * PHYSICS.SHOVE.team;
+    let cur = lead;
+    for (;;) {
+      let next = null, best = Infinity;
+      for (const o of activeWalkers) {
+        if (team.includes(o) || !o._spawned || o.state !== W_STATE.WALKING) continue;
+        if (o.location !== 'road' || o.currentEdge !== lead.currentEdge || o.edgeT == null) continue;
+        if (_travelSign(o, road) !== sign) continue;
+        const behind = (cur.edgeT - o.edgeT) * sign;
+        if (behind > 0 && behind < gap && behind < best) { best = behind; next = o; }
+      }
+      if (!next) return team;
+      team.push(next);
+      cur = next;
+    }
+  }
+  function _onDifferentRoads(a, b) {
+    return a.location === 'road' && b.location === 'road' && a.currentEdge !== b.currentEdge;
+  }
+  // Two walkers touching on the same sampled road. Returns true when handled
+  // here (the caller then skips the generic elastic bounce):
+  //   head-on        → both sides bounce back, or one side shoves the other
+  //   same direction → the one behind slows to the leader's pace (a queue)
+  //   moving apart   → nothing to do
+  function _meetOnRoad(a, b, now) {
+    if (a.state !== W_STATE.WALKING || b.state !== W_STATE.WALKING) return false;
+    if (a.currentEdge !== b.currentEdge) return false;
+    const road = _sampledRoad(a);
+    if (!road || !_sampledRoad(b)) return false;
+    if (a.shove || b.shove) return true;          // a shove in progress steers both (tick)
+    const back = a.edgeT <= b.edgeT ? a : b, front = back === a ? b : a;
+    const sBack = _travelSign(back, road), sFront = _travelSign(front, road);
+    if (!sBack || !sFront) return false;
+    if (sBack > 0 && sFront < 0) {                 // head-on
+      const fwd = _teamOf(back, road, 1), rev = _teamOf(front, road, -1);
+      const S = PHYSICS.SHOVE;
+      const chance = fwd.length === rev.length ? S.chance : S.chanceUneven;
+      if (Math.random() < chance) {
+        const dir = Math.random() < fwd.length / (fwd.length + rev.length) ? 1 : -1;
+        const shove = { dir, until: now + randBetween(S.minMs, S.maxMs), edge: a.currentEdge };
+        for (const w of fwd.concat(rev)) w.shove = shove;
+      } else {
+        for (const w of fwd) _setRoadVelocity(w, road, -1, PHYSICS.WALKER.speed);
+        for (const w of rev) _setRoadVelocity(w, road, 1, PHYSICS.WALKER.speed);
+      }
+      return true;
+    }
+    if (sBack === sFront) {                        // queue: the follower matches the leader
+      const leader = sBack > 0 ? front : back, follower = leader === front ? back : front;
+      const lead = Math.hypot(leader.vx, leader.vy), own = Math.hypot(follower.vx, follower.vy);
+      if (own > lead) _setRoadVelocity(follower, road, sBack, lead);
+      return true;
+    }
+    return true;                                   // moving apart
+  }
 
   // Build cluster bounding rectangles with road openings. A cluster groups
   // every visible node that shares a `location`. Walkers roam the whole
@@ -1553,6 +1657,14 @@ const Walkers = (() => {
           const dir = w.edgeDirection === 'forward' ? 1 : -1;
           if (w.edgeT == null) w.edgeT = dir > 0 ? 0 : road.length;
 
+          // A shove (see _meetOnRoad): the whole contact moves the winner's
+          // way at a push pace; when it ends everyone walks on that way.
+          if (w.shove) {
+            if (w.shove.edge !== w.currentEdge) w.shove = null;
+            else if (now < w.shove.until) _setRoadVelocity(w, road, w.shove.dir, PHYSICS.WALKER.speed * PHYSICS.SHOVE.speedMult);
+            else { _setRoadVelocity(w, road, w.shove.dir, PHYSICS.WALKER.speed); w.shove = null; }
+          }
+
           const samp = _sampleAt(road.samples, w.edgeT);
           // Velocity projected onto the unit tangent — signed. Positive when
           // the walker is moving in the curve's forward direction.
@@ -1577,7 +1689,11 @@ const Walkers = (() => {
 
           // Also reorient velocity along the tangent so the walker doesn't
           // drift off-curve if the tangent changes (curves bend underfoot).
-          const currentSpeed = Math.hypot(w.vx, w.vy);
+          let currentSpeed = Math.hypot(w.vx, w.vy);
+          // Back up to walking pace after queueing behind a slower walker.
+          if (!w.shove && w.state === W_STATE.WALKING && currentSpeed > 0.01 && currentSpeed < PHYSICS.WALKER.speed) {
+            currentSpeed = Math.min(PHYSICS.WALKER.speed, currentSpeed + 30 * dtSec);
+          }
           if (currentSpeed > 0.01) {
             const travelSign = Math.sign(speedAlong) || dir;
             w.vx = samp.tx * currentSpeed * travelSign;
@@ -1586,6 +1702,7 @@ const Walkers = (() => {
 
           const reachedEnd = w.edgeT >= road.length || w.edgeT <= 0;
           if (reachedEnd) {
+            w.shove = null;
             const arrivedForward = w.edgeT >= road.length;
             w.currentNode = arrivedForward ? road.toId : road.fromId;
             w.clusterId = arrivedForward ? road.toClusterId : road.fromClusterId;
@@ -1686,7 +1803,10 @@ const Walkers = (() => {
         const dist = Math.hypot(dx, dy);
         const minDist = PHYSICS.WALKER.size;
 
-        if (dist < minDist && dist > 0.01) {
+        // Walkers on two different roads are in separate lanes (or crossing
+        // at a crossroads): they walk past each other. Bumping them pinned
+        // both in place where neighbouring lanes run closer than a walker.
+        if (dist < minDist && dist > 0.01 && !_onDifferentRoads(a, b)) {
           const nx = dx / dist;
           const ny = dy / dist;
           const overlap = minDist - dist;
@@ -1694,19 +1814,16 @@ const Walkers = (() => {
           const aLocked = a.state === W_STATE.ENCOUNTER;
           const bLocked = b.state === W_STATE.ENCOUNTER;
 
+          // Push apart — through edgeT for walkers on sampled roads (_nudge).
           if (aLocked && bLocked) {
             continue;
           } else if (aLocked) {
-            b._cx += nx * overlap;
-            b._cy += ny * overlap;
+            _nudge(b, nx * overlap, ny * overlap);
           } else if (bLocked) {
-            a._cx -= nx * overlap;
-            a._cy -= ny * overlap;
+            _nudge(a, -nx * overlap, -ny * overlap);
           } else {
-            a._cx -= nx * overlap / 2;
-            a._cy -= ny * overlap / 2;
-            b._cx += nx * overlap / 2;
-            b._cy += ny * overlap / 2;
+            _nudge(a, -nx * overlap / 2, -ny * overlap / 2);
+            _nudge(b, nx * overlap / 2, ny * overlap / 2);
           }
 
           // Elastic velocity exchange (equal mass).
@@ -1718,10 +1835,15 @@ const Walkers = (() => {
           if (!aLocked && !bLocked) {
             const aVn = a.vx * nx + a.vy * ny;
             const bVn = b.vx * nx + b.vy * ny;
-            a.vx += (bVn - aVn) * nx;
-            a.vy += (bVn - aVn) * ny;
-            b.vx += (aVn - bVn) * nx;
-            b.vy += (aVn - bVn) * ny;
+            // Same road: bounce back / shove / queue (_meetOnRoad). Anything
+            // else exchanges velocity only while closing — swapping again
+            // while they separate is what pinned two walkers together.
+            if (!_meetOnRoad(a, b, now) && aVn - bVn > 0) {
+              a.vx += (bVn - aVn) * nx;
+              a.vy += (bVn - aVn) * ny;
+              b.vx += (aVn - bVn) * nx;
+              b.vy += (aVn - bVn) * ny;
+            }
           } else if (!aLocked && bLocked) {
             const aVn = a.vx * nx + a.vy * ny;
             if (aVn > 0) { a.vx -= 2 * aVn * nx * PHYSICS.ROAD.bounce; a.vy -= 2 * aVn * ny * PHYSICS.ROAD.bounce; }

@@ -315,6 +315,13 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-10-13 — Walkers meeting on a road: bounce back or shove, never stuck
+
+Two walkers meeting head-on on a road could lock in place, pushing forever; a third walker joining one side won at a crawl. Cause: on sampled roads (map beziers, and since the rook-style roads every chart road) a walker's position comes from `edgeT`, so the collision push was thrown away each frame, and the elastic swap fired again while they were separating — the pair flipped velocity every frame. Dialogues start at 26px, inside the 28px bump radius, so every talk on a road ended in that lock.
+
+- `js/walkers.js` — collision pushes go through `_nudge` (moves `edgeT` on sampled roads); the generic elastic swap only fires while two walkers are closing. Same road, head-on (`_meetOnRoad`): both sides — each walker plus the queue right behind it (`_teamOf`) — usually bounce back; with `SHOVE.chance` (0.3, or 0.65 when one queue is bigger) one side wins (odds = its size / both sizes) and shoves the other back along the road at 0.6× pace for 1.2–2.6 s, then everyone walks on that way. Same road, same direction: the one behind slows to the leader's pace (a queue) and speeds back up after. Walkers on different roads (neighbouring lanes, crossroads) walk past each other — bumping pinned them where lanes run closer than a walker. After a dialogue mid-road a walker keeps going along the road the way it was going (aiming straight at the target could turn it round on a rook-style road).
+- Checked in the preview with three deployed walkers on a real road: 2 v 1 and 1 v 1 meetings bounce or shove (pair won 5 of 7 shoves in one run), crossing and neighbouring-lane passes run at full speed, no stuck cases.
+
 ### 2026-10-13 — Rook-style roads: no diagonals, no roads through projects, no overlapping roads
 
 Roads used to be straight centre-to-centre lines, so a road between two projects that weren't neighbours cut diagonally through other cards / houses and piled on top of other roads. Now every road moves like a rook: horizontal and vertical runs through the gaps between projects, turning where it has to. Roads that need the same gap get their own side-by-side lane; two roads can still cross at a right angle (a crossroads) but never run on top of each other. Applies to the watch-order chart (`/`, `/friend/:u`), its walkers, the admin projects board and `/world`. `/map` (curved roads between locations) is unchanged.
