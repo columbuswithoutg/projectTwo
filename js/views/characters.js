@@ -57,17 +57,8 @@ const CharactersView = {
         const img = typeof getCharImage === 'function' ? getCharImage(c, watchedIds) : c.image;
         return `
           <div class="character-card">
-            ${img
-              ? `<img class="character-avatar-img" src="assets/characters/${img}" alt="${c.name}" loading="lazy"
-                   onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'" />
-                 <div class="character-avatar" style="display:none">
-                   ${c.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
-                 </div>`
-              : `<div class="character-avatar">
-                   ${c.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
-                 </div>`
-            }
-            <p class="character-name">${c.name}</p>
+            <div class="character-avatar">${PosterArt.charHtml(c, img)}</div>
+            <p class="character-name">${esc(c.name)}</p>
           </div>`;
       }).join('');
     };

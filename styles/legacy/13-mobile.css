@@ -283,11 +283,9 @@
     border-radius: 10px;
   }
 
-  .character-avatar,
-  .character-avatar-img {
+  .character-avatar {
     width: 68px;
     height: 68px;
-    font-size: 1.2rem;
   }
 
   .character-name {

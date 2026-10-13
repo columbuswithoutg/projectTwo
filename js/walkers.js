@@ -239,7 +239,7 @@ const Walkers = (() => {
 
   /* ---- walker DOM element ---- */
 
-  function createWalkerElement(charImg) {
+  function createWalkerElement(charImg, char) {
     const wrap = document.createElement('div');
     wrap.className = 'map-walker';
     wrap.style.width = PHYSICS.WALKER.size + 'px';
@@ -250,8 +250,12 @@ const Walkers = (() => {
     wrap.style.transition = 'none';
 
     // Visual styling (ring, glow, background) lives in styles.css under
-    // .map-walker img so it stays consistent with the theme system.
+    // .map-walker img so it stays consistent with the theme system. The
+    // character's monogram sits underneath and shows when the image file is
+    // missing (PosterArt removes a broken <img data-poster>).
+    if (char) wrap.insertAdjacentHTML('beforeend', PosterArt.charHtml(char, null));
     const img = document.createElement('img');
+    img.setAttribute('data-poster', '');
     img.src = charImg;
     wrap.appendChild(img);
 
@@ -1070,7 +1074,7 @@ const Walkers = (() => {
     // Create villain walker
     const imgFile = typeof getCharImage === 'function' ? getCharImage(villainChar, state) : villainChar.image;
     const img = assetUrl(`assets/characters/${imgFile}`);
-    const el = createWalkerElement(img);
+    const el = createWalkerElement(img, villainChar);
     el.classList.add('villain');
     WalkerView.get().container().appendChild(el);
 
@@ -1994,7 +1998,7 @@ const Walkers = (() => {
 
       const imgFile = resolveWalkerImage(entry, char);
       const img = assetUrl(`assets/characters/${imgFile}`);
-      const el = createWalkerElement(img);
+      const el = createWalkerElement(img, char);
       container.appendChild(el);
 
       // Start at the node that unlocked this stage
@@ -2194,7 +2198,7 @@ const Walkers = (() => {
 
         card.innerHTML = `
           <div class="walker-card-img">
-            <img src="${assetUrl(`assets/characters/${stage.image}`)}" alt="${label}" loading="lazy" />
+            ${PosterArt.charHtml(char, stage.image, { alt: label })}
             <span class="walker-check">✔</span>
             <span class="walker-remove">✕</span>
           </div>

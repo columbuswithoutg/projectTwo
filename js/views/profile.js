@@ -185,11 +185,8 @@ const ProfileView = {
           btn.className = 'avatar-option' + (src === currentPic ? ' selected' : '');
           btn.title = stages.length > 1 ? `${c.name} — ${s.label}` : c.name;
 
-          const img = document.createElement('img');
-          img.src = src;
-          img.alt = c.name;
-          img.loading = 'lazy';
-          btn.appendChild(img);
+          // Monogram under the portrait — shows when the file is missing.
+          PosterArt.charMount(btn, c, s.image);
 
           btn.onclick = async () => {
             const res = await fetch(`${API}/profile/picture`, {

@@ -12,6 +12,15 @@
  *   PosterArt.cardHtml(p)   just the card
  *   PosterArt.mount(el, p)  append card + image to an element (DOM-built UIs)
  *
+ * Character portraits get the same treatment (many character image files
+ * don't exist yet): a phase-coloured MONOGRAM — a faint head-and-shoulders
+ * silhouette behind the character's initials — drawn under the portrait.
+ *   PosterArt.charHtml(c, file, opts)   monogram + <img data-poster> markup
+ *   PosterArt.charMount(el, c, file, opts)  same, appended to an element
+ *   PosterArt.initials(name)            "Captain America (Sam Wilson)" → "CA"
+ * The holder must be position:relative (or the .map-walker chip); the
+ * monogram is a circle filling it (styles/components/poster.css).
+ *
  * The container must be position:relative with a size (the card fills it,
  * styles/components/poster.css). A broken poster image is removed by ONE
  * capture-phase document listener — inline onerror= attributes are blocked
@@ -54,7 +63,47 @@ const PosterArt = (() => {
     return el.querySelector('img[data-poster]');
   }
 
-  // A poster that 404s is removed so the title card underneath shows.
+  // ── Character monograms ──
+  // Initials of the name without its "(…)" qualifier: two words → two
+  // letters, one word → one letter.
+  function initials(name) {
+    const full = String(name || '').trim();
+    const base = full.replace(/\s*\([^)]*\)/g, '').trim() || full;
+    const words = base.split(/[\s-]+/).filter(Boolean);
+    if (!words.length) return '?';
+    return (words.length > 1 ? words[0][0] + words[1][0] : words[0][0]).toUpperCase();
+  }
+
+  // The character's debut phase colours the monogram (same palette as the
+  // poster title cards).
+  function charPhase(c) {
+    const debut = c && c.debut && typeof projects !== 'undefined' && Array.isArray(projects)
+      ? projects.find((p) => p.id === c.debut) : null;
+    return debut ? phaseOf(debut) : 1;
+  }
+
+  function charCardHtml(c) {
+    return `<span class="char-art poster-phase-${charPhase(c)}" aria-hidden="true">` +
+      `<span class="char-art-initials">${esc(initials(c && c.name))}</span></span>`;
+  }
+
+  // file: the image file name under assets/characters/ (falsy → monogram only).
+  // opts: { alt (default the name), cls (extra class on the img), lazy (default true) }
+  function charHtml(c, file, opts = {}) {
+    const img = file
+      ? `<img class="char-art-img${opts.cls ? ' ' + opts.cls : ''}" data-poster src="${esc(assetUrl('assets/characters/' + file))}"` +
+        ` alt="${esc(opts.alt != null ? opts.alt : (c && c.name) || '')}"${opts.lazy === false ? '' : ' loading="lazy"'} draggable="false">`
+      : '';
+    return charCardHtml(c) + img;
+  }
+
+  function charMount(el, c, file, opts = {}) {
+    el.insertAdjacentHTML('beforeend', charHtml(c, file, opts));
+    return el.querySelector('img[data-poster]');
+  }
+
+  // A poster (or character portrait) that 404s is removed so the card /
+  // monogram underneath shows.
   if (typeof document !== 'undefined') {
     document.addEventListener('error', (e) => {
       const t = e.target;
@@ -62,5 +111,5 @@ const PosterArt = (() => {
     }, true);
   }
 
-  return { url, html, cardHtml, mount, phaseOf, yearOf };
+  return { url, html, cardHtml, mount, phaseOf, yearOf, initials, charHtml, charMount };
 })();

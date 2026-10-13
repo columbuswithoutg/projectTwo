@@ -67,28 +67,26 @@
   box-shadow: var(--shadow-2), 0 0 12px var(--gold-01);
 }
 
+/* Portrait holder: the monogram (PosterArt.charHtml) fills it and the
+   image, when the file exists, covers the monogram. */
 .character-avatar {
+  position: relative;
+  flex-shrink: 0;
   width: 80px;
   height: 80px;
   border-radius: 50%;
-  background: var(--gold-gradient);
-  color: var(--text-on-accent);
-  font-weight: 900;
-  font-size: 1.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 14px var(--gold-035);
-}
-
-.character-avatar-img {
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  object-fit: cover;
-  object-position: top;
+  overflow: hidden;
   border: 2px solid var(--gold-04);
   box-shadow: 0 4px 14px rgba(237, 29, 36, 0.2);
+}
+
+.character-avatar .char-art-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
   display: block;
 }
 

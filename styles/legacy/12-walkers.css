@@ -199,7 +199,8 @@
   outline-offset: 1px;
   border-radius: 50%;
 }
-.map-walker.villain img {
+.map-walker.villain img,
+.map-walker.villain .char-art {
   border-color: rgba(226, 54, 54, 0.9);
   box-shadow: 0 0 10px rgba(226, 54, 54, 0.6), 0 0 20px rgba(226, 54, 54, 0.3);
 }
@@ -298,7 +299,8 @@
   0%, 100% { filter: none; }
   50% { filter: brightness(1.35) drop-shadow(0 0 6px var(--color-red)); }
 }
-.map-walker.hit-flash img {
+.map-walker.hit-flash img,
+.map-walker.hit-flash .char-art {
   animation: hitFlash 0.18s ease-out;
 }
 
@@ -314,6 +316,14 @@
   object-fit: cover;
   border: 1.5px solid rgba(237, 29, 36, 0.9);
   background: rgba(7, 8, 15, 0.85);
+  box-shadow:
+    0 0 6px rgba(237, 29, 36, 0.4),
+    0 3px 6px rgba(0, 0, 0, 0.45);
+}
+/* The monogram under the portrait wears the same ring (it's all that shows
+   when the character's image file is missing). */
+.map-walker .char-art {
+  border: 1.5px solid rgba(237, 29, 36, 0.9);
   box-shadow:
     0 0 6px rgba(237, 29, 36, 0.4),
     0 3px 6px rgba(0, 0, 0, 0.45);
