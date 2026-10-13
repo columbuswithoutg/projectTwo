@@ -277,37 +277,40 @@
     svg += `<text x="${CELL_W / 2}" y="${CELL_H / 2 + 10}" text-anchor="middle">+</text></g>`;
     svg += `<rect class="admin-board-drop" width="${CELL_W}" height="${CELL_H}" style="display:none" />`;
 
-    // Prerequisite edges — AABB-perimeter clipped, one path per edge (no
-    // themed multi-layer "road" here, this is an editor not the public view).
+    // Prerequisite roads, routed exactly as the chart and /world route them
+    // (js/road-router.js) from the positions on this board — unsaved drags
+    // included, so the admin sees the real roads while arranging. Thin lines,
+    // not the themed multi-layer road: this is an editor, not the public view.
     svg += `<g class="admin-board-edges">`;
-    const halfW = NODE_W / 2, halfH = NODE_H / 2;
-    for (const child of _items) {
-      const cPos = _pos.get(child.id);
-      if (!cPos) continue;
-      const edges = [
-        ...(child.prerequisites || []).map(id => [id, false]),
+    let crowded = [];
+    if (typeof RoadRouter !== 'undefined') {
+      const placed = [];
+      for (const p of _items) {
+        const pos = _pos.get(p.id);
+        if (pos) placed.push({ id: p.id, gridX: pos.gx, gridY: pos.gy, prerequisites: p.prerequisites, recommendedPrerequisites: p.recommendedPrerequisites });
+      }
+      const routes = RoadRouter.route(placed);
+      const view = {
+        pitchX: CELL_W, pitchY: CELL_H,
+        originX: xOf(0) + CELL_W / 2, originY: yOf(0) + CELL_H / 2,
+        laneSpacing: 5, gapRoomX: 7, gapRoomY: 11,
+        cellRoomX: NODE_W / 2 - 10, cellRoomY: NODE_H / 2 - 10,
+        nodeHalfW: NODE_W / 2, nodeHalfH: NODE_H / 2,
+        trails: true
+      };
+      for (const road of routes.roads) {
+        const d = RoadRouter.pathD(RoadRouter.toView(road, view).points, 4);
         // Recommended (optional) links: dashed, so the admin can tell them apart.
-        ...(child.recommendedPrerequisites || []).map(id => [id, true])
-      ];
-      edges.forEach(([parentId, optional]) => {
-        const pPos = _pos.get(parentId);
-        if (!pPos) return;
-        const fromX = xOf(pPos.gx) + CELL_W / 2, fromY = yOf(pPos.gy) + CELL_H / 2;
-        const toX = xOf(cPos.gx) + CELL_W / 2, toY = yOf(cPos.gy) + CELL_H / 2;
-        const dx = toX - fromX, dy = toY - fromY;
-        const len = Math.hypot(dx, dy);
-        if (len === 0) return;
-        const ux = dx / len, uy = dy / len;
-        const exit = (v, h) => {
-          const tx = Math.abs(ux) > 1e-6 ? v / Math.abs(ux) : Infinity;
-          const ty = Math.abs(uy) > 1e-6 ? h / Math.abs(uy) : Infinity;
-          return Math.min(tx, ty);
-        };
-        const d0 = exit(halfW, halfH);
-        const x1 = fromX + ux * d0, y1 = fromY + uy * d0;
-        const x2 = toX - ux * d0, y2 = toY - uy * d0;
-        svg += `<path class="admin-board-edge${optional ? ' is-recommended' : ''}" d="M ${x1} ${y1} L ${x2} ${y2}" marker-end="url(#admin-board-arrow)" />`;
-      });
+        if (d) svg += `<path class="admin-board-edge${road.required ? '' : ' is-recommended'}" d="${d}" marker-end="url(#admin-board-arrow)" />`;
+      }
+      // Gaps holding more roads side by side than fit cleanly.
+      crowded = routes.overCapacity;
+      for (const c of crowded) {
+        const a = RoadRouter.latticeToView(c.o === 'h' ? c.from : c.line, c.o === 'h' ? c.line : c.from, view);
+        const b = RoadRouter.latticeToView(c.o === 'h' ? c.to : c.line, c.o === 'h' ? c.line : c.to, view);
+        const x = Math.min(a.x, b.x) - 6, y = Math.min(a.y, b.y) - 6;
+        svg += `<rect class="admin-board-crowded" x="${x}" y="${y}" width="${Math.abs(b.x - a.x) + 12}" height="${Math.abs(b.y - a.y) + 12}" rx="6"><title>${c.lanes} roads side by side here — spread these projects out</title></rect>`;
+      }
     }
     svg += `</g>`;
 
@@ -356,6 +359,12 @@
         return `cell (${gx}, ${gy}): ${names}`;
       }).join(' · ');
       _shell.warn.innerHTML = `⚠ Overlapping projects — drag one apart before saving. ${cellList}`;
+      _shell.warn.hidden = false;
+    } else if (crowded.length) {
+      // Not a blocker: the roads still route, they're just squeezed.
+      const ids = [...new Set(crowded.flatMap(c => c.roads.flatMap(k => k.split('__'))))];
+      const names = ids.slice(0, 6).map(id => (_itemById(id) || {}).title || id).map(esc).join(', ');
+      _shell.warn.innerHTML = `⚠ ${crowded.length} crowded gap${crowded.length > 1 ? 's' : ''} (red) — more than ${RoadRouter.MAX_LANES} roads side by side. Spreading these projects out gives the roads room: ${names}${ids.length > 6 ? '…' : ''}`;
       _shell.warn.hidden = false;
     } else {
       _shell.warn.hidden = true;

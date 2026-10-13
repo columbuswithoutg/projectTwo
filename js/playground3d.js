@@ -80,7 +80,7 @@ const Playground3D = (() => {
   // character feels at the same scale on either map. Roads are the only
   // walkable strips between platforms — see _isInWalkable() collision.
   const WORLD = {
-    SCALE: 18,                    // world units per project grid unit (room-sized + gap)
+    SCALE: 24,                    // world units per project grid unit: room + apron + an 8u gap that fits 2–3 road lanes
     PLATFORM_W: 12,
     PLATFORM_H: 0.4,
     PLATFORM_D: 12,
@@ -221,7 +221,7 @@ const Playground3D = (() => {
   // Set by the view (setHouseKeepers); rendered as HUD elements in _tickHUD.
   let _keeperTags = new Map();
   const KEEPER_TAG_MAX_DIST = 80;  // world units — tags beyond this are hidden
-  let _worldRoads = new Map();    // "a→b" key (sorted) → mesh
+  let _worldRoads = new Map();    // "a→b" key (sorted) → [run meshes]
   let _remotePlayers = new Map(); // socketId → { rig, target:{x,z,yaw,walking}, current, nameEl, bubbleEls[], emoteUntil }
   let _npcs = [];                 // local Avenger NPCs patrolling their debut nodes (NOT network/voice peers)
   let _npcSpecs = [];             // declared specs [{ id, name, character, debut }] — materialized as their debut nodes unlock
@@ -2651,28 +2651,6 @@ const Playground3D = (() => {
     return out;
   }
 
-  // Pick the side a road exits through, and where along that side the
-  // doorway should be centered. Roads from the platform center toward a
-  // neighbor cross exactly one boundary of the AABB; the dominant axis
-  // (|dx| vs |dz|) tells us which side. Diagonals don't get a corner
-  // doorway — they get a doorway on the dominant side at the exact
-  // intersection point, so the doorway lines up with the road.
-  function _doorwayOnSide(node, other) {
-    const cx = node.mesh.position.x, cz = node.mesh.position.z;
-    const ox = other.mesh.position.x, oz = other.mesh.position.z;
-    const dx = ox - cx, dz = oz - cz;
-    const HALF = WORLD.PLATFORM_W / 2;
-    if (Math.abs(dx) >= Math.abs(dz)) {
-      const side = dx > 0 ? 'E' : 'W';
-      // Exit Z along the side (parametric line until x = ±HALF).
-      const exitZ = Math.abs(dx) > 0.001 ? cz + dz * (HALF / Math.abs(dx)) : cz;
-      return { side, coord: Math.max(cz - HALF + 0.5, Math.min(cz + HALF - 0.5, exitZ)) };
-    }
-    const side = dz > 0 ? 'S' : 'N';
-    const exitX = Math.abs(dz) > 0.001 ? cx + dx * (HALF / Math.abs(dz)) : cx;
-    return { side, coord: Math.max(cx - HALF + 0.5, Math.min(cx + HALF - 0.5, exitX)) };
-  }
-
   // Remove a node's walls (+ their collision boxes), lock icons and decor.
   // Dropping the walls from the _walls collision list lets the player pass.
   function _teardownNodeWalls(node) {
@@ -2956,42 +2934,24 @@ const Playground3D = (() => {
   }
 
   // Door openings per side, in world coordinates along that side's axis.
-  // Derived from the roads alone: for every unlocked neighbour, the side and
-  // point where its road leaves the platform (_doorwayOnSide), clipped to the
+  // Derived from the roads alone (PG3DScene.roadPorts → js/road-router.js):
+  // one doorway centred on each road to an unlocked neighbour, clipped to the
   // platform and merged when two openings overlap or leave only a thin sliver
-  // (< DOORWAY_MERGE_GAP) — so two roads converging on a side become a single
+  // (< DOORWAY_MERGE_GAP) — so two lanes arriving on one side become a single
   // doorway with one frame instead of overlapping frames / a lone thin post.
-  // Centres are sorted and clamping preserves order, so a single left-to-right
-  // merge is correct. Shared by _buildNodeWalls and getHouseLayout so the
-  // editor's picture of the fixed door is exactly what gets built.
+  // Shared by _buildNodeWalls and getHouseLayout so the editor's picture of
+  // the fixed door is exactly what gets built.
   function _sideOpenings(node) {
     if (node.home) return node.openings;   // doorways to the neighbouring rooms
-    const sides = { N: [], S: [], E: [], W: [] };
-    for (const other of _getConnectedNodes(node.project.id)) {
-      const { side, coord } = _doorwayOnSide(node, other);
-      sides[side].push(coord);
-    }
-    const cx = node.mesh.position.x, cz = node.mesh.position.z;
-    const HALF = WORLD.PLATFORM_W / 2, D = WORLD.DOORWAY_WIDTH;
-    const out = {};
-    for (const s of ['N', 'S', 'E', 'W']) {
-      const axisStart = (s === 'N' || s === 'S') ? cx - HALF : cz - HALF;
-      const axisEnd = axisStart + 2 * HALF;
-      const openings = [];
-      for (const dCenter of [...sides[s]].sort((a, b) => a - b)) {
-        const a = Math.max(axisStart, dCenter - D / 2);
-        const b = Math.min(axisEnd,   dCenter + D / 2);
-        if (b - a < 0.1) continue;
-        const last = openings[openings.length - 1];
-        if (last && a - last[1] < WORLD.DOORWAY_MERGE_GAP) {
-          last[1] = Math.max(last[1], b);   // overlap or thin sliver → merge
-        } else {
-          openings.push([a, b]);
-        }
-      }
-      out[s] = openings;
-    }
-    return out;
+    const ports = _roadPorts(node).filter(p => _worldNodes.has(p.otherId));
+    return PG3DScene.openingsFromPorts(node.project, ports, WORLD);
+  }
+
+  // Every road this island will ever have, where it meets the walls:
+  // [{ side, coord, otherId }] (see PG3DScene.roadPorts).
+  function _roadPorts(node) {
+    if (node.home || typeof projects === 'undefined' || !Array.isArray(projects)) return [];
+    return PG3DScene.roadPorts(node.project, projects, WORLD);
   }
 
   // The fixed door layout of one house for the editor: openings per side in
@@ -3055,8 +3015,7 @@ const Playground3D = (() => {
     // Lay the decal just inside the wall's inner face (walls are inset T/2 from
     // the platform edge) so it sits flush on the wall, normal facing interior.
     const inset = T + 0.02;
-    for (const ln of _getLockedNeighbors(node)) {
-      const { side, coord } = _doorwayOnSide(node, { mesh: { position: { x: ln.x, z: ln.z } } });
+    for (const { side, coord } of _roadPorts(node).filter(p => !_worldNodes.has(p.otherId))) {
       let ix, iz, rotY;
       if (side === 'N')      { ix = coord;             iz = cz - HALF + inset; rotY = 0; }
       else if (side === 'S') { ix = coord;             iz = cz + HALF - inset; rotY = Math.PI; }
@@ -3065,32 +3024,6 @@ const Playground3D = (() => {
       const icon = _makeLockDecal(ix, iconY, iz, rotY);
       if (icon) { _scene.add(icon); node.lockIcons.push(icon); }
     }
-  }
-
-  // Graph neighbors of this (unlocked) node that are NOT yet built/unlocked.
-  // Looks both at this node's prerequisites and at projects that list this
-  // node as a prerequisite, returning each locked neighbor's world position.
-  function _getLockedNeighbors(node) {
-    if (node.home) return [];   // /home rooms have no road graph
-    if (typeof projects === 'undefined' || !Array.isArray(projects)) return [];
-    const me = node.project;
-    const seen = new Set();
-    const out = [];
-    const consider = (q) => {
-      if (!q || q.id === me.id) return;
-      if (_worldNodes.has(q.id)) return;  // already built → it's unlocked, gets a real road
-      if (typeof q.gridX !== 'number' || typeof q.gridY !== 'number') return;
-      if (seen.has(q.id)) return;
-      seen.add(q.id);
-      out.push({ project: q, x: q.gridX * WORLD.SCALE, z: q.gridY * WORLD.SCALE });
-    };
-    for (const preId of (Array.isArray(me.prerequisites) ? me.prerequisites : [])) {
-      consider(projects.find(p => p.id === preId));
-    }
-    for (const q of projects) {
-      if (Array.isArray(q.prerequisites) && q.prerequisites.includes(me.id)) consider(q);
-    }
-    return out;
   }
 
   // Open the roof of whichever room the player is standing in (fade it to
@@ -3667,45 +3600,56 @@ const Playground3D = (() => {
     if (obj.parent) obj.parent.remove(obj);
   }
 
+  // One road between two unlocked islands, along its rook-style route
+  // (PG3DScene.roadRoutes → js/road-router.js): a straight stone strip per
+  // run, each stretched by half the road width past its ends so corners fill
+  // in square. Every run is also a walkable rectangle tagged with both ends
+  // (HUD vicinity). Routes come from the full road graph, so this road is in
+  // the same place no matter which islands are unlocked.
   function _buildWorldRoad(aId, bId) {
     const a = _worldNodes.get(aId);
     const b = _worldNodes.get(bId);
     if (!a || !b) return;
     const key = aId < bId ? `${aId}→${bId}` : `${bId}→${aId}`;
     if (_worldRoads.has(key)) return;
+    const routes = PG3DScene.roadRoutes(projects);
+    const road = routes.byKey.get(`${bId}__${aId}`) || routes.byKey.get(`${aId}__${bId}`);
+    if (!road) return;
     const THREE = window.THREE;
-    const ax = a.mesh.position.x, az = a.mesh.position.z;
-    const bx = b.mesh.position.x, bz = b.mesh.position.z;
-    const dx = bx - ax, dz = bz - az;
-    const len = Math.hypot(dx, dz);
-    if (len < 0.01) return;
-    const angle = Math.atan2(dx, dz);
+    const pts = RoadRouter.toView(road, PG3DScene.roadView(WORLD)).points;
 
-    // Road runs center-to-center so the walkable strip from platform A
-    // smoothly meets the walkable strip from platform B with no gap.
-    // Its top sits ~2cm BELOW the platform top (via ROAD_RAISE) so the
-    // platform poster always renders on top inside the platform AABB
-    // without polygonOffset (which was clipping the road at the camera's
-    // far plane and made distant roads vanish).
+    // Top sits ~2cm BELOW the platform top (via ROAD_RAISE) so the platform
+    // poster always renders on top inside the platform AABB without
+    // polygonOffset (which was clipping the road at the camera's far plane
+    // and made distant roads vanish). The apron ring hides the stub that
+    // runs under it from the wall out to the gap.
     const mat = new THREE.MeshLambertMaterial({ color: WORLD.ROAD_COLOR });
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(WORLD.ROAD_W, WORLD.ROAD_H, len), mat);
-    mesh.position.set((ax + bx) / 2, WORLD.ROAD_RAISE, (az + bz) / 2);
-    mesh.rotation.y = angle;
-    mesh.receiveShadow = true;
-    _scene.add(mesh);
-    _worldRoads.set(key, mesh);
-
-    // Walkable corridor is the full center-to-center rectangle so stepping
-    // from inside a platform onto its connecting road is continuous.
-    _walkableRoads.push({
-      a: aId, b: bId,                 // node ids at each end (HUD vicinity)
-      cx: (ax + bx) / 2,
-      cz: (az + bz) / 2,
-      cosA: Math.cos(angle),
-      sinA: Math.sin(angle),
-      halfW: WORLD.ROAD_W / 2,
-      halfL: len / 2
-    });
+    const meshes = [];
+    const halfW = WORLD.ROAD_W / 2;
+    for (let i = 1; i < pts.length; i++) {
+      const ax = pts[i - 1].x, az = pts[i - 1].y, bx = pts[i].x, bz = pts[i].y;
+      const dx = bx - ax, dz = bz - az;
+      const len = Math.hypot(dx, dz);
+      if (len < 0.01) continue;
+      const angle = Math.atan2(dx, dz);
+      const full = len + WORLD.ROAD_W;   // + halfW past each end
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(WORLD.ROAD_W, WORLD.ROAD_H, full), mat);
+      mesh.position.set((ax + bx) / 2, WORLD.ROAD_RAISE, (az + bz) / 2);
+      mesh.rotation.y = angle;
+      mesh.receiveShadow = true;
+      _scene.add(mesh);
+      meshes.push(mesh);
+      _walkableRoads.push({
+        a: aId, b: bId,                 // node ids at each end (HUD vicinity)
+        cx: (ax + bx) / 2,
+        cz: (az + bz) / 2,
+        cosA: Math.cos(angle),
+        sinA: Math.sin(angle),
+        halfW,
+        halfL: full / 2
+      });
+    }
+    _worldRoads.set(key, meshes);
   }
 
   // Point-in-region test: world position (x, z) is walkable iff it's

@@ -119,6 +119,7 @@ projectOne/
     ├── walkerView.js          Walker DOM + fight UI
     ├── walkers/...            (other walker render helpers)
     ├── layout.js              Map graph + road network
+    ├── road-router.js         Rook-style roads (chart, walkers, admin board, /world) — unit-tested
     ├── nodeFactory.js         Project node DOM builder
     ├── renderer.js            Map renderer
     ├── orderRenderer.js       Watch-order grid renderer
@@ -314,6 +315,15 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-10-13 — Rook-style roads: no diagonals, no roads through projects, no overlapping roads
+
+Roads used to be straight centre-to-centre lines, so a road between two projects that weren't neighbours cut diagonally through other cards / houses and piled on top of other roads. Now every road moves like a rook: horizontal and vertical runs through the gaps between projects, turning where it has to. Roads that need the same gap get their own side-by-side lane; two roads can still cross at a right angle (a crossroads) but never run on top of each other. Applies to the watch-order chart (`/`, `/friend/:u`), its walkers, the admin projects board and `/world`. `/map` (curved roads between locations) is unchanged.
+
+- `js/road-router.js` (new, UMD, `test/road-router.test.js`) — one router for all views. Half-cell lattice (projects on even/even vertices, gaps on odd), A* per road over (vertex, heading) with costs for length, bends, crossings and lanes already in use; shortest roads first; then lanes per lattice line (greedy colouring, centred). Every road is routed once from the full prerequisite graph, so unlocking a project never moves a road, and required roads are routed before recommended trails so `/world` (no trails) gets the same roads. `toView` maps a route into a view's units, `portsView` gives where roads meet a project's sides, `pathD` / `samplePolyline` draw it with rounded corners and sample it for walkers. On the bundled 84 projects: 104 roads, 0 crowded gaps.
+- `js/orderRenderer.js` — `renderArrows` draws routed roads (`_roadView`; gap rows sit 19px lower, below the card labels). `js/walkerView.js` `buildFlowRoadGeometry` samples the same paths (`type: 'path'`); `js/walkers.js` treats any non-`straight` road as sampled.
+- `js/views/admin/cms-projects-board.js` — the board draws the real routed roads from the positions on the board (unsaved drags included). A gap with more than 3 roads side by side is outlined red and named in the warning bar (not a save blocker).
+- `/world`: `WORLD.SCALE` 18 → 24, so the gap between two aprons is 8u and fits 2–3 lanes (roads never run under an apron). One road mesh + walkable rectangle per straight run, stretched by half a road width so corners are square (`_buildWorldRoad`). Doorways and lock icons come from the router's ports (`PG3DScene.roadPorts` / `openingsFromPorts`, shared with the Scene Guess screen spot) — `_doorwayOnSide`, `_getLockedNeighbors` and the copied maths in `allOpenings` are gone. Side effects: every door moved, the town is a third bigger, and adjacent islands are no longer close enough to gap-jump between. Two saved props now stand on a doorstep cell (hulk: bookshelf at 7,1; ironman2: bed at 1,4) — left as they are.
+
 ### 2026-10-06 — Furniture round: ~43 new pieces, pieces that join, things you can use
 
 The /world keeper house and every /home room share one prop set (`WorldHouseLogic` + `PG3DProps`), so this lands in both.
@@ -423,7 +433,7 @@ From a full code review. Security and data-loss fixes first, then bugs, then the
 
 ### 2026-09-22 — House editor: roof shapes, wall finishes, window placement
 
-The keeper's **Edit house** panel now restyles the building itself, not just its colours: a roof shape (flat slab / gable with a ridge running E–W or N–S / hip pyramid, plus an optional chimney), a wall finish (plaster / brick / stone / timber — all tinted by the wall palette colour), a window style (cross / grid / plain / shutters), and **where the windows go**. The floor plan grew a wall ring around the 10×10 floor: pick 🪟 and tap a wall cell to put a window there, tap it again to select / remove it, or press **Auto** to go back to the engine's one-window-per-long-wall default. **The door is not editable and never will be**: its side, position and width come from the roads (`_doorwayOnSide` + the clip/merge now in `_sideOpenings`), it is drawn on the plan as a locked 🚪 cell, and a window that would touch it is refused by the editor and skipped by the engine (the same `windowBlocked` rule on both ends). Undecorated houses look exactly as before.
+The keeper's **Edit house** panel now restyles the building itself, not just its colours: a roof shape (flat slab / gable with a ridge running E–W or N–S / hip pyramid, plus an optional chimney), a wall finish (plaster / brick / stone / timber — all tinted by the wall palette colour), a window style (cross / grid / plain / shutters), and **where the windows go**. The floor plan grew a wall ring around the 10×10 floor: pick 🪟 and tap a wall cell to put a window there, tap it again to select / remove it, or press **Auto** to go back to the engine's one-window-per-long-wall default. **The door is not editable and never will be**: its side, position and width come from the roads (since 2026-10-13: the road router's ports + the clip/merge in `PG3DScene.openingsFromPorts`), it is drawn on the plan as a locked 🚪 cell, and a window that would touch it is refused by the editor and skipped by the engine (the same `windowBlocked` rule on both ends). Undecorated houses look exactly as before.
 
 - `js/world-house-logic.js` — `ROOF_STYLES` / `WALL_STYLES` / `WINDOW_STYLES` / `SIDES`, new house fields `roofStyle`, `roofDir`, `chimney`, `wallStyle`, `windowStyle`, `windows` (`null` = auto, else `[{ side, pos }]` ≤ 8, no duplicate cells), `windowSpan` / `windowBlocked` / `openingsToCells` / `autoWindowCentres` / `canPlaceWindow` — all in edge-offset units along a wall so the editor and engine share one door test.
 - `js/playground3d-house.js` (new, `PG3DHouse`, UMD) — cached white-based wall textures per finish (Lambert map × colour can only darken, so joints stay white and block bodies go darker; one 2 u × 1 u tile, repeat both ways), cached window-glass textures per style, `roofExtra` (gable prism / hip pyramid as explicit triangle soup with auto-outward winding, gable ends in the wall material, trim fascia, brick chimney; shares the slab's roof material and only disposes what it owns), `roofHeightAt`.

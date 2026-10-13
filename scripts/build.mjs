@@ -51,7 +51,9 @@ const CHUNKS = {
     'js/world-config.js', 'projects.js', 'characters.js', 'locations.js',
     'js/config.js', 'js/theme.js', 'js/auth.js', 'js/state.js', 'js/layout.js',
     // scene-guess-logic: Scene Guess rules, used by the /world HUD and the admin stills tab
-    'js/utils.js', 'js/pan-zoom-logic.js', 'js/pan-zoom.js', 'js/messaging-logic.js', 'js/scene-guess-logic.js', 'js/poster-art.js', 'js/nodeFactory.js', 'js/renderer.js', 'js/orderRenderer.js',
+    'js/utils.js', 'js/pan-zoom-logic.js', 'js/pan-zoom.js', 'js/messaging-logic.js', 'js/scene-guess-logic.js', 'js/poster-art.js', 'js/nodeFactory.js', 'js/renderer.js',
+    // road-router: rook-style roads shared by the chart, walkers, the admin board and /world
+    'js/road-router.js', 'js/orderRenderer.js',
     'js/watch-controls.js', 'js/post-composer.js', 'js/popup.js', 'js/goals.js', 'js/friend-view.js', 'js/friends.js',
     'js/messages.js', 'js/reports.js',
     'js/memory.js', 'js/walker-dialogues.js', 'js/walkerView.js', 'js/walkers.js',

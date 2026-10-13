@@ -302,85 +302,41 @@ function buildFlowClusterRects() {
   return rects;
 }
 
-// Distance from cluster center to its AABB perimeter along direction (ux, uy).
-// Walker physics expects road endpoints to sit ON the cluster perimeter so
-// cluster openings face outward — if endpoints are at cluster CENTER, the
-// opening is inside the cluster and walkers escape immediately.
-function _aabbExitDist(halfW, halfH, ux, uy) {
-  const tx = Math.abs(ux) > 1e-6 ? halfW / Math.abs(ux) : Infinity;
-  const ty = Math.abs(uy) > 1e-6 ? halfH / Math.abs(uy) : Infinity;
-  return Math.min(tx, ty);
-}
-
-// Roads = prerequisite edges. Walker physics expects a Map<edgeKey, road>
-// where each road has bezier-style sample points with cumulative length,
-// tangent (tx, ty), and normal (nx, ny). Straight lines are easy to sample
-// since tangent and normal are constant along the line.
+// Roads = prerequisite edges, routed rook-style by RoadRouter exactly as
+// orderRenderer.renderArrows draws them (same view, same corner radius).
+// Walker physics expects a Map<edgeKey, road> of sampled roads: points with
+// cumulative length, tangent (tx, ty) and normal (nx, ny) — the shape
+// LayoutSystem.sampleAt walks. Ends sit on the node boxes, where openings
+// are detected.
 function buildFlowRoadGeometry() {
   const roads = new Map();
-  if (!orderRenderer || !orderRenderer.nodeElements) return roads;
-  const SAMPLE_COUNT = 12;
-  // Match buildFlowClusterRects' halfW/halfH so road endpoints sit exactly
-  // on the cluster boundary (where openings are detected).
-  const halfW = ORDER_CELL.nodeWidth / 2;
-  const halfH = ORDER_CELL.nodeHeight / 2;
+  if (!orderRenderer || !orderRenderer.nodeElements || typeof RoadRouter === 'undefined') return roads;
+  const routes = RoadRouter.route(projects);
+  const view = orderRenderer._roadView();
 
-  projects.forEach(child => {
-    if (!orderRenderer._isShown(child)) return;
-    (child.prerequisites || []).forEach(parentId => {
-      const parent = state.byId?.get(parentId);
-      if (!parent || !orderRenderer._isShown(parent)) return;
-      const cFrom = orderRenderer._cellPos(parent);
-      const cTo = orderRenderer._cellPos(child);
-      const dx = cTo.x - cFrom.x;
-      const dy = cTo.y - cFrom.y;
-      const centerLen = Math.hypot(dx, dy);
-      if (centerLen === 0) return;
-      const ux = dx / centerLen;
-      const uy = dy / centerLen;
-
-      // Clip endpoints to cluster perimeter so openings sit on the edge.
-      const exit = _aabbExitDist(halfW, halfH, ux, uy);
-      const fromX = cFrom.x + ux * exit;
-      const fromY = cFrom.y + uy * exit;
-      const toX = cTo.x - ux * exit;
-      const toY = cTo.y - uy * exit;
-      const length = Math.hypot(toX - fromX, toY - fromY);
-      if (length <= 0) return;
-
-      const nx = -uy;
-      const ny = ux;
-      const samples = [];
-      for (let i = 0; i < SAMPLE_COUNT; i++) {
-        const t = i / (SAMPLE_COUNT - 1);
-        samples.push({
-          t,
-          x: fromX + (toX - fromX) * t,
-          y: fromY + (toY - fromY) * t,
-          tx: ux, ty: uy,
-          nx, ny,
-          cumLen: length * t,
-        });
-      }
-      const key = `${parentId}__${child.id}`;
-      roads.set(key, {
-        key,
-        type: 'straight',
-        fromId: parentId, toId: child.id,
-        fromClusterId: parentId, toClusterId: child.id,
-        fromIsCosmic: false, toIsCosmic: false,
-        x1: fromX, y1: fromY, x2: toX, y2: toY,
-        ux, uy,
-        // Perpendicular unit vector — required by the straight-road branch
-        // in walkers.js for corridor-wall bounce math (road.px, road.py).
-        // Without these, perpDist = NaN and walkers drift off the road in
-        // arbitrary directions instead of staying on the asphalt.
-        px: nx, py: ny,
-        samples,
-        length,
-        halfW: 12,   // road corridor half-width — walker_r=12 fits inside
-        pathD: `M ${fromX} ${fromY} L ${toX} ${toY}`,
-      });
+  routes.roads.forEach(r => {
+    if (!r.required) return;   // dashed trails aren't walkable roads
+    const parent = state.byId?.get(r.fromId);
+    const child = state.byId?.get(r.toId);
+    if (!parent || !child) return;
+    if (!orderRenderer._isShown(parent) || !orderRenderer._isShown(child)) return;
+    const pts = RoadRouter.toView(r, view).points;
+    const { samples, length } = RoadRouter.samplePolyline(pts, ORDER_CELL.roadRadius);
+    if (samples.length < 2 || length <= 0) return;
+    const first = samples[0], last = samples[samples.length - 1];
+    roads.set(r.key, {
+      key: r.key,
+      type: 'path',
+      fromId: r.fromId, toId: r.toId,
+      fromClusterId: r.fromId, toClusterId: r.toId,
+      fromIsCosmic: false, toIsCosmic: false,
+      x1: first.x, y1: first.y, x2: last.x, y2: last.y,
+      ux: first.tx, uy: first.ty,
+      px: first.nx, py: first.ny,
+      samples,
+      length,
+      halfW: 12,   // road corridor half-width — walker_r=12 fits inside
+      pathD: RoadRouter.pathD(pts, ORDER_CELL.roadRadius),
     });
   });
   return roads;

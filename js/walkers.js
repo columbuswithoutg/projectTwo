@@ -546,7 +546,9 @@ const Walkers = (() => {
       const toRect = rects.get(road.toClusterId);
       if (!fromRect || !toRect) return;
 
-      if (road.type === 'bezier') {
+      // Sampled roads (map beziers, rook-style flow roads): the opening
+      // faces along the first / last sample's tangent.
+      if (road.type !== 'straight') {
         const firstSample = road.samples[0];
         const lastSample = road.samples[road.samples.length - 1];
         fromRect.openings.push({

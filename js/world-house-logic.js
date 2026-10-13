@@ -7,7 +7,7 @@
  * and a handful of interior props placed on a 10×10 grid inside the 12×12
  * platform (one cell of margin so a prop never overlaps the wall ring).
  * The DOOR is never part of a house: its side, position and width come
- * from the roads (playground3d.js _doorwayOnSide) and stay fixed.
+ * from the roads (road-router.js ports, via PG3DScene.roadPorts) and stay fixed.
  *
  * Shared by BOTH ends of the wire:
  *   routes/world.js      — validates a keeper's PUT before saving

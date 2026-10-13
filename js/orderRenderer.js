@@ -364,73 +364,59 @@ class OrderRenderer {
     while (this.svg.firstChild) this.svg.removeChild(this.svg.firstChild);
     this._ensureArrowhead();
 
-    // Straight roads between AABB perimeters — geometry MUST match the walker
-    // road geometry in walkerView.buildFlowRoadGeometry so walkers visibly
-    // travel along the rendered roads (no floating-in-empty-space effect).
-    const halfW = ORDER_CELL.nodeWidth / 2;
-    const halfH = ORDER_CELL.nodeHeight / 2;
+    // Rook-style roads (js/road-router.js): horizontal/vertical runs through
+    // the gaps between cards, never through one, each road in its own lane.
+    // Every road is routed (hidden cards included) so nothing jumps when a
+    // card unlocks; only roads with both ends shown are drawn. Geometry MUST
+    // match walkerView.buildFlowRoadGeometry (same view, same radius) so
+    // walkers visibly travel along the rendered roads.
+    if (typeof RoadRouter === "undefined") return;
+    const routes = RoadRouter.route(projects);
+    const view = this._roadView();
 
-    projects.forEach(child => {
-      // Skip arrows for hidden (locked) child nodes — no point pointing at
-      // a card that isn't on screen.
-      if (!this._isShown(child)) return;
+    routes.roads.forEach(road => {
+      const parent = state.byId?.get(road.fromId);
+      const child = state.byId?.get(road.toId);
+      if (!parent || !child) return;
+      if (!this._isShown(parent) || !this._isShown(child)) return;
+      const d = RoadRouter.pathD(RoadRouter.toView(road, view).points, ORDER_CELL.roadRadius);
+      if (!d) return;
 
-      (child.prerequisites || []).forEach(parentId => {
-        const parent = state.byId?.get(parentId);
-        if (!parent) return;
-        if (!this._isShown(parent)) return;
-
-        const cFrom = this._cellPos(parent);
-        const cTo = this._cellPos(child);
-        const dx = cTo.x - cFrom.x;
-        const dy = cTo.y - cFrom.y;
-        const len = Math.hypot(dx, dy);
-        if (len === 0) return;
-        const ux = dx / len;
-        const uy = dy / len;
-        // Clip endpoints to the AABB perimeter — same as walker roads.
-        const exit = this._aabbExitDist(halfW, halfH, ux, uy);
-        const fromX = cFrom.x + ux * exit;
-        const fromY = cFrom.y + uy * exit;
-        const toX = cTo.x - ux * exit;
-        const toY = cTo.y - uy * exit;
-
-        const d = `M ${fromX} ${fromY} L ${toX} ${toY}`;
+      if (road.required) {
         this._buildFlowRoad(d).forEach(el => this.svg.appendChild(el));
-      });
-
+        return;
+      }
       // Recommended (optional) prerequisites: a faint dashed trail, not a
       // road — they never lock anything, so they shouldn't read as a path
       // you're forced down.
-      (child.recommendedPrerequisites || []).forEach(parentId => {
-        const parent = state.byId?.get(parentId);
-        if (!parent || !this._isShown(parent)) return;
-        const cFrom = this._cellPos(parent);
-        const cTo = this._cellPos(child);
-        const dx = cTo.x - cFrom.x;
-        const dy = cTo.y - cFrom.y;
-        const len = Math.hypot(dx, dy);
-        if (len === 0) return;
-        const ux = dx / len;
-        const uy = dy / len;
-        const exit = this._aabbExitDist(halfW, halfH, ux, uy);
-        const trail = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        trail.setAttribute("d", `M ${cFrom.x + ux * exit} ${cFrom.y + uy * exit} L ${cTo.x - ux * exit} ${cTo.y - uy * exit}`);
-        trail.setAttribute("class", "flow-road-recommended");
-        trail.setAttribute("stroke", "rgba(201, 162, 39, 0.45)");
-        trail.setAttribute("stroke-width", "3");
-        trail.setAttribute("stroke-dasharray", "8 10");
-        trail.setAttribute("stroke-linecap", "round");
-        trail.setAttribute("fill", "none");
-        this.svg.appendChild(trail);
-      });
+      const trail = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      trail.setAttribute("d", d);
+      trail.setAttribute("class", "flow-road-recommended");
+      trail.setAttribute("stroke", "rgba(201, 162, 39, 0.45)");
+      trail.setAttribute("stroke-width", "3");
+      trail.setAttribute("stroke-dasharray", "8 10");
+      trail.setAttribute("stroke-linecap", "round");
+      trail.setAttribute("fill", "none");
+      this.svg.appendChild(trail);
     });
   }
 
-  _aabbExitDist(halfW, halfH, ux, uy) {
-    const tx = Math.abs(ux) > 1e-6 ? halfW / Math.abs(ux) : Infinity;
-    const ty = Math.abs(uy) > 1e-6 ? halfH / Math.abs(uy) : Infinity;
-    return Math.min(tx, ty);
+  // The chart in RoadRouter view terms (canvas px). Gap rows sit below the
+  // card labels; lanes keep clear of the cards and labels either side.
+  _roadView() {
+    const b = this._getBounds();
+    const cw = ORDER_CELL.width, ch = ORDER_CELL.height;
+    return {
+      pitchX: cw, pitchY: ch,
+      originX: -b.minX * cw + cw / 2,
+      originY: -b.minY * ch + ch / 2,
+      gapShiftY: ORDER_CELL.gapShiftY,
+      laneSpacing: ORDER_CELL.laneSpacing,
+      gapRoomX: ORDER_CELL.gapRoomX, gapRoomY: ORDER_CELL.gapRoomY,
+      cellRoomX: ORDER_CELL.nodeWidth / 2 - 14, cellRoomY: ORDER_CELL.nodeHeight / 2 - 14,
+      nodeHalfW: ORDER_CELL.nodeWidth / 2, nodeHalfH: ORDER_CELL.nodeHeight / 2,
+      trails: true,
+    };
   }
 
   _buildFlowRoad(d) {
@@ -547,6 +533,13 @@ const ORDER_CELL = {
   nodeWidth: 110,    // visible node width (poster)
   nodeHeight: 150,   // visible node height (poster)
   cellWidth: 130,    // .flow-cell wrapper width (CSS) — wider than node so longer titles wrap nicely
+  // Roads (RoadRouter): a card's 2-line label hangs ~40px below the poster,
+  // so gap rows drop 19px to sit midway between label and the next card.
+  gapShiftY: 19,
+  laneSpacing: 22,   // road is 18px wide → 4px of ground between lanes
+  gapRoomX: 34,      // column gap: labels end ±65, next labels start ±155
+  gapRoomY: 24,      // row gap: label bottom ~+113, next card top +185
+  roadRadius: 14,    // rounded corners
 };
 
 const ORDER_ZOOM = {

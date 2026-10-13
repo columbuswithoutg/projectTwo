@@ -813,6 +813,12 @@
 .admin-board-edge.is-recommended {
   stroke-dasharray: 5 5;
 }
+.admin-board-crowded {
+  fill: rgba(220, 60, 60, 0.12);
+  stroke: rgba(220, 60, 60, 0.7);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
 .admin-board-arrow-tip {
   fill: rgba(var(--ink), 0.4);
 }

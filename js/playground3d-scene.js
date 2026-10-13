@@ -2,6 +2,10 @@
  * PLAYGROUND 3D — Scene Guess props (driven by js/scene-guess.js)
  *
  * The minigame's 3D side, kept out of js/playground3d.js:
+ *   roadRoutes / roadView / roadPorts / openingsFromPorts / allOpenings
+ *       /world's rook-style roads (js/road-router.js) and the doorways they
+ *       cut — shared with js/playground3d.js so the screen and the walls
+ *       agree on where every door is
  *   screenSpot(project, projects, WORLD, wallHeight)
  *       where an island's cinema-wall screen hangs (pure maths): the longest
  *       door-free stretch of inner wall, judged from EVERY road the island
@@ -25,30 +29,45 @@
 
   // ── placement ──
 
-  // Doorway spans per side over every road the island will ever have. Same
-  // maths as playground3d.js _doorwayOnSide / _sideOpenings.
-  function allOpenings(project, projects, W) {
+  // ── roads (js/road-router.js) ──
+  // /world routes the same rook-style roads as the watch-order chart: every
+  // required road, once, so a road never moves when an island unlocks.
+  function roadRoutes(projects) {
+    if (typeof RoadRouter === 'undefined') return { roads: [], byKey: new Map(), overCapacity: [] };
+    const placed = (projects || []).filter(p => p && typeof p.gridX === 'number' && typeof p.gridY === 'number');
+    return RoadRouter.route(placed, { trails: false });
+  }
+  // /world in RoadRouter view terms (world units, x = gridX·SCALE, z = gridY·SCALE).
+  // Lanes in the gap between two aprons keep clear of both; lanes on an
+  // island's own row / column (its doorstep) keep a doorway on the wall.
+  function roadView(W) {
+    const apronHalf = (W.PLATFORM_W + W.APRON_MARGIN) / 2;
+    const gapRoom = Math.max(0, W.SCALE / 2 - apronHalf - W.ROAD_W / 2 - 0.25);
+    const cellRoom = Math.max(0, W.PLATFORM_W / 2 - W.DOORWAY_WIDTH / 2 - 0.5);
+    return {
+      pitchX: W.SCALE, pitchY: W.SCALE, originX: 0, originY: 0,
+      laneSpacing: W.ROAD_W + 0.6,
+      gapRoomX: gapRoom, gapRoomY: gapRoom, cellRoomX: cellRoom, cellRoomY: cellRoom,
+      nodeHalfW: W.PLATFORM_W / 2, nodeHalfH: W.PLATFORM_W / 2,
+      trails: false
+    };
+  }
+  // Where each road meets this island's walls → [{ side, coord, otherId }],
+  // coord = world x (N/S walls) or z (E/W walls) of the road's centre line.
+  function roadPorts(project, projects, W) {
+    if (!project || typeof project.gridX !== 'number' || typeof project.gridY !== 'number' || typeof RoadRouter === 'undefined') return [];
+    const cx = project.gridX * W.SCALE, cz = project.gridY * W.SCALE;
+    return RoadRouter.portsView(roadRoutes(projects), project.id, roadView(W), { requiredOnly: true })
+      .map(p => ({ side: p.side, coord: ((p.side === 'N' || p.side === 'S') ? cx : cz) + p.along, otherId: p.otherId }));
+  }
+  // Doorway spans per side from a list of road centres on each side: a
+  // DOORWAY_WIDTH opening per road, clipped to the wall, merged when two
+  // overlap or leave only a thin sliver (< DOORWAY_MERGE_GAP).
+  function openingsFromPorts(project, ports, W) {
     const HALF = W.PLATFORM_W / 2, D = W.DOORWAY_WIDTH;
     const cx = project.gridX * W.SCALE, cz = project.gridY * W.SCALE;
-    const byId = new Map((projects || []).map(p => [p.id, p]));
-    const others = [];
-    for (const id of (project.prerequisites || [])) { const q = byId.get(id); if (q) others.push(q); }
-    for (const q of projects || []) {
-      if (q && q.id !== project.id && Array.isArray(q.prerequisites) && q.prerequisites.includes(project.id)) others.push(q);
-    }
     const sides = { N: [], S: [], E: [], W: [] };
-    for (const q of others) {
-      if (typeof q.gridX !== 'number' || typeof q.gridY !== 'number') continue;
-      const dx = q.gridX * W.SCALE - cx, dz = q.gridY * W.SCALE - cz;
-      if (!dx && !dz) continue;
-      if (Math.abs(dx) >= Math.abs(dz)) {
-        const exitZ = cz + dz * (HALF / Math.abs(dx));
-        sides[dx > 0 ? 'E' : 'W'].push(Math.max(cz - HALF + 0.5, Math.min(cz + HALF - 0.5, exitZ)));
-      } else {
-        const exitX = cx + dx * (HALF / Math.abs(dz));
-        sides[dz > 0 ? 'S' : 'N'].push(Math.max(cx - HALF + 0.5, Math.min(cx + HALF - 0.5, exitX)));
-      }
-    }
+    for (const p of ports) sides[p.side].push(p.coord);
     const out = {};
     for (const s of ['N', 'S', 'E', 'W']) {
       const start = ((s === 'N' || s === 'S') ? cx : cz) - HALF, end = start + 2 * HALF;
@@ -63,6 +82,10 @@
       out[s] = opens;
     }
     return out;
+  }
+  // Doorway spans per side over every road the island will ever have.
+  function allOpenings(project, projects, W) {
+    return openingsFromPorts(project, roadPorts(project, projects, W), W);
   }
 
   // { side, from, to (world coords along that wall), x, y, z (centre), w, h, rotY } or null.
@@ -472,5 +495,5 @@
     return { group, update };
   }
 
-  root.PG3DScene = { SCREEN, CW, CH, allOpenings, screenSpot, makeScreen, drawScreen, makeCrown, makeConfetti, makeSpotlight, dispose };
+  root.PG3DScene = { SCREEN, CW, CH, roadRoutes, roadView, roadPorts, openingsFromPorts, allOpenings, screenSpot, makeScreen, drawScreen, makeCrown, makeConfetti, makeSpotlight, dispose };
 })(typeof self !== 'undefined' ? self : this);
