@@ -315,6 +315,20 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-10-13 — Goals = the road to Avengers: Doomsday
+
+The Goals panel is now a single checklist: Marvel's official "stream these before Avengers: Doomsday" list (14 titles, Marvel's order), ticked against what you've watched, with a progress bar and "in theaters December 18" from Doomsday's release date. Titles you can watch now open their popup as before; ones not unlocked yet are listed muted. It replaces the "one step ahead" goals, so it names titles the viewer hasn't reached yet — deliberately, it's Marvel's public list.
+
+- `js/goals.js` — `DOOMSDAY_WATCHLIST` + `computeDoomsdayGoal()` (replaces `computeGoals()`); `styles/legacy/08-friends-goals.css` — progress bar, status line, `.is-locked` rows.
+- The list is fixed rather than read from Doomsday's prerequisites, which differ: Loki S1 isn't a direct prerequisite (it's required through Loki S2 and Deadpool & Wolverine), and X-Men + X2 are required by Doomsday but aren't on Marvel's list. Data left as is.
+
+### 2026-10-13 — Character portrait placeholder
+
+56 of the 156 character image files referenced in `characters.js` don't exist yet. The Characters page tried to swap in initials with an inline `onerror=`, which the CSP blocks (`script-src-attr 'none'`), so it showed a broken image with its alt text instead. Every character portrait now has a MONOGRAM underneath it — a circle in the debut phase's colour (same palette as the poster title cards) with a faint head-and-shoulders silhouette and the initials ("Captain America (Sam Wilson)" → CA) — and a missing file is removed by PosterArt's capture-phase error listener so the monogram shows.
+
+- `js/poster-art.js` — `initials`, `charHtml`, `charMount`. Used by `js/views/characters.js`, the walker picker and map walker chips (`js/walkers.js`), and the profile picture picker (`js/views/profile.js`). Styles in `styles/components/poster.css` (`.char-art`, Cinematic hairline / Comic halftone variants, chip-size rule), holders in `10-characters.css`, `11-profile.css`, `12-walkers.css`, `13-mobile.css`.
+- Not covered: a profile picture already saved as a missing file still shows broken where the profile picture is displayed.
+
 ### 2026-10-13 — Walkers meeting on a road: bounce back or shove, never stuck
 
 Two walkers meeting head-on on a road could lock in place, pushing forever; a third walker joining one side won at a crawl. Cause: on sampled roads (map beziers, and since the rook-style roads every chart road) a walker's position comes from `edgeT`, so the collision push was thrown away each frame, and the elastic swap fired again while they were separating — the pair flipped velocity every frame. Dialogues start at 26px, inside the 28px bump radius, so every talk on a road ended in that lock.

@@ -222,6 +222,38 @@
   color: var(--text-3);
 }
 
+/* Road to Doomsday: progress bar, status line, not-yet-unlocked titles. */
+.goals-subtitle strong {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.goal-progress {
+  height: 6px;
+  margin: 0 0 8px;
+  border-radius: 999px;
+  background: rgba(var(--ink), 0.08);
+  overflow: hidden;
+}
+
+.goal-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary);
+  transition: width 0.4s ease;
+}
+
+.goal-status {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: var(--text-3);
+}
+
+.goal-req.is-locked .goal-req-title {
+  color: var(--text-3);
+}
+
 /* Recommended (optional) prerequisites — muted, never counted as required. */
 .goal-req.is-optional .goal-req-mark {
   color: var(--text-3);

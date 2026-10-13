@@ -1,63 +1,51 @@
 /************************************************
- * GOALS — "what's needed to watch a project" guide
+ * GOALS — the road to Avengers: Doomsday
  *
- * Locked projects are intentionally invisible everywhere else (map:
- * display:none, flowchart: not rendered, both click handlers silently
- * no-op) — see isUnlocked()/isVisible()/isRevealed() in js/utils.js. That
- * leaves nothing to explain WHY a title is locked. This panel answers
- * that, but deliberately only "one step ahead": a locked project is listed
- * here only when every one of its requirements is already watched or
- * revealed (i.e. something the user can already see). Anything deeper in
- * the chain simply doesn't appear — no title the user hasn't reached yet
- * is ever named.
+ * One checklist: Marvel's official "stream these before Avengers: Doomsday"
+ * list (marvel.com), ticked off against what the user has watched. It
+ * replaced the old "one step ahead" goals (every locked title whose
+ * requirements were all in view), so this panel now names titles the user
+ * may not have unlocked yet — on purpose, it's Marvel's public list.
  *
- * computeGoals() reuses isUnlocked/isPhaseUnlocked/isRevealed/allPrereqs
- * from js/utils.js verbatim rather than reimplementing the unlock rules.
+ * The list is fixed here, not derived from Doomsday's prerequisites: those
+ * differ slightly (Loki S1 is required only through Loki S2; X-Men and X2
+ * are required but not on Marvel's list).
  ************************************************/
 
-// A project qualifies as a "goal" when it's locked, not yet watched, and
-// EVERY one of its requirements (prerequisites + hiddenPrerequisites, plus
-// its phase unlocker if the phase itself isn't open yet) is something the
-// user can already see — watched or revealed. This is a single filter, not
-// a recursive walk: a requirement that is itself still locked disqualifies
-// the whole goal from appearing at all.
-function computeGoals() {
-  if (typeof projects === 'undefined' || !Array.isArray(projects)) return [];
+const DOOMSDAY_ID = 'doomsday';
+// Marvel's order.
+const DOOMSDAY_WATCHLIST = [
+  'cap1', 'avengers1', 'infinitywar', 'endgame', 'loki1', 'loki2', 'shangchi',
+  'nowayhome', 'blackpanther2', 'cap4', 'deadpool3', 'drstrange2',
+  'thunderbolts', 'fantasticfour'
+];
 
-  const goals = [];
-  for (const p of projects) {
-    if (state.isWatched(p.id)) continue;
-    if (isUnlocked(p)) continue; // already revealed — not a "goal", it's ready to watch
-
-    const reqIds = allPrereqs(p).slice();
-    if (!isPhaseUnlocked(p)) {
-      const unlockerId = PHASE_UNLOCKERS[p.phaseNum];
-      if (unlockerId) reqIds.push(unlockerId);
-    }
-    if (!reqIds.length) continue; // nothing to show a checklist for
-
-    const seenReq = new Set();
-    const requirements = [];
-    let visible = true;
-    for (const id of reqIds) {
-      if (seenReq.has(id)) continue;
-      seenReq.add(id);
-      const req = state.byId?.get(id);
-      const watched = state.isWatched(id);
-      const revealed = !watched && req && isRevealed(req);
-      if (!watched && !revealed) { visible = false; break; }
-      requirements.push({ id, title: req ? (req.title || id) : id, watched });
-    }
-    if (!visible) continue;
-
-    const met = requirements.filter(r => r.watched).length;
-    // Recommended titles are shown but never counted toward met/total.
-    goals.push({ project: p, requirements, recommended: visibleRecommended(p), met, total: requirements.length });
+// → { target, items: [{ id, title, watched, ready }], met, total }
+// ready = unlocked and not watched yet (something you can watch now).
+function computeDoomsdayGoal() {
+  const byId = state.byId;
+  const items = [];
+  for (const id of DOOMSDAY_WATCHLIST) {
+    const p = byId?.get(id);
+    if (!p) continue;            // a title the live content doesn't have
+    const watched = state.isWatched(id);
+    items.push({ id, title: p.title || id, watched, ready: !watched && isUnlocked(p) });
   }
+  return {
+    target: byId?.get(DOOMSDAY_ID) || null,
+    items,
+    met: items.filter(i => i.watched).length,
+    total: items.length
+  };
+}
 
-  // Closest-to-complete first.
-  goals.sort((a, b) => (b.met / b.total) - (a.met / a.total));
-  return goals;
+// "in theaters December 18" before release, "now in theaters" after.
+function _doomsdayReleaseText(target) {
+  const iso = target && target.release;
+  const d = iso ? new Date(iso + 'T00:00:00') : null;
+  if (!d || isNaN(d)) return 'in theaters';
+  if (d <= new Date()) return 'now in theaters';
+  return 'in theaters ' + d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
 }
 
 /************************************************
@@ -66,7 +54,10 @@ function computeGoals() {
 function showGoalsPanel() {
   $('.goals-panel')?.remove();
 
-  const goals = computeGoals();
+  const g = computeDoomsdayGoal();
+  const title = g.target ? g.target.title : 'Avengers: Doomsday';
+  const seenTarget = g.target && state.isWatched(g.target.id);
+  const pct = g.total ? Math.round((g.met / g.total) * 100) : 0;
 
   const panel = document.createElement('div');
   panel.className = 'goals-panel';
@@ -74,41 +65,40 @@ function showGoalsPanel() {
   panel.setAttribute('aria-modal', 'true');
   panel.setAttribute('aria-labelledby', 'goals-panel-heading');
 
-  const body = goals.length
-    ? goals.map(g => `
-        <div class="goal-card">
-          <div class="goal-card-head">
-            <span class="goal-card-title">${esc(g.project.title)}</span>
-            <span class="goal-card-progress">${g.met} / ${g.total}</span>
-          </div>
-          <ul class="goal-req-list">
-            ${g.requirements.map(r => `
-              <li class="goal-req${r.watched ? ' is-met' : ''}" data-action="${r.watched ? '' : 'goal-req'}" data-id="${esc(r.id)}">
-                <span class="goal-req-mark">${r.watched ? '✓' : '✗'}</span>
-                <span class="goal-req-title">${esc(r.title)}</span>
-              </li>
-            `).join('')}
-          </ul>
-          ${g.recommended.length ? `
-            <p class="goal-rec-label">Recommended (optional)</p>
-            <ul class="goal-req-list">
-              ${g.recommended.map(r => `
-                <li class="goal-req is-optional${r.watched ? ' is-met' : ''}" data-action="${r.watched ? '' : 'goal-req'}" data-id="${esc(r.id)}">
-                  <span class="goal-req-mark">${r.watched ? '✓' : '○'}</span>
-                  <span class="goal-req-title">${esc(r.title)}</span>
-                </li>
-              `).join('')}
-            </ul>
-          ` : ''}
-        </div>
-      `).join('')
-    : `<p class="goals-empty">Nothing new to work toward — keep watching.</p>`;
+  const status = seenTarget
+    ? `You've seen ${esc(title)}.`
+    : g.met === g.total
+      ? `All caught up — you're ready for ${esc(title)}.`
+      : `${g.total - g.met} to go.`;
+
+  const body = `
+    <div class="goal-card goal-card--feature">
+      <div class="goal-card-head">
+        <span class="goal-card-title">${esc(title)}</span>
+        <span class="goal-card-progress">${g.met} / ${g.total}</span>
+      </div>
+      <div class="goal-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${g.total}" aria-valuenow="${g.met}" aria-label="Titles watched">
+        <span class="goal-progress-fill" style="width:${pct}%"></span>
+      </div>
+      <p class="goal-status">${status}</p>
+      <ul class="goal-req-list">
+        ${g.items.map(r => `
+          <li class="goal-req${r.watched ? ' is-met' : ''}${!r.watched && !r.ready ? ' is-locked' : ''}"
+              data-action="${r.ready ? 'goal-req' : ''}" data-id="${esc(r.id)}"
+              ${!r.watched && !r.ready ? 'title="Not unlocked yet — keep watching to reach it"' : ''}>
+            <span class="goal-req-mark">${r.watched ? '✓' : '✗'}</span>
+            <span class="goal-req-title">${esc(r.title)}</span>
+          </li>
+        `).join('')}
+      </ul>
+    </div>
+  `;
 
   panel.innerHTML = `
     <div class="goals-box">
       <button class="popup-close" id="close-goals" aria-label="Close">✕</button>
       <h3 id="goals-panel-heading">Goals</h3>
-      <p class="goals-subtitle">What's next, one step ahead</p>
+      <p class="goals-subtitle">Stream these on Disney+, then catch <strong>${esc(title)}</strong> ${_doomsdayReleaseText(g.target)}.</p>
       <div class="goals-list">${body}</div>
     </div>
   `;
