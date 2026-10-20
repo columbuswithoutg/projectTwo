@@ -59,6 +59,7 @@
 @import "./components/forms.css" layer(components);
 @import "./components/brand.css" layer(components);
 @import "./components/overlays.css" layer(components);
+@import "./components/route-progress.css" layer(components);
 @import "./components/poster.css" layer(components);
 
 @import "./pages/login.css" layer(pages);

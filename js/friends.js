@@ -94,12 +94,14 @@ function showFriendsPanel() {
 
       <!-- Search -->
       <div class="friends-section">
-        <h4>Add Friend</h4>
+        <h4>Add friend</h4>
+        <label class="visually-hidden" for="friend-search">Search by username</label>
         <div class="friends-search-row">
-          <input id="friend-search" type="text" placeholder="Search by username" />
-          <button id="friend-search-btn">Add</button>
+          <input id="friend-search" type="search" placeholder="Search by username" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="30" />
+          <button id="friend-search-btn" type="button">Search</button>
         </div>
-        <div id="friend-search-results"></div>
+        <p id="friend-search-status" class="friends-search-status" role="status" aria-live="polite" hidden></p>
+        <ul id="friend-search-results" class="friends-search-results" role="list"></ul>
       </div>
 
       <!-- Pending Requests -->
@@ -116,78 +118,93 @@ function showFriendsPanel() {
     </div>
   `;
 
-  const addBtn = panel.querySelector('#friend-search-btn');
+  // Search shows a LIST of matches with a per-person Add. The old button
+  // sent a request to the first fuzzy match, so "an" + Enter befriended a
+  // stranger. Enter still sends — only when the typed name is exactly one
+  // person who can be asked (js/ux-logic.js rankFriendSearch).
+  const searchBtn = panel.querySelector('#friend-search-btn');
+  const searchInput = panel.querySelector('#friend-search');
+  const resultsEl = panel.querySelector('#friend-search-results');
+  const statusEl = panel.querySelector('#friend-search-status');
+  // Lower-cased names already befriended (filled by loadFriendList) / asked here.
+  panel._friendNames = new Set();
+  panel._outgoing = new Set();
+  const setStatus = (text) => { statusEl.textContent = text || ''; statusEl.hidden = !text; };
 
-  const doAdd = async () => {
-    const query = panel.querySelector('#friend-search').value.trim();
-    if (!query) return;
-
-    addBtn.disabled = true;
-    addBtn.textContent = '...';
-
-    // A network failure used to leave the button stuck on '...' forever.
-    let results;
-    try {
-      results = await Friends.search(query);
-    } catch (_) {
-      toast("Couldn't search — check your connection", 'error');
-      addBtn.textContent = 'Add';
-      addBtn.disabled = false;
-      return;
-    }
-
-    if (!results.length) {
-      addBtn.textContent = 'Not Found';
-      addBtn.style.background = 'rgba(255, 80, 80, 0.7)';
-      addBtn.style.color = '#fff';
-      setTimeout(() => {
-        addBtn.textContent = 'Add';
-        addBtn.style.background = '';
-        addBtn.style.color = '';
-        addBtn.disabled = false;
-      }, 2000);
-      return;
-    }
-
-    const user = results.find(u => u.username.toLowerCase() === query.toLowerCase()) || results[0];
+  const sendTo = async (user, btn) => {
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
     let data;
-    try {
-      data = await Friends.sendRequest(user._id);
-    } catch (_) {
-      data = { error: 'Network error' };
-    }
-
-    if (data.error) {
-      if (data.error === 'Request already exists') {
-        addBtn.textContent = 'Already Added';
-      } else if (/declined/i.test(data.error)) {
-        // Cooldown message is a sentence — too long for the button.
-        addBtn.textContent = 'Declined';
-        toast(data.error, 'info');
-      } else {
-        addBtn.textContent = data.error;
+    try { data = await Friends.sendRequest(user._id); }
+    catch (_) { data = { error: "Couldn't send — check your connection." }; }
+    if (!data || data.error) {
+      const already = data && data.error === 'Request already exists';
+      if (already) {
+        panel._outgoing.add(user.username.toLowerCase());
+        btn.textContent = 'Requested';
+        return;
       }
-      addBtn.style.background = 'rgba(255, 80, 80, 0.7)';
-      addBtn.style.color = '#fff';
-    } else {
-      addBtn.textContent = 'Added!';
-      addBtn.style.background = 'rgba(46, 255, 81, 0.8)';
-      addBtn.style.color = '#000';
+      btn.textContent = /declined/i.test(data && data.error) ? 'Declined' : 'Failed';
+      btn.classList.add('is-err');
+      toast((data && data.error) || "Couldn't send that request.", 'error');
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'Add'; btn.classList.remove('is-err'); }, 2500);
+      return;
     }
-
-    setTimeout(() => {
-      addBtn.textContent = 'Add';
-      addBtn.style.background = '';
-      addBtn.style.color = '';
-      addBtn.disabled = false;
-      panel.querySelector('#friend-search').value = '';
-    }, 2000);
+    panel._outgoing.add(user.username.toLowerCase());
+    btn.textContent = 'Sent ✓';
+    btn.classList.add('is-ok');
+    toast(`Friend request sent to ${user.username}.`, 'success');
   };
 
-  addBtn.onclick = doAdd;
+  const renderResults = (ranked, query) => {
+    if (!ranked.items.length) {
+      resultsEl.innerHTML = '';
+      setStatus(`No one called “${query}” — names are matched from the start.`);
+      return;
+    }
+    setStatus(`${ranked.items.length} ${ranked.items.length === 1 ? 'person matches' : 'people match'} “${query}”`);
+    resultsEl.innerHTML = ranked.items.map(u => {
+      const [a, b] = u.match || [0, 0];
+      const name = u.match
+        ? esc(u.username.slice(0, a)) + '<mark>' + esc(u.username.slice(a, b)) + '</mark>' + esc(u.username.slice(b))
+        : esc(u.username);
+      const action = u.status === 'friend' ? '<span class="friend-search-state">Friends</span>'
+        : u.status === 'pending' ? '<span class="friend-search-state">Requested</span>'
+        : `<button type="button" class="friend-search-add" data-id="${esc(u._id)}" data-name="${esc(u.username)}" aria-label="Add ${esc(u.username)}">Add</button>`;
+      return `<li class="friend-row"><span class="friend-username">${name}</span><div class="friend-row-actions">${action}</div></li>`;
+    }).join('');
+    resultsEl.querySelectorAll('.friend-search-add').forEach(btn => {
+      btn.addEventListener('click', () => sendTo({ _id: btn.dataset.id, username: btn.dataset.name }, btn));
+    });
+  };
 
-  panel.querySelector('#friend-search').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') doAdd();
+  const runSearch = async () => {
+    const query = searchInput.value.trim();
+    if (query.length < 2) {
+      resultsEl.innerHTML = '';
+      setStatus(query ? 'Type at least 2 characters.' : '');
+      return null;
+    }
+    searchBtn.disabled = true;
+    let results;
+    try { results = await Friends.search(query); }
+    catch (_) { toast("Couldn't search — check your connection", 'error'); searchBtn.disabled = false; return null; }
+    searchBtn.disabled = false;
+    if (!Array.isArray(results)) { setStatus((results && results.error) || "Couldn't search right now."); return null; }
+    const ranked = UxLogic.rankFriendSearch(results, query, { friends: panel._friendNames, pending: panel._outgoing });
+    renderResults(ranked, query);
+    return ranked;
+  };
+
+  searchBtn.addEventListener('click', runSearch);
+  searchInput.addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const ranked = await runSearch();
+    if (ranked && ranked.exact.length === 1 && ranked.exact[0].status === 'none') {
+      const btn = resultsEl.querySelector(`.friend-search-add[data-id="${CSS.escape(ranked.exact[0]._id)}"]`);
+      if (btn) sendTo(ranked.exact[0], btn);
+    }
   });
 
   // Load pending requests. Named + retryable — this fetch used to have no
@@ -205,7 +222,7 @@ function showFriendsPanel() {
   <div class="friend-row">
     <span>
       ${r.type === 'watch'
-        ? `<strong>${esc(r.requester.username)}</strong> ${r.postId ? 'says you watched' : 'wants to log'} <em style="color:rgba(46,255,81,0.8)">${esc(r.projectTitle || r.projectId)}${r.episode ? ` · Episode ${Number(r.episode)}` : ''}</em> together — accept to be tagged on their post`
+        ? `<strong>${esc(r.requester.username)}</strong> ${r.postId ? 'says you watched' : 'wants to log'} <em class="friend-req-title">${esc(r.projectTitle || r.projectId)}${r.episode ? ` · Episode ${Number(r.episode)}` : ''}</em> together — accept to be tagged on their post`
         : `<strong>${esc(r.requester.username)}</strong> sent you a friend request`
       }
     </span>
@@ -216,11 +233,34 @@ function showFriendsPanel() {
   </div>
 `).join('');
 
+    // Both buttons lock while a request is in flight (a double tap sent it
+    // twice), and the row only leaves once the server said yes.
+    const respond = async (btn, action) => {
+      const row = btn.closest('.friend-row');
+      const buttons = row.querySelectorAll('button');
+      buttons.forEach(b => { b.disabled = true; });
+      let data;
+      try { data = await Friends.respond(btn.dataset.id, action); }
+      catch (_) { data = { error: "Couldn't reach the server — try again." }; }
+      if (!data || data.error) {
+        toast((data && data.error) || `Couldn't ${action === 'accepted' ? 'accept' : 'decline'} that request.`, 'error');
+        buttons.forEach(b => { b.disabled = false; });
+        return null;
+      }
+      row.remove();
+      const list = panel.querySelector('#friend-pending-list');
+      if (!list.querySelector('.friend-row')) {
+        list.innerHTML = '<p class="friends-empty">No pending requests</p>';
+      }
+      return data;
+    };
+
     container.querySelectorAll('.friend-accept-btn').forEach(btn => {
       btn.onclick = async () => {
-        const data = await Friends.respond(btn.dataset.id, 'accepted');
         const type = btn.dataset.type;
         const projectId = btn.dataset.project;
+        const data = await respond(btn, 'accepted');
+        if (!data) return;
 
         if (type === 'watch' && projectId) {
           // The server only tags the co-watcher on an existing watch (it never
@@ -239,22 +279,12 @@ function showFriendsPanel() {
             toast('Finish watching it from your Board first — then you can log it together.', 'info');
           }
         }
-
-        btn.closest('.friend-row').remove();
         if (type === 'friend') loadFriendList(panel);
-
-        const list = panel.querySelector('#friend-pending-list');
-        if (!list.querySelector('.friend-row')) {
-          list.innerHTML = '<p class="friends-empty">No pending requests</p>';
-        }
       };
     });
 
     container.querySelectorAll('.friend-reject-btn').forEach(btn => {
-      btn.onclick = async () => {
-        await Friends.respond(btn.dataset.id, 'rejected');
-        btn.closest('.friend-row').remove();
-      };
+      btn.onclick = () => respond(btn, 'rejected');
     });
     }).catch(() => {
       container.innerHTML = `
@@ -294,6 +324,7 @@ function loadFriendList(panel) {
   container.textContent = 'Loading...';
   Friends.getList().then(friends => {
     if (!friends || friends.error || !Array.isArray(friends)) { fail(); return; }
+    panel._friendNames = new Set(friends.map(f => String(f.username || '').toLowerCase()));
     if (!friends.length) {
       container.innerHTML = '<p class="friends-empty">No friends yet</p>';
       return;
@@ -327,7 +358,14 @@ function loadFriendList(panel) {
 
 
 async function showWatchedWithFriendModal(project) {
-  const friends = await Friends.getList();
+  let friends;
+  try {
+    friends = await Friends.getList();
+    if (!Array.isArray(friends)) throw new Error((friends && friends.error) || 'Bad response');
+  } catch (_) {
+    toast("Couldn't load your friends — check your connection and try again.", 'error');
+    return;
+  }
 
   const modal = document.createElement('div');
   modal.className = 'auth-modal';
@@ -336,25 +374,26 @@ async function showWatchedWithFriendModal(project) {
   modal.setAttribute('aria-labelledby', 'watched-with-friend-heading');
   modal.innerHTML = `
     <div class="auth-box">
-      <button class="popup-close" aria-label="Close">✕</button>
-      <h3 id="watched-with-friend-heading">Watched with a Friend</h3>
-      <p style="color:#aaa; font-size:0.9rem">Tag a friend you watched <strong style="color:#fff">${esc(project.title)}</strong> with. It's added once they accept, if they've finished it too.</p>
+      <button class="popup-close" type="button" aria-label="Close">✕</button>
+      <h3 id="watched-with-friend-heading">Watched with a friend</h3>
+      <p class="dialog-muted">Tag a friend you watched <strong class="dialog-strong">${esc(project.title)}</strong> with. It's added once they accept, if they've finished it too.</p>
       <div id="watch-friends-list">
         ${!friends.length
-          ? '<p style="color:#666">No friends yet</p>'
+          ? '<p class="dialog-empty">No friends yet</p>'
           : friends.map(f => `
             <div class="friend-row">
               <span>${esc(f.username)}</span>
-              <button class="watch-with-btn" data-id="${f.id}">Send Request</button>
+              <button class="watch-with-btn" type="button" data-id="${esc(f.id)}">Send request</button>
             </div>
           `).join('')
         }
       </div>
     </div>
   `;
-
-  modal.querySelector('.popup-close').onclick = () => modal.remove();
-  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+  // Esc, backdrop, focus restore — the shared helper, like every other dialog.
+  const close = wireModalDismiss(modal, () => modal.remove(), { initialFocus: modal.querySelector('.popup-close') });
+  modal.querySelector('.popup-close').onclick = close;
 
   modal.querySelectorAll('.watch-with-btn').forEach(btn => {
     btn.onclick = async () => {
@@ -366,94 +405,62 @@ async function showWatchedWithFriendModal(project) {
         toast('Finish watching it first.', 'error');
         return;
       }
-
-      const res = await fetch(`${API}/friends/watch-request`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${Auth.getToken()}`
-        },
-        body: JSON.stringify({ recipientId, projectId: project.id, projectTitle: project.title })
-      });
-      const data = await res.json();
-
-      if (data.error) {
-        btn.textContent = data.error;
-        btn.style.background = 'rgba(255, 80, 80, 0.7)';
-        btn.style.color = '#fff';
-      } else {
-        // The "watched with" tag lands only when the friend accepts (and has
-        // watched it too) — see applyCoWatch in routes/friends.js.
-        btn.textContent = 'Sent!';
-      }
       btn.disabled = true;
-    };
-  });
+      btn.textContent = 'Sending…';
+      let data = null, ok = false;
+      try {
+        const res = await fetch(`${API}/friends/watch-request`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${Auth.getToken()}`
+          },
+          body: JSON.stringify({ recipientId, projectId: project.id, projectTitle: project.title })
+        });
+        try { data = await res.json(); } catch (_) {}
+        ok = res.ok && !!data && !data.error;
+      } catch (_) { /* network */ }
 
-  document.body.appendChild(modal);
-}
-
-function showRemoveConfirm(friendId, friendName, panel) {
-  const confirm = document.createElement('div');
-  confirm.className = 'auth-modal';
-  confirm.setAttribute('role', 'alertdialog');
-  confirm.setAttribute('aria-modal', 'true');
-  confirm.setAttribute('aria-labelledby', 'remove-friend-heading');
-  confirm.innerHTML = `
-    <div class="auth-box" style="text-align:center; gap:16px">
-      <h3 id="remove-friend-heading">Remove Friend</h3>
-      <p style="color:#aaa">Are you sure you want to remove <strong style="color:#fff">${esc(friendName)}</strong> as a friend?</p>
-      <p class="auth-error" style="display:none; color:red"></p>
-      <div style="display:flex; gap:8px">
-        <button id="confirm-remove" style="flex:1; padding:10px; border-radius:8px; border:none; background:rgba(255,80,80,0.8); color:#fff; font-weight:bold; cursor:pointer">
-          Remove
-        </button>
-        <button id="cancel-remove" style="flex:1; padding:10px; border-radius:8px; border:none; background:rgba(255,255,255,0.1); color:#fff; font-weight:bold; cursor:pointer">
-          Cancel
-        </button>
-      </div>
-    </div>
-  `;
-
-  confirm.querySelector('#cancel-remove').onclick = () => confirm.remove();
-  confirm.addEventListener('click', (e) => { if (e.target === confirm) confirm.remove(); });
-
-  confirm.querySelector('#confirm-remove').onclick = async () => {
-    const btn = confirm.querySelector('#confirm-remove');
-    const errorEl = confirm.querySelector('.auth-error');
-    btn.disabled = true;
-    btn.textContent = 'Removing...';
-
-    try {
-      const res = await fetch(`${API}/friends/remove/${friendId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${Auth.getToken()}` }
-      });
-      const data = await res.json();
-
-      if (data.error) {
-        errorEl.textContent = data.error;
-        errorEl.style.display = 'block';
-        btn.disabled = false;
-        btn.textContent = 'Remove';
+      if (!ok) {
+        toast((data && data.error) || "Couldn't send — check your connection.", 'error');
+        btn.textContent = 'Failed';
+        btn.classList.add('is-err');
+        setTimeout(() => { btn.disabled = false; btn.textContent = 'Send request'; btn.classList.remove('is-err'); }, 2500);
         return;
       }
+      // The "watched with" tag lands only when the friend accepts (and has
+      // watched it too) — see applyCoWatch in routes/friends.js.
+      btn.textContent = 'Sent ✓';
+      btn.classList.add('is-ok');
+    };
+  });
+}
 
-      confirm.remove();
-      const removeBtn = panel.querySelector(`.friend-remove-btn[data-id="${friendId}"]`);
-      removeBtn?.closest('.friend-row')?.remove();
-
-      const list = panel.querySelector('#friend-list');
-      if (!list.querySelector('.friend-row')) {
-        list.innerHTML = '<p class="friends-empty">No friends yet</p>';
-      }
-    } catch (e) {
-      errorEl.textContent = 'Failed to remove. Try again.';
-      errorEl.style.display = 'block';
-      btn.disabled = false;
-      btn.textContent = 'Remove';
-    }
-  };
-
-  document.body.appendChild(confirm);
+// The branded confirm (tokens, Esc, focus) — the hand-built dialog here
+// had white text on the Comic theme's white sheet and an invisible Cancel.
+async function showRemoveConfirm(friendId, friendName, panel) {
+  const sure = await confirmDialog({
+    title: 'Remove friend?',
+    message: `Remove ${friendName} from your friends? You can add them again later.`,
+    confirmLabel: 'Remove',
+    cancelLabel: 'Keep',
+    danger: true
+  });
+  if (!sure) return;
+  const removeBtn = panel.querySelector(`.friend-remove-btn[data-id="${CSS.escape(friendId)}"]`);
+  if (removeBtn) { removeBtn.disabled = true; removeBtn.textContent = 'Removing…'; }
+  let data = null;
+  try { data = await Friends.remove(friendId); } catch (_) { data = null; }
+  if (!data || data.error) {
+    toast((data && data.error) || "Couldn't remove them — check your connection and try again.", 'error');
+    if (removeBtn) { removeBtn.disabled = false; removeBtn.textContent = 'Remove'; }
+    return;
+  }
+  if (panel._friendNames) panel._friendNames.delete(String(friendName).toLowerCase());
+  removeBtn?.closest('.friend-row')?.remove();
+  const list = panel.querySelector('#friend-list');
+  if (!list.querySelector('.friend-row')) {
+    list.innerHTML = '<p class="friends-empty">No friends yet</p>';
+  }
+  toast(`${friendName} removed from your friends.`, 'success');
 }

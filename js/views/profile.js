@@ -32,7 +32,7 @@ const ProfileView = {
     }
 
     const adminLink = Auth.isAdmin()
-      ? `<button id="admin-link-btn" class="admin-link-btn" title="Admin panel">⚙</button>`
+      ? `<button id="admin-link-btn" class="admin-link-btn" type="button" title="Admin panel" aria-label="Admin panel">⚙</button>`
       : `<div style="width:48px"></div>`;
     container.innerHTML = `
       <header id="header">
@@ -46,7 +46,7 @@ const ProfileView = {
           <div id="profile-avatar-wrap">
             <img id="profile-avatar-img" src="" alt="" style="display:none" />
             <span id="profile-avatar-initials"></span>
-            <button id="change-avatar-btn" title="Change avatar">✎</button>
+            <button id="change-avatar-btn" type="button" title="Change picture" aria-label="Change picture" aria-expanded="false" aria-controls="profile-avatar-picker">✎</button>
           </div>
           <h2 id="profile-username"></h2>
         </div>
@@ -110,7 +110,7 @@ const ProfileView = {
       </div>
     `;
 
-    document.getElementById('back-btn').addEventListener('click', () => Router.go('/'));
+    document.getElementById('back-btn').addEventListener('click', () => Router.back('/'));
     const adminLinkBtn = document.getElementById('admin-link-btn');
     if (adminLinkBtn) adminLinkBtn.addEventListener('click', () => Router.go('/admin'));
     document.getElementById('profile-messages-btn').addEventListener('click', () => Router.go('/messages'));
@@ -184,25 +184,42 @@ const ProfileView = {
           const btn = document.createElement('button');
           btn.className = 'avatar-option' + (src === currentPic ? ' selected' : '');
           btn.title = stages.length > 1 ? `${c.name} — ${s.label}` : c.name;
+          btn.type = 'button';
+          btn.setAttribute('aria-label', btn.title);
+          btn.setAttribute('aria-pressed', String(src === currentPic));
 
           // Monogram under the portrait — shows when the file is missing.
           PosterArt.charMount(btn, c, s.image);
 
           btn.onclick = async () => {
-            const res = await fetch(`${API}/profile/picture`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${Auth.getToken()}`
-              },
-              body: JSON.stringify({ profilePicture: src })
-            });
-            const data = await res.json();
-            if (data.error) return;
+            // A failed save used to do nothing at all (and a network error
+            // threw out of the handler) — now it says so and keeps the old pick.
+            if (btn.getAttribute('aria-busy') === 'true') return;
+            btn.setAttribute('aria-busy', 'true');
+            try {
+              const res = await fetch(`${API}/profile/picture`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${Auth.getToken()}`
+                },
+                body: JSON.stringify({ profilePicture: src })
+              });
+              let data = null;
+              try { data = await res.json(); } catch (_) {}
+              if (!res.ok || !data || data.error) throw new Error((data && data.error) || `HTTP ${res.status}`);
 
-            setAvatar(src, usernameEl.textContent);
-            pickerGrid.querySelectorAll('.avatar-option').forEach(b => b.classList.remove('selected'));
-            btn.classList.add('selected');
+              setAvatar(src, usernameEl.textContent);
+              pickerGrid.querySelectorAll('.avatar-option').forEach(b => { b.classList.remove('selected'); b.setAttribute('aria-pressed', 'false'); });
+              btn.classList.add('selected');
+              btn.setAttribute('aria-pressed', 'true');
+              if (typeof PostComposer !== 'undefined' && PostComposer.setProfilePic) PostComposer.setProfilePic(src);
+              toast('Profile picture updated.', 'success');
+            } catch (e) {
+              toast('Couldn’t change your picture — try again.', 'error');
+            } finally {
+              btn.removeAttribute('aria-busy');
+            }
           };
 
           pickerGrid.appendChild(btn);
@@ -215,7 +232,11 @@ const ProfileView = {
       const willOpen = pickerWrap.hidden;
       pickerWrap.hidden = !willOpen;
       changeBtn.textContent = willOpen ? '✕' : '✎';
-      if (willOpen) pickerWrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      changeBtn.setAttribute('aria-expanded', String(willOpen));
+      const label = willOpen ? 'Close picture picker' : 'Change picture';
+      changeBtn.setAttribute('aria-label', label);
+      changeBtn.title = label;
+      if (willOpen) pickerWrap.scrollIntoView({ behavior: smoothBehavior(), block: 'nearest' });
     });
 
     // Load profile data

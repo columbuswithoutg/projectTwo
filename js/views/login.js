@@ -14,19 +14,19 @@ const LoginView = {
   title: 'MCU Tracker — Login',
 
   mount(container) {
+    // Where to go after signing in: the page the auth gate redirected from
+    // (?next=, kept in-app by UxLogic.safeNextUrl), else the watch order.
+    const nextUrl = UxLogic.safeNextUrl(new URLSearchParams(location.search).get('next')) || '/';
+
     // If already logged in, skip to app
     if (Auth.isLoggedIn()) {
-      Router.go('/');
+      Router.go(nextUrl, { replace: true });
       return;
     }
 
-    // Reset app state flags so next login fetches fresh data.
-    // resetLocal fires listeners so layout/renderer caches invalidate for
-    // the incoming account (otherwise the new login inherits the previous
-    // user's cached map until a hard refresh).
-    AppView._initialized = false;
-    Walkers.resetInit();
-    state.resetLocal();
+    // Landing here means no session: forget whatever the previous account
+    // left in memory / storage so the next login starts clean.
+    Auth.resetClientState();
 
     container.innerHTML = `
       <div class="auth-modal-static">
@@ -36,15 +36,22 @@ const LoginView = {
             <h1>MCU Watch Order</h1>
             <p class="auth-subtitle">Track your Marvel journey</p>
 
-            <div class="auth-tabs">
-              <button class="auth-tab active" data-tab="login">Login</button>
-              <button class="auth-tab" data-tab="register">Register</button>
+            <div class="auth-tabs" role="tablist" aria-label="Log in or register">
+              <button class="auth-tab active" type="button" role="tab" aria-selected="true" data-tab="login">Log in</button>
+              <button class="auth-tab" type="button" role="tab" aria-selected="false" data-tab="register">Register</button>
             </div>
 
-            <input id="auth-username" type="text" placeholder="Username" />
-            <input id="auth-password" type="password" placeholder="Password" />
-            <p class="auth-error" id="auth-error"></p>
-            <button id="auth-submit">Login</button>
+            <form class="auth-form" id="auth-form" novalidate>
+              <label class="visually-hidden" for="auth-username">Username</label>
+              <input id="auth-username" name="username" type="text" placeholder="Username"
+                     autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"
+                     maxlength="30" aria-describedby="auth-error" />
+              <label class="visually-hidden" for="auth-password">Password</label>
+              <input id="auth-password" name="password" type="password" placeholder="Password"
+                     autocomplete="current-password" aria-describedby="auth-error" />
+              <p class="auth-error" id="auth-error" role="status" aria-live="polite"></p>
+              <button id="auth-submit" type="submit">Log in</button>
+            </form>
           </div>
 
           <div class="auth-success-panel" id="auth-success-panel" hidden>
@@ -65,8 +72,10 @@ const LoginView = {
     const usernameEl = document.getElementById('auth-username');
     const passwordEl = document.getElementById('auth-password');
     const submitBtn = document.getElementById('auth-submit');
+    const form = document.getElementById('auth-form');
     const errorEl = document.getElementById('auth-error');
     const tabs = document.querySelectorAll('.auth-tab');
+    let inFlight = false;   // Enter twice must not send two requests
 
     const FADE_MS = 260;
     const HOLD_MS = 900;
@@ -76,8 +85,15 @@ const LoginView = {
 
     function setMode(mode, opts = {}) {
       currentMode = mode;
-      tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === mode));
-      submitBtn.textContent = mode === 'login' ? 'Login' : 'Create Account';
+      tabs.forEach(t => {
+        const on = t.dataset.tab === mode;
+        t.classList.toggle('active', on);
+        t.setAttribute('aria-selected', String(on));
+      });
+      submitBtn.textContent = mode === 'login' ? 'Log in' : 'Create account';
+      // Lets password managers offer to save a NEW password on register and
+      // fill the saved one on login.
+      passwordEl.setAttribute('autocomplete', mode === 'login' ? 'current-password' : 'new-password');
       if (!opts.preserveError) hideError();
     }
 
@@ -92,6 +108,8 @@ const LoginView = {
     }
     function hideError() {
       errorEl.classList.remove('visible', 'success');
+      usernameEl.removeAttribute('aria-invalid');
+      passwordEl.removeAttribute('aria-invalid');
     }
 
     // Animated success beat: fade the form out, show a checkmark panel with
@@ -151,16 +169,20 @@ const LoginView = {
     }
 
     const doSubmit = async () => {
+      if (inFlight) return;
       const username = usernameEl.value.trim();
       const password = passwordEl.value;
 
       if (!username || !password) {
-        showError('Please fill in all fields.');
+        showError('Please fill in both fields.');
+        (username ? passwordEl : usernameEl).setAttribute('aria-invalid', 'true');
+        (username ? passwordEl : usernameEl).focus();
         return;
       }
 
+      inFlight = true;
       submitBtn.disabled = true;
-      submitBtn.textContent = 'Please wait...';
+      submitBtn.textContent = 'Please wait…';
 
       try {
         const res = await fetch(`${API}/auth/${currentMode}`, {
@@ -169,34 +191,39 @@ const LoginView = {
           body: JSON.stringify({ username, password })
         });
 
-        const data = await res.json();
+        let data = null;
+        try { data = await res.json(); } catch (_) {}
 
-        if (data.error) {
-          showError(data.error);
+        if (!res.ok || !data || data.error) {
+          showError(UxLogic.friendlyAuthError(data, res.status));
+          if (res.status === 401) { usernameEl.setAttribute('aria-invalid', 'true'); passwordEl.setAttribute('aria-invalid', 'true'); }
+          passwordEl.focus();
           return;
         }
 
         if (currentMode === 'login') {
+          // Clean slate before this account's token lands (a different
+          // account's leftovers may still be in memory in this tab).
+          Auth.resetClientState();
           localStorage.setItem('mcu_token', data.token);
           // Start fetching the 3D character models in the background.
           if (window.HumanoidPrefetch) HumanoidPrefetch.warm();
           localStorage.setItem('mcu_username', data.username);
-          Router.go('/');
+          Router.go(nextUrl, { replace: true });
         } else {
           await playSuccessTransition(username);
         }
       } catch (e) {
-        showError('Server error. Is the server running?');
+        showError(UxLogic.friendlyAuthError(null, 0));
       } finally {
+        inFlight = false;
         submitBtn.disabled = false;
-        submitBtn.textContent = currentMode === 'login' ? 'Login' : 'Create Account';
+        submitBtn.textContent = currentMode === 'login' ? 'Log in' : 'Create account';
       }
     };
 
-    submitBtn.addEventListener('click', doSubmit);
-    passwordEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') doSubmit();
-    });
+    // One submit path: the button, Enter in either field.
+    form.addEventListener('submit', (e) => { e.preventDefault(); doSubmit(); });
   },
 
   unmount() {

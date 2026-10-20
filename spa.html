@@ -74,8 +74,10 @@
   </div>
   <span class="visually-hidden" role="status" id="boot-splash-status">Loading MCU Tracker…</span>
 
-  <!-- SPA root — views mount here -->
+  <!-- SPA root — views mount here. aria-busy + the bar below come from
+       js/router.js while a lazy route's chunk downloads. -->
   <div id="app"></div>
+  <div id="route-progress" role="progressbar" aria-label="Loading page" aria-hidden="true"><span></span></div>
 
   <!--
     THIS FILE IS A TEMPLATE. scripts/build.mjs fills the two build: markers

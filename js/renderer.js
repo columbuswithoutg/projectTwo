@@ -105,6 +105,23 @@ class MapRenderer {
     this.nodesContainer.addEventListener("click", handlePinClick);
     // Shelf pins share the same click-to-open-popup behavior as map pins.
     if (this.shelfTrack) this.shelfTrack.addEventListener("click", handlePinClick);
+
+    // Keyboard: pins are buttons (NodeFactory). Enter / Space opens one; a
+    // pin that gets focus off-screen pans the camera to it — the map moves
+    // by transform, so the browser's own scroll-into-view (which only shifts
+    // the overflow box) is undone first.
+    activateOnKey(this.nodesContainer, ".node");
+    if (this.shelfTrack) activateOnKey(this.shelfTrack, ".node");
+    const onFocusIn = (e) => {
+      const node = e.target && e.target.closest ? e.target.closest(".node") : null;
+      if (!node || !this.wrapper) return;
+      this.wrapper.scrollLeft = 0;
+      this.wrapper.scrollTop = 0;
+      const project = state.byId.get(node.dataset.id);
+      const loc = project && project.location && typeof LOCATION_BY_ID !== 'undefined' ? LOCATION_BY_ID.get(project.location) : null;
+      if (loc) this._setCamera(this.worldZoom, loc.worldX, loc.worldY, false);
+    };
+    this.nodesContainer.addEventListener("focusin", onFocusIn);
   }
 
   setupNavigationControls() {

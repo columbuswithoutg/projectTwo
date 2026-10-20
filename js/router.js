@@ -62,8 +62,21 @@ const Router = (() => {
   function init(containerId) {
     appContainer = document.getElementById(containerId);
 
+    // Every in-app history entry carries its position (history.state.idx), so
+    // back() can tell "there is an in-app page behind us" from "this tab
+    // started here" — history.length counts other sites too.
+    const st = history.state;
+    _idx = (st && Number.isInteger(st.idx)) ? st.idx : 0;
+    if (!st || !Number.isInteger(st.idx)) {
+      try { history.replaceState({ idx: 0 }, '', location.href); } catch (_) {}
+    }
+
     // Handle browser back/forward
-    window.addEventListener('popstate', () => navigate(location.pathname + location.search + location.hash, false));
+    window.addEventListener('popstate', () => {
+      const s = history.state;
+      _idx = (s && Number.isInteger(s.idx)) ? s.idx : 0;
+      navigate(location.pathname + location.search + location.hash, false);
+    });
 
     // Reload / tab close with unsaved work: the browser's own "Leave site?"
     // prompt. Views opt in with isDirty().
@@ -92,6 +105,38 @@ const Router = (() => {
   // The full URL (path + query + hash) of the mounted view — put back in the
   // address bar when a Back/Forward is vetoed by the leave guard.
   let currentUrl = null;
+  // Position of the current entry in this tab's in-app history (see init).
+  let _idx = 0;
+
+  // Loading state while a lazy route downloads its chunk: #app[aria-busy]
+  // plus the thin top bar (#route-progress, spa.html), shown only after
+  // 150 ms so a cached chunk never flashes it.
+  let _loading = 0;
+  let _barTimer = null;
+  function _setLoading(on) {
+    _loading = Math.max(0, _loading + (on ? 1 : -1));
+    const busy = _loading > 0;
+    if (appContainer) appContainer.setAttribute('aria-busy', String(busy));
+    clearTimeout(_barTimer);
+    const bar = document.getElementById('route-progress');
+    if (!bar) return;
+    if (busy) {
+      _barTimer = setTimeout(() => { bar.classList.add('active'); bar.setAttribute('aria-hidden', 'false'); }, 150);
+    } else {
+      bar.classList.remove('active');
+      bar.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  // Resolves once the FIRST view has mounted (or the first navigation gave
+  // up) — boot.js keeps the splash up until then, so a direct load of a lazy
+  // route (/world, /admin) shows the splash instead of a blank page while
+  // its chunk downloads.
+  let _firstResolve = null;
+  const firstMount = new Promise((resolve) => { _firstResolve = resolve; });
+  function _firstDone() {
+    if (_firstResolve) { _firstResolve(); _firstResolve = null; }
+  }
 
   // opts.force skips the leave guard (a view leaving after its own save).
   async function navigate(path, pushState = true, opts = {}) {
@@ -123,7 +168,7 @@ const Router = (() => {
       if (!ok) {
         // Back/Forward already moved the address bar — put the page we stayed on back.
         if (!pushState && currentUrl && location.pathname + location.search + location.hash !== currentUrl) {
-          history.pushState(null, '', currentUrl);
+          history.pushState({ idx: ++_idx }, '', currentUrl);
         }
         return;
       }
@@ -142,9 +187,13 @@ const Router = (() => {
     // than a public route, force-redirect to /login. Use replaceState (not
     // push) so the unauthorized URL doesn't sit in the browser history —
     // the back button won't take them back into the gated route.
+    // The page they asked for travels along as ?next= so the login view can
+    // send them back to it (js/ux-logic.js safeNextUrl keeps it in-app).
     let redirectedToLogin = false;
+    let loginUrl = '/login';
     const authReady = typeof Auth !== 'undefined';
     if (authReady && !PUBLIC_ROUTES.has(path) && !Auth.isLoggedIn()) {
+      if (fullUrl !== '/') loginUrl += '?next=' + encodeURIComponent(fullUrl);
       path = '/login';
       redirectedToLogin = true;
     }
@@ -158,9 +207,11 @@ const Router = (() => {
       if (matched) { entry = matched.route.view; params = matched.params; }
     }
     if (!entry) {
-      // Last resort: go to /
+      // Last resort: go to / (replacing the unknown URL, so Back doesn't loop).
       if (path !== '/' && exactRoutes['/']) {
-        navigate('/', pushState);
+        navigate('/', true, { replace: true });
+      } else {
+        _firstDone();
       }
       return;
     }
@@ -170,12 +221,16 @@ const Router = (() => {
     // The result is memoized onto the route so the await happens once.
     let view = entry;
     if (typeof entry === 'function') {
+      _setLoading(true);
       try {
         view = await entry();
       } catch (err) {
         console.error('[router] chunk load failed for', path, err);
+        _firstDone();
         _reloadOnce(fullUrl);
         return;
+      } finally {
+        _setLoading(false);
       }
       if (seq !== navSeq) return;   // superseded while the chunk downloaded
       if (matched) matched.route.view = view; else exactRoutes[path] = view;
@@ -191,12 +246,14 @@ const Router = (() => {
     if (sameView && sameParams && sameSearch && pushState) return;
 
     if (redirectedToLogin) {
-      // Rewrite the URL to /login without a new history entry.
-      if (location.pathname !== '/login') {
-        history.replaceState(null, '', '/login');
+      // Rewrite the URL to /login (+ ?next=) without a new history entry.
+      if (location.pathname + location.search !== loginUrl) {
+        history.replaceState({ idx: _idx }, '', loginUrl);
       }
+    } else if (pushState && opts.replace) {
+      history.replaceState({ idx: _idx }, '', fullUrl);
     } else if (pushState) {
-      history.pushState(null, '', fullUrl);
+      history.pushState({ idx: ++_idx }, '', fullUrl);
     }
 
     // A dialog must not float over the next page (a project popup left open
@@ -215,9 +272,10 @@ const Router = (() => {
     // exact-route views ignore the second argument).
     currentView = view;
     currentView._params = params;
-    currentUrl = redirectedToLogin ? '/login' : fullUrl;
+    currentUrl = redirectedToLogin ? loginUrl : fullUrl;
     document.title = view.title || 'MCU Tracker';
     view.mount(appContainer, params);
+    _firstDone();
   }
 
   // A chunk URL that fails to load usually means a deploy happened while
@@ -245,9 +303,24 @@ const Router = (() => {
   }
 
   // Helper for programmatic navigation (replaces window.location.href).
-  // opts.force skips the current view's leave guard.
+  // opts.force skips the current view's leave guard; opts.replace swaps the
+  // current history entry instead of adding one.
   function go(path, opts) {
     return navigate(path, true, opts || {});
+  }
+
+  // "← Back" buttons: the previous in-app page when there is one, otherwise
+  // `fallback` (a page opened in a new tab has nothing behind it). Replaces
+  // the entry so Back from the fallback doesn't return to the page we left.
+  function back(fallback) {
+    if (_idx > 0) { history.back(); return Promise.resolve(); }
+    return navigate(fallback || '/', true, { replace: true });
+  }
+
+  // Does the mounted view hold unsaved work? (The service-worker update
+  // prompt asks before reloading.)
+  function currentIsDirty() {
+    try { return !!(currentView && currentView.isDirty && currentView.isDirty()); } catch (_) { return false; }
   }
 
   // Shared "Discard changes?" for views' canLeave(): resolves true to leave.
@@ -262,5 +335,5 @@ const Router = (() => {
     });
   }
 
-  return { register, init, navigate, go, confirmLeave };
+  return { register, init, navigate, go, back, confirmLeave, firstMount, currentIsDirty, isLoading: () => _loading > 0 };
 })();

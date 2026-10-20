@@ -14,7 +14,7 @@ const AppView = {
 
     container.innerHTML = `
       <header id="header">
-        <button id="nav-toggle">☰</button>
+        ${NavDrawer.toggleHtml()}
 
         <div class="view-tabs" role="tablist" aria-label="View mode">
           <button class="view-tab" data-route="/" role="tab" aria-selected="false"><span class="vt-long">Watch </span>Order</button>
@@ -23,42 +23,8 @@ const AppView = {
           <button class="view-tab" data-route="/world" role="tab" aria-selected="false">World</button>
         </div>
 
-        <div id="nav-drawer">
-          <div id="nav-drawer-overlay"></div>
-          <div id="nav-drawer-content">
-            <button id="close-drawer">✕</button>
-            <nav>
-              <div class="nav-section">
-                <div class="nav-section-title">Navigate</div>
-                <button id="world-btn">World</button>
-                <button id="home-btn">Home</button>
-                <button id="profile-btn">Profile</button>
-                <button id="characters-btn">Characters</button>
-                <button id="map-btn">Universe Map</button>
-              </div>
-              <div class="nav-section">
-                <div class="nav-section-title">You</div>
-                <button id="nav-character-btn">Customize character</button>
-                <button id="friends-btn">Friends</button>
-                <button id="messages-btn">Messages <span class="nav-badge" data-unread-badge hidden></span></button>
-                <button id="goals-btn">Goals</button>
-                <button id="report-btn">Report a bug</button>
-              </div>
-              <div class="nav-section">
-                <div class="nav-section-title">Walkers</div>
-                <button id="walkers-btn">Walkers</button>
-                <button id="fights-toggle-btn">Fights: On</button>
-                <button id="dialogues-toggle-btn">Dialogues: On</button>
-              </div>
-              <div class="nav-section">
-                <div class="nav-section-title">Data</div>
-                <button id="clear-progress">Clear Progress</button>
-                <button id="logout-btn">Logout</button>
-              </div>
-            </nav>
-          </div>
-        </div>
-        <button id="header-profile-btn" title="Profile">
+        ${NavDrawer.html('full')}
+        <button id="header-profile-btn" title="Profile" aria-label="Profile">
           <img id="header-avatar" src="" alt="" style="display:none" />
           <span id="header-avatar-initials">👤</span>
         </button>
@@ -111,32 +77,19 @@ const AppView = {
     // Re-bind renderer to fresh DOM elements
     renderer.init();
 
-    // Drawer
-    const drawer = document.getElementById('nav-drawer');
-    // Re-read the live values every time the drawer opens — the server's flag
-    // defaults (/api/config/public → Walkers.applyFlagDefaults) arrive after
-    // mount, so a label rendered once can disagree with the real setting and
-    // make the first tap look like a no-op.
+    // Drawer (js/nav-drawer.js). Re-read the live toggle values every time it
+    // opens — the server's flag defaults (/api/config/public →
+    // Walkers.applyFlagDefaults) arrive after mount, so a label rendered
+    // once can disagree with the real setting and make the first tap look
+    // like a no-op.
     const refreshToggleLabels = () => {
       if (typeof Walkers === 'undefined') return;
       const f = document.getElementById('fights-toggle-btn');
-      if (f) f.textContent = `Fights: ${Walkers.getFightsEnabled() ? 'On' : 'Off'}`;
+      if (f) { f.textContent = `Fights: ${Walkers.getFightsEnabled() ? 'On' : 'Off'}`; f.setAttribute('aria-pressed', String(!!Walkers.getFightsEnabled())); }
       const d = document.getElementById('dialogues-toggle-btn');
-      if (d) d.textContent = `Dialogues: ${Walkers.getDialoguesEnabled() ? 'On' : 'Off'}`;
+      if (d) { d.textContent = `Dialogues: ${Walkers.getDialoguesEnabled() ? 'On' : 'Off'}`; d.setAttribute('aria-pressed', String(!!Walkers.getDialoguesEnabled())); }
     };
-    const openDrawer = () => { refreshToggleLabels(); drawer.classList.add('open'); };
-    const closeDrawer = () => drawer.classList.remove('open');
-
-    document.getElementById('nav-toggle').addEventListener('click', openDrawer);
-    document.getElementById('close-drawer').addEventListener('click', closeDrawer);
-    document.getElementById('nav-drawer-overlay').addEventListener('click', closeDrawer);
-
-    // Navigation — SPA routes instead of .html redirects
-    document.getElementById('world-btn')?.addEventListener('click', () => Router.go('/world'));
-    document.getElementById('home-btn')?.addEventListener('click', () => Router.go('/home'));
-    document.getElementById('profile-btn')?.addEventListener('click', () => Router.go('/profile'));
-    document.getElementById('characters-btn')?.addEventListener('click', () => Router.go('/characters'));
-    document.getElementById('map-btn')?.addEventListener('click', () => Router.go('/map'));
+    NavDrawer.wire(document, { onOpen: refreshToggleLabels });
 
     // View-mode tab toggle (Watch Order ↔ World) — the two focal surfaces.
     // On /map neither is active; the tabs act as quick jumps to a focal view.
@@ -145,15 +98,6 @@ const AppView = {
         const route = tab.dataset.route;
         if (route) Router.go(route);
       });
-    });
-
-    // Close drawer after any nav button
-    // Auto-close on tap — but NOT for the in-place toggles. Fights/Dialogues
-    // flip a setting and rewrite their own label; closing the drawer hid that
-    // label change, so on mobile the buttons looked like they did nothing.
-    document.querySelectorAll('#nav-drawer-content nav button').forEach(btn => {
-      if (btn.id === 'fights-toggle-btn' || btn.id === 'dialogues-toggle-btn') return;
-      btn.addEventListener('click', closeDrawer);
     });
 
     $("#clear-progress")?.addEventListener("click", async () => {
@@ -168,24 +112,11 @@ const AppView = {
       renderer.setCenterTarget(CONFIG.START_NODE_ID);
     });
 
-    $("#logout-btn")?.addEventListener("click", () => {
-      // Flush any pending debounced progress save before we tear down auth —
-      // otherwise the user's last click never reaches the server.
-      state.flushPersist?.();
-      localStorage.removeItem("mcu_token");
-      localStorage.removeItem("mcu_username");
-      // Reset init flags so next login re-fetches data
-      AppView._initialized = false;
-      WatchOrderView._initialized = false;
-      Walkers.resetInit();
-      // resetLocal fires listeners → invalidates layout cache → next user
-      // doesn't inherit the previous user's map state.
-      state.resetLocal();
-      Router.go('/login');
-    });
+    // One logout path for the whole app (js/auth.js): flushes the pending
+    // progress save, signs out everywhere, clears every per-user cache.
+    $("#logout-btn")?.addEventListener("click", () => Auth.logout());
 
     $("#friends-btn")?.addEventListener("click", () => showFriendsPanel());
-    $("#messages-btn")?.addEventListener("click", () => Router.go('/messages'));
     $("#report-btn")?.addEventListener("click", () => showReportDialog());
     MessagesBadge.apply();
     $("#goals-btn")?.addEventListener("click", () => showGoalsPanel());

@@ -103,18 +103,24 @@ Router.init('app');
 // view paints the cached count into its own drawer via MessagesBadge.apply().
 MessagesBadge.start();
 
-// First view is mounted — fade the static boot splash out and drop it.
-// The setTimeout is a safety net in case transitionend never fires
+// Fade the static boot splash out once the FIRST view has mounted. For an
+// eager route that is right now; for a direct load of a lazy route (/world,
+// /home, /customize, /admin) it waits for the chunk, so the page is never
+// blank meanwhile. 15 s is the safety net if the first navigation never
+// settles; the inner setTimeout covers transitionend never firing
 // (display:none ancestors, reduced-motion transition removal, etc.).
-const bootSplash = document.getElementById('boot-splash');
-if (bootSplash) {
-  bootSplash.classList.add('hide');
-  bootSplash.addEventListener('transitionend', () => bootSplash.remove(), { once: true });
-  setTimeout(() => { if (bootSplash.parentNode) bootSplash.remove(); }, 600);
+function hideBootSplash() {
+  const bootSplash = document.getElementById('boot-splash');
+  if (bootSplash && bootSplash.parentNode) {
+    bootSplash.classList.add('hide');
+    bootSplash.addEventListener('transitionend', () => bootSplash.remove(), { once: true });
+    setTimeout(() => { if (bootSplash.parentNode) bootSplash.remove(); }, 600);
+  }
+  // The a11y loading announcement lives outside the aria-hidden splash —
+  // drop it too so screen readers don't keep a stale "Loading…" status.
+  document.getElementById('boot-splash-status')?.remove();
 }
-// The a11y loading announcement lives outside the aria-hidden splash —
-// drop it too so screen readers don't keep a stale "Loading…" status.
-document.getElementById('boot-splash-status')?.remove();
+Promise.race([Router.firstMount, new Promise(r => setTimeout(r, 15000))]).then(hideBootSplash);
 
 // Background content refresh. Only the pure content views remount — the
 // 3D views (/world, /home) and /customize keep their session and pick up

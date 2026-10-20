@@ -23,6 +23,7 @@ const HomeEditView = (() => {
   // ── module state (per mount) ──
   let _container = null;
   let _layout = [];             // [{ projectId, gx, gy }] — mutable working copy
+  let _initialJson = null;      // _layout as loaded, for the unsaved-changes guard
   let _maxRooms = 0;
   let _watchedCount = 0;
   let _watchedIds = [];         // all projectIds the user has watched
@@ -50,13 +51,14 @@ const HomeEditView = (() => {
         <aside class="pg-edit-panel" id="pg-edit-panel"></aside>
       </div>
     `;
-    document.getElementById('pg-edit-back').addEventListener('click', () => Router.go('/home'));
+    document.getElementById('pg-edit-back').addEventListener('click', () => Router.back('/home'));
     _load();
   }
 
   function unmount() {
     _container = null;
     _layout = [];
+    _initialJson = null;
     _maxRooms = 0;
     _watchedCount = 0;
     _watchedIds = [];
@@ -87,6 +89,7 @@ const HomeEditView = (() => {
     _layout = (layout.rooms || []).map(r => ({
       projectId: r.projectId, gx: r.gx | 0, gy: r.gy | 0
     }));
+    _initialJson = _loadFailed ? null : JSON.stringify(_layout);
     // Server is the source of truth for watched ids — works even when the
     // user lands directly on /home/edit without first visiting a view that
     // calls state.load(). Falls back to state.data if the server didn't
@@ -219,7 +222,7 @@ const HomeEditView = (() => {
       const url = _imageUrl(project);
       const x = xOf(r.gx), y = yOf(r.gy);
       const title = project ? (project.title || r.projectId) : r.projectId;
-      svg += `<g class="pg-edit-room" data-action="room" data-gx="${r.gx}" data-gy="${r.gy}">`;
+      svg += `<g class="pg-edit-room" data-action="room" data-gx="${r.gx}" data-gy="${r.gy}" tabindex="0" role="button" aria-label="Room: ${_escape(title)}">`;
       svg += `<rect x="${x + 4}" y="${y + 4}" width="${CELL - 8}" height="${CELL - 8}" rx="6" fill="#1a1d2c" stroke="rgba(255,255,255,0.18)" stroke-width="1.5" />`;
       if (url) {
         svg += `<image href="${url}" x="${x + 6}" y="${y + 6}" width="${CELL - 12}" height="${CELL - 12}" preserveAspectRatio="xMidYMid slice" />`;
@@ -234,7 +237,7 @@ const HomeEditView = (() => {
     // Slot "+" buttons.
     for (const c of _slotCells()) {
       const x = xOf(c.gx), y = yOf(c.gy);
-      svg += `<g class="pg-edit-slot" data-action="slot" data-gx="${c.gx}" data-gy="${c.gy}">`;
+      svg += `<g class="pg-edit-slot" data-action="slot" data-gx="${c.gx}" data-gy="${c.gy}" tabindex="0" role="button" aria-label="Add a room here">`;
       svg += `<rect x="${x + 8}" y="${y + 8}" width="${CELL - 16}" height="${CELL - 16}" rx="10" fill="rgba(201,162,39,0.08)" stroke="rgba(201,162,39,0.55)" stroke-width="2" stroke-dasharray="6 6" />`;
       svg += `<text x="${x + CELL / 2}" y="${y + CELL / 2 + 12}" text-anchor="middle" fill="#dca960" font-size="36" font-family="system-ui, sans-serif">+</text>`;
       svg += `</g>`;
@@ -245,6 +248,7 @@ const HomeEditView = (() => {
 
     // Event delegation on the grid.
     main.querySelector('.pg-edit-grid').addEventListener('click', _onGridClick);
+    activateOnKey(main.querySelector('.pg-edit-grid'), '[data-action]');   // Enter / Space on a room or slot
   }
 
   function _renderPanel() {
@@ -300,7 +304,7 @@ const HomeEditView = (() => {
       : `<div class="pg-edit-error" id="pg-edit-error"></div>`;
 
     panel.innerHTML = html;
-    document.getElementById('pg-edit-cancel').addEventListener('click', () => Router.go('/home'));
+    document.getElementById('pg-edit-cancel').addEventListener('click', () => Router.back('/home'));
     document.getElementById('pg-edit-save').addEventListener('click', _save);
     const retry = document.getElementById('pg-edit-retry');
     if (retry) retry.addEventListener('click', () => { retry.disabled = true; retry.textContent = 'Loading…'; _load(); });
@@ -380,7 +384,6 @@ const HomeEditView = (() => {
           <button class="pg-modal-close" type="button" aria-label="Close">✕</button>
         </header>
         <div class="pg-modal-body">
-          <p class="pg-edit-sub">Position: (${gx}, ${gy})</p>
           ${removable
             ? `<button class="pg-btn pg-btn-danger" type="button" id="pg-room-remove">Remove room</button>`
             : `<button class="pg-btn" type="button" disabled title="Removing this room would orphan others">Remove room (would orphan)</button>`}
@@ -429,7 +432,8 @@ const HomeEditView = (() => {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      Router.go('/home');
+      _initialJson = JSON.stringify(_layout);   // saved — leaving no longer asks
+      Router.go('/home', { force: true });
     } catch (e) {
       _saving = false;
       _renderPanel();
@@ -448,5 +452,14 @@ const HomeEditView = (() => {
     return s.length <= n ? s : s.slice(0, n - 1) + '…';
   }
 
-  return { mount, unmount, title: 'Edit Home — MCU Tracker' };
+  // Router leave guard: moving a room and then pressing Back, Cancel or a
+  // drawer link used to drop the change silently.
+  function isDirty() {
+    return !!_container && !_saving && _initialJson != null && JSON.stringify(_layout) !== _initialJson;
+  }
+  function canLeave() {
+    return !isDirty() || Router.confirmLeave('Your room layout hasn’t been saved.');
+  }
+
+  return { mount, unmount, isDirty, canLeave, title: 'Edit Home — MCU Tracker' };
 })();

@@ -55,7 +55,9 @@ const MessagesView = (() => {
         <button type="button" class="msg-new-btn" id="msg-new-btn">＋ New message</button>
       </div>
       <form class="msg-compose" id="msg-compose" hidden>
-        <input type="text" id="msg-compose-to" placeholder="Username" maxlength="${L().C.USERNAME_MAX}" autocomplete="off" />
+        <label class="visually-hidden" for="msg-compose-to">To (username)</label>
+        <input type="text" id="msg-compose-to" placeholder="Username" maxlength="${L().C.USERNAME_MAX}" autocomplete="off" autocapitalize="none" spellcheck="false" />
+        <label class="visually-hidden" for="msg-compose-text">Message</label>
         <textarea id="msg-compose-text" rows="3" placeholder="Write a message…" maxlength="${L().C.DM_MAX_LEN}"></textarea>
         <div class="msg-compose-actions">
           <button type="button" class="msg-btn msg-btn-ghost" id="msg-compose-cancel">Cancel</button>
@@ -76,7 +78,7 @@ const MessagesView = (() => {
       const to = q('#msg-compose-to').value.trim();
       const text = q('#msg-compose-text').value;
       const ok = await send(to, text);
-      if (ok) openThread({ username: ok.to?.username || to });
+      if (ok) Router.go('/messages?with=' + encodeURIComponent(ok.to?.username || to));
     });
 
     try {
@@ -113,10 +115,12 @@ const MessagesView = (() => {
           ${c.unread ? `<span class="msg-unread" aria-label="${c.unread} unread">${c.unread > 99 ? '99+' : c.unread}</span>` : ''}
         </button>`;
     }).join('');
+    // Threads are real URLs (/messages?with=…), so the browser's Back
+    // returns to the list and a thread can be shared or reloaded.
     list.querySelectorAll('.msg-conv').forEach(btn => {
       btn.addEventListener('click', () => {
-        if (btn.dataset.system) openThread({ system: true });
-        else if (btn.dataset.user) openThread({ username: btn.dataset.user });
+        if (btn.dataset.system) Router.go('/messages?admin=1');
+        else if (btn.dataset.user) Router.go('/messages?with=' + encodeURIComponent(btn.dataset.user));
       });
     });
   }
@@ -140,12 +144,13 @@ const MessagesView = (() => {
         ${target.system
           ? `<p class="msg-system-note">You can reply to the admin from the report itself on <a href="/reports" data-link>My reports</a>.</p>`
           : `<form class="msg-form" id="msg-form">
+               <label class="visually-hidden" for="msg-text">Message ${esc(title)}</label>
                <textarea id="msg-text" rows="2" placeholder="Message ${esc(title)}…" maxlength="${L().C.DM_MAX_LEN}"></textarea>
                <button type="submit" class="msg-btn">Send</button>
              </form>`}
       </div>
     `;
-    q('#msg-back').addEventListener('click', showList);
+    q('#msg-back').addEventListener('click', () => Router.back('/messages'));
     q('#msg-earlier').addEventListener('click', () => loadThread({ older: true }));
     const form = q('#msg-form');
     if (form) {
@@ -245,7 +250,7 @@ const MessagesView = (() => {
       </header>
       <main id="messages-wrapper"><div id="messages-main" class="msg-column"></div></main>
     `;
-    container.querySelector('#back-btn').addEventListener('click', () => Router.go('/'));
+    container.querySelector('#back-btn').addEventListener('click', () => Router.back('/'));
 
     const params = new URLSearchParams(location.search);
     const withUser = params.get('with');

@@ -120,3 +120,16 @@
   border-color: rgba(226, 54, 54, 0.4) !important;
   color: #ff6060 !important;
 }
+
+/* Closed = inert (js/nav-drawer.js): nothing inside it can be tabbed to or
+   read, and it is hidden outright — it used to just sit off-screen with all
+   its buttons still in the Tab order. */
+#nav-drawer[inert] {
+  visibility: hidden;
+}
+
+#nav-toggle:focus-visible,
+#close-drawer:focus-visible {
+  outline: 2px solid var(--highlight);
+  outline-offset: 2px;
+}

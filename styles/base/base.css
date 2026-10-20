@@ -75,3 +75,17 @@ body {
   scrollbar-width: thin;
   scrollbar-color: rgba(var(--ink), 0.28) transparent;
 }
+
+/* Keyboard targets that aren't buttons: chart cells, map pins, goal rows
+   (role="button" + tabindex, activated via activateOnKey in js/utils.js). */
+.flow-cell:focus-visible,
+.node[role="button"]:focus-visible,
+.goal-req[role="button"]:focus-visible {
+  outline: 3px solid var(--highlight);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+.flow-cell[aria-disabled="true"]:focus-visible,
+.node[aria-disabled="true"]:focus-visible {
+  outline-style: dashed;
+}

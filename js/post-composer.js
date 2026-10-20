@@ -411,9 +411,13 @@ const PostComposer = (() => {
     postBtns.forEach(b => b.addEventListener('click', submit));
 
     // ---- Open / close ----
-    const prevFocus = document.activeElement;
-    function close(result = null, { saved = false } = {}) {
-      if (!overlay.isConnected) return;
+    // On the shared modal stack (wireModalDismiss): Escape closes only the
+    // composer (not a popup underneath), Tab stays inside, focus goes back
+    // to the trigger, and a route change closes it with every other dialog
+    // (it used to float over the next page).
+    let pending = { result: null, saved: false };
+    function teardown() {
+      const { result, saved } = pending;
       if (!saved && mode === 'complete') {
         // Keep what they wrote for next time (finished uploads only).
         const kept = media.filter(m => m.status === 'done');
@@ -423,46 +427,39 @@ const PostComposer = (() => {
       } else {
         media.forEach(m => { if (m.local && m.status !== 'done') URL.revokeObjectURL(m.local); });
       }
-      window.removeEventListener('keydown', onKey, true);
       document.body.classList.remove('pc-open');
       overlay.remove();
       _open = null;
-      if (prevFocus && prevFocus.focus && document.contains(prevFocus)) prevFocus.focus();
       resolve(result);
     }
-
-    async function requestClose() {
-      if (busy) return;
+    function close(result = null, { saved = false } = {}) {
+      if (!overlay.isConnected) return;
+      pending = { result, saved };
+      dismiss();
+    }
+    async function canClose() {
+      if (busy) return false;
       const dirty = mode === 'edit' && (ta.value.trim() !== originalCaption.trim() || newTags.length
         || keptTags.length !== (opts.post.watchedWith || []).length
         || media.length !== (opts.post.memories || []).length || media.some(m => !m.existing));
       if (dirty) {
         const ok = await confirmDialog({ title: 'Discard changes?', message: "Your edits to this post won't be saved.", confirmLabel: 'Discard', danger: true });
-        if (!ok) return;
+        if (!ok) return false;
       }
       if (uploading() && mode === 'complete') toast('Uploads still in progress were dropped — finished ones are kept for next time.', 'info');
-      close(null);
+      return true;
     }
+    const requestClose = () => dismiss.request();
 
-    // Capture on window so Escape closes only the composer, not a popup
-    // (e.g. the project popup) that's still open underneath.
-    function onKey(e) {
-      if (e.key === 'Escape') {
-        if (document.querySelector('.confirm-modal')) return; // the discard confirm handles its own Escape
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        requestClose();
-      } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        submit();
-      }
-    }
-    window.addEventListener('keydown', onKey, true);
+    // Ctrl / ⌘ + Enter posts.
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
+    });
     $('.pc-close').addEventListener('click', requestClose);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) requestClose(); });
 
     document.body.appendChild(overlay);
     document.body.classList.add('pc-open');
+    const dismiss = wireModalDismiss(overlay, teardown, { initialFocus: ta, canClose });
     _open = { close };
     syncCounter();
     renderThumbs();
@@ -479,5 +476,19 @@ const PostComposer = (() => {
     }
   }
 
-  return { open };
+  // Forget everything tied to the signed-out user (Auth.resetClientState):
+  // an open composer, every unsent draft and the cached avatar — user B
+  // used to open user A's caption, photos and picture on the same project.
+  function reset() {
+    if (_open) { try { _open.close(null); } catch (_) {} }
+    _open = null;
+    drafts.clear();
+    _profilePic = null;
+  }
+  // The profile page changed the picture — keep the composer's copy current.
+  function setProfilePic(url) {
+    _profilePic = typeof url === 'string' ? url : null;
+  }
+
+  return { open, reset, setProfilePic };
 })();

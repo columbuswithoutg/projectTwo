@@ -51,13 +51,13 @@ const CHUNKS = {
     'js/world-config.js', 'projects.js', 'characters.js', 'locations.js',
     'js/config.js', 'js/theme.js', 'js/auth.js', 'js/state.js', 'js/layout.js',
     // scene-guess-logic: Scene Guess rules, used by the /world HUD and the admin stills tab
-    'js/utils.js', 'js/pan-zoom-logic.js', 'js/pan-zoom.js', 'js/messaging-logic.js', 'js/scene-guess-logic.js', 'js/poster-art.js', 'js/nodeFactory.js', 'js/renderer.js',
+    'js/utils.js', 'js/pan-zoom-logic.js', 'js/ux-logic.js', 'js/pan-zoom.js', 'js/messaging-logic.js', 'js/scene-guess-logic.js', 'js/poster-art.js', 'js/nodeFactory.js', 'js/renderer.js',
     // road-router: rook-style roads shared by the chart, walkers, the admin board and /world
     'js/road-router.js', 'js/orderRenderer.js',
     'js/watch-controls.js', 'js/post-composer.js', 'js/popup.js', 'js/goals.js', 'js/friend-view.js', 'js/friends.js',
     'js/messages.js', 'js/reports.js',
     'js/memory.js', 'js/walker-dialogues.js', 'js/walkerView.js', 'js/walkers.js',
-    'js/chunk-loader.js', 'js/router.js', 'js/humanoid-prefetch.js',
+    'js/chunk-loader.js', 'js/router.js', 'js/nav-drawer.js', 'js/humanoid-prefetch.js',
     'js/views/login.js', 'js/views/app.js', 'js/views/watchorder.js', 'js/views/board.js',
     'js/views/profile.js', 'js/views/feed.js', 'js/views/characters.js',
     'js/views/messages.js', 'js/views/reports.js',
@@ -96,7 +96,7 @@ const CHUNKS = {
 const EXPECT_GLOBALS = {
   core: ['Router', 'Auth', 'state', 'Chunks', 'CONFIG', 'API', 'Walkers', 'WALKER_DIALOGUES',
          'FriendView', 'WatchOrderView', 'AppView', 'LoginView', 'HomeEditView', 'esc', 'toast',
-         'MessagesView', 'ReportsView', 'Messages', 'MessagesBadge', 'Reports', 'showReportDialog', 'PanZoom', 'PosterArt'],
+         'MessagesView', 'ReportsView', 'Messages', 'MessagesBadge', 'Reports', 'showReportDialog', 'PanZoom', 'PosterArt', 'NavDrawer'],
   world: ['Playground', 'Playground3D', 'Multiplayer', 'VoiceManager', 'PG3DProps', 'HouseEditor', 'SceneGuess',
           'HomeView', 'CustomizeView', 'WorldView', 'FriendHomeView'],
   admin: ['AdminView']
@@ -104,7 +104,7 @@ const EXPECT_GLOBALS = {
 // Globals attached as properties (`root.PG3DPhysics = api` in the UMD-style
 // files) rather than declared — checked for a `.Name =` assignment instead.
 const EXPECT_ATTACHED = {
-  core: ['MessagingLogic', 'HumanoidPrefetch', 'SceneGuessLogic', 'PanZoomLogic'],
+  core: ['MessagingLogic', 'HumanoidPrefetch', 'SceneGuessLogic', 'PanZoomLogic', 'UxLogic'],
   admin: ['ProjectLogic'],
   world: ['PG3DPhysics', 'WorldNetLogic', 'PG3DInputLogic', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid', 'PG3DGearLogic',
           'PG3DAvatar', 'PG3DGear', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation', 'PG3DScene']

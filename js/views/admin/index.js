@@ -108,7 +108,7 @@ AdminView.api = async function api(path, opts = {}) {
   if (token) headers.Authorization = 'Bearer ' + token;
   const res = await fetch(`${API}/admin${path}`, { ...opts, headers });
   if (res.status === 401) {
-    Auth.logout();
+    Auth.logout({ next: location.pathname + location.search });   // back here after signing in
     throw new Error('Session expired');
   }
   if (res.status === 403) {

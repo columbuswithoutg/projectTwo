@@ -582,6 +582,10 @@ const HouseEditor = (() => {
     // saved house back unless the draft was just saved. A room / island that
     // had no house goes back to having none (not to the default house).
     let closed = false, didSave = false;
+    // Unsaved edits ask before they are thrown away (Esc, the backdrop, ✕
+    // and Cancel used to discard a whole design silently).
+    const initialJson = JSON.stringify(draft);
+    const isDirty = () => !didSave && JSON.stringify(draft) !== initialJson;
     const restore = () => {
       if (Playground3D.applyHouse) Playground3D.applyHouse(projectId, hadHouse ? saved : null);
       if (sharedRoof) Playground3D.setHomeRoof(savedRoof);
@@ -593,9 +597,18 @@ const HouseEditor = (() => {
       overlay.remove();
       if (Playground3D.clearHouseShowcase) Playground3D.clearHouseShowcase();
       if (opts.onClose) opts.onClose();
-    }, { initialFocus: overlay.querySelector('.popup-close') });
-    overlay.querySelector('.popup-close').addEventListener('click', close);
-    overlay.querySelector('.world-house-cancel').addEventListener('click', close);
+    }, {
+      initialFocus: overlay.querySelector('.popup-close'),
+      canClose: async () => !isDirty() || confirmDialog({
+        title: `Discard ${unit} changes?`,
+        message: `Your edits to this ${unit} haven’t been saved.`,
+        confirmLabel: 'Discard',
+        cancelLabel: 'Keep editing',
+        danger: true
+      })
+    });
+    overlay.querySelector('.popup-close').addEventListener('click', close.request);
+    overlay.querySelector('.world-house-cancel').addEventListener('click', close.request);
     overlay.querySelector('.world-house-save').addEventListener('click', async () => {
       if (draft.props.length > maxProps()) {
         if (typeof toast === 'function') toast(`The limit is now ${maxProps()} props — remove ${draft.props.length - maxProps()} first.`, 'warn');
@@ -615,7 +628,9 @@ const HouseEditor = (() => {
         if (!res.ok) {
           if (opts.onSaveFailed) opts.onSaveFailed(data);
           if (typeof toast === 'function') toast(data.error || `Couldn’t save the ${unit}.`, 'error');
-          close();
+          // A rule the server refused (cap, doorway, bad value) keeps the
+          // editor open to fix it; only losing the keeper seat (403) ends it.
+          if (res.status === 403) close(); else btn.disabled = false;
           return;
         }
         didSave = true;

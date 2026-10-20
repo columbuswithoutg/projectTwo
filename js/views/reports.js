@@ -146,7 +146,7 @@ const ReportsView = (() => {
         </div>
       </main>
     `;
-    container.querySelector('#back-btn').addEventListener('click', () => Router.go('/'));
+    container.querySelector('#back-btn').addEventListener('click', () => Router.back('/'));
     container.querySelector('#reports-new-btn').addEventListener('click', () => showReportDialog());
     container.querySelector('#reports-prev').addEventListener('click', () => { if (_page > 1) { _page--; load(); } });
     container.querySelector('#reports-next').addEventListener('click', () => { _page++; load(); });

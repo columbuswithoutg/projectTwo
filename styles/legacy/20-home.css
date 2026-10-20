@@ -247,3 +247,13 @@
     grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
   }
 }
+
+/* Keyboard focus on the home editor's SVG rooms / slots (an outline on an
+   SVG <g> doesn't render reliably, so the frame rect lights up instead). */
+.pg-edit-room:focus,
+.pg-edit-slot:focus { outline: none; }
+.pg-edit-room:focus-visible > rect:first-of-type,
+.pg-edit-slot:focus-visible > rect:first-of-type {
+  stroke: var(--highlight);
+  stroke-width: 3;
+}

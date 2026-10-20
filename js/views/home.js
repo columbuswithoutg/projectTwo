@@ -18,54 +18,18 @@ const HomeView = {
 
     container.innerHTML = `
       <header class="pg-header">
-        <button id="nav-toggle">☰</button>
+        ${NavDrawer.toggleHtml()}
         <h1 class="pg-title">Home</h1>
-        <button id="pg-customize-btn" title="Edit">✎</button>
+        <button id="pg-customize-btn" type="button" title="Edit" aria-label="Edit home or character" aria-haspopup="menu">✎</button>
 
-        <div id="nav-drawer">
-          <div id="nav-drawer-overlay"></div>
-          <div id="nav-drawer-content">
-            <button id="close-drawer">✕</button>
-            <nav>
-              <div class="nav-section">
-                <div class="nav-section-title">Navigate</div>
-                <button data-route="/world">World</button>
-                <button data-route="/">Watch Order</button>
-                <button data-route="/board">Board</button>
-                <button data-route="/profile">Profile</button>
-                <button data-route="/characters">Characters</button>
-                <button data-route="/map">Universe Map</button>
-              </div>
-              <div class="nav-section">
-                <div class="nav-section-title">You</div>
-                <button id="nav-character-btn">Customize character</button>
-                <button data-route="/messages">Messages <span class="nav-badge" data-unread-badge hidden></span></button>
-                <button id="report-btn">Report a bug</button>
-              </div>
-              <div class="nav-section">
-                <div class="nav-section-title">Data</div>
-                <button id="logout-btn">Logout</button>
-              </div>
-            </nav>
-          </div>
-        </div>
+        ${NavDrawer.html('home')}
       </header>
 
       <div id="pg-stage" class="pg-stage"></div>
     `;
 
-    // Drawer wiring (same pattern as watchorder/app views).
-    const drawer = document.getElementById('nav-drawer');
-    const closeDrawer = () => drawer.classList.remove('open');
-    document.getElementById('nav-toggle').addEventListener('click', () => drawer.classList.add('open'));
-    document.getElementById('close-drawer').addEventListener('click', closeDrawer);
-    document.getElementById('nav-drawer-overlay').addEventListener('click', closeDrawer);
-    document.querySelectorAll('#nav-drawer-content nav button[data-route]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        closeDrawer();
-        Router.go(btn.dataset.route);
-      });
-    });
+    // Drawer (js/nav-drawer.js) — routes and auto-close are wired there.
+    const closeDrawer = NavDrawer.wire(container, {}).close;
     document.getElementById('logout-btn')?.addEventListener('click', () => {
       Auth.logout();
     });

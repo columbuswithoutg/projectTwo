@@ -510,6 +510,7 @@ const FeedView = (() => {
       const id = li.dataset.commentId;
       const idx = post.comments.findIndex(c => c.id === id);
       if (idx === -1) return;
+      if (!(await confirmDialog({ title: 'Delete this comment?', confirmLabel: 'Delete', danger: true }))) return;
       // Optimistic remove; restore on failure.
       const [removed] = post.comments.splice(idx, 1);
       rerender();
@@ -641,14 +642,15 @@ const FeedView = (() => {
 
     container.innerHTML = `
       <header id="header">
-        <button id="feed-friends-btn" class="feed-header-btn" title="Friends" aria-label="Friends">👥</button>
+        ${NavDrawer.toggleHtml()}
         <div class="view-tabs" role="tablist" aria-label="View mode">
           <button class="view-tab" data-route="/" role="tab" aria-selected="false"><span class="vt-long">Watch </span>Order</button>
           <button class="view-tab" data-route="/board" role="tab" aria-selected="false">Board</button>
           <button class="view-tab active" data-route="/feed" role="tab" aria-selected="true">Feed</button>
           <button class="view-tab" data-route="/world" role="tab" aria-selected="false">World</button>
         </div>
-        <button id="header-profile-btn" title="Profile">
+        ${NavDrawer.html('lite')}
+        <button id="header-profile-btn" title="Profile" aria-label="Profile">
           <img id="header-avatar" src="" alt="" style="display:none" />
           <span id="header-avatar-initials">👤</span>
         </button>
@@ -665,7 +667,7 @@ const FeedView = (() => {
       tab.addEventListener('click', () => Router.go(tab.dataset.route));
     });
     container.querySelector('#header-profile-btn').addEventListener('click', () => Router.go('/profile'));
-    container.querySelector('#feed-friends-btn').addEventListener('click', () => showFriendsPanel());
+    NavDrawer.wire(container, { actions: true });
     container.querySelector('.feed-more').addEventListener('click', () => loadPage(false));
     initHeaderAvatar();
 
@@ -697,5 +699,12 @@ const FeedView = (() => {
     _asOthersSee = asOthersSee;
     try { return cardHtml(post); } finally { _asOthersSee = false; }
   }
-  return { title: 'Feed — MCU Tracker', mount, unmount, previewCardHtml };
+  // Per-user memory (friend names, paging cursor) — cleared on logout by
+  // Auth.resetClientState so the next account never sees the last one's.
+  function reset() {
+    _friendNames = new Set();
+    _nextBefore = null;
+  }
+
+  return { title: 'Feed — MCU Tracker', mount, unmount, previewCardHtml, reset };
 })();

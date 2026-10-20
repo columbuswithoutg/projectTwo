@@ -34,16 +34,21 @@ function uploadMemoryFile(file, { onProgress, onProcessing } = {}) {
 async function showAddMemoryModal(project) {
   const modal = document.createElement('div');
   modal.className = 'auth-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-labelledby', 'add-memory-heading');
   modal.innerHTML = `
     <div class="auth-box">
-      <button class="popup-close">✕</button>
-      <h3>Add Memory</h3>
-      <p style="color:#aaa; font-size:0.9rem">Upload a photo or video from watching ${esc(project.title)}</p>
-      <input type="file" id="memory-file" accept="image/*,video/*" />
-      <input type="text" id="memory-caption" placeholder="Caption (optional)" />
+      <button class="popup-close" type="button" aria-label="Close">✕</button>
+      <h3 id="add-memory-heading">Add memory</h3>
+      <p class="dialog-muted">Upload a photo or video from watching ${esc(project.title)}</p>
+      <label class="visually-hidden" for="memory-file">Photo or video</label>
+      <input type="file" id="memory-file" accept="image/*,video/*,.heic,.heif" />
+      <label class="visually-hidden" for="memory-caption">Caption</label>
+      <input type="text" id="memory-caption" placeholder="Caption (optional)" maxlength="280" />
       <div id="memory-preview"></div>
-      <p class="auth-error" style="display:none; color:red"></p>
-      <button id="memory-upload-btn">Upload</button>
+      <p class="auth-error" role="alert" style="display:none"></p>
+      <button id="memory-upload-btn" type="button">Upload</button>
     </div>
   `;
 
@@ -123,7 +128,13 @@ async function showAddMemoryModal(project) {
         },
         body: JSON.stringify({ projectId: project.id, url, type, caption })
       });
-      const saved = await saveRes.json();
+      // The save used to be trusted blindly: a cap / validation error closed
+      // the dialog as if it had worked and wiped the local memory list.
+      let saved = null;
+      try { saved = await saveRes.json(); } catch (_) {}
+      if (!saveRes.ok || !saved || saved.error || !Array.isArray(saved.memories)) {
+        throw new Error((saved && saved.error) || 'Couldn’t save the memory. Try again.');
+      }
 
       const entry = state.data.get(project.id);
       if (entry) entry.memories = saved.memories;
@@ -132,7 +143,7 @@ async function showAddMemoryModal(project) {
       showPopup(project);
 
     } catch (e) {
-      errorEl.textContent = 'Upload failed. Try again.';
+      errorEl.textContent = (e && e.message) || 'Upload failed. Try again.';
       errorEl.style.display = 'block';
       resetButton();
     }
@@ -147,11 +158,48 @@ function showMemoryLightbox(memories, startIndex, project) {
 
   const lightbox = document.createElement('div');
   lightbox.className = 'memory-lightbox';
+  lightbox.setAttribute('role', 'dialog');
+  lightbox.setAttribute('aria-modal', 'true');
+  lightbox.setAttribute('aria-label', 'Memory');
+  // The shell is built ONCE; only the media swaps. Re-rendering the whole
+  // box on every step destroyed the focused Prev / Next button, so keyboard
+  // users dropped to the page after one press.
+  lightbox.innerHTML = `
+    <div class="lightbox-inner">
+      <button class="lightbox-close" type="button" aria-label="Close">✕</button>
+      <button class="lightbox-nav prev" type="button" aria-label="Previous">‹</button>
+      <div class="lightbox-media"></div>
+      <button class="lightbox-nav next" type="button" aria-label="Next">›</button>
+    </div>
+  `;
+  const media = lightbox.querySelector('.lightbox-media');
+  const prev = lightbox.querySelector('.prev');
+  const next = lightbox.querySelector('.next');
+  const closeBtn = lightbox.querySelector('.lightbox-close');
+
+  const render = () => {
+    const m = memories[current];
+    media.innerHTML = `
+      ${m.type === 'video'
+        ? `<video src="${esc(m.url)}" controls autoplay></video>`
+        : `<img src="${esc(m.url)}" alt="${esc(m.caption)}" loading="lazy" />`
+      }
+      ${m.caption ? `<p class="lightbox-caption">${esc(m.caption)}</p>` : ''}
+      <p class="lightbox-counter">${current + 1} / ${memories.length}</p>
+    `;
+    prev.disabled = current === 0;
+    next.disabled = current === memories.length - 1;
+    // A button that just became disabled can't keep focus — hand it on.
+    if (document.activeElement === prev && prev.disabled) (next.disabled ? closeBtn : next).focus();
+    if (document.activeElement === next && next.disabled) (prev.disabled ? closeBtn : prev).focus();
+  };
 
   const go = (delta) => {
-    const next = current + delta;
-    if (next >= 0 && next < memories.length) { current = next; render(); }
+    const n = current + delta;
+    if (n >= 0 && n < memories.length) { current = n; render(); }
   };
+  prev.onclick = () => go(-1);
+  next.onclick = () => go(1);
 
   // ArrowLeft / ArrowRight mirror the on-screen prev/next buttons.
   function onKey(e) {
@@ -159,40 +207,14 @@ function showMemoryLightbox(memories, startIndex, project) {
     else if (e.key === 'ArrowRight') go(1);
   }
 
-  // Forwarder so render() can wire the close button before `close` exists
-  // (it's only ever invoked on click, by which point close is assigned).
-  const dismiss = () => close();
-
-  const render = () => {
-    const m = memories[current];
-    lightbox.innerHTML = `
-      <div class="lightbox-inner">
-        <button class="lightbox-close" aria-label="Close">✕</button>
-        <button class="lightbox-nav prev" aria-label="Previous" ${current === 0 ? 'disabled' : ''}>‹</button>
-        <div class="lightbox-media">
-          ${m.type === 'video'
-            ? `<video src="${esc(m.url)}" controls autoplay></video>`
-            : `<img src="${esc(m.url)}" alt="${esc(m.caption)}" loading="lazy" />`
-          }
-          ${m.caption ? `<p class="lightbox-caption">${esc(m.caption)}</p>` : ''}
-          <p class="lightbox-counter">${current + 1} / ${memories.length}</p>
-        </div>
-        <button class="lightbox-nav next" aria-label="Next" ${current === memories.length - 1 ? 'disabled' : ''}>›</button>
-      </div>
-    `;
-
-    lightbox.querySelector('.lightbox-close').onclick = dismiss;
-    lightbox.querySelector('.prev').onclick = () => go(-1);
-    lightbox.querySelector('.next').onclick = () => go(1);
-  };
-
   render();
   document.body.appendChild(lightbox);
 
   const close = wireModalDismiss(lightbox, () => {
     document.removeEventListener('keydown', onKey);
     lightbox.remove();
-  }, { initialFocus: lightbox.querySelector('.lightbox-close') });
+  }, { initialFocus: closeBtn });
+  closeBtn.onclick = close;
 
   document.addEventListener('keydown', onKey);
 }

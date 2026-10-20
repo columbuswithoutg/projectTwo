@@ -111,7 +111,7 @@ const WorldView = (() => {
         </div>
       </div>
     `;
-    document.getElementById('world-back').addEventListener('click', () => Router.go('/'));
+    document.getElementById('world-back').addEventListener('click', () => Router.back('/'));
     _stage = document.getElementById('pg-stage');
 
     // Fallback: if the scene still hasn't rendered its canvas after a while

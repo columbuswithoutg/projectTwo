@@ -32,3 +32,21 @@
   text-transform: uppercase;
   color: var(--text-3);
 }
+
+/* Toast with an action ("A new version is ready — Reload"), js/utils.js toast(). */
+.app-toast-action {
+  margin-left: 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.app-toast-action:focus-visible {
+  outline: 2px solid var(--highlight);
+  outline-offset: 2px;
+}

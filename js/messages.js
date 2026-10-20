@@ -19,7 +19,7 @@ const Messages = (() => {
     const res = await fetch(`${API}/messages${path}`, opts);
     let body = null;
     try { body = await res.json(); } catch (_) {}
-    if (res.status === 401) { Auth.logout(); throw new Error('Session expired'); }
+    if (res.status === 401) { Auth.logout({ next: location.pathname + location.search }); throw new Error('Session expired'); }
     if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
     return body;
   }

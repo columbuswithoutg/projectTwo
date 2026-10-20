@@ -84,7 +84,7 @@ function showGoalsPanel() {
       <ul class="goal-req-list">
         ${g.items.map(r => `
           <li class="goal-req${r.watched ? ' is-met' : ''}${!r.watched && !r.ready ? ' is-locked' : ''}"
-              data-action="${r.ready ? 'goal-req' : ''}" data-id="${esc(r.id)}"
+              data-action="${r.ready ? 'goal-req' : ''}" data-id="${esc(r.id)}"${r.ready ? ' tabindex="0" role="button"' : ''}
               ${!r.watched && !r.ready ? 'title="Not unlocked yet — keep watching to reach it"' : ''}>
             <span class="goal-req-mark">${r.watched ? '✓' : '✗'}</span>
             <span class="goal-req-title">${esc(r.title)}</span>
@@ -109,6 +109,7 @@ function showGoalsPanel() {
     initialFocus: panel.querySelector('#close-goals')
   });
   panel.querySelector('#close-goals').addEventListener('click', close);
+  activateOnKey(panel, '.goal-req[data-action="goal-req"]');
 
   panel.querySelectorAll('.goal-req[data-action="goal-req"]').forEach(el => {
     el.addEventListener('click', () => {
@@ -118,7 +119,7 @@ function showGoalsPanel() {
       close();
       const cell = document.querySelector(`.flow-cell[data-id="${CSS.escape(id)}"]`);
       if (cell) {
-        cell.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+        cell.scrollIntoView({ block: 'center', inline: 'center', behavior: smoothBehavior() });
         cell.classList.add('goal-highlight');
         setTimeout(() => cell.classList.remove('goal-highlight'), 1600);
       }

@@ -478,3 +478,37 @@
   text-transform: uppercase;
   color: var(--text-3);
 }
+
+/* ── Friend search results (js/friends.js runSearch) ── */
+.friends-search-status {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-3);
+}
+.friends-search-status[hidden] { display: none; }
+.friends-search-results {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.friends-search-results mark {
+  background: transparent;
+  color: var(--text-1);
+  font-weight: 700;
+}
+.friend-search-state {
+  font-size: 0.8rem;
+  color: var(--text-3);
+  padding: 4px 8px;
+}
+.friend-search-add.is-ok,
+.watch-with-btn.is-ok { opacity: 0.85; }
+.friend-search-add.is-err,
+.watch-with-btn.is-err { border-color: var(--accent-text); color: var(--accent-text); }
+
+/* Text inside dialogs — tokens, never literal greys / whites (Comic is a
+   white sheet; #aaa / #fff on it used to vanish). */
+.friend-req-title { color: var(--accent-text); font-style: normal; font-weight: 600; }
+.dialog-muted  { color: var(--text-2); font-size: 0.9rem; }
+.dialog-strong { color: var(--text-1); font-weight: 700; }
+.dialog-empty  { color: var(--text-3); }

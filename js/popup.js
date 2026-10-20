@@ -77,7 +77,7 @@ ${!isReadonly ? `
             }
             <div class="memory-overlay">
               <button class="memory-view-btn" data-index="${i}">View</button>
-              ${!isReadonly ? `<button class="memory-delete" data-url="${esc(m.url)}">✕</button>` : ''}
+              ${!isReadonly ? `<button class="memory-delete" type="button" data-url="${esc(m.url)}" title="Delete memory" aria-label="Delete memory${m.caption ? ': ' + esc(m.caption) : ''}">✕</button>` : ''}
             </div>
             ${m.caption ? `<p class="memory-caption">${esc(m.caption)}</p>` : ''}
           </div>
@@ -121,6 +121,14 @@ ${!isReadonly ? `
     popup.querySelectorAll('.memory-delete').forEach(btn => {
       btn.onclick = async () => {
         const url = btn.dataset.url;
+        // One tap used to delete the photo for good — ask first.
+        const sure = await confirmDialog({
+          title: 'Delete this memory?',
+          message: 'It comes off this title for good — the photo isn’t kept anywhere else.',
+          confirmLabel: 'Delete',
+          danger: true
+        });
+        if (!sure) return;
         // Only remove it on screen once the server confirms — otherwise a
         // failed delete looks done and the memory reappears on reload.
         let ok = false;

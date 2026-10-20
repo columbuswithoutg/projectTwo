@@ -63,7 +63,8 @@
   border-radius: 8px;
 }
 
-.memory-item:hover .memory-overlay {
+.memory-item:hover .memory-overlay,
+.memory-item:focus-within .memory-overlay {
   opacity: 1;
 }
 

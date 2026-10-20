@@ -120,9 +120,9 @@ const BoardView = (() => {
     return `
       <article class="kb-card" data-id="${esc(p.id)}" tabindex="-1">
         <button type="button" class="kb-grip" aria-label="Drag ${esc(p.title)}" title="Drag to move">⋮⋮</button>
-        <div class="kb-poster">${PosterArt.html(p)}</div>
+        <div class="kb-poster" aria-hidden="true">${PosterArt.html(p)}</div>
         <div class="kb-body">
-          <h3 class="kb-title">${esc(p.title)}</h3>
+          <h3 class="kb-title"><button type="button" class="kb-title-btn">${esc(p.title)}</button></h3>
           <div class="kb-tags">${phase}${series}${rewatch}${ago}</div>
           <div class="kb-controls"></div>
         </div>
@@ -347,9 +347,10 @@ const BoardView = (() => {
 
     container.innerHTML = `
       <header id="header">
-        <button id="board-friends-btn" class="feed-header-btn" title="Friends" aria-label="Friends">👥</button>
+        ${NavDrawer.toggleHtml()}
         ${tabBar()}
-        <button id="header-profile-btn" title="Profile">
+        ${NavDrawer.html('lite')}
+        <button id="header-profile-btn" title="Profile" aria-label="Profile">
           <img id="header-avatar" src="" alt="" style="display:none" />
           <span id="header-avatar-initials">👤</span>
         </button>
@@ -363,7 +364,7 @@ const BoardView = (() => {
       tab.addEventListener('click', () => Router.go(tab.dataset.route));
     });
     container.querySelector('#header-profile-btn').addEventListener('click', () => Router.go('/profile'));
-    container.querySelector('#board-friends-btn').addEventListener('click', () => showFriendsPanel());
+    NavDrawer.wire(container, { actions: true });
     container.querySelector('.kb-board').addEventListener('pointerdown', onPointerDown);
     initHeaderAvatar();
 

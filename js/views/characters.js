@@ -19,14 +19,15 @@ const CharactersView = {
 
       <div id="characters-wrapper">
         <div id="characters-filter">
-          <input id="search-input" type="text" placeholder="Search characters..." />
+          <label class="visually-hidden" for="search-input">Search characters</label>
+          <input id="search-input" type="search" placeholder="Search characters…" autocomplete="off" />
           <p id="unlocked-count"></p>
         </div>
         <div id="characters-grid"></div>
       </div>
     `;
 
-    document.getElementById('back-btn').addEventListener('click', () => Router.go('/'));
+    document.getElementById('back-btn').addEventListener('click', () => Router.back('/'));
 
     this._load();
   },

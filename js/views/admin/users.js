@@ -171,7 +171,15 @@
     },
 
     async banPrompt(user) {
-      const reason = window.prompt(`Ban "${user.username}"?\n\nOptional reason (shown to user):`, '');
+      const reason = await promptDialog({
+        title: `Ban "${user.username}"?`,
+        message: 'They lose access everywhere at once; the reason is shown on their login screen.',
+        label: 'Reason (optional, shown to the user)',
+        placeholder: 'e.g. spam in chat',
+        confirmLabel: 'Ban',
+        danger: true,
+        maxLength: 280
+      });
       if (reason === null) return;
       try {
         await AdminView.api(`/users/${user._id}/ban`, {
@@ -203,7 +211,16 @@
     },
 
     async resetPwdPrompt(user) {
-      const pwd = window.prompt(`Set new password for "${user.username}" (8–128 chars):`, '');
+      const pwd = await promptDialog({
+        title: `New password for "${user.username}"`,
+        message: 'They are signed out everywhere and must log in with it.',
+        label: '8 characters or more',
+        type: 'password',
+        minLength: 8,
+        maxLength: 72,
+        required: true,
+        confirmLabel: 'Set password'
+      });
       if (pwd == null) return;
       try {
         await AdminView.api(`/users/${user._id}/password`, {

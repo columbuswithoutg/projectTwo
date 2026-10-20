@@ -14,7 +14,7 @@ const Reports = (() => {
     const res = await fetch(`${API}/reports${path}`, opts);
     let body = null;
     try { body = await res.json(); } catch (_) {}
-    if (res.status === 401) { Auth.logout(); throw new Error('Session expired'); }
+    if (res.status === 401) { Auth.logout({ next: location.pathname + location.search }); throw new Error('Session expired'); }
     if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
     return body;
   }
@@ -75,8 +75,18 @@ function showReportDialog(opts = {}) {
   const errEl = overlay.querySelector('.report-error');
   const sendBtn = overlay.querySelector('.confirm-ok');
 
-  const close = wireModalDismiss(overlay, () => { if (overlay.parentNode) overlay.remove(); }, { initialFocus: titleEl });
-  overlay.querySelector('.confirm-cancel').addEventListener('click', close);
+  let sent = false;
+  const close = wireModalDismiss(overlay, () => { if (overlay.parentNode) overlay.remove(); }, {
+    initialFocus: titleEl,
+    // A half-written report asks before Escape / the backdrop / Cancel throw it away.
+    canClose: async () => sent || !(titleEl.value.trim() || descEl.value.trim()) || confirmDialog({
+      title: 'Discard this report?',
+      confirmLabel: 'Discard',
+      cancelLabel: 'Keep writing',
+      danger: true
+    })
+  });
+  overlay.querySelector('.confirm-cancel').addEventListener('click', close.request);
 
   const showError = (msg) => { errEl.textContent = msg; errEl.hidden = !msg; };
   descEl.addEventListener('input', () => { counter.textContent = `${descEl.value.length} / ${L.C.DESC_MAX}`; });
@@ -103,8 +113,13 @@ function showReportDialog(opts = {}) {
     showError('');
     try {
       await Reports.create(v.report);
+      sent = true;
       toast('Report sent — thanks! Replies land in your Messages.', 'success');
       close();
+      // Filed from the reports page: show it in "My reports" right away.
+      if (location.pathname === '/reports' && typeof ReportsView !== 'undefined' && ReportsView.refresh) {
+        try { ReportsView.refresh(); } catch (_) {}
+      }
     } catch (err) {
       showError(err.message || 'Could not send the report.');
       busy = false;

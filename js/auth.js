@@ -79,7 +79,42 @@ const Auth = {
     return data;
   },
 
-  logout() {
+  // Forget EVERYTHING that belongs to the signed-in user, in one place.
+  // Three logout paths used to each clean a different subset, so switching
+  // accounts in one tab showed the previous user's walkers, composer draft,
+  // avatar or unread badge until a hard refresh. Called by logout(), by the
+  // login page on mount, and right before a new login stores its token.
+  // Per-device preferences (theme, fights/dialogues toggles, zoom) stay.
+  resetClientState() {
+    // 1. Save the outgoing user's last progress click while the token is valid.
+    try { if (typeof state !== 'undefined' && state.flushPersist) state.flushPersist(); } catch (_) {}
+    // 2. Leave friend mode first (it writes the saved state.data back), close dialogs.
+    if (typeof FriendView !== 'undefined') { try { FriendView.exit(); } catch (_) {} }
+    if (typeof closeAllModals === 'function') { try { closeAllModals(); } catch (_) {} }
+    if (typeof PostComposer !== 'undefined' && PostComposer.reset) { try { PostComposer.reset(); } catch (_) {} }
+    // 3. Credentials + per-user storage.
+    Auth.clearToken();
+    localStorage.removeItem("mcu_username");
+    localStorage.removeItem("mcu_walkers");
+    if (typeof CONFIG !== 'undefined' && CONFIG.STORAGE_KEY) {
+      localStorage.removeItem(CONFIG.STORAGE_KEY);
+    }
+    // 4. In-memory per-user state. resetLocal fires listeners, so the layout
+    //    / renderer / walker caches rebuild for the next account.
+    if (typeof Walkers !== 'undefined' && Walkers.resetInit) { try { Walkers.resetInit(); } catch (_) {} }
+    if (typeof state !== 'undefined' && state.resetLocal) { try { state.resetLocal(); } catch (_) {} }
+    if (typeof WatchOrderView !== 'undefined') WatchOrderView._initialized = false;
+    if (typeof AppView !== 'undefined') AppView._initialized = false;
+    if (typeof HomeView !== 'undefined') HomeView._firstVisitPrompted = false;
+    if (typeof FeedView !== 'undefined' && FeedView.reset) { try { FeedView.reset(); } catch (_) {} }
+    if (typeof MessagesBadge !== 'undefined' && MessagesBadge.apply) { try { MessagesBadge.apply(0); } catch (_) {} }
+  },
+
+  // opts.next: the in-app URL to return to after signing in again (used by
+  // the 401 handlers, never by a deliberate logout — the next account must
+  // not land on the previous user's page).
+  logout(opts) {
+    const next = opts && typeof opts.next === 'string' ? opts.next : null;
     // Tell the server first (fire-and-forget): it bumps tokenVersion, so
     // this token stops working in every tab and on every device. The
     // response is never read — a stale token's 401 can't loop back here.
@@ -92,19 +127,10 @@ const Auth = {
         }).catch(() => {});
       } catch (_) {}
     }
-    Auth.clearToken();
-    localStorage.removeItem("mcu_username");
-    // Clear per-user data so the next account-switch in the same browser
-    // tab doesn't briefly show the previous user's walkers / watch
-    // progress before the server fetch overwrites them. Per-device
-    // preferences (mcu_fights_enabled, mcu_dialogues_enabled) are kept
-    // intentionally — those are device choices, not user-specific.
-    localStorage.removeItem("mcu_walkers");
-    if (typeof CONFIG !== 'undefined' && CONFIG.STORAGE_KEY) {
-      localStorage.removeItem(CONFIG.STORAGE_KEY);
-    }
+    Auth.resetClientState();
+    const target = next && next !== '/' ? '/login?next=' + encodeURIComponent(next) : '/login';
     if (typeof Router !== 'undefined') {
-      Router.go('/login');
+      Router.go(target, { force: true });   // unsaved work can't hold a dead session
     } else {
       window.location.reload();
     }

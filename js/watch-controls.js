@@ -146,6 +146,16 @@ const WatchControls = (() => {
             danger: true
           });
           if (!ok) return;
+        } else if (s && !eps && s.startedAt && Date.now() - new Date(s.startedAt).getTime() > 60000) {
+          // A movie timer that has really been running: one tap used to reset it.
+          const ok = await confirmDialog({
+            title: `Stop watching ${p.title}?`,
+            message: `The timer resets and it goes back to ${s.rewatch ? 'Done' : 'Not started'}.`,
+            confirmLabel: 'Stop timer',
+            cancelLabel: 'Keep watching',
+            danger: true
+          });
+          if (!ok) return;
         }
       }
       busy = true;

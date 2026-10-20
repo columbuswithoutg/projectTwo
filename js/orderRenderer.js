@@ -86,6 +86,9 @@ class OrderRenderer {
     };
     this.nodesContainer.addEventListener("click", onClick);
     this._listeners.push({ target: this.nodesContainer, event: "click", handler: onClick });
+    // Keyboard: Tab to a cell, Enter / Space opens it (js/utils.js).
+    const onKeyActivate = activateOnKey(this.nodesContainer, ".flow-cell");
+    this._listeners.push({ target: this.nodesContainer, event: "keydown", handler: onKeyActivate });
   }
 
   // Drag to move, wheel to zoom (js/pan-zoom.js). A drag may start anywhere —
@@ -336,8 +339,9 @@ class OrderRenderer {
         cell = document.createElement("div");
         cell.className = "flow-cell";
         cell.dataset.id = project.id;
+        NodeFactory.applyA11y(cell, project);
 
-        const node = NodeFactory.create(project);
+        const node = NodeFactory.create(project, { focusable: false });
         node.style.width = `${ORDER_CELL.nodeWidth}px`;
         node.style.height = `${ORDER_CELL.nodeHeight}px`;
         cell.appendChild(node);
@@ -356,6 +360,7 @@ class OrderRenderer {
       } else {
         const node = cell.querySelector(".node");
         if (node) NodeFactory.updateState(node, project);
+        NodeFactory.applyA11y(cell, project);
       }
     });
   }

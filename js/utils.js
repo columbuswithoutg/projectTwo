@@ -34,9 +34,13 @@ function esc(str) {
  * options object { type, duration }. Returns a dismiss() function so a
  * persistent toast (e.g. "Offline") can be cleared when the condition ends.
  ************************************************/
+// opts.action = { label, onClick } adds a button ("Reload") — such a toast
+// stays until used or tapped unless a duration is given. Errors and warnings
+// are role="alert" (announced at once); the rest role="status".
 function toast(message, opts = {}) {
   if (typeof opts === 'string') opts = { type: opts };
-  const { type = 'info', duration = 3200 } = opts;
+  const { type = 'info', action = null } = opts;
+  const duration = opts.duration != null ? opts.duration : (action ? 0 : 3200);
 
   let region = document.getElementById('app-toast-region');
   if (!region) {
@@ -48,8 +52,22 @@ function toast(message, opts = {}) {
 
   const el = document.createElement('div');
   el.className = 'app-toast app-toast-' + type;
-  el.setAttribute('role', 'status');
-  el.textContent = message == null ? '' : String(message);
+  el.setAttribute('role', (type === 'error' || type === 'warn') ? 'alert' : 'status');
+  const text = document.createElement('span');
+  text.className = 'app-toast-text';
+  text.textContent = message == null ? '' : String(message);
+  el.appendChild(text);
+  if (action && action.label) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'app-toast-action';
+    b.textContent = action.label;
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      try { if (typeof action.onClick === 'function') action.onClick(); } finally { remove(); }
+    });
+    el.appendChild(b);
+  }
   region.appendChild(el);
   requestAnimationFrame(() => el.classList.add('show'));
 
@@ -132,14 +150,33 @@ function shouldIgnoreGlobalKey(e) {
 //                 sub-mode) so the dialog stays open
 //   canClose()  → (async) false keeps the dialog open; Escape, the backdrop
 //                 and close.request() ask it first ("Discard changes?")
-function wireModalDismiss(overlayEl, closeFn, { initialFocus, backdrop = true, onEscape, canClose } = {}) {
+//   trapFocus   → Tab / Shift+Tab cycle inside the dialog (default on)
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+function focusableIn(rootEl) {
+  return [...rootEl.querySelectorAll(FOCUSABLE)].filter(el =>
+    el.getClientRects().length && !el.closest('[inert], [hidden]'));
+}
+
+function wireModalDismiss(overlayEl, closeFn, { initialFocus, backdrop = true, onEscape, canClose, trapFocus = true } = {}) {
   const prevFocus = document.activeElement;
   let closed = false;
   let asking = false;
   pushModal(overlayEl);
 
   function onKey(e) {
-    if (e.key !== 'Escape' || closed) return;
+    if (closed) return;
+    if (e.key === 'Tab' && trapFocus) {
+      if (topModal() !== overlayEl) return;
+      const items = focusableIn(overlayEl);
+      if (!items.length) { e.preventDefault(); return; }
+      const first = items[0], last = items[items.length - 1];
+      const active = document.activeElement;
+      if (!overlayEl.contains(active)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); return; }
+      if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+      return;
+    }
+    if (e.key !== 'Escape') return;
     if (topModal() !== overlayEl) return;          // only the top dialog reacts
     e.preventDefault();
     e.stopPropagation();
@@ -206,6 +243,31 @@ function wireModalDismiss(overlayEl, closeFn, { initialFocus, backdrop = true, o
   return close;
 }
 
+// Enter / Space on an element matching `selector` inside `root` clicks it.
+// For things that are clickable but not buttons (chart posters, map pins,
+// goal rows, home-edit cells): el.click() fires the existing click handler
+// with no pointer events first, so the pan-zoom drag/click discrimination is
+// never involved. Returns the keydown handler (for owners that track listeners).
+function activateOnKey(root, selector) {
+  const handler = (e) => {
+    if ((e.key !== 'Enter' && e.key !== ' ') || e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
+    const el = e.target && e.target.closest ? e.target.closest(selector) : null;
+    if (!el || !root.contains(el) || el.tagName === 'BUTTON' || el.tagName === 'A') return;
+    if (el.getAttribute('aria-disabled') === 'true') return;
+    e.preventDefault();               // Space must not scroll the container
+    if (typeof el.click === 'function') el.click();
+    else el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  };
+  root.addEventListener('keydown', handler);
+  return handler;
+}
+
+// 'smooth' unless the user asked for reduced motion (the CSS kill switch
+// can't reach a behavior set from JS).
+function smoothBehavior() {
+  return (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) ? 'auto' : 'smooth';
+}
+
 // Branded confirmation dialog (replaces native confirm()). Resolves true on
 // confirm, false on Cancel / Escape / backdrop. Cancel is auto-focused as
 // the safe default; pass `danger:true` for a destructive (red) confirm.
@@ -265,7 +327,9 @@ function promptDialog(opts = {}) {
     danger = false,
     multiline = false,
     required = false,
-    maxLength = 500
+    maxLength = 500,
+    type = 'text',        // 'text' | 'password' (masked, never trimmed)
+    minLength = 0         // OK stays disabled below this many characters
   } = opts;
 
   return new Promise((resolve) => {
@@ -276,7 +340,7 @@ function promptDialog(opts = {}) {
     overlay.setAttribute('aria-label', title);
     const field = multiline
       ? `<textarea class="textarea prompt-input" rows="3" maxlength="${maxLength}" placeholder="${esc(placeholder)}">${esc(value)}</textarea>`
-      : `<input class="input prompt-input" type="text" maxlength="${maxLength}" placeholder="${esc(placeholder)}" value="${esc(value)}">`;
+      : `<input class="input prompt-input" type="${type === 'password' ? 'password' : 'text'}"${type === 'password' ? ' autocomplete="new-password"' : ''} maxlength="${maxLength}" placeholder="${esc(placeholder)}" value="${esc(value)}">`;
     overlay.innerHTML = `
       <div class="confirm-box">
         <h3 class="confirm-title">${esc(title)}</h3>
@@ -293,7 +357,7 @@ function promptDialog(opts = {}) {
     const input = overlay.querySelector('.prompt-input');
     const ok = overlay.querySelector('.confirm-ok');
     let result = null;
-    const sync = () => { ok.disabled = required && !input.value.trim(); };
+    const sync = () => { const v = input.value; ok.disabled = (required && !v.trim()) || v.length < minLength; };
     const close = wireModalDismiss(
       overlay,
       () => { if (overlay.parentNode) overlay.remove(); resolve(result); },
@@ -301,7 +365,7 @@ function promptDialog(opts = {}) {
     );
     const submit = () => {
       if (ok.disabled) return;
-      result = input.value.trim();
+      result = type === 'password' ? input.value : input.value.trim();
       close();
     };
     input.addEventListener('input', sync);

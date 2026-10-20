@@ -2151,7 +2151,7 @@ const Walkers = (() => {
     const unlocked = getUnlockedCharacters();
 
     if (unlocked.length === 0) {
-      alert('Watch some movies first to unlock character walkers!');
+      if (typeof toast === 'function') toast('Watch some movies first to unlock character walkers.', 'info');
       return;
     }
 

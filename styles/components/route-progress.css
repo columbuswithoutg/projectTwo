@@ -1,0 +1,52 @@
+/************************************************
+ * ROUTE PROGRESS — the thin bar along the top while a lazy route (the 3D
+ * world, the admin panel) downloads its chunk. js/router.js adds .active
+ * 150 ms into a load, so a cached chunk never flashes it; #app[aria-busy]
+ * carries the same state for assistive tech.
+ ************************************************/
+#route-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: var(--z-toast, 9000);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+#route-progress span {
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: 0 999px 999px 0;
+  background: var(--color-primary);
+  box-shadow: 0 0 8px rgba(var(--primary-rgb, 237, 29, 36), 0.55);
+  transform: translateX(-100%);
+}
+
+#route-progress.active {
+  opacity: 1;
+}
+
+#route-progress.active span {
+  animation: routeProgressSweep 1.1s ease-in-out infinite;
+}
+
+@keyframes routeProgressSweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #route-progress.active span {
+    animation: routeProgressPulse 1.2s ease-in-out infinite;
+    width: 60%;
+    transform: none;
+  }
+  @keyframes routeProgressPulse {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 1; }
+  }
+}
