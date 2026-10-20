@@ -315,6 +315,19 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-10-19 — Board rearranged: three blocks, rows by year, redundant links trimmed
+
+The cards on the chart / admin board / `/world` were placed by hand, so roads looped around other projects and the Netflix shows (2015–19) sat beside the 2008–15 films. New layout, applied to the live database and `projects.js` (both now match; the DB also had Doctor Strange moved and Thor: Ragnarok requiring Doctor Strange — that link is now in `projects.js` too):
+
+- **Three blocks side by side**: Fox X-Men / Deadpool / Wolverine on the left (columns −6…−4), the MCU down the middle, the Netflix Defenders shows on the right (4…8). Same width as before (15 columns); after 2019 the MCU may use the side columns.
+- **One row band per release year**, 2000 → 2026, chains inside a year taking extra rows (2018 and 2019 take three each). A card may sit one row early or late when that straightens its roads, no row mixes years more than one apart, and nothing ever sits above its own prerequisite — so The Incredible Hulk (2008, needs Iron Man 2) sits on the 2011 row. 30 rows instead of 23.
+- **Ten transitively redundant required links removed** (unlock rules unchanged in practice, since the parent is already required through a chain): Doomsday keeps 8 of its 15 (drops X-Men, Cap 1, Avengers, Infinity War, Endgame, Loki S2, No Way Home), Defenders drops Daredevil S2 and Jessica Jones, Infinity War drops Doctor Strange (needed through Ragnarok).
+- Result on the real chart view: 105 → 95 required roads, 16 → 3 crossings, total road length −28%, 0 crowded gaps. The three left: Deadpool & Wolverine ↔ Ironheart, Cap 4 ↔ Thunderbolts, What If…? S2 ↔ Black Panther 2.
+
+How: a one-off script (not in the repo) placed rows by watchable year, columns by block, then ran a simulated-annealing + greedy local search scored by the real `RoadRouter` on the chart's own view (50 per crossing + length + bends + detours + a pull toward each block's centre). Side effects: every `/world` island moved (houses, keepers and props travel with their project), all doorways re-derived; `test/road-router.test.js` bundled numbers changed (99 routes, 3 crossings).
+
+---
+
 ### 2026-10-19 — Roads that don't cross unless they have to
 
 Roads on the chart, the admin board and in `/world` crossed each other far more than the layout forced: 74 visible crossings between the 104 required roads on the bundled projects, most of them between roads that share a hub (the 15 roads into Doomsday braided where they converged; Endgame's 14 roads cut through each other leaving its doorstep). Two causes in `js/road-router.js`, both fixed there, no view changes:
