@@ -36,6 +36,7 @@ const Multiplayer = (() => {
     snapshot:    'world:snapshot',
     joined:      'world:joined',
     left:        'world:left',
+    kicked:      null,             // nobody is ejected from /world
     leave:       null,             // /world auto-cleans on disconnect; no explicit leave
     zone:        'world:zone',     // server: the project island we're standing on changed
     house:       'world:house',    // server: a keeper saved an island's house decorations
@@ -58,6 +59,7 @@ const Multiplayer = (() => {
     snapshot:    'home:snapshot',
     joined:      'home:joined',
     left:        'home:left',
+    kicked:      'home:kicked',    // server: we were removed from this home (unfriended)
     leave:       'home:leave',     // emitted before disconnect so the room's owner gets prompt notice
     zone:        null,             // homes have one shared chat — no channels
     house:       'home:house',     // server: the owner saved a room (+ the home's roof)
@@ -324,6 +326,7 @@ const Multiplayer = (() => {
     // addRemotePlayer early-returns on the old ids and peers freeze in place.
     let joined = false;
     let errToasted = false;       // throttle connect_error toasts to once per outage
+    let retryTimer = null;        // one delayed reconnect after a 'Too many connections' refusal
     socket.on('connect', () => {
       if (joined) {
         if (Playground3D.clearRemotePlayers) Playground3D.clearRemotePlayers();
@@ -385,6 +388,15 @@ const Multiplayer = (() => {
       Playground3D.removeRemotePlayer(id);
       if (events.channels && chan.active === 'whisper') refreshWhisperPicker();
     });
+    if (events.kicked) {
+      socket.on(events.kicked, (info) => {
+        const why = info && info.reason === 'unfriended'
+          ? 'You’re no longer friends, so the visit ended.'
+          : 'You were removed from this home.';
+        if (typeof toast === 'function') toast(why, 'warn');
+        if (typeof Router !== 'undefined') Router.go('/home');
+      });
+    }
     socket.on(events.chat, (msg) => {
       const { id, username, text } = msg || {};
       if (events.channels) {
@@ -514,9 +526,19 @@ const Multiplayer = (() => {
         toast(
           (m === 'Account suspended') ? 'Your account has been suspended.'
           : (m === 'Invalid token') ? 'Session expired — please log in again.'
+          : (m === 'Too many connections') ? 'Too many connections — retrying in a moment…'
           : 'Can’t reach the world server.',
-          'error'
+          (m === 'Too many connections') ? 'warn' : 'error'
         );
+      }
+      // The server refused the handshake for rate reasons; socket.io won't
+      // try again by itself, so schedule one retry after the floor passes.
+      if (err && err.message === 'Too many connections' && !retryTimer) {
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          errToasted = false;
+          if (!socket.connected) socket.connect();
+        }, 15000);
       }
     });
 
@@ -616,6 +638,7 @@ const Multiplayer = (() => {
 
     function stop() {
       if (posTimer) { clearInterval(posTimer); posTimer = null; }
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
       if (input) input.removeEventListener('keydown', onChatKey);
       if (chatRow) {
         chatRow.removeEventListener('click', onChatRowClick);

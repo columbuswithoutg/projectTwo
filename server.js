@@ -48,8 +48,12 @@ const app = express();
 // (20 login attempts per 15 min for the whole site) and AuditLog.ip records
 // the proxy. 1 = trust exactly one hop; express-rate-limit v8 refuses the
 // permissive true. Raise the hop count if another proxy (e.g. Cloudflare)
-// is ever put in front of Render.
-app.set('trust proxy', 1);
+// is ever put in front of Render — set TRUST_PROXY=<hops> (0–10) in the
+// environment; unset or invalid falls back to 1. The socket.io handshake
+// reads the same value to find the client address for its IP limit.
+const { parseTrustProxy } = require('./server/socket-guard');
+const TRUST_PROXY_HOPS = parseTrustProxy(process.env.TRUST_PROXY);
+app.set('trust proxy', TRUST_PROXY_HOPS);
 
 // Compress JSON + HTML responses. Cuts response sizes ~70% on text payloads.
 // Already-compressed binaries in /assets are skipped automatically by content-type.
@@ -169,6 +173,9 @@ mongoose.connect(process.env.MONGO_URI)
     console.log('MongoDB connected');
     // Give seeded projects their watch runtimes (never overwrites admin edits).
     require('./server/watchRules').backfillRuntimes();
+    // usernameLower readiness: once every account has the field the
+    // case-insensitive regex fallback switches off (server/username.js).
+    require('./server/username').startReadinessPoll();
   })
   .catch(err => console.error(err));
 
@@ -178,6 +185,8 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many auth attempts, try again in 15 minutes' },
+  // Logging out is authed and harmless; don't let it eat the login budget.
+  skip: (req) => req.path === '/logout',
 });
 // Moderate limit for authenticated mutating endpoints — prevents spam of
 // progress writes, memory uploads, friend requests, etc.

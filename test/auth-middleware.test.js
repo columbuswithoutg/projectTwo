@@ -150,3 +150,14 @@ test('validateToken is exported for the socket handshake and returns the same de
   const bad = await auth.validateToken('nope');
   assert.deepEqual(bad, { ok: false, status: 401, error: 'Invalid token' });
 });
+
+test('only HS256 tokens are accepted: HS512 with the right secret and alg "none" both get 401', async () => {
+  const id = seed({ username: 'alg' });
+  const hs512 = jwt.sign({ id, tv: 0 }, process.env.JWT_SECRET, { algorithm: 'HS512', expiresIn: '1h' });
+  assert.deepEqual(await auth.validateToken(hs512), { ok: false, status: 401, error: 'Invalid token' });
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const none = b64({ alg: 'none', typ: 'JWT' }) + '.' + b64({ id, tv: 0, exp: Math.floor(Date.now() / 1000) + 3600 }) + '.';
+  assert.deepEqual(await auth.validateToken(none), { ok: false, status: 401, error: 'Invalid token' });
+  // The same claims signed properly still work.
+  assert.equal((await auth.validateToken(tokenFor(id, 0))).ok, true);
+});

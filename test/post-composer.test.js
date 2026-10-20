@@ -14,9 +14,13 @@ test('tag ids: valid, distinct, not yourself, capped', () => {
 test('memory URLs must be this app\'s Cloudinary uploads', () => {
   process.env.CLOUDINARY_CLOUD_NAME = 'testcloud';
   const { sanitizeMemory } = require('../server/memory');
-  const ok = sanitizeMemory({ url: 'https://res.cloudinary.com/testcloud/image/upload/v1/a.jpg', type: 'video', caption: 'hi' });
-  assert.deepStrictEqual(ok, { url: 'https://res.cloudinary.com/testcloud/image/upload/v1/a.jpg', type: 'video', caption: 'hi' });
+  const ok = sanitizeMemory({ url: 'https://res.cloudinary.com/testcloud/image/upload/v1/mcu-memories/a.jpg', type: 'video', caption: 'hi' });
+  assert.deepStrictEqual(ok, { url: 'https://res.cloudinary.com/testcloud/image/upload/v1/mcu-memories/a.jpg', type: 'video', caption: 'hi' });
   assert.strictEqual(sanitizeMemory({ url: 'https://res.cloudinary.com/other/image/upload/a.jpg' }), null);
+  // Our cloud, but not a plain upload in our folder (fetch proxy / transformation / other folder).
+  assert.strictEqual(sanitizeMemory({ url: 'https://res.cloudinary.com/testcloud/image/fetch/https://evil.example/x.png' }), null);
+  assert.strictEqual(sanitizeMemory({ url: 'https://res.cloudinary.com/testcloud/image/upload/l_text:Arial_40:hi/v1/mcu-memories/a.jpg' }), null);
+  assert.strictEqual(sanitizeMemory({ url: 'https://res.cloudinary.com/testcloud/image/upload/v1/a.jpg' }), null);
   assert.strictEqual(sanitizeMemory({ url: 'javascript:alert(1)' }), null);
   assert.strictEqual(sanitizeMemory({ url: 'https://res.cloudinary.com/testcloud/a".jpg' }), null);
   assert.strictEqual(sanitizeMemory('x'), null);

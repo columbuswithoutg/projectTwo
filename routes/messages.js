@@ -14,18 +14,17 @@ const User = require('../models/user');
 const auth = require('../middleware/auth');
 const Messages = require('../server/messages');
 const L = require('../js/messaging-logic');
+const Username = require('../server/username');
+const DmPolicy = require('../server/dm-policy');
 
 const { C } = L;
 
-function escapeRegex(s) {
-    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
+// Case-insensitive, indexed (server/username.js) — the regex scan is only
+// a fallback until every account carries usernameLower.
 function findUserByName(name) {
     const clean = String(name || '').trim();
     if (!clean || clean.length > C.USERNAME_MAX) return null;
-    return User.findOne({ username: { $regex: '^' + escapeRegex(clean) + '$', $options: 'i' } })
-        .select('_id username profilePicture').lean();
+    return Username.findByUsername(clean, '_id username profilePicture');
 }
 
 function shapeUser(u) {
@@ -37,18 +36,6 @@ function parseBefore(q) {
     if (!q) return null;
     const d = new Date(String(q));
     return isNaN(d) ? null : d;
-}
-
-// Per-user floor between sends — a bounded map in the same spirit as the
-// lastActiveAt throttle in middleware/auth.js. Resets on deploy; fine.
-const lastSend = new Map();
-function tooSoon(userId) {
-    const now = Date.now();
-    const last = lastSend.get(userId) || 0;
-    if (now - last < C.SEND_FLOOR_MS) return true;
-    lastSend.set(userId, now);
-    if (lastSend.size > 5000) lastSend.delete(lastSend.keys().next().value);
-    return false;
 }
 
 // One page of a thread (oldest → newest) and mark the ones addressed to me
@@ -140,7 +127,9 @@ router.post('/', auth, async (req, res) => {
     if (String(recipient._id) === String(req.user.id)) {
         return res.status(400).json({ error: "You can't message yourself" });
     }
-    if (tooSoon(req.user.id)) return res.status(429).json({ error: 'Slow down a little.' });
+    // One send budget shared with /world whispers (server/dm-policy.js).
+    const d = await DmPolicy.check(req.user.id, recipient._id);
+    if (!d.ok) return res.status(429).json({ error: L.errorText(d.error), code: d.error, retryInMs: d.retryInMs || 0 });
     const me = await User.findById(req.user.id).select('username').lean();
     if (!me) return res.status(401).json({ error: 'Invalid token' });
     const doc = await Messages.sendDirect({

@@ -24,6 +24,7 @@ const HouseLogic = require('../js/world-house-logic');
 const AdminConfig = require('../models/AdminConfig');
 const WorldSocket = require('./world-socket');
 const { toHouse, portraitOk } = require('../server/house');
+const { ttlCache } = require('../server/ttl-cache');
 
 const HOUSE_FIELDS = 'projectId wallColor roofColor trimColor lampColor sign portrait props roofStyle roofDir chimney wallStyle windowStyle windows';
 
@@ -83,14 +84,25 @@ async function keepersByProject() {
   return out;
 }
 
-// `mine` is the caller's own stay per island, so the client can show how much
-// longer they need to stay to take a house over from its keeper.
-router.get('/houses', auth, async (req, res) => {
+// Every house + every keeper is the same for every caller, and every /world
+// client asks for it on entry and then every few minutes — so it is computed
+// at most once per HOUSES_TTL_MS (the keeper aggregation walks the whole
+// ProjectStay collection). A keeper's save invalidates it at once; a keeper
+// change from the stay flush shows within the TTL.
+const HOUSES_TTL_MS = 15000;
+const sharedHouses = ttlCache(async () => {
   const docs = await WorldHouse.find({}).select(HOUSE_FIELDS).lean();
   const houses = {};
   for (const d of docs) houses[d.projectId] = toHouse(d);
-  const [keepers, myRows] = await Promise.all([
-    keepersByProject(),
+  const keepers = await keepersByProject();
+  return { houses, keepers };
+}, HOUSES_TTL_MS);
+
+// `mine` is the caller's own stay per island, so the client can show how much
+// longer they need to stay to take a house over from its keeper.
+router.get('/houses', auth, async (req, res) => {
+  const [{ houses, keepers }, myRows] = await Promise.all([
+    sharedHouses.get(),
     ProjectStay.find({ userId: req.user.id }).select('projectId ms').lean()
   ]);
   const mine = {};
@@ -126,6 +138,7 @@ router.put('/houses/:projectId', auth, async (req, res) => {
     { upsert: true, new: true, projection: HOUSE_FIELDS }
   ).lean();
   const house = toHouse(saved);
+  sharedHouses.invalidate();
   const me = await User.findById(req.user.id).select('username').lean();
   const keeper = { userId: String(req.user.id), username: (me && me.username) || 'You', ms: top.ms };
   WorldSocket.broadcastWorld('world:house', { projectId, house, keeper });

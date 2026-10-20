@@ -42,18 +42,16 @@ router.get('/', auth, async (req, res) => {
 
 // Whitelist of acceptable profile-picture sources:
 //   - relative path into the bundled character art (assets/characters/…)
-//   - https URL on our Cloudinary cloud (signed in upload route)
+//   - one of this app's own Cloudinary uploads (server/cloudinary-url.js —
+//     the same strict check memories use; a bare cloud prefix also let
+//     fetch-proxy and transformation URLs through)
 // Blocks javascript: URIs, data: URIs, and arbitrary attacker-controlled URLs.
-const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
+const { isOurAssetUrl } = require('../server/cloudinary-url');
 function validProfilePictureUrl(url) {
   if (typeof url !== 'string') return false;
   if (url.length > 512) return false;
   if (/^assets\/characters\/[\w.\-]+$/.test(url)) return true;
-  if (CLOUD_NAME) {
-    const prefix = `https://res.cloudinary.com/${CLOUD_NAME}/`;
-    if (url.startsWith(prefix)) return true;
-  }
-  return false;
+  return isOurAssetUrl(url);
 }
 
 // Character portraits the picker can offer: image file → what unlocks it.

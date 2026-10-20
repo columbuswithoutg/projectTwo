@@ -62,7 +62,9 @@ async function validateToken(token) {
 
   let payload;
   try {
-    payload = jwt.verify(token, process.env.JWT_SECRET);
+    // Pin the algorithm: a token signed any other way (or with alg "none")
+    // is rejected before its claims are read.
+    payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
   } catch {
     return { ok: false, status: 401, error: 'Invalid token' };
   }

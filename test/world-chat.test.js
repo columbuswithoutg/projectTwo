@@ -63,6 +63,13 @@ test('normalizeMessage: whisper needs a target', () => {
     { ok: true, channel: 'whisper', text: 'psst', to: 'Tony' });
 });
 
+test('normalizeMessage: object text / target never throws (a {toString:1} payload once crashed the server)', () => {
+  assert.deepEqual(L.normalizeMessage({ text: { toString: 1 } }), { ok: false, error: 'empty' });
+  assert.deepEqual(L.normalizeMessage({ text: { toString: () => 'hi' } }), { ok: false, error: 'empty' });
+  assert.deepEqual(L.normalizeMessage({ channel: 'whisper', text: 'hi', to: { toString: 1 } }), { ok: false, error: 'no-target' });
+  assert.deepEqual(L.normalizeMessage({ channel: { toString: 1 }, text: 'hi' }).channel, 'world');
+});
+
 test('parseWhisperCommand: /w, /whisper, /msg', () => {
   assert.deepEqual(L.parseWhisperCommand('/w Tony hello there'), { to: 'Tony', text: 'hello there' });
   assert.deepEqual(L.parseWhisperCommand('/WHISPER bob hi'), { to: 'bob', text: 'hi' });

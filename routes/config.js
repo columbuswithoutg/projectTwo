@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const AdminConfig = require('../models/AdminConfig');
 const auth = require('../middleware/auth');
+const { iceServers } = require('../server/turn');
 
 // Public, unauthed endpoint — every connected client fetches this on boot
 // to merge admin-set values over the hardcoded PHYSICS defaults in
@@ -39,28 +40,15 @@ router.get('/public', async (req, res) => {
   }
 });
 
-// Voice-chat ICE config — STUN by default, optionally TURN if env vars set.
-// Authed so anonymous traffic can't drain a paid TURN provider's quota.
-// The client (js/voice-chat.js) fetches this once per voice session and
-// merges the result into RTCPeerConnection config. When TURN_* env vars
-// are absent, returns STUN-only — same behavior as the hardcoded fallback,
-// so older deploys / misconfigured envs keep working unchanged.
+// Voice-chat ICE config — STUN by default, TURN when configured
+// (server/turn.js: time-limited HMAC credentials with TURN_SECRET, or the
+// static TURN_USERNAME / TURN_CREDENTIAL pair). Authed so anonymous traffic
+// can't drain a paid TURN provider's quota. The client (js/voice-chat.js)
+// fetches this once per voice session; the 5-minute cache is far below the
+// credential TTL (12 h by default).
 router.get('/voice-turn', auth, (req, res) => {
-  const iceServers = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
-  ];
-  const urls = (process.env.TURN_URLS || '')
-    .split(',').map(s => s.trim()).filter(Boolean);
-  if (urls.length && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
-    iceServers.push({
-      urls,
-      username: process.env.TURN_USERNAME,
-      credential: process.env.TURN_CREDENTIAL
-    });
-  }
   res.set('Cache-Control', 'private, max-age=300');
-  res.json({ iceServers });
+  res.json({ iceServers: iceServers(process.env, req.user.id, Date.now()) });
 });
 
 module.exports = router;

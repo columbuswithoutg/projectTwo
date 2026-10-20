@@ -120,8 +120,16 @@
   // floors in world-socket.js.
   // Scene Guess (server/scene-guess.js): starting a lobby reads Mongo on its
   // close, so it gets the tightest bucket; a guess is once per round anyway.
+  // Keyed by USER on the server (server/rate-store.js), so a limit is shared
+  // by every tab / reconnect of one account: `join` covers every /world
+  // join from any tab, `homeJoin` likewise for homes. The handshake pair
+  // bounds reconnect churn (per user) and token-less connection floods
+  // (per IP, checked before any JWT or DB work).
   const RATES = Object.freeze({
-    join:      Object.freeze({ cap: 3, perSec: 0.1 }),
+    join:      Object.freeze({ cap: 4, perSec: 0.1 }),
+    homeJoin:  Object.freeze({ cap: 5, perSec: 0.2 }),
+    handshakeUser: Object.freeze({ cap: 10, perSec: 0.1 }),
+    handshakeIp:   Object.freeze({ cap: 30, perSec: 1 }),
     emote:     Object.freeze({ cap: 4, perSec: 0.5 }),
     announce:  Object.freeze({ cap: 5, perSec: 0.5 }),
     stoneGrab: Object.freeze({ cap: 6, perSec: 2 }),

@@ -32,6 +32,13 @@
     CONVERSATIONS_MAX: 100,
     REPLIES_MAX: 100,
     SEND_FLOOR_MS: 750,
+    // server/dm-policy.js — one budget per sender for inbox DMs AND /world
+    // whispers: DM_BURST at once, DM_PER_MIN sustained, and a stranger (not a
+    // friend) may store at most NONFRIEND_DAILY_PER_RECIPIENT per recipient
+    // per rolling day.
+    DM_BURST: 8,
+    DM_PER_MIN: 20,
+    NONFRIEND_DAILY_PER_RECIPIENT: 20,
     REPORTS_PER_HOUR: 10,
     POLL_MS: 45000
   };
@@ -115,6 +122,9 @@
       case 'no-target':            return 'Enter a username to message.';
       case 'empty':                return 'Type a message first.';
       case 'too-long':             return `Keep it under ${C.DM_MAX_LEN} characters.`;
+      case 'cooldown':             return 'Slow down a little.';
+      case 'rate':                 return 'You’re sending messages too quickly — give it a minute.';
+      case 'daily-cap':            return 'You’ve reached today’s limit for messaging someone who isn’t your friend yet.';
       case 'bad-kind':             return 'Pick Bug or Suggestion.';
       case 'no-title':             return 'Give it a short title.';
       case 'title-too-long':       return `Titles are limited to ${C.TITLE_MAX} characters.`;

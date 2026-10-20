@@ -8,12 +8,11 @@ const auth = require('../middleware/auth');
 const feed = require('../server/feed');
 const watchRules = require('../server/watchRules');
 const { housesForRooms, homeRoofFor, effectiveLayout, watchedIdsOf } = require('../server/house');
+const Username = require('../server/username');
 
-// Escape regex metacharacters so a user can't pass ".*" to dump everyone
-// or "(a+)+$" to hang the DB with catastrophic backtracking (ReDoS).
-function escapeRegex(s) {
-    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+// Outgoing friend requests still waiting for an answer. Past this a user
+// is mass-adding, not making friends.
+const MAX_OUTGOING_PENDING = 50;
 
 const FRIEND_RETRY_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 // Friend-request docs only (watch-party requests share the collection).
@@ -36,16 +35,14 @@ async function applyCoWatch(userId, projectId, coWatcherUsername) {
     );
 }
 
-// Search users by username
+// Search users by username — a case-insensitive PREFIX match of at least
+// two characters (server/username.js searchFilter: anchored + escaped, so
+// it can use the usernameLower index and nobody can dump the whole list
+// with a one-letter or ".*" query). Up to 10, alphabetical, never self.
 router.get('/search', auth, async (req, res) => {
-    const { username } = req.query;
-    if (!username || typeof username !== 'string') return res.json([]);
-    const trimmed = username.trim();
-    if (trimmed.length < 1 || trimmed.length > 40) return res.json([]);
-    const users = await User.find({
-        username: { $regex: escapeRegex(trimmed), $options: 'i' },
-        _id: { $ne: req.user.id } // exclude self
-    }).select('username _id').limit(10);
+    const filter = Username.searchFilter(req.query.username, Username.isReady(), req.user.id);
+    if (!filter) return res.json([]);
+    const users = await User.find(filter).select('username _id').sort({ username: 1 }).limit(10).lean();
     res.json(users);
 });
 
@@ -78,6 +75,13 @@ router.post('/request', auth, async (req, res) => {
     if (declined) {
         const days = Math.ceil((declined.updatedAt.getTime() + FRIEND_RETRY_COOLDOWN_MS - Date.now()) / 86400000);
         return res.status(429).json({ error: `They declined your last request — you can ask again in ${days} day${days !== 1 ? 's' : ''}` });
+    }
+
+    // Cap on unanswered outgoing requests — stops one account carpet-bombing
+    // everyone it finds through /search.
+    const pendingOut = await Friend.countDocuments({ requester: req.user.id, status: 'pending', ...FRIEND_ONLY });
+    if (pendingOut >= MAX_OUTGOING_PENDING) {
+        return res.status(429).json({ error: 'Too many pending friend requests — wait for some to be answered' });
     }
 
     const request = await Friend.create({ requester: req.user.id, recipient: recipientId });
@@ -185,7 +189,9 @@ router.get('/list', auth, async (req, res) => {
     const friends = await Friend.find(friendFilter(req.user.id))
         .populate('requester recipient', 'username');
 
-    const list = friends.map(f => {
+    // A side can be null for a few seconds after an admin deletes that user
+    // (the Friend docs are cascaded right after) — skip rather than throw.
+    const list = friends.filter(f => f.requester && f.recipient).map(f => {
         const friend = f.requester._id.toString() === req.user.id
             ? f.recipient
             : f.requester;
@@ -369,6 +375,9 @@ router.delete('/remove/:friendId', auth, async (req, res) => {
                 { requester: req.params.friendId, recipient: req.user.id }
             ]
         });
+        // If either of us is standing in the other's home right now, that
+        // visit ends too (lazy require: world-socket never requires this file).
+        try { require('./world-socket').ejectFromHome(req.user.id, req.params.friendId); } catch (_) {}
         res.json({ message: 'Friend removed' });
     } catch (e) {
         console.error('Remove friend error:', e);

@@ -28,6 +28,16 @@ const WatchSessionSchema = new mongoose.Schema({
 
 const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
+  // Lower-cased copy of `username` so the case-insensitive lookups (login,
+  // whispers, DMs, friend search) hit an index instead of a regex scan —
+  // server/username.js. Filled for new accounts by the pre-validate hook
+  // below; older accounts get it from scripts/backfill-username-lower.js (or
+  // heal on their next lookup). No default on purpose: the index is sparse,
+  // and a null default would be a duplicate key for every legacy account.
+  // usernameLowerConflict marks the rare legacy pair that differs only by
+  // case — the newer one keeps no usernameLower and is found by exact match.
+  usernameLower: { type: String },
+  usernameLowerConflict: { type: Boolean },
   password: { type: String, required: true },
   watchedProjects: { type: [WatchEntrySchema], default: [] },
   watchSessions: { type: [WatchSessionSchema], default: [] },
@@ -132,5 +142,16 @@ const UserSchema = new mongoose.Schema({
   // null: derived from the first decorated room, else the plain roof.
   homeRoof: { type: mongoose.Schema.Types.Mixed, default: null }
 }, { timestamps: true });
+
+UserSchema.index({ usernameLower: 1 }, { unique: true, sparse: true });
+
+// New accounts always carry usernameLower. Existing documents are left
+// alone here (an unrelated save must never hit a duplicate key because of
+// a legacy case-twin) — the backfill script handles those.
+UserSchema.pre('validate', function () {
+  if (this.isNew && typeof this.username === 'string' && !this.usernameLower) {
+    this.usernameLower = this.username.trim().toLowerCase();
+  }
+});
 
 module.exports = mongoose.model('User', UserSchema);

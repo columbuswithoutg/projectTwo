@@ -3,9 +3,13 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user');
+const auth = require('../middleware/auth');
+const Username = require('../server/username');
+const { passwordError, hashPassword, needsRehash, dummyHash, PASSWORD_MAX_BYTES } = require('../server/password');
 
 // Username: 3–30 chars, letters/digits/underscore/dash. Rejects NoSQL operator objects.
-// Password: 8–128 chars. Rejects empty strings, non-strings, and coerced objects.
+// Password: server/password.js (8 chars … 72 bytes — bcrypt ignores anything
+// past 72 bytes, so a longer cap only pretended to be stricter).
 function validateCredentials(username, password) {
   if (typeof username !== 'string' || typeof password !== 'string') {
     return 'Username and password must be strings';
@@ -13,8 +17,7 @@ function validateCredentials(username, password) {
   const u = username.trim();
   if (u.length < 3 || u.length > 30) return 'Username must be 3–30 characters';
   if (!/^[a-zA-Z0-9_-]+$/.test(u)) return 'Username can only contain letters, numbers, _ or -';
-  if (password.length < 8 || password.length > 128) return 'Password must be 8–128 characters';
-  return null;
+  return passwordError(password);
 }
 
 router.post('/register', async (req, res) => {
@@ -22,14 +25,14 @@ router.post('/register', async (req, res) => {
   const err = validateCredentials(username, password);
   if (err) return res.status(400).json({ error: err });
   try {
-    // The unique index is case-sensitive, but DM / whisper lookups are not,
-    // so "bob" must not be able to register next to "Bob". The character
-    // whitelist above means the name has no regex metacharacters except '-'.
+    // Usernames are unique case-insensitively ("bob" can't register next to
+    // "Bob"). server/username.js checks usernameLower first (indexed) and
+    // falls back to the exact / case-insensitive forms for accounts that
+    // predate the field.
     const clean = username.trim();
-    const taken = await User.exists({ username: { $regex: '^' + clean.replace(/-/g, '\\-') + '$', $options: 'i' } });
-    if (taken) return res.status(400).json({ error: 'Username already exists' });
-    const hashed = await bcrypt.hash(password, 10);
-    await User.create({ username: clean, password: hashed });
+    if (await Username.exists(clean)) return res.status(400).json({ error: 'Username already exists' });
+    const hashed = await hashPassword(password);
+    await User.create({ username: clean, password: hashed });   // the model fills usernameLower
     res.json({ message: 'User created' });
   } catch (e) {
     // Distinguish duplicate-key from real errors — previously every failure
@@ -47,14 +50,13 @@ router.post('/login', async (req, res) => {
   if (typeof username !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ error: 'Invalid credentials' });
   }
-  // Usernames are unique case-insensitively (see /register), so "bob" logs in
-  // "Bob". Exact match first — older accounts may predate that rule and
-  // differ only by case — then a case-insensitive, fully escaped match.
-  const name = username.trim().slice(0, 40);
-  const user = await User.findOne({ username: name }) ||
-    await User.findOne({ username: { $regex: '^' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } });
-  if (!user || !(await bcrypt.compare(password, user.password)))
-    return res.status(401).json({ error: 'Invalid credentials' });
+  const name = username.trim().slice(0, Username.MAX_LEN);
+  const user = await Username.findByUsername(name);
+  // ALWAYS run one bcrypt compare. Skipping it for an unknown name used to
+  // answer in ~1 ms instead of ~300 ms, which told a caller which usernames
+  // exist without ever getting a password right.
+  const ok = await bcrypt.compare(password, user ? user.password : await dummyHash());
+  if (!user || !ok) return res.status(401).json({ error: 'Invalid credentials' });
   // Banned users can authenticate with the right password but receive no
   // token — surfaces a clear message instead of silently failing the next
   // protected call with a confusing 401.
@@ -63,6 +65,14 @@ router.post('/login', async (req, res) => {
       error: 'Account suspended',
       reason: user.banReason || ''
     });
+  }
+
+  // Quietly upgrade an old cost-10 hash to the current cost while we still
+  // have the plaintext. Guarded on the stored hash so it can't race a reset.
+  if (needsRehash(user.password) && Buffer.byteLength(password, 'utf8') <= PASSWORD_MAX_BYTES) {
+    hashPassword(password)
+      .then(h => User.updateOne({ _id: user._id, password: user.password }, { $set: { password: h } }))
+      .catch(() => {});
   }
 
   // tokenVersion is bumped on ban; auth middleware rejects mismatched JWTs
@@ -82,6 +92,22 @@ router.post('/login', async (req, res) => {
     watchedProjects: user.watchedProjects,
     isAdmin: !!user.isAdmin
   });
+});
+
+// Log out EVERYWHERE: bumping tokenVersion makes every JWT this user holds
+// (this tab, other tabs, other devices) fail the middleware's version
+// check, and invalidateUser drops the 30 s validation cache entry plus any
+// live /world or /home socket. The client calls this fire-and-forget from
+// Auth.logout() and clears its own token regardless of the answer.
+router.post('/logout', auth, async (req, res) => {
+  try {
+    await User.updateOne({ _id: req.user.id }, { $inc: { tokenVersion: 1 } });
+  } catch (e) {
+    console.error('Logout error:', e && e.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+  auth.invalidateUser(req.user.id);
+  res.json({ ok: true });
 });
 
 module.exports = router;

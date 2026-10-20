@@ -6,13 +6,12 @@
 const HouseLogic = require('../js/world-house-logic');
 const AdminConfig = require('../models/AdminConfig');
 
-// Same rule as memories (routes/progress.js): a portrait must live on the
-// app's own Cloudinary account, so a keeper can't hang a tracker/phishing
-// URL in a house every visitor's browser then fetches.
-const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
-const CLOUDINARY_PREFIX = CLOUD_NAME ? `https://res.cloudinary.com/${CLOUD_NAME}/` : '';
+// Same rule as memories (server/cloudinary-url.js): a portrait must be one
+// of this app's own uploads, so a keeper can't hang a tracker / phishing /
+// proxied URL in a house every visitor's browser then fetches.
+const { isOurAssetUrl } = require('./cloudinary-url');
 function portraitOk(url) {
-  return !url || (!!CLOUDINARY_PREFIX && url.startsWith(CLOUDINARY_PREFIX));
+  return !url || isOurAssetUrl(url);
 }
 
 // Reading never truncates: a stored house keeps every prop even if the
@@ -107,6 +106,6 @@ function watchedIdsOf(user) {
 }
 
 module.exports = {
-  CLOUDINARY_PREFIX, portraitOk, READ_CAP, toHouse, homeMaxPropsNow, housesForRooms, pickRoof, homeRoofFor,
+  portraitOk, READ_CAP, toHouse, homeMaxPropsNow, housesForRooms, pickRoof, homeRoofFor,
   effectiveLayout, watchedIdsOf
 };

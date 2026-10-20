@@ -13,8 +13,18 @@ audio. Without one, voice silently fails for those pairs (the voice
 diagnostics panel shows "STUN only").
 
 The app is already fully wired: the client fetches ICE servers from
-`GET /api/config/voice-turn`, and the server builds that list from three
-environment variables. You only need to create a TURN account and set them.
+`GET /api/config/voice-turn`, and the server (`server/turn.js`) builds that
+list from environment variables. You only need to create a TURN account and
+set them. Two credential modes:
+
+- **Shared secret (preferred)** — `TURN_URLS` + `TURN_SECRET`: every request
+  gets its own credentials that expire after `TURN_TTL_SEC` (default 12 h),
+  made with the standard TURN REST scheme (username `<expiry>:<user id>`,
+  credential `base64(HMAC-SHA1(secret, username))`). Someone who copies a
+  pair out of the browser can't use the relay for long.
+- **Static pair** — `TURN_URLS` + `TURN_USERNAME` + `TURN_CREDENTIAL`: used
+  only when `TURN_SECRET` is unset. Every logged-in user receives the same
+  permanent pair, so prefer the secret whenever the provider offers it.
 
 ## Option A — Metered.ca (recommended, free tier)
 
@@ -32,18 +42,28 @@ TURN_CREDENTIAL=<your credential from the dashboard>
 Comma-separate multiple URLs. The `:443?transport=tcp` variant helps on
 networks that block UDP entirely.
 
-## Option B — Cloudflare Calls TURN
+## Option B — any provider with a TURN REST shared secret
 
-https://developers.cloudflare.com/calls/turn/ — generates short-lived
-credentials via API. The current server code expects static credentials, so
-prefer Option A unless you want to extend `routes/config.js` to mint
-Cloudflare credentials per request.
+If the provider gives you a **secret** (Metered.ca and Twilio-style setups
+do, under names like "TURN REST API secret"), set
+
+```
+TURN_URLS=turn:...
+TURN_SECRET=<the secret>
+TURN_TTL_SEC=43200
+```
+
+and leave `TURN_USERNAME` / `TURN_CREDENTIAL` unset. Cloudflare Calls TURN
+(https://developers.cloudflare.com/calls/turn/) mints credentials through
+its own API instead; that would need a small addition to `server/turn.js`.
 
 ## Option C — self-hosted coturn
 
-Run [coturn](https://github.com/coturn/coturn) on any VPS, set
-`TURN_URLS=turn:your-server:3478`, plus the long-term credential user/pass
-you configured. Only worth it if you outgrow free tiers.
+Run [coturn](https://github.com/coturn/coturn) on any VPS with
+`use-auth-secret` and `static-auth-secret=<secret>` in `turnserver.conf`,
+then set `TURN_URLS=turn:your-server:3478` and `TURN_SECRET=<secret>`
+(Option B). Long-term `user=…:…` credentials also work through the static
+pair. Only worth it if you outgrow free tiers.
 
 ## Verifying it works
 

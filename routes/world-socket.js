@@ -40,12 +40,18 @@ const SceneGuess = require('../server/scene-guess').instance();
 // Stops a hostile client parking a large blob that gets fanned to everyone,
 // and keeps junk out of other clients' rig builder.
 const { sanitizeCharacter } = require('../server/character');
+const Username = require('../server/username');
+const RateStore = require('../server/rate-store');
+const DmPolicy = require('../server/dm-policy');
+const { clientIp, homeEjections, parseTrustProxy } = require('../server/socket-guard');
 
-// Per-socket token buckets (js/world-net-logic.js RATES) for the events that
-// hit the DB or fan out to a whole room without a floor of their own.
+// Per-USER token buckets (js/world-net-logic.js RATES) for the events that
+// hit the DB or fan out to a whole room without a floor of their own. Keyed
+// by the verified user id, not the socket, so a reconnect (fresh socket)
+// does not refill them — the old per-socket buckets did. The stores are
+// built after the constants below (server/rate-store.js).
 function rateOk(socket, key) {
-  const store = socket.data.rl || (socket.data.rl = {});
-  return NetLogic.allow(store, key, Date.now());
+  return userRl.allow(socket.data.userId || socket.id, key, Date.now());
 }
 
 // Copy a sanitized position packet (NetLogic.sanitizePos) onto a player
@@ -160,10 +166,6 @@ function flushStays() {
 const MAX_USERNAME = 40;
 const MAX_CHAT_LEN = 200;
 
-function escapeRegex(s) {
-  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 // Push a whisper-shaped chat line to every live /world socket of `userId`
 // (normally one). Used by the HTTP /api/messages route so a message sent
 // from the inbox page lands in the recipient's Whisper tab if they happen to
@@ -190,6 +192,10 @@ async function handleWhisper(io, socket, p, m, out, reply) {
   }
   if (target) {
     if (target.userId === p.userId) return reply({ ok: false, error: 'self' });
+    // Same budget as the inbox (server/dm-policy.js): floor, burst, and a
+    // daily cap per recipient for non-friends.
+    const d = await DmPolicy.check(p.userId, target.userId).catch(() => ({ ok: false, error: 'not-sent' }));
+    if (!d.ok) return reply(d);
     out.to = target.username;
     io.to(target.socketId).emit('world:chat', out);
     socket.emit('world:chat', out);
@@ -203,14 +209,16 @@ async function handleWhisper(io, socket, p, m, out, reply) {
 
   let user = null;
   try {
-    user = await User.findOne({ username: { $regex: '^' + escapeRegex(m.to) + '$', $options: 'i' } })
-      .select('_id username').lean();
+    // Indexed case-insensitive lookup (server/username.js).
+    user = await Username.findByUsername(m.to, '_id username');
   } catch (err) {
     console.error('[whisper] lookup failed:', err && err.message);
     return reply({ ok: false, error: 'not-sent' });
   }
   if (!user) return reply({ ok: false, error: 'not-found', to: m.to });
   if (String(user._id) === String(p.userId)) return reply({ ok: false, error: 'self' });
+  const d = await DmPolicy.check(p.userId, user._id).catch(() => ({ ok: false, error: 'not-sent' }));
+  if (!d.ok) return reply(d);
   try {
     await Message.create({
       sender: p.userId, recipient: user._id,
@@ -356,6 +364,19 @@ function stoneRingCenter() {
 const worldNpcs = NpcLogic.initialNpcState();
 const NPC_IDS = new Set(NpcLogic.NPC_IDS);
 
+// Rate state keyed by user id (buckets + the chat / punch / snap floors that
+// used to live on the per-join player record) and by client IP (handshake
+// floods). Bounded LRU maps, swept once a minute (timers set up in attach).
+const userRl = new RateStore({
+  rates: NetLogic.RATES, maxKeys: 10000,
+  floorMaxMs: Math.max(ChatLogic.C.COOLDOWN_MS, SNAP_INTERVAL_MS, PUNCH_INTERVAL_MS, CHAT_INTERVAL_MS)
+});
+const ipRl = new RateStore({ rates: NetLogic.RATES, maxKeys: 20000 });
+// Floor names on userRl: 'anyChat' (every /world channel), 'worldChat' (the
+// 10 s World cooldown), 'homeChat', 'punch', 'snap'.
+function floorLeft(socket, name, ms, now) { return userRl.floorLeft(socket.data.userId || socket.id, name, ms, now); }
+function markFloor(socket, name, now) { userRl.mark(socket.data.userId || socket.id, name, now); }
+
 function npcUpdatePayload(id, event, by) {
   const n = worldNpcs[id];
   return {
@@ -373,6 +394,9 @@ module.exports = (io) => {
   // process alive on its own.
   const stayTimer = setInterval(() => { flushStays(); }, Stay.C.FLUSH_INTERVAL_MS);
   if (stayTimer.unref) stayTimer.unref();
+  const rlTimer = setInterval(() => { const t = Date.now(); userRl.sweep(t); ipRl.sweep(t); }, 60 * 1000);
+  if (rlTimer.unref) rlTimer.unref();
+  const trustHops = parseTrustProxy(process.env.TRUST_PROXY);
 
   // Handshake auth — verify the JWT AND enforce the same ban / tokenVersion
   // checks the HTTP layer does (validateToken). Without this, a banned or
@@ -381,9 +405,17 @@ module.exports = (io) => {
   // spoof a display name.
   io.use(async (socket, next) => {
     try {
+      const now = Date.now();
+      // Connection floods: per client IP BEFORE any JWT or DB work (same hop
+      // count as Express's trust proxy), then per user after the token is
+      // verified. socket.io does not retry a rejected handshake on its own —
+      // the client (js/home-socket.js) schedules one retry on this message.
+      const ip = clientIp(socket.handshake.headers['x-forwarded-for'], socket.handshake.address, trustHops);
+      if (!ipRl.allow(ip, 'handshakeIp', now)) return next(new Error('Too many connections'));
       const token = socket.handshake.auth && socket.handshake.auth.token;
       const result = await auth.validateToken(token);
       if (!result.ok) return next(new Error(result.error || 'Unauthorized'));
+      if (!userRl.allow(String(result.payload.id), 'handshakeUser', now)) return next(new Error('Too many connections'));
       socket.data.userId = String(result.payload.id);
       socket.data.username = result.username || null;
       next();
@@ -500,7 +532,6 @@ module.exports = (io) => {
         mv: 0,              // movement flags (NetLogic.MV) from the last position packet
         emote: null,        // looping emote in progress — in the snapshot so late joiners see it
         downAt: 0,          // when their last accepted knockdown landed (punch immunity)
-        lastChat: 0,
         projectId: null,    // island the player stands on (Project chat / voice scope)
         stay: null          // js/world-stay-logic record while on an island
       };
@@ -620,20 +651,20 @@ module.exports = (io) => {
       const now = Date.now();
       // Spam floor on every channel (same as the /messages DM route). Project
       // and whisper have no 10s cooldown, but a script must not be able to
-      // flood an island or someone's inbox.
-      if (now - (p.lastAnyChat || 0) < MessagingLogic.C.SEND_FLOOR_MS) {
-        return reply({ ok: false, error: 'cooldown', retryInMs: MessagingLogic.C.SEND_FLOOR_MS - (now - (p.lastAnyChat || 0)) });
-      }
+      // flood an island or someone's inbox. Floors are per USER (userRl), so
+      // reconnecting does not reset them.
+      const anyLeft = floorLeft(socket, 'anyChat', MessagingLogic.C.SEND_FLOOR_MS, now);
+      if (anyLeft > 0) return reply({ ok: false, error: 'cooldown', retryInMs: anyLeft });
       const limited = ChatLogic.hasCooldown(m.channel);
       if (limited) {
-        const retryInMs = ChatLogic.cooldownLeft(p.lastChat, now);
+        const retryInMs = floorLeft(socket, 'worldChat', ChatLogic.C.COOLDOWN_MS, now);
         if (retryInMs > 0) return reply({ ok: false, error: 'cooldown', retryInMs });
       }
 
       // An accepted message counts as island activity (people chatting stand
       // still) — rejected sends above never reach this line.
       touchStay(p, now);
-      p.lastAnyChat = now;
+      markFloor(socket, 'anyChat', now);
       // Sender always gets its own copy (so its log shows what went out).
       const out = { channel: m.channel, id: socket.id, username: p.username, text: m.text };
       if (m.channel === 'world') {
@@ -650,7 +681,7 @@ module.exports = (io) => {
         return handleWhisper(io, socket, p, m, out, reply);
       }
       if (!limited) return reply({ ok: true, cooldownMs: 0 });
-      p.lastChat = now;
+      markFloor(socket, 'worldChat', now);
       reply({ ok: true, cooldownMs: ChatLogic.C.COOLDOWN_MS });
     });
 
@@ -681,8 +712,8 @@ module.exports = (io) => {
       const p = worldPlayers.get(socket.id);
       if (!p) return reply({ ok: false, reason: 'not-joined' });
       const now = Date.now();
-      if (now - (p.lastPunch || 0) < PUNCH_INTERVAL_MS) return reply({ ok: false, reason: 'cooldown' });
-      p.lastPunch = now;
+      if (floorLeft(socket, 'punch', PUNCH_INTERVAL_MS, now) > 0) return reply({ ok: false, reason: 'cooldown' });
+      markFloor(socket, 'punch', now);
       let target = raw && raw.target;
       if (target != null && (typeof target !== 'string' || !worldPlayers.has(target))) return reply({ ok: false, reason: 'bad-target' });
       let npc = raw && raw.npc;
@@ -787,9 +818,9 @@ module.exports = (io) => {
       const p = worldPlayers.get(socket.id);
       if (!p) return;
       const now = Date.now();
-      if (now - (p.lastSnap || 0) < SNAP_INTERVAL_MS) return;
+      if (floorLeft(socket, 'snap', SNAP_INTERVAL_MS, now) > 0) return;
       if (stonesHeldBy(socket.id).length < STONE_IDS.length) return;   // authority
-      p.lastSnap = now;
+      markFloor(socket, 'snap', now);
       touchStay(p, now);
 
       // Scene Guess players are never dusted: the respawn teleports them off
@@ -820,8 +851,9 @@ module.exports = (io) => {
     // Shape mirrors world:* so the client uses the same handlers.
 
     socket.on('home:join', async (raw) => {
-      // One or two DB lookups per join — rate-limited like world:join.
-      if (!rateOk(socket, 'join')) return;
+      // One or two DB lookups per join — rate-limited like world:join (its
+      // own bucket: the user-keyed `join` bucket is shared by every tab).
+      if (!rateOk(socket, 'homeJoin')) return;
       // typeof guard: String() on a crafted object throws and crashes the process.
       const ownerUsername = (typeof raw?.ownerUsername === 'string' ? raw.ownerUsername : '').slice(0, MAX_USERNAME);
       if (!ownerUsername) return;
@@ -875,8 +907,7 @@ module.exports = (io) => {
         walking: false,
         pose: null,
         mv: 0,
-        emote: null,
-        lastChat: 0
+        emote: null
       };
       homePlayers.set(socket.id, player);
 
@@ -917,8 +948,9 @@ module.exports = (io) => {
       if (!p) return;
       const msg = (typeof raw?.text === 'string' ? raw.text : '').trim().slice(0, MAX_CHAT_LEN);
       if (!msg) return;
-      if (Date.now() - p.lastChat < CHAT_INTERVAL_MS) return;
-      p.lastChat = Date.now();
+      const nowChat = Date.now();
+      if (floorLeft(socket, 'homeChat', CHAT_INTERVAL_MS, nowChat) > 0) return;
+      markFloor(socket, 'homeChat', nowChat);
       io.to('home:' + p.ownerId).emit('home:chat', {
         id: socket.id, username: p.username, text: msg
       });
@@ -1105,3 +1137,20 @@ module.exports.flushStays = flushStays;
 // For routes/messages.js (via server/messages.js): live-deliver an inbox
 // message to the recipient's Whisper tab when they're in /world.
 module.exports.deliverWhisper = deliverWhisper;
+// For routes/friends.js: when a and b stop being friends, any socket of one
+// standing in the other's home leaves at once (room, voice mesh, player
+// record) and is told why — the friendship check only ever ran on join.
+module.exports.ejectFromHome = (a, b) => {
+  if (!_io) return 0;
+  const list = homeEjections(homePlayers, a, b);
+  for (const { sid, ownerId } of list) {
+    homePlayers.delete(sid);
+    leaveHomeVoice(_io, sid, ownerId);
+    _io.in(sid).socketsLeave('home:' + ownerId);
+    _io.to('home:' + ownerId).emit('home:left', { id: sid });
+    _io.to(sid).emit('home:kicked', { reason: 'unfriended' });
+    const s = _io.sockets.sockets.get(sid);
+    if (s && s.data) s.data.homeJoinSeq = (s.data.homeJoinSeq || 0) + 1;   // cancels a join still awaiting the DB
+  }
+  return list.length;
+};

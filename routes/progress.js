@@ -5,6 +5,7 @@ const auth = require('../middleware/auth');
 const feed = require('../server/feed');
 const watchRules = require('../server/watchRules');
 const watchTags = require('../server/watchTags');
+const { sanitizeWalkers } = require('../server/walkers');
 
 // Load progress
 router.get('/load', auth, async (req, res) => {
@@ -335,6 +336,7 @@ router.post('/memory', auth, async (req, res) => {
   const memory = sanitizeMemory(req.body);
   if (!memory) return res.status(400).json({ error: 'Invalid memory payload (Cloudinary URL required)' });
   const user = await User.findById(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });   // deleted mid-session
   const entry = user.watchedProjects.find(e => e.projectId === projectId);
   if (!entry) return res.status(404).json({ error: 'Project not watched yet' });
   if (entry.memories.length >= MAX_MEMORIES_PER_ENTRY) {
@@ -350,6 +352,7 @@ router.post('/memory', auth, async (req, res) => {
 router.delete('/memory', auth, async (req, res) => {
   const { projectId, url } = req.body || {};
   const user = await User.findById(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
   const entry = user.watchedProjects.find(e => e.projectId === projectId);
   if (!entry) return res.status(404).json({ error: 'Not found' });
   entry.memories = entry.memories.filter(m => m.url !== url);
@@ -360,19 +363,20 @@ router.delete('/memory', auth, async (req, res) => {
 
 // Load walker selections
 router.get('/walkers', auth, async (req, res) => {
-  const user = await User.findById(req.user.id);
-  res.json({ walkers: user.walkers || [] });
+  const user = await User.findById(req.user.id).select('walkers').lean();
+  // Re-sanitised on the way out too, so anything stored before the rule
+  // (server/walkers.js) never reaches a client.
+  res.json({ walkers: sanitizeWalkers((user && user.walkers) || []) });
 });
 
 // Save walker selections
 router.post('/walkers', auth, async (req, res) => {
   const { walkers } = req.body || {};
   if (!Array.isArray(walkers)) return res.status(400).json({ error: 'walkers must be an array' });
-  // Cap at 200 entries, accept strings or { id, stage } objects
-  const clean = walkers.slice(0, 200).filter(w =>
-    typeof w === 'string' || (w && typeof w.id === 'string')
-  );
-  await User.findByIdAndUpdate(req.user.id, { walkers: clean });
+  // Every entry rebuilt as { id, stage } — nothing else is stored (friends
+  // download this list straight into their walker code).
+  const clean = sanitizeWalkers(walkers);
+  await User.updateOne({ _id: req.user.id }, { $set: { walkers: clean } });
   res.json({ message: 'Saved' });
 });
 

@@ -112,6 +112,8 @@
       case 'not-found':  return `${(info && info.to) || 'That player'} isn’t a player here.`;
       case 'not-sent':   return 'Couldn’t deliver that whisper — try again.';
       case 'self':       return 'You can’t whisper to yourself.';
+      case 'rate':       return 'You’re sending messages too quickly — give it a minute.';
+      case 'daily-cap':  return 'You’ve reached today’s limit for whispering someone who isn’t your friend yet.';
       case 'no-target':  return 'Pick someone to whisper to.';
       case 'empty':      return 'Type a message first.';
       default:           return 'Message not sent.';

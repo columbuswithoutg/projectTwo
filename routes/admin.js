@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs');
+const { passwordError, hashPassword } = require('../server/password');
 const mongoose = require('mongoose');
 const cloudinary = require('cloudinary').v2;
 const User = require('../models/user');
@@ -23,6 +23,9 @@ const SceneScore = require('../models/SceneScore');
 const FeedPost = require('../models/FeedPost');
 const SceneData = require('../server/scene-guess-data');
 const Messages = require('../server/messages');
+const Upload = require('../models/Upload');
+const UploadPolicy = require('../server/upload-policy');
+const { parseAsset } = require('../server/cloudinary-url');
 const feed = require('../server/feed');
 const MessagingLogic = require('../js/messaging-logic');
 const auth = require('../middleware/auth');
@@ -152,10 +155,9 @@ router.post('/users/:id/password', async (req, res) => {
     return res.status(400).json({ error: 'Invalid user id' });
   }
   const { password } = req.body || {};
-  if (typeof password !== 'string' || password.length < 8 || password.length > 128) {
-    return res.status(400).json({ error: 'Password must be 8–128 characters' });
-  }
-  const hashed = await bcrypt.hash(password, 10);
+  const pwErr = passwordError(password);   // same rules as register (server/password.js)
+  if (pwErr) return res.status(400).json({ error: pwErr });
+  const hashed = await hashPassword(password);
   // Bump tokenVersion to invalidate the user's existing sessions — a
   // password reset should always log out everywhere, otherwise a stolen
   // token outlives the reset.
@@ -273,16 +275,10 @@ router.get('/memories', async (req, res) => {
   res.json({ items, total, page, limit });
 });
 
-// Best-effort Cloudinary destroy. The URL pattern from CloudinaryStorage is
-//   https://res.cloudinary.com/<cloud>/<resource_type>/upload/v<ver>/<public_id>.<ext>
-// We extract the public_id and resource_type from the URL itself rather
-// than trusting the client's `type` field.
-function parseCloudinary(url) {
-  if (typeof url !== 'string') return null;
-  const m = url.match(/res\.cloudinary\.com\/[^/]+\/(image|video|raw)\/upload\/(?:[^/]+\/)*v\d+\/(.+?)\.[^.]+$/);
-  if (!m) return null;
-  return { resource_type: m[1], public_id: m[2] };
-}
+// Best-effort Cloudinary destroy. public_id and resource_type come from the
+// URL itself (server/cloudinary-url.js parseAsset — our cloud only), never
+// from the client's `type` field.
+const parseCloudinary = parseAsset;
 
 router.delete('/memories', async (req, res) => {
   const { userId, projectId, url } = req.body || {};
@@ -304,15 +300,24 @@ router.delete('/memories', async (req, res) => {
   }
 
   // Cloudinary destroy is fire-and-forget — the Mongo write is the source
-  // of truth for visibility, the cloud delete just reclaims storage.
+  // of truth for visibility, the cloud delete just reclaims storage. It only
+  // happens once NOTHING references the asset any more: a user who re-posted
+  // someone else's photo URL used to get the original owner's asset destroyed
+  // when their copy was moderated.
   const parsed = parseCloudinary(url);
+  const uploader = await Upload.findOne({ url }).select('userId').lean().catch(() => null);
   if (parsed) {
-    cloudinary.uploader.destroy(parsed.public_id, { resource_type: parsed.resource_type, invalidate: true })
+    UploadPolicy.assetStillReferenced(url)
+      .then(async (still) => {
+        if (still) { console.log('[admin] asset kept, still referenced elsewhere:', parsed.public_id); return; }
+        await cloudinary.uploader.destroy(parsed.public_id, { resource_type: parsed.resource_type, invalidate: true });
+        await Upload.deleteOne({ publicId: parsed.public_id });
+      })
       .catch(err => console.error('Cloudinary destroy failed:', err && err.message));
   }
   // Same cleanup the user's own delete does — pull it out of friends' feeds.
   feed.removeMemory(userId, projectId, url);
-  logAudit(req, 'deleteMemory', { userId, projectId, url }, null);
+  logAudit(req, 'deleteMemory', { userId, projectId, url, uploadedBy: uploader ? String(uploader.userId) : null }, null);
   res.json({ message: 'Memory deleted' });
 });
 

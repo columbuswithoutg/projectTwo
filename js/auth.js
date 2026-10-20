@@ -80,6 +80,18 @@ const Auth = {
   },
 
   logout() {
+    // Tell the server first (fire-and-forget): it bumps tokenVersion, so
+    // this token stops working in every tab and on every device. The
+    // response is never read — a stale token's 401 can't loop back here.
+    const t = localStorage.getItem("mcu_token");
+    if (t && isTokenValid(t)) {
+      try {
+        fetch(`${API}/auth/logout`, {
+          method: 'POST', keepalive: true,
+          headers: { Authorization: 'Bearer ' + t }
+        }).catch(() => {});
+      } catch (_) {}
+    }
     Auth.clearToken();
     localStorage.removeItem("mcu_username");
     // Clear per-user data so the next account-switch in the same browser
