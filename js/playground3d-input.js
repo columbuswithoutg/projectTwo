@@ -105,6 +105,11 @@
         Math.min(CAMERA.MAX_ELEV, _orbit.elevation - dy * CAMERA.ROTATE_SPEED));
     }
     function onMouseUp() { mouseDragging = false; }
+    // The browser's native context menu (Save image as / Inspect) has no
+    // place over the world: right-click is reserved for game actions, and
+    // an open menu swallows key-ups, leaving W/A/S/D stuck. On Android a
+    // long press on the canvas fires the same event.
+    function onContextMenu(e) { e.preventDefault(); }
     function onWheel(e) {
       if (!_orbit || suspended) return;
       _orbit.distance = Math.max(CAMERA.MIN_DIST,
@@ -115,6 +120,7 @@
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     viewport.addEventListener('wheel', onWheel, { passive: false });
+    viewport.addEventListener('contextmenu', onContextMenu);
 
     // Touch joystick (mobile) + one-finger camera drag (anywhere outside joystick).
     let joyEl = null, stickEl = null, joyCenter = null, joyRadius = 56;
@@ -538,6 +544,7 @@
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       viewport.removeEventListener('wheel', onWheel);
+      viewport.removeEventListener('contextmenu', onContextMenu);
       viewport.removeEventListener('pointerdown', onPointerDown);
       viewport.removeEventListener('pointermove', onPointerMove);
       viewport.removeEventListener('pointerup', onPointerUp);
