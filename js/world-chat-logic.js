@@ -31,7 +31,9 @@
     MAX_LEN: 200,
     // Mirrors Playground3D's WORLD constants: a node sits at grid × SCALE and
     // its walkable apron is (PLATFORM_W + APRON_MARGIN) = 16 units square.
-    GRID_SCALE: 18,
+    // test/world-chat.test.js fails if these drift from js/playground3d.js —
+    // a stale SCALE put players in the wrong island's Project chat.
+    GRID_SCALE: 24,
     ZONE_HALF: 8
   };
 

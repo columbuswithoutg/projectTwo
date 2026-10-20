@@ -6,6 +6,8 @@
  ************************************************/
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const L = require('../js/world-chat-logic.js');
 
 const GRID = [
@@ -13,24 +15,37 @@ const GRID = [
   { id: 'ironman2', gridX: 0, gridY: 2 },
   { id: 'hulk', gridX: -2, gridY: 3 }
 ];
+const S = L.C.GRID_SCALE;
 
 test('projectAt: inside an island apron returns its id', () => {
-  assert.equal(L.projectAt(0, 18, GRID), 'ironman1');
-  assert.equal(L.projectAt(-36, 54, GRID), 'hulk');
-  assert.equal(L.projectAt(7.5, 18 - 7.5, GRID), 'ironman1');
+  assert.equal(L.projectAt(0, S, GRID), 'ironman1');
+  assert.equal(L.projectAt(-2 * S, 3 * S, GRID), 'hulk');
+  assert.equal(L.projectAt(7.5, S - 7.5, GRID), 'ironman1');
 });
 
 test('projectAt: apron edge counts, the road gap between islands does not', () => {
-  assert.equal(L.projectAt(8, 18, GRID), 'ironman1');
-  assert.equal(L.projectAt(8.01, 18, GRID), null);
-  assert.equal(L.projectAt(0, 27, GRID), null);     // halfway between 18 and 36
-  assert.equal(L.projectAt(0, 36 - 8, GRID), 'ironman2');
+  assert.equal(L.projectAt(8, S, GRID), 'ironman1');
+  assert.equal(L.projectAt(8.01, S, GRID), null);
+  assert.equal(L.projectAt(0, 1.5 * S, GRID), null);     // halfway between two islands
+  assert.equal(L.projectAt(0, 2 * S - 8, GRID), 'ironman2');
 });
 
 test('projectAt: bad input is null, never a throw', () => {
   assert.equal(L.projectAt(NaN, 0, GRID), null);
-  assert.equal(L.projectAt(0, 18, null), null);
-  assert.equal(L.projectAt(0, 18, [{ id: 'x' }]), null);
+  assert.equal(L.projectAt(0, S, null), null);
+  assert.equal(L.projectAt(0, S, [{ id: 'x' }]), null);
+});
+
+// The server can only tell which island a player is on by redoing the
+// client's layout math, so the constants must match js/playground3d.js.
+// When SCALE went 18 → 24 there and not here, a player inside one island
+// was put in another island's Project chat.
+test('zone constants match the /world engine layout', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../js/playground3d.js'), 'utf8');
+  const world = src.slice(src.indexOf('const WORLD = {'));
+  const num = (key) => Number((world.match(new RegExp(`\\b${key}:\\s*([\\d.]+)`)) || [])[1]);
+  assert.equal(L.C.GRID_SCALE, num('SCALE'));
+  assert.equal(L.C.ZONE_HALF, (num('PLATFORM_W') + num('APRON_MARGIN')) / 2);
 });
 
 test('hasCooldown: only World chat is rate limited', () => {
