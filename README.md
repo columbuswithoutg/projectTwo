@@ -315,6 +315,19 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-10-19 — Roads that don't cross unless they have to
+
+Roads on the chart, the admin board and in `/world` crossed each other far more than the layout forced: 74 visible crossings between the 104 required roads on the bundled projects, most of them between roads that share a hub (the 15 roads into Doomsday braided where they converged; Endgame's 14 roads cut through each other leaving its doorstep). Two causes in `js/road-router.js`, both fixed there, no view changes:
+
+- **Lanes were ordered by where a run starts, not by where its road goes.** Two roads side by side in a gap crossed whenever the one on the outer lane turned off first. Lanes on a shared stretch are now ordered by where the two roads part: walk the stretch to the point they diverge, and the road that turns off to the left takes the left lane (likewise where they join). "Left" follows the road round its corners, so one order serves the whole shared stretch, and roads peel off a hub's doorstep without crossing. When the two ends disagree a crossing is unavoidable and no order is forced. Runs that only touch end to end at a gap vertex now need separate lanes only when they turn opposite ways.
+- **Each road was routed once, knowing only the roads before it.** Shortest-first meant every long road into a hub had to cross the short ones already there. After the first pass every road is now searched again against *all* the others and moves only when strictly cheaper (rip-up and reroute, up to 3 passes, roads already at their floor cost skipped). A crossing now costs 10 (was 3), a bend 3 (2.5) and each road already in a lane 0.5 (1), so a road would rather share a gap or take a corner than cross. Required roads settle before trails are routed, so `/world` (no trails) still gets exactly the chart's roads.
+
+Bundled projects: 74 → 14 visible crossings (13 true crossroads, 37 before), total road length +3%, 121 → 141 bends, still 0 crowded gaps, doorstep lanes unchanged (max 5). A cold route takes ~1.3× longer (≈55 ms best case here); results are cached per layout as before, and the admin board only re-routes on drop. `test/road-router.test.js`: a doorstep fan-out / join must have zero crossings, and the bundled board may not exceed 20.
+
+Not done (a bigger design change, worth considering): roads into the same hub could *merge* into a shared trunk instead of running in separate lanes — fewer lanes, fewer crossings, but one doorway per trunk and shared walker paths.
+
+---
+
 ### 2026-10-13 — Goals = the road to Avengers: Doomsday
 
 The Goals panel is now a single checklist: Marvel's official "stream these before Avengers: Doomsday" list (14 titles, Marvel's order), ticked against what you've watched, with a progress bar and "in theaters December 18" from Doomsday's release date. Titles you can watch now open their popup as before; ones not unlocked yet are listed muted. It replaces the "one step ahead" goals, so it names titles the viewer hasn't reached yet — deliberately, it's Marvel's public list.

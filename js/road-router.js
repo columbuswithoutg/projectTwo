@@ -18,10 +18,22 @@
  * project sits on an even/even vertex; odd coordinates are the gaps between
  * projects. A project's vertex is blocked to every road except its own, so a
  * road leaves through one of the four side midpoints and travels the gaps.
- * Each road is an A* search (length + bends + crossings + lane pressure);
- * shortest roads go first so neighbours get the direct line. Lanes are then
- * assigned per lattice line: runs on the same line that overlap or touch get
- * different lanes, centred on the gap.
+ *
+ * Routing, in three steps:
+ *   1. Each road is an A* search (length + bends + crossings + lane
+ *      pressure); shortest roads go first so neighbours get the direct line.
+ *   2. Rip-up and reroute: every road is searched again against ALL the
+ *      others — the first pass only knew the roads routed before it — and
+ *      moves only when that is strictly cheaper, for up to PASSES passes.
+ *      This is what stops the early roads forcing crossings on the late
+ *      ones (the long roads into a hub nest instead of braiding).
+ *   3. Lanes per lattice line: runs on the same line that overlap get
+ *      different lanes, ORDERED by where the two roads part — walk their
+ *      shared stretch to the point they diverge; the road that turns off to
+ *      the left takes the left lane (likewise where they join). "Left"
+ *      follows the road round its corners, so one order serves the whole
+ *      shared stretch and roads peel off a hub's doorstep without crossing
+ *      each other. Lanes are centred on the gap.
  *
  * Required roads are routed and laned before recommended trails, so a view
  * that only shows required roads (/world) gets the same roads as one that
@@ -43,13 +55,14 @@
   const MAX_LANES = 3;       // lanes a gap holds before the admin board warns
   const COST = {
     STEP: 1,                 // one half-cell
-    BEND: 2.5,               // per turn — keeps roads to a few clean corners
-    CROSS: 3,                // crossing another road at a right angle
-    LANE: 1,                 // per road already on this stretch
+    BEND: 3,                 // per turn — keeps roads to a few clean corners
+    CROSS: 10,               // crossing another road at a right angle
+    LANE: 0.5,               // per road already on this stretch
     OVER: 40,                // stretch already at MAX_LANES
     TRAIL_ON_ROAD: 2         // a recommended trail sharing a required road's stretch
   };
   const MARGIN = 2;          // lattice ring around the board roads may use
+  const PASSES = 3;          // rip-up and reroute passes after the first routing
   // Directions: 0 E (+X), 1 S (+Y), 2 W (−X), 3 N (−Y). Side names match
   // /world, where +gridY is +z (south).
   const DX = [1, 0, -1, 0], DY = [0, 1, 0, -1];
@@ -142,13 +155,26 @@
   // use.seg[i*2 + o]   roads on the unit segment leaving vertex i in +X (o=0) / +Y (o=1)
   // use.req[...]       same, required roads only (trails avoid them)
   // use.vtx[i*2 + o]   roads with a horizontal (o=0) / vertical (o=1) segment at vertex i
+  function stepCost(use, edge, v, nv, d, nd, goal) {
+    const o = nd & 1;                                         // 0 horizontal, 1 vertical
+    const segI = Math.min(v, nv) * 2 + o;
+    const onSeg = use.seg[segI];
+    let c = COST.STEP + onSeg * COST.LANE;
+    if (edge.required) { if (onSeg >= MAX_LANES) c += COST.OVER; }
+    else if (use.req[segI]) c += COST.TRAIL_ON_ROAD;
+    if (d >= 0 && nd !== d) c += COST.BEND;
+    if (nv !== goal && use.vtx[nv * 2 + (1 - o)]) c += COST.CROSS;
+    return c;
+  }
+
   function search(board, use, edge) {
     const { x0, y0, w, h, blocked } = board;
     const N = w * h;
     const sx = edge.a.X - x0, sy = edge.a.Y - y0, tx = edge.b.X - x0, ty = edge.b.Y - y0;
     const start = sy * w + sx, goal = ty * w + tx;
-    const g = new Float64Array(N * 5).fill(Infinity);   // state = v*5 + (dir+1)
-    const prev = new Int32Array(N * 5).fill(-1);
+    if (!board.g) { board.g = new Float64Array(N * 5); board.prev = new Int32Array(N * 5); }
+    const g = board.g.fill(Infinity);                   // state = v*5 + (dir+1)
+    const prev = board.prev.fill(-1);
     const heap = new Heap();
     let counter = 0;
     const hfn = (v) => Math.abs((v % w) - tx) + Math.abs(((v / w) | 0) - ty);
@@ -159,7 +185,7 @@
       const v = (cur.s / 5) | 0, d = (cur.s % 5) - 1;
       const gc = g[cur.s];
       if (cur.f - hfn(v) > gc + 1e-9) continue;   // stale entry
-      if (v === goal) return unwind(prev, cur.s, w, x0, y0);
+      if (v === goal) return { verts: unwind(prev, cur.s, w, x0, y0), cost: gc };
       const vx = v % w, vy = (v / w) | 0;
       for (let nd = 0; nd < 4; nd++) {
         if (d >= 0 && nd === ((d + 2) & 3)) continue;           // no U-turns
@@ -167,16 +193,8 @@
         if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
         const nv = ny * w + nx;
         if (blocked[nv] && nv !== goal) continue;                // other projects
-        const o = nd & 1;                                         // 0 horizontal, 1 vertical
-        const segI = Math.min(v, nv) * 2 + o;
-        const onSeg = use.seg[segI];
-        let c = COST.STEP + onSeg * COST.LANE;
-        if (edge.required) { if (onSeg >= MAX_LANES) c += COST.OVER; }
-        else if (use.req[segI]) c += COST.TRAIL_ON_ROAD;
-        if (d >= 0 && nd !== d) c += COST.BEND;
-        if (nv !== goal && use.vtx[nv * 2 + (1 - o)]) c += COST.CROSS;
         const ns = nv * 5 + nd + 1;
-        const ng = gc + c;
+        const ng = gc + stepCost(use, edge, v, nv, d, nd, goal);
         if (ng < g[ns] - 1e-9) {
           g[ns] = ng; prev[ns] = cur.s;
           heap.push({ s: ns, f: ng + hfn(nv), n: counter++ });
@@ -184,6 +202,21 @@
       }
     }
     return null;
+  }
+
+  // Cost of an existing path against the current usage (its own use removed).
+  function pathCost(board, use, edge, verts) {
+    const { x0, y0, w } = board;
+    const idx = (p) => (p.Y - y0) * w + (p.X - x0);
+    const goal = idx(verts[verts.length - 1]);
+    let c = 0, d = -1;
+    for (let i = 1; i < verts.length; i++) {
+      const a = verts[i - 1], b = verts[i];
+      const nd = b.X > a.X ? 0 : b.Y > a.Y ? 1 : b.X < a.X ? 2 : 3;
+      c += stepCost(use, edge, idx(a), idx(b), d, nd, goal);
+      d = nd;
+    }
+    return c;
   }
 
   function unwind(prev, s, w, x0, y0) {
@@ -195,16 +228,17 @@
     return out.reverse();
   }
 
-  function markUse(board, use, verts, required) {
+  function markUse(board, use, verts, required, sign) {
     const { x0, y0, w } = board;
+    const k = sign === -1 ? -1 : 1;
     for (let i = 1; i < verts.length; i++) {
       const a = verts[i - 1], b = verts[i];
       const o = a.Y === b.Y ? 0 : 1;
       const va = (a.Y - y0) * w + (a.X - x0), vb = (b.Y - y0) * w + (b.X - x0);
       const segI = Math.min(va, vb) * 2 + o;
-      use.seg[segI]++;
-      if (required) use.req[segI]++;
-      use.vtx[va * 2 + o]++; use.vtx[vb * 2 + o]++;
+      use.seg[segI] += k;
+      if (required) use.req[segI] += k;
+      use.vtx[va * 2 + o] += k; use.vtx[vb * 2 + o] += k;
     }
   }
 
@@ -224,45 +258,195 @@
     return runs;
   }
 
+  // ── Lane order ──
+  // Two roads that share a stretch must sit in separate lanes; WHICH lane
+  // decides whether they cross when they part. Walk the shared stretch to
+  // where the two roads diverge: the road that leaves to the left belongs
+  // in the left lane (likewise where they join). "Left" follows the road
+  // round its corners, so one order serves the whole shared stretch. When
+  // the two ends disagree a crossing is unavoidable and no order is set.
+  const vkey = (p) => p.X + ',' + p.Y;
+  const skey = (a, b) => (a.X < b.X || (a.X === b.X && a.Y < b.Y)) ? vkey(a) + '|' + vkey(b) : vkey(b) + '|' + vkey(a);
+  // -1 left of `fwd`, +1 right, 0 straight on / back.
+  function sideOf(fwd, dir) {
+    const d = dir.X * fwd.Y - dir.Y * fwd.X;     // dot(dir, left), left = (fwd.Y, -fwd.X)
+    return d > 0 ? -1 : d < 0 ? 1 : 0;
+  }
+  const sub = (p, q) => ({ X: p.X - q.X, Y: p.Y - q.Y });
+
+  // Adds order constraints (it.lt / it.gt) between items (one per run) on
+  // the same line, from every stretch two required roads share.
+  function orderConstraints(roads, vertsByKey, itemAt) {
+    const segRunOf = new Map();     // key -> Int32Array: segment i -> run index
+    const bySeg = new Map();        // segment -> [{ r, i }]
+    for (const r of roads) {
+      const verts = vertsByKey.get(r.key);
+      const sr = new Int32Array(verts.length - 1);
+      let i = 0;
+      r.runs.forEach((run, ri) => { for (let n = Math.abs(run.to - run.from); n > 0; n--) sr[i++] = ri; });
+      segRunOf.set(r.key, sr);
+      for (let k = 0; k < verts.length - 1; k++) {
+        const sk = skey(verts[k], verts[k + 1]);
+        if (!bySeg.has(sk)) bySeg.set(sk, []);
+        bySeg.get(sk).push({ r, i: k });
+      }
+    }
+    // Shared segments per pair.
+    const pairs = new Map();
+    bySeg.forEach((list) => {
+      for (let x = 0; x < list.length; x++) for (let y = x + 1; y < list.length; y++) {
+        const [P, Q] = list[x].r.key < list[y].r.key ? [list[x], list[y]] : [list[y], list[x]];
+        const pk = P.r.key + '~' + Q.r.key;
+        if (!pairs.has(pk)) pairs.set(pk, { P: P.r, Q: Q.r, segs: [] });
+        pairs.get(pk).segs.push({ iP: P.i, iQ: Q.i });
+      }
+    });
+    const constrain = (pItem, qItem, pSmaller) => {
+      const [u, v] = pSmaller ? [pItem, qItem] : [qItem, pItem];
+      if (u === v) return;
+      u.lt.add(v); v.gt.add(u);
+    };
+    pairs.forEach(({ P, Q, segs }) => {
+      const vP = vertsByKey.get(P.key), vQ = vertsByKey.get(Q.key);
+      segs.sort((x, y) => x.iP - y.iP);
+      // Maximal runs of consecutive shared segments (one shared stretch each).
+      let g = 0;
+      while (g < segs.length) {
+        let e = g;
+        while (e + 1 < segs.length && segs[e + 1].iP === segs[e].iP + 1 && Math.abs(segs[e + 1].iQ - segs[e].iQ) === 1
+          && (e === g || segs[e + 1].iQ - segs[e].iQ === segs[e].iQ - segs[e - 1].iQ)) e++;
+        const iP0 = segs[g].iP, iP1 = segs[e].iP;
+        const same = e > g ? segs[e].iQ > segs[g].iQ : (vkey(vQ[segs[g].iQ]) === vkey(vP[iP0]));
+        const A = vP[iP0], B = vP[iP1 + 1];
+        // Off-stretch neighbours at each end (null when the road ends there).
+        const pPrev = iP0 > 0 ? vP[iP0 - 1] : null, pNext = iP1 + 2 < vP.length ? vP[iP1 + 2] : null;
+        const qA = same ? segs[g].iQ - 1 : segs[g].iQ + 2;
+        const qB = same ? segs[e].iQ + 2 : segs[e].iQ - 1;
+        const qPrev = qA >= 0 && qA < vQ.length ? vQ[qA] : null, qNext = qB >= 0 && qB < vQ.length ? vQ[qB] : null;
+        let atA = 0, atB = 0;     // -1: P left of Q, +1: P right of Q, 0: unknown
+        if (pPrev && qPrev) {
+          const fwd = sub(vP[iP0 + 1], A);
+          atA = Math.sign(sideOf(fwd, sub(pPrev, A)) - sideOf(fwd, sub(qPrev, A)));
+        }
+        if (pNext && qNext) {
+          const fwd = sub(B, vP[iP1]);
+          atB = Math.sign(sideOf(fwd, sub(pNext, B)) - sideOf(fwd, sub(qNext, B)));
+        }
+        const pLeft = (atA && atB && atA !== atB) ? 0 : (atA || atB);
+        if (pLeft) {
+          const srP = segRunOf.get(P.key), srQ = segRunOf.get(Q.key);
+          for (let k = g; k <= e; k++) {
+            const i = segs[k].iP;
+            const fwd = sub(vP[i + 1], vP[i]);
+            const pItem = itemAt(P.key, srP[i]), qItem = itemAt(Q.key, srQ[segs[k].iQ]);
+            // Lane offsets grow +Y on a horizontal line, +X on a vertical one.
+            const leftIsSmaller = pItem.run.o === 'h' ? fwd.X > 0 : fwd.Y < 0;
+            constrain(pItem, qItem, (pLeft < 0) === leftIsSmaller);
+          }
+        }
+        g = e + 1;
+      }
+    });
+  }
+
   // ── Lanes ──
-  // Runs on one lattice line that overlap, or touch at a gap vertex, need
-  // different lanes (touching runs that both turn the same way would
-  // otherwise overlap by their lane offsets). Runs that only meet at a
-  // project's centre don't: both are clipped to the project's box. Required:
-  // greedy colouring, centred per touching group. Trails: the nearest free
-  // offset to the centre, ≥ 1 lane from anything already on that stretch.
-  function assignLanes(roads, cells) {
+  // Runs on one lattice line that overlap need different lanes, ordered by
+  // the constraints above (greedy, in topological order; a rare cycle is cut).
+  // Runs that only touch end to end at a gap vertex (both turn there) need
+  // separate lanes only when they turn opposite ways (the one turning to
+  // -offset takes the lower lane); turning the same way they can share.
+  // Runs that meet at a project's centre never conflict: both are clipped to
+  // the project's box. Lanes are centred per touching group. Trails come
+  // after: the nearest free offset to the centre, >= 1 lane from anything
+  // already on that stretch.
+  function assignLanes(roads, cells, vertsByKey) {
     const lines = new Map();
-    for (const r of roads) for (const run of r.runs) {
+    const items = new Map();
+    for (const r of roads) r.runs.forEach((run, ri) => {
       const k = run.o + run.line;
       if (!lines.has(k)) lines.set(k, []);
-      lines.get(k).push({ run, req: r.required, a: Math.min(run.from, run.to), b: Math.max(run.from, run.to), key: r.key });
-    }
+      const it = { run, ri, road: r, req: r.required, a: Math.min(run.from, run.to), b: Math.max(run.from, run.to), key: r.key, lane: null, lt: new Set(), gt: new Set() };
+      lines.get(k).push(it);
+      items.set(r.key + '#' + ri, it);
+    });
+    const itemAt = (key, ri) => items.get(key + '#' + ri);
+    orderConstraints(roads.filter((r) => r.required), vertsByKey, itemAt);
+
     const byStart = (x, y) => x.a - y.a || x.b - y.b || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0);
     const over = [];
-    lines.forEach((items, lineKey) => {
+    lines.forEach((lineItems, lineKey) => {
       const o = lineKey[0], line = +lineKey.slice(1);
       const isProject = (t) => cells.has(o === 'h' ? t + ',' + line : line + ',' + t);
+      const overlap = (x, y) => Math.min(x.b, y.b) > Math.max(x.a, y.a);
       const touch = (x, y) => {
         const lo = Math.max(x.a, y.a), hi = Math.min(x.b, y.b);
         return hi > lo || (hi === lo && !isProject(lo));
       };
-      const req = items.filter((i) => i.req).sort(byStart);
-      // Touching groups (sweep by start).
+      // Which way a run's road turns off this line at t (-1 / +1 along the
+      // offset axis), for a run that ends at t.
+      const turnAt = (it, t) => {
+        const runs = it.road.runs;
+        const next = it.run.to === t ? runs[it.ri + 1] : runs[it.ri - 1];
+        if (!next) return 0;
+        const dir = it.run.to === t ? next.dir : (next.dir + 2) & 3;
+        return (dir === 1 || dir === 0) ? 1 : -1;     // S / E -> +offset
+      };
+      const req = lineItems.filter((i) => i.req).sort(byStart);
+      // Touch-only pairs: constrain opposite turns, let same turns share.
+      for (let x = 0; x < req.length; x++) for (let y = x + 1; y < req.length; y++) {
+        const p = req[x], q = req[y];
+        if (overlap(p, q) || !touch(p, q)) continue;
+        const t = p.b === q.a ? p.b : q.b === p.a ? q.b : null;
+        if (t == null) continue;
+        const tp = turnAt(p, t), tq = turnAt(q, t);
+        if (tp && tq && tp !== tq) { const [u, v] = tp < 0 ? [p, q] : [q, p]; u.lt.add(v); v.gt.add(u); }
+      }
+      // Constraints only count between items on this line; cut cycles (DFS, byStart order).
+      const onLine = new Set(req);
+      const state = new Map();
+      const visit = (it) => {
+        state.set(it, 1);
+        for (const v of Array.from(it.lt).sort(byStart)) {
+          if (!onLine.has(v)) continue;
+          const st = state.get(v);
+          if (st === 1) { it.lt.delete(v); v.gt.delete(it); continue; }
+          if (!st) visit(v);
+        }
+        state.set(it, 2);
+      };
+      for (const it of req) if (!state.get(it)) visit(it);
+      // Topological order, byStart among the ready items.
+      const indeg = new Map(req.map((it) => [it, Array.from(it.gt).filter((u) => onLine.has(u)).length]));
+      const ready = req.filter((it) => indeg.get(it) === 0).sort(byStart);
+      const order = [];
+      while (ready.length) {
+        const it = ready.shift();
+        order.push(it);
+        for (const v of Array.from(it.lt).sort(byStart)) {
+          if (!onLine.has(v)) continue;
+          indeg.set(v, indeg.get(v) - 1);
+          if (indeg.get(v) === 0) { ready.push(v); ready.sort(byStart); }
+        }
+      }
+      // Greedy lanes in that order.
+      const placed = [];
+      for (const it of order) {
+        let lane = 0;
+        for (const u of it.gt) if (onLine.has(u) && u.lane != null) lane = Math.max(lane, u.lane + 1);
+        for (;;) {
+          const clash = placed.some((q) => q.lane === lane && overlap(q, it));
+          if (!clash) break;
+          lane++;
+        }
+        it.lane = lane;
+        placed.push(it);
+      }
+      // Touching groups (sweep by start): centre each, flag crowded gaps.
       let group = [], groupEnd = -Infinity;
       const flush = () => {
         if (!group.length) return;
-        const lanes = [];
-        for (const it of group) {
-          const taken = new Set(group.filter((q) => q !== it && q.lane != null && touch(q, it)).map((q) => q.lane));
-          let l = 0; while (taken.has(l)) l++;
-          it.lane = l; lanes.push(l);
-        }
-        const n = Math.max(...lanes) + 1;
+        const n = Math.max(...group.map((i) => i.lane)) + 1;
         for (const it of group) { it.run.off = it.lane - (n - 1) / 2; it.run.room = (n - 1) / 2; }
-        // Crowded gap: more than MAX_LANES roads side by side on a stretch
-        // that isn't a project's own doorstep (a busy project's side just
-        // gets a wider doorway).
         if (n > MAX_LANES) {
           let worst = 0, wFrom = 0, wTo = 0;
           for (let t = Math.min(...group.map((i) => i.a)); t < Math.max(...group.map((i) => i.b)); t++) {
@@ -280,31 +464,27 @@
       }
       flush();
       // Trails.
-      const placed = req.slice();
-      for (const it of items.filter((i) => !i.req).sort(byStart)) {
-        const near = placed.filter((o) => touch(o, it)).map((o) => o.run.off);
+      const placedAll = req.slice();
+      for (const it of lineItems.filter((i) => !i.req).sort(byStart)) {
+        const near = placedAll.filter((o) => touch(o, it)).map((o) => o.run.off);
         let off = 0;
         for (let k = 0; k < 64; k++) {
           const c = (k === 0 ? 0 : (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.5);
           if (near.every((u) => Math.abs(u - c) >= 1 - 1e-9)) { off = c; break; }
         }
         it.run.off = off;
-        placed.push(it);
+        placedAll.push(it);
       }
-      // Trail rooms: the widest offset on the stretch (so a view squeezes
-      // everything there by the same factor).
-      for (const it of items) {
+      for (const it of lineItems) {
         if (it.req) continue;
-        const near = placed.filter((o) => touch(o, it)).map((o) => Math.abs(o.run.off));
+        const near = placedAll.filter((o) => touch(o, it)).map((o) => Math.abs(o.run.off));
         it.run.room = Math.max(Math.abs(it.run.off), ...near);
       }
-      // Required runs on a stretch with trails keep their own room in a
-      // roads-only view; `roomAll` is what the chart squeezes by.
       for (const it of req) {
-        const near = placed.filter((o) => touch(o, it)).map((o) => Math.abs(o.run.off));
+        const near = placedAll.filter((o) => touch(o, it)).map((o) => Math.abs(o.run.off));
         it.run.roomAll = Math.max(it.run.room, ...near);
       }
-      for (const it of items) if (!it.req) it.run.roomAll = it.run.room;
+      for (const it of lineItems) if (!it.req) it.run.roomAll = it.run.room;
     });
     return over;
   }
@@ -333,18 +513,49 @@
     const board = buildBoard(projects);
     const N = board.w * board.h;
     const use = { seg: new Uint16Array(N * 2), req: new Uint16Array(N * 2), vtx: new Uint16Array(N * 2) };
+    const edges = collectEdges(projects, withTrails);
+    const paths = new Map();
+    // Required roads first: sequentially, then rip-up and reroute, where
+    // every road is re-searched against ALL the others (the first pass only
+    // knew the roads routed before it) and moves only when strictly cheaper.
+    // Trails follow the same way, so they never move a required road.
+    const routeGroup = (list) => {
+      for (const e of list) {
+        const found = search(board, use, e);
+        if (!found || found.verts.length < 2) continue;
+        markUse(board, use, found.verts, e.required, 1);
+        paths.set(e.key, found.verts);
+      }
+      for (let pass = 0; pass < PASSES; pass++) {
+        let moved = 0;
+        for (const e of list) {
+          const cur = paths.get(e.key);
+          if (!cur) continue;
+          markUse(board, use, cur, e.required, -1);
+          const was = pathCost(board, use, e, cur);
+          // Already as cheap as any road between these two could be.
+          const floor = e.dist * COST.STEP + (e.a.X !== e.b.X && e.a.Y !== e.b.Y ? COST.BEND : 0);
+          if (was <= floor + 1e-9) { markUse(board, use, cur, e.required, 1); continue; }
+          const found = search(board, use, e);
+          if (found && found.verts.length >= 2 && found.cost < was - 1e-6) { paths.set(e.key, found.verts); markUse(board, use, found.verts, e.required, 1); moved++; }
+          else markUse(board, use, cur, e.required, 1);
+        }
+        if (!moved) break;
+      }
+    };
+    routeGroup(edges.filter((e) => e.required));
+    routeGroup(edges.filter((e) => !e.required));
     const roads = [];
-    for (const e of collectEdges(projects, withTrails)) {
-      const verts = search(board, use, e);
-      if (!verts || verts.length < 2) continue;
-      markUse(board, use, verts, e.required);
+    for (const e of edges) {
+      const verts = paths.get(e.key);
+      if (!verts) continue;
       const runs = toRuns(verts);
       roads.push({
         key: e.key, fromId: e.fromId, toId: e.toId, required: e.required, runs,
         fromSide: SIDE[runs[0].dir], toSide: SIDE[(runs[runs.length - 1].dir + 2) & 3]
       });
     }
-    const overCapacity = assignLanes(roads, board.cells);
+    const overCapacity = assignLanes(roads, board.cells, paths);
     const result = { roads, byKey: new Map(roads.map((r) => [r.key, r])), overCapacity };
     if (_cache.size > 8) _cache.delete(_cache.keys().next().value);
     _cache.set(sig, result);

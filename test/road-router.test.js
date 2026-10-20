@@ -55,6 +55,22 @@ function assertNoOverlap(segs, minGap) {
   }
 }
 
+// Legs of different roads that properly cross (a crossroads, or a road
+// cutting through a neighbour's lane). Ends clipped to the project boxes
+// don't count — use a view with nodeHalfW/H > 0.
+function countCrossings(segs) {
+  const d = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const cross = (p, q) => {
+    const d1 = d(p.a, p.b, q.a), d2 = d(p.a, p.b, q.b), d3 = d(q.a, q.b, p.a), d4 = d(q.a, q.b, p.b);
+    return ((d1 > 1e-6 && d2 < -1e-6) || (d1 < -1e-6 && d2 > 1e-6)) && ((d3 > 1e-6 && d4 < -1e-6) || (d3 < -1e-6 && d4 > 1e-6));
+  };
+  let n = 0;
+  for (let i = 0; i < segs.length; i++) for (let j = i + 1; j < segs.length; j++) {
+    if (segs[i].key !== segs[j].key && cross(segs[i], segs[j])) n++;
+  }
+  return n;
+}
+
 // No lattice vertex a road visits is another project's cell.
 function assertAvoidsProjects(projects, result) {
   const cells = new Map(projects.map((p) => [`${2 * p.gridX},${2 * p.gridY}`, p.id]));
@@ -113,6 +129,25 @@ test('roads sharing a gap get separate lanes', () => {
   assertNoOverlap(segs, 0.1);
 });
 
+test('roads sharing a doorstep peel off without crossing each other', () => {
+  // One parent, three children down the row below it: the roads leave the
+  // hub along its row in lanes and turn south one after another. The lane
+  // order must follow the turn order (the road turning first takes the
+  // inner lane) or the first to turn cuts through the others.
+  const projects = [P('hub', 0, 0), P('a', 1, 2, ['hub']), P('b', 2, 2, ['hub']), P('c', 3, 2, ['hub'])];
+  const res = R.route(projects);
+  const box = Object.assign({}, UNIT, { nodeHalfW: 0.45, nodeHalfH: 0.45 });
+  const segs = segmentsOf(res, box);
+  assertAxisAligned(segs);
+  assertNoOverlap(segs, 0.1);
+  assert.equal(countCrossings(segs), 0);
+  // Mirror image: three parents into one child.
+  const joined = [P('a', 1, 0), P('b', 2, 0), P('c', 3, 0), P('hub', 0, 2, ['a', 'b', 'c'])];
+  const segs2 = segmentsOf(R.route(joined), box);
+  assertNoOverlap(segs2, 0.1);
+  assert.equal(countCrossings(segs2), 0);
+});
+
 test('ports match the ends of the routes', () => {
   const projects = [P('a', 0, 0), P('b', 1, 0, ['a']), P('c', 0, 1, ['a'])];
   const res = R.route(projects);
@@ -157,7 +192,13 @@ test('the bundled projects: every road routed, rook-only, no project hit, no ove
   const segs2 = segmentsOf(roadsOnly, Object.assign({}, UNIT, { trails: false }));
   assertNoOverlap(segs2, 0.1);
   const bends = res.roads.filter((r) => r.required).reduce((n, r) => n + r.runs.length - 1, 0);
-  console.log(`bundled: ${res.roads.length} routes, ${bends} bends on required roads, ${res.overCapacity.length} over-capacity gaps`);
+  // Crossings the eye sees (lane offsets included), required roads only.
+  // 74 before the reroute passes + ordered lanes, 14 after; the ceiling
+  // guards against a cost tweak quietly bringing the braids back.
+  const box = Object.assign({}, UNIT, { nodeHalfW: 0.45, nodeHalfH: 0.45, trails: false });
+  const crossings = countCrossings(segmentsOf(roadsOnly, box));
+  assert.ok(crossings <= 20, `${crossings} crossings between required roads`);
+  console.log(`bundled: ${res.roads.length} routes, ${bends} bends on required roads, ${crossings} crossings, ${res.overCapacity.length} over-capacity gaps`);
 });
 
 test('pathD rounds corners and samplePolyline measures the same route', () => {
