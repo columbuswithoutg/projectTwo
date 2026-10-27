@@ -167,7 +167,7 @@ const ProfileView = {
     }
 
     function buildAvatarPicker(watchedIds, currentPic) {
-      const unlocked = characters.filter(c => watchedIds.has(c.debut));
+      const unlocked = characters.filter(c => isCharUnlocked(c, watchedIds));
       if (!unlocked.length) {
         pickerEmpty.style.display = 'block';
         return;
@@ -268,7 +268,7 @@ const ProfileView = {
         const watchedIds = new Set(
           (prog.watchedProjects || []).filter(e => e.count > 0).map(e => e.projectId)
         );
-        statChars.textContent = characters.filter(c => watchedIds.has(c.debut)).length;
+        statChars.textContent = characters.filter(c => isCharUnlocked(c, watchedIds)).length;
         buildAvatarPicker(watchedIds, data.profilePicture);
       } catch {
         statChars.textContent = '?';

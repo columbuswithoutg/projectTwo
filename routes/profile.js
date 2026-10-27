@@ -56,7 +56,9 @@ function validProfilePictureUrl(url) {
 
 // Character portraits the picker can offer: image file → what unlocks it.
 // A character's base image needs its debut watched; an alternate look
-// (stage) also needs its `after` project. Same source as /api/content
+// (stage) needs only its `after` project — the same rule as getCharStages in
+// characters.js, so Deadpool & Wolverine alone offers yellow-suit Wolverine
+// without X-Men (2000). Same source as /api/content
 // (Mongo, else characters.js), cached briefly.
 let _charImages = null;
 let _charImagesAt = 0;
@@ -70,7 +72,7 @@ async function characterImages() {
   const map = new Map();
   for (const c of list || contentLoader.get('characters')) {
     if (c.image) map.set(c.image, { needs: [c.debut] });
-    for (const s of c.stages || []) if (s.image) map.set(s.image, { needs: [c.debut, s.after] });
+    for (const s of c.stages || []) if (s.image) map.set(s.image, { needs: [s.after] });
   }
   _charImages = map;
   _charImagesAt = Date.now();

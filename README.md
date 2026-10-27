@@ -35,7 +35,7 @@ projectOne/
 ├── README.md                  ← this file
 │
 ├── projects.js                Static fallback: 71 MCU projects (data, var-declared)
-├── characters.js              Static fallback: 131 MCU characters
+├── characters.js              Static fallback: 130 MCU + Fox X-Men characters
 ├── locations.js               Static fallback: 36 world-map locations
 ├── auth.js                    Login-page script (bound to index.html)
 ├── index.html                 Login page
@@ -318,6 +318,20 @@ Append new entries at the **top** of this section. Use the format:
 Brief summary of what changed and why.
 - file/path:line — what changed
 ```
+
+---
+
+### 2026-10-27 — Every project and character has its picture; duplicates merged into stages; Fox X-Men cast
+
+Filled every missing poster and portrait and made each picture match the look it stands for: a character's base image is how they look in their debut, and each later look is a stage unlocked by watching that project. Images are official posters / stills from TMDB, cropped to the existing sizes (posters 540x800, portraits 540x614, JPEG q82). Only Isaiah Bradley is still missing (no usable image on TMDB), so he keeps the monogram.
+
+- `assets/images/` — 13 new posters: the 12 Fox X-Men / Wolverine / Deadpool films and Avengers: Doomsday (teaser).
+- `assets/characters/` — 91 new portraits (incl. the 2014 Groot and Hawkeye-era Echo), 2 replaced. Three files existed under the wrong name (`blackwidow_white.jpg.jpg`, `he_who_remains.jfif`, `mistynight.jpg`) and are renamed to what the data references. Base images that showed a later look were moved to stage names and replaced with the debut look: Rhodey (Terrence Howard; the Secret Invasion poster is now `rhodey_si.jpg`), Hulk (2008; Ruffalo → `hulk_avengers.jpg`), Jane Foster (Thor; the Love & Thunder poster → `mightythor.jpg`), Hawkeye (Avengers; series poster → `hawkeye_series.jpg`), Spider-Man (Civil War suit; Iron Spider → `spiderman_iron.jpg`), Zemo (unmasked; FATWS mask → `zemo_fatws.jpg`), Monica (WandaVision; Photon → `monica2.jpg`), Daredevil (Netflix suit; She-Hulk yellow suit → `daredevil_yellow.jpg`), Fisk (Netflix; Kingpin white suit → `kingpin.jpg`), Bucky (`bucky_wakanda.jpg` was the FATWS look → `bucky_fatws.jpg`). Abomination and Howard Stark were comic art, now film images.
+- `characters.js` — 15 duplicate entries folded into stages of one character: Thor (L&T), Mighty Thor → Jane, Fury (SI), Winter Soldier + Bucky (FATWS) → Bucky, Captain America (Sam) ×2 → Sam Wilson (`falcon`, renamed from "Falcon"), Kamala → Ms. Marvel, Riri ×2 → Ironheart, Agatha (AAA), Monica (Marvels), Daredevil (BA), Kingpin → Fisk, Ghost (TB). New stages: Rhodey War Machine / Skrull, Hulk Avengers, Bro Thor, Hawkeye Ronin (now after Endgame) / series, Cap Infinity War beard (Endgame stage relabelled "Endgame suit"), Bucky Winter Soldier / FATWS / Thunderbolts, Groot grown again (Vol. 3, `groot_vol3.jpg`), Spider-Man Iron Spider, Zemo FATWS, Shuri as Black Panther, Fisk Kingpin / Mayor. Wolverine now debuts in X-Men (2000) and Deadpool in Deadpool (2016), with Logan / D&W stages. New Fox X-Men section: Professor X, Magneto, Jean Grey, Cyclops, Storm, Mystique, Rogue, Sabretooth, Nightcrawler, Beast, Gambit, Apocalypse, X-23, Cable, with young-cast stages; walker stats for them; villains at X-Men, Origins, Apocalypse and Deadpool 2. `VILLAIN_DATA` cap2 → `bucky`, echo → `fisk`. 131 → 130 characters.
+- `characters.js` `MERGED_CHARACTER_IDS` + `js/walkers.js` `normalizeEntry` — saved walker selections that use a merged id become the character it was merged into, at its highest unlocked look.
+- `js/walker-dialogues.js` — Winter Soldier lines keyed to `bucky`, Kingpin lines merged into `fisk`, defeat/victory lines for Magneto, Sabretooth, Apocalypse and Cable.
+- Live site: the Mongo copy still has the old character list. Run `node scripts/seed-content.js` (upserts the new and changed entries and the dialogue maps), then delete the 15 merged ids in the admin CMS — the seed never deletes: `thor_lt, mightythor, fury_si, wintersoldier, bucky2, samwilson, sam_cap, kamala, riri, riri2, agatha_aaa, monicarambeau2, daredevil_ba, kingpin, ghost_tb`. Until then every filename the live data references still exists, so nothing breaks.
+- **A character unlocks from any project they appear in** — their debut or any stage's project — and shows only the looks you've watched (`isCharUnlocked` / `getCharStages` in `characters.js`, used by the Characters page, profile picker + stats, and the walker roster). Deadpool & Wolverine alone gives Wolverine, Deadpool, Gambit and X-23 in their D&W looks; Hawkeye alone gives Fisk as Kingpin; Born Again without the Netflix shows gives Daredevil and Mayor Fisk. The debut look joins once the debut is watched. `routes/profile.js`: a stage portrait needs only its own project (it also needed the debut). `js/walkers.js` `getStageStartNode` reads the unlocking project from the unlocked-looks list (it indexed `char.stages`, which was off whenever an earlier look was skipped). Echo (Maya Lopez) now debuts in Hawkeye, where she first appears: `echo.jpg` is her Hawkeye character poster and the Echo-series still is the `echo` stage (`echo_series.jpg`). Groot's base is now the 2014 character poster and the Vol. 3 art is `groot_vol3.jpg` (one file served as both, so the portrait rule asked for Vol. 3 before the base could be picked). `test/character-unlock.test.js` covers the rule and checks the bundled data (real projects, no image used twice, merged ids resolve).
 
 ---
 

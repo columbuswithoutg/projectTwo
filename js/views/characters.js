@@ -34,7 +34,7 @@ const CharactersView = {
 
   async _load() {
     const watchedIds = await this._getWatchedIds();
-    const unlocked = characters.filter(c => watchedIds.has(c.debut));
+    const unlocked = characters.filter(c => isCharUnlocked(c, watchedIds));
 
     const countEl = document.getElementById('unlocked-count');
     if (countEl) countEl.textContent = `${unlocked.length} of ${characters.length} unlocked`;

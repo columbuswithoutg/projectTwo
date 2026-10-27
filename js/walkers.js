@@ -124,11 +124,15 @@ const Walkers = (() => {
   /* ---- persistence ---- */
   // Storage format: [{ id: "thor", stage: 1 }, { id: "cap", stage: 0 }, ...]
   // Backward compat: plain string "thor" → { id: "thor", stage: -1 } (-1 = highest unlocked)
+  // A merged character id (e.g. "thor_lt", see MERGED_CHARACTER_IDS in characters.js)
+  // becomes the character it was merged into, at its highest unlocked look.
 
   function normalizeEntry(entry) {
-    if (typeof entry === 'string') return { id: entry, stage: -1 };
-    if (entry && typeof entry.id === 'string') return { id: entry.id, stage: entry.stage ?? -1 };
-    return null;
+    const id = typeof entry === 'string' ? entry : (entry && typeof entry.id === 'string' ? entry.id : null);
+    if (!id) return null;
+    if (MERGED_CHARACTER_IDS[id]) return { id: MERGED_CHARACTER_IDS[id], stage: -1 };
+    if (typeof entry === 'string') return { id, stage: -1 };
+    return { id, stage: entry.stage ?? -1 };
   }
 
   function loadSelections() {
@@ -175,16 +179,12 @@ const Walkers = (() => {
     return stages[Math.max(0, entry.stage)].image;
   }
 
-  // Each stage starts at the node that unlocked it
+  // Each stage starts at the node that unlocked it. stageIndex counts the
+  // UNLOCKED looks (getCharStages), not char.stages, so read the node from there.
   function getStageStartNode(char, stageIndex, visibleIds) {
-    if (stageIndex <= 0) {
-      return visibleIds.includes(char.debut) ? char.debut : pickRandom(visibleIds);
-    }
-    // Stage N corresponds to char.stages[N-1].after
-    const stageData = char.stages?.[stageIndex - 1];
-    if (stageData && visibleIds.includes(stageData.after)) {
-      return stageData.after;
-    }
+    const looks = getCharStages(char, state);
+    const look = looks[Math.min(Math.max(0, stageIndex), looks.length - 1)];
+    if (look && visibleIds.includes(look.after)) return look.after;
     return visibleIds.includes(char.debut) ? char.debut : pickRandom(visibleIds);
   }
 
@@ -195,9 +195,9 @@ const Walkers = (() => {
   }
 
   function getUnlockedCharacters() {
-    // Characters whose debut node has been watched
+    // Characters with any watched appearance (debut or a stage's project)
     if (typeof characters === 'undefined') return [];
-    return characters.filter(c => state.isWatched(c.debut));
+    return characters.filter(c => isCharUnlocked(c, state));
   }
 
   function getVisibleNodes() {
