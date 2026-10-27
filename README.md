@@ -24,7 +24,7 @@ This document describes the **current state** of the project. The Changelog at t
 ## Repo layout
 
 ```
-projectOne/
+projectTwo/
 ├── server.js                  Express app entry — routes, rate limits, static allowlist, helmet, compression
 ├── manifest.json              PWA manifest (name, icons, theme color, start_url)
 ├── sw.js                      Service worker TEMPLATE → dist/sw.js (version + precache filled by the build)
@@ -37,10 +37,15 @@ projectOne/
 ├── projects.js                Static fallback: 71 MCU projects (data, var-declared)
 ├── characters.js              Static fallback: 130 MCU + Fox X-Men characters
 ├── locations.js               Static fallback: 36 world-map locations
-├── auth.js                    Login-page script (bound to index.html)
-├── index.html                 Login page
 ├── spa.html                   SPA shell TEMPLATE → dist/spa.html (build fills stylesheet, chunk manifest, core script)
-├── styles.css                 Single global stylesheet (~7300 lines; minified + hashed by the build)
+├── styles/                    Stylesheet sources → dist/static/styles.<hash>.css (bundled + minified by the build)
+│   ├── index.css              Entry: declares the cascade layers and @imports every partial below in order
+│   ├── tokens/                primitives + Cinematic / Comic theme tokens
+│   ├── legacy/                01-global.css … 28-composer.css — the old single stylesheet, split verbatim
+│   ├── base/                  base.css
+│   ├── components/            header, buttons, surfaces, forms, brand, overlays, route-progress, poster
+│   ├── pages/                 login, profile, board, feed, watchorder, map, admin-cms, customize, admin-scenes
+│   └── hud/                   3D-view HUD: world, scene-guess
 │
 ├── models/                    Mongoose schemas
 │   ├── user.js                username, password, watchedProjects, walkers,
@@ -80,7 +85,7 @@ projectOne/
 │
 ├── scripts/
 │   ├── build.mjs              Client build → dist/ (`npm run build`; `--watch --serve` = `npm run dev`)
-│   ├── seed-content.js        Idempotent seed: JS files → Mongo (run once)
+│   ├── seed-content.js        Seed: JS files → Mongo (insert-only; --dry-run, --overwrite, --wipe --yes)
 │   ├── export-content.js      Inverse: Mongo → static fallback files (--dry-run)
 │   ├── optimize-images.mjs    Shrink assets/characters + assets/images in place (--dry-run)
 │   ├── build-humanoid-assets.mjs  Raw Quaternius glTF → assets/models/humanoid/v1
@@ -113,11 +118,10 @@ projectOne/
     ├── house-editor.js        Decorate-a-house panel — /world keeper houses and /home rooms
     ├── config.js              Frontend-only app config (CONFIG)
     ├── world-config.js        CONFIG_WORLD — display geometry (NOT content)
-    ├── state.js               Watch-progress in-memory store + persist
+    ├── state.js               Watch-progress store (server-owned; /start, /complete, /cancel, /memory)
     ├── walker-dialogues.js    Dialogue API — pairs, defeat, victory lines
     ├── walkers.js             Walker physics + dialogue + fight engine
     ├── walkerView.js          Walker DOM + fight UI
-    ├── walkers/...            (other walker render helpers)
     ├── layout.js              Map graph + road network
     ├── road-router.js         Rook-style roads (chart, walkers, admin board, /world) — unit-tested
     ├── nodeFactory.js         Project node DOM builder
@@ -155,7 +159,7 @@ projectOne/
 ## Setup
 
 ### Prerequisites
-- Node.js 18+
+- Node.js >= 20.19 (Mongoose 9; CI and Render use the version pinned in `.node-version`)
 - A MongoDB Atlas cluster (free tier works) or local Mongo
 - A Cloudinary account (for memory uploads)
 
@@ -173,7 +177,7 @@ PORT=3000
 ### Run locally
 ```
 npm install          # also builds dist/ (postinstall)
-npm run dev          # build, watch js/ + styles.css + templates, and start server.js
+npm run dev          # build, watch js/ + styles/ + templates, and start server.js
 ```
 Open `http://localhost:3000`. Edits rebuild in ~300 ms; reload to pick them up. `npm start` (= `node server.js`) serves an existing build without watching — run `npm run build` first. The server forces Google DNS (8.8.8.8) at startup to work around Atlas SRV resolution issues on Windows.
 
@@ -182,7 +186,7 @@ The CMS tab will be empty until you copy the static JS files into MongoDB:
 ```
 node scripts/seed-content.js
 ```
-The script is idempotent (upsert by `id`). Pass `--wipe` to reset and re-seed.
+By default the seed is insert-only (`$setOnInsert` keyed on `id`): it adds the rows that are missing and leaves existing ones — and every CMS edit — untouched, so it is safe to re-run. `--dry-run` prints, per collection, the ids it would insert / overwrite and writes nothing. `--overwrite` resets existing rows (and the dialogue doc) to the repo copy, discarding CMS edits. `--wipe` deletes the four content collections first (CMS-only rows are lost) and refuses to run without `--yes`. Every run prints the target DB host (credentials redacted) first and a one-line summary at the end.
 
 If you skip the seed: the app falls back to the static JS files via `server/contentLoader.js`. App works identically; CMS just shows empty lists.
 
@@ -246,8 +250,10 @@ In MongoDB Atlas Data Explorer → `mcu-tracker` → `users`:
 
 ### Seed/reseed content
 ```
-node scripts/seed-content.js          # upsert (safe to re-run)
-node scripts/seed-content.js --wipe   # drop collections then re-seed
+node scripts/seed-content.js --dry-run       # what would be inserted / overwritten; writes nothing
+node scripts/seed-content.js                 # insert missing rows only (safe to re-run)
+node scripts/seed-content.js --overwrite     # also reset existing rows to the repo copy (drops CMS edits)
+node scripts/seed-content.js --wipe --yes    # drop the four collections, then re-seed
 ```
 
 ### Adding a character or poster image
@@ -259,6 +265,7 @@ It rewrites only files that get at least 10% smaller (characters ≤600px, poste
 
 ### Deploy to Render
 - Push to the connected branch → Render rebuilds automatically.
+- Set the service's **Auto-Deploy** to "After CI checks pass", so a push that fails CI (`node --check` sweep + `npm test`) is never deployed.
 - Set the service's **Health Check Path** to `/api/health` — it returns 503 while Mongo is disconnected, so Render recycles a wedged process instead of leaving it serving 500s.
 - No new env vars required for Phase 2 / 3 — same `MONGO_URI`, `JWT_SECRET`, `CLOUDINARY_*`.
 - Render filesystem is ephemeral, so the static fallback JS files (which live in the repo) survive across deploys; the seed script needs to be run pointing at the production Mongo URI:
@@ -280,8 +287,8 @@ It rewrites only files that get at least 10% smaller (characters ≤600px, poste
 - **Boot-time content fetch adds ~100ms** before the first view mounts. On a healthy server this is invisible; on a cold start it's brief but noticeable. If it ever becomes an issue, the static globals remain available and we could render against them first, then re-render after fetch.
 - **`Object.freeze` on PHYSICS was dropped in Phase 2.** Don't restore it — `Walkers.applyConfig` mutates sub-objects.
 - **`const` → `var` in the static content files (projects.js / characters.js / locations.js).** Don't change back. boot.js reassigns these globals after the content fetch resolves.
-- **CMS edits do not propagate back to the static JS files.** Once you start editing via the admin UI, the JS files become a stale snapshot. There is no automatic export-to-JS-files job (could be built later as `scripts/export-content.js`).
-- **MongoDB SRV lookup fails on default Windows DNS.** Both `server.js` and `scripts/seed-content.js` force Google DNS (`8.8.8.8`) at startup to work around this.
+- **CMS edits do not propagate back to the static JS files.** Once you start editing via the admin UI, the JS files become a stale snapshot. Run `node scripts/export-content.js` (`--dry-run` first) to snapshot Mongo back into them.
+- **MongoDB SRV lookup fails on default Windows DNS.** `server.js` and the Mongo scripts (`seed-content.js`, `export-content.js`, `backfill-username-lower.js`) force Google DNS (`8.8.8.8`) at startup to work around this — except when `NODE_ENV=production`, unless `FORCE_PUBLIC_DNS=1` (`usePublicDns()` in `server/boot-checks.js`).
 - **`isAdmin` is set manually in MongoDB.** No promote-from-UI flow exists by design — there's no public path to admin.
 - **The client is a build artefact.** `server.js` serves `dist/` and refuses to start without `dist/spa.html`. `spa.html` and `sw.js` in the repo root are templates; `js/*.js` are sources and are no longer served over HTTP. Adding a JS file means adding it to the right chunk list in `scripts/build.mjs`, in dependency order. Chunks are plain concatenations minified with `esbuild.transform` — **never switch to `bundle`/`format`**: the files share state through top-level declarations and `boot.js` reassigns `window.projects` etc., which any bundle format would scope away. The build's global-name assertion exists to catch exactly that.
 - **Service worker cache invalidation is automatic.** `dist/sw.js` gets `CACHE_VERSION` from the hash of the build outputs, so any change to any built file rolls the cache — no manual bumps. `/dist/*` is cache-first (hashed names), `/assets/*` stale-while-revalidate (held open with `waitUntil`), `/api/*` and `/socket.io/*` never cached. A tab left open across a deploy that then asks for a lazy chunk whose hash is gone gets one full reload (`_reloadOnce` in `js/router.js`).
@@ -291,10 +298,10 @@ It rewrites only files that get at least 10% smaller (characters ≤600px, poste
 - **Passwords are 8 characters to 72 bytes** (`server/password.js`). bcrypt ignores everything past 72 bytes, so the old 128-character cap was a fiction. Login never applies the rule — old accounts keep working and are quietly re-hashed to cost 12 on their next sign-in.
 - **`usernameLower` must be backfilled once per database.** New accounts get the lower-cased, uniquely indexed copy of their name automatically; run `node scripts/backfill-username-lower.js --dry-run` then without the flag after a deploy (production: with `MONGO_URI` pointing at Atlas). Until every account has it, `server/username.js` keeps the old case-insensitive regex as a last fallback, so nothing breaks — it is just slower. Never write `null` into the field (the index is sparse).
 - **Uploads are policed in `server/upload-policy.js`**: one accepted-type list (JPG/PNG/GIF/WebP/AVIF/HEIC/HEIF/MP4/MOV/WebM; HEIC/HEIF are stored as JPG), 25 MB a file, 60 files / 400 MB per user per day, two at a time, every asset recorded in `models/Upload.js` against its uploader. Media URLs a user supplies (memories, profile picture, house portraits) must be plain uploads in the `mcu-memories` folder of this cloud (`server/cloudinary-url.js`): fetch-proxy and transformation URLs are refused. An admin memory delete only destroys the Cloudinary asset once nothing else references it.
-- **Watches are one-way.** A finished watch only comes from `POST /api/progress/complete` (timer) or an admin's Mark watched (`POST /api/admin/users/:id/watched`), and nothing removes one: `/save` can't delete entries and Clear progress was removed on 2026-10-27. Undoing a watch means editing the user's `watchedProjects` in Mongo by hand.
+- **Watches are one-way.** A finished watch only comes from `POST /api/progress/complete` (timer) or an admin's Mark watched (`POST /api/admin/users/:id/watched`), and nothing removes one: watches only go through `/start`, `/complete` and `/cancel` (memories through `/memory`), none of which deletes an entry, and Clear progress was removed on 2026-10-27. Undoing a watch means editing the user's `watchedProjects` in Mongo by hand.
 - **Realtime limits are per user, not per socket** (`server/rate-store.js`): chat cooldowns, punch/snap floors and the join buckets survive a reconnect, and one account's tabs share them. The handshake itself is capped per IP (before the JWT is even read) and per user; a refused client retries once after 15 s. Private messages — inbox DMs and /world whispers alike — share one budget per sender (`server/dm-policy.js`: 8 at once, 20 a minute, and at most 20 stored per day to someone who isn't a friend).
 - **Helmet CSP is ENFORCED** (since 2026-07-07) with an allowlist covering the inline importmap, unpkg.com (Three.js), Cloudinary, Google Fonts, websockets, and data:/blob: images. **Adding any new external source requires extending the allowlist in server.js first** or first paint will brick. Other security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS, COOP, CORP=cross-origin) are on.
-- **`index.html` + root `auth.js` are a stale legacy login page** (since 2026-08-06). The in-app router rewrites `/index.html` → `/` and `/login` always serves `spa.html`, so nothing in normal navigation reaches them — but a direct request for `/index.html` still gets served statically (`server.js` `ROOT_FILES`) and runs the old, un-animated register/login script. `js/views/login.js` is the live implementation; keep new auth UX changes there, not in the legacy file.
+- **The legacy login page is gone** (root `index.html` + `auth.js` and the single stylesheet were removed on 2026-09-29, 432e746). `/index.html` now 301-redirects to `/login`, which `spa.html` serves; `js/views/login.js` is the only login implementation.
 
 ---
 
@@ -341,7 +348,7 @@ Filled every missing poster and portrait and made each picture match the look it
 - `characters.js` — 15 duplicate entries folded into stages of one character: Thor (L&T), Mighty Thor → Jane, Fury (SI), Winter Soldier + Bucky (FATWS) → Bucky, Captain America (Sam) ×2 → Sam Wilson (`falcon`, renamed from "Falcon"), Kamala → Ms. Marvel, Riri ×2 → Ironheart, Agatha (AAA), Monica (Marvels), Daredevil (BA), Kingpin → Fisk, Ghost (TB). New stages: Rhodey War Machine / Skrull, Hulk Avengers, Bro Thor, Hawkeye Ronin (now after Endgame) / series, Cap Infinity War beard (Endgame stage relabelled "Endgame suit"), Bucky Winter Soldier / FATWS / Thunderbolts, Groot grown again (Vol. 3, `groot_vol3.jpg`), Spider-Man Iron Spider, Zemo FATWS, Shuri as Black Panther, Fisk Kingpin / Mayor. Wolverine now debuts in X-Men (2000) and Deadpool in Deadpool (2016), with Logan / D&W stages. New Fox X-Men section: Professor X, Magneto, Jean Grey, Cyclops, Storm, Mystique, Rogue, Sabretooth, Nightcrawler, Beast, Gambit, Apocalypse, X-23, Cable, with young-cast stages; walker stats for them; villains at X-Men, Origins, Apocalypse and Deadpool 2. `VILLAIN_DATA` cap2 → `bucky`, echo → `fisk`. 131 → 130 characters.
 - `characters.js` `MERGED_CHARACTER_IDS` + `js/walkers.js` `normalizeEntry` — saved walker selections that use a merged id become the character it was merged into, at its highest unlocked look.
 - `js/walker-dialogues.js` — Winter Soldier lines keyed to `bucky`, Kingpin lines merged into `fisk`, defeat/victory lines for Magneto, Sabretooth, Apocalypse and Cable.
-- Live site: the Mongo copy still has the old character list. Run `node scripts/seed-content.js` (upserts the new and changed entries and the dialogue maps), then delete the 15 merged ids in the admin CMS — the seed never deletes: `thor_lt, mightythor, fury_si, wintersoldier, bucky2, samwilson, sam_cap, kamala, riri, riri2, agatha_aaa, monicarambeau2, daredevil_ba, kingpin, ghost_tb`. Until then every filename the live data references still exists, so nothing breaks.
+- Live site: the Mongo copy still has the old character list. Run `node scripts/seed-content.js --dry-run` and then without the flag (inserts the new ids; the seed is insert-only since 2026-10-27, so changed entries and the dialogue maps need `--overwrite` — which also resets every CMS edit to the repo copy — or the CMS), then delete the 15 merged ids in the admin CMS — the seed never deletes: `thor_lt, mightythor, fury_si, wintersoldier, bucky2, samwilson, sam_cap, kamala, riri, riri2, agatha_aaa, monicarambeau2, daredevil_ba, kingpin, ghost_tb`. Until then every filename the live data references still exists, so nothing breaks.
 - **A character unlocks from any project they appear in** — their debut or any stage's project — and shows only the looks you've watched (`isCharUnlocked` / `getCharStages` in `characters.js`, used by the Characters page, profile picker + stats, and the walker roster). Deadpool & Wolverine alone gives Wolverine, Deadpool, Gambit and X-23 in their D&W looks; Hawkeye alone gives Fisk as Kingpin; Born Again without the Netflix shows gives Daredevil and Mayor Fisk. The debut look joins once the debut is watched. `routes/profile.js`: a stage portrait needs only its own project (it also needed the debut). `js/walkers.js` `getStageStartNode` reads the unlocking project from the unlocked-looks list (it indexed `char.stages`, which was off whenever an earlier look was skipped). Echo (Maya Lopez) now debuts in Hawkeye, where she first appears: `echo.jpg` is her Hawkeye character poster and the Echo-series still is the `echo` stage (`echo_series.jpg`). Groot's base is now the 2014 character poster and the Vol. 3 art is `groot_vol3.jpg` (one file served as both, so the portrait rule asked for Vol. 3 before the base could be picked). `test/character-unlock.test.js` covers the rule and checks the bundled data (real projects, no image used twice, merged ids resolve).
 
 ---
@@ -526,7 +533,7 @@ From a full code review. Security and data-loss fixes first, then bugs, then the
 - **Admin cleanup** — deleting a user also deletes their `ProjectStay` rows (no ghost house keepers); deleting a memory also removes it from feeds (`feed.removeMemory`) and invalidates the Cloudinary CDN copy.
 - **Voice mesh leak** — `leaveHomeVoice()` in `routes/world-socket.js` removes a socket from `voiceHomes` (and sends `voice:peer-left`) on `home:leave`, home switch, retired duplicate tab and disconnect.
 - **Fetch errors** — memory delete in `js/popup.js` only removes the memory on screen after the server confirms (toast otherwise); `js/profile.js` `loadProfile` checks `res.ok`.
-- **Mobile screen lock** (`styles.css`, `js/boot.js`) — `* { touch-action: pan-x pan-y; -webkit-tap-highlight-color: transparent }` turns off browser pinch / double-tap zoom and the blue tap flash while keeping one-finger scrolling; the in-app zoom surfaces keep their own more specific `touch-action`. `body` gets `overscroll-behavior: none` and `user-select: none` / no long-press callout; inputs, chat lines, DM bubbles and feed captions opt back into selection. `html` is clipped (`overflow: hidden`, except the legacy login page) so the app can't slide sideways; scroll panels get `overscroll-behavior: contain`. `gesturestart` / `gesturechange` are cancelled for iOS Safari, which ignores `user-scalable=no`.
+- **Mobile screen lock** (`styles.css`, now `styles/legacy/01-global.css`; `js/boot.js`) — `* { touch-action: pan-x pan-y; -webkit-tap-highlight-color: transparent }` turns off browser pinch / double-tap zoom and the blue tap flash while keeping one-finger scrolling; the in-app zoom surfaces keep their own more specific `touch-action`. `body` gets `overscroll-behavior: none` and `user-select: none` / no long-press callout; inputs, chat lines, DM bubbles and feed captions opt back into selection. `html` is clipped (`overflow: hidden`, except the legacy login page) so the app can't slide sideways; scroll panels get `overscroll-behavior: contain`. `gesturestart` / `gesturechange` are cancelled for iOS Safari, which ignores `user-scalable=no`.
 
 ### 2026-09-22 — Houses round 2: admin prop cap, wall-hugging props, shelf runs, standable props, bed, sit / lie, spawn at your house
 
@@ -552,7 +559,7 @@ The keeper's **Edit house** panel now restyles the building itself, not just its
 - **Props**: the cap is now 20 per house (`C.MAX_PROPS`, was 8 — plenty of furniture, well short of the 100 cells). Wall-backed props (`WALL_BACKED`, currently the bookshelf) placed on an edge cell of the grid turn their back to that wall (`wallSideOfCell` / `wallBackedRot`, forced by `validateHouse` so the server agrees) and `_buildProps` slides them flush against the wall's inner face; the editor's Rotate tool explains why they won't turn. Anywhere else they stand free.
 - **House showcase while editing** — the keeper edits from *inside* the house, where its roof is hidden, so roof changes were invisible. While the editor is open the camera now circles the house from outside (`Playground3D.setHouseShowcase` / `clearHouseShowcase`: `_updateCamera` orbits the platform at 24 u, `_tickRoomCeilings` keeps that house's roof on, occlusion fading is paused so the walls between the outside camera and the player don't go see-through). On wide screens the panel docks right so the house stays in view; **👁 Look at the house** hides the panel and backdrop, the **✏️ Back to editing** pill restores it.
 - `models/WorldHouse.js`, `routes/world.js` — the six new fields (`windows` is `Mixed` so `null` and `[]` both round-trip); `HOUSE_FIELDS` extended. Validation is unchanged: the shared `validateHouse`.
-- `styles.css` — `.world-house-chip*`, `.world-house-wall(.locked)`, `.world-house-corner`, `.world-house-window(.auto/.selected)`. `scripts/build.mjs` — new file in the `world` chunk, `PG3DHouse` in `EXPECT_ATTACHED`.
+- `styles.css` (now `styles/legacy/18-world-hud.css`) — `.world-house-chip*`, `.world-house-wall(.locked)`, `.world-house-corner`, `.world-house-window(.auto/.selected)`. `scripts/build.mjs` — new file in the `world` chunk, `PG3DHouse` in `EXPECT_ATTACHED`.
 - Tests: `test/world-house.test.js` (enums, coercion, window rules, door helpers), `test/house-geometry.test.js` (new, `roofHeightAt`).
 
 ---
@@ -571,7 +578,7 @@ The keeper's **Edit house** panel now restyles the building itself, not just its
 - `js/pg-orientation.js` (new, `PGOrientation`, world chunk before `playground3d.js`) — `attach(stage, { onResize })` / `detach()`: the `.pg-fullscreen` button (created only when `document.fullscreenEnabled || webkitFullscreenEnabled`; `requestFullscreen({navigationUI:'hide'})` → `screen.orientation.lock('landscape')` after the promise resolves, all rejections swallowed; exit unlocks; detach exits fullscreen if we entered it, so leaving `/world` never strands you locked), the one-time `.pg-rotate-hint` pill on portrait phones (`(pointer: coarse) and (orientation: portrait) and (max-width: 520px)`, localStorage `pg_rotate_hint_seen`, waits out `/world`'s controls hint so two pills never stack, dismissed on rotate / first tap / 6 s), and an orientation-change resize nudge.
 - `js/playground3d.js` — attaches it after input creation (to `_container`, after the innerHTML wipe), detaches in `destroy()`. `_resizeRenderer` now sets `camera.fov = PG3DPhysics.fovForAspect(aspect)`: 60° in landscape, opening to 80° in phone portrait so the side-to-side view no longer collapses to ~30°.
 - `js/playground3d-physics.js` `fovForAspect` + `test/physics.test.js`.
-- `styles.css` — `@media (orientation: landscape) and (max-height: 520px)` (every phone sideways, no tablet/desktop): `body:has(.pg-stage) { --header-height: 48px }` (only the 3D views), joystick bottom-left, jump + punch in a right-thumb arc, fullscreen button top-right, chat band `min(480px, 56vw)` with a 72px log. Portrait: fullscreen button tops the right-thumb stack; joystick / jump / punch / `.pg-header` respect `env(safe-area-inset-*)`. Hidden with the rest of the HUD while the nav drawer is open.
+- `styles.css` (now `styles/legacy/18-world-hud.css`) — `@media (orientation: landscape) and (max-height: 520px)` (every phone sideways, no tablet/desktop): `body:has(.pg-stage) { --header-height: 48px }` (only the 3D views), joystick bottom-left, jump + punch in a right-thumb arc, fullscreen button top-right, chat band `min(480px, 56vw)` with a 72px log. Portrait: fullscreen button tops the right-thumb stack; joystick / jump / punch / `.pg-header` respect `env(safe-area-inset-*)`. Hidden with the rest of the HUD while the nav drawer is open.
 - Keeper chip fix (`js/views/world.js` `_refreshHouseHud`, `.world-house-keeper-*`): `🔑 keeper · 3m · you 12s` was ellipsised at 180px, cutting off *your own* stay — your progress toward taking the house. It's now two spans: the name may ellipsise, "you 12s" never does, and it carries a fill that grows toward the keeper's time. Usernames go through `esc()`.
 - `manifest.json` `orientation` stays `any` — a manifest lock would apply to the whole installed app, and iOS ignores it anyway.
 - Not verified on hardware: DevTools can't emulate iPhone's missing fullscreen API or a real rotation/lock. Follow-up: on a cold first `/world` visit the controls hint can be wiped by the engine's `container.innerHTML = ''` if THREE finishes loading after it appears.
@@ -580,7 +587,7 @@ The keeper's **Edit house** panel now restyles the building itself, not just its
 
 Every project house in `/world` is now editable — by exactly one person: the **keeper**, the user with the longest all-time *active* stay on that island. Stay time accrues while connected and pauses after one minute without any action (movement, a chat message on any channel, an emote, a punch, a stone grab), so chatting while standing still counts and a parked tab does not. The keeper picks wall / roof / trim / lamp colours from a palette, hangs a sign over the door, and places up to 8 interior props on a 10×10 grid; everyone sees the result live. Voice in `/world` now uses the same island scope as Project chat: you only connect to players standing on your island and the mic idles on the roads (`/home` voice unchanged).
 
-- `js/world-stay-logic.js` (new, server-only, tested) — `enter` / `touch` / `drain` credit math with the 60 s AFK cap (`creditedUpTo` prevents double credit across flushes), `keeperOf`, `formatStay`.
+- `js/world-stay-logic.js` (new, server-only, tested) — `enter` / `touch` / `drain` credit math with the 60 s AFK cap (`creditedUpTo` prevents double credit across flushes), `keeperOf`. (Stay labels are formatted by `WorldHouseLogic.formatStay`.)
 - `js/world-house-logic.js` (new, shared, tested) — 14-swatch `PALETTE`, `PROP_KINDS`, `validateHouse` (palette bounds, sign sanitising to 24 chars, ≤ 8 props on cells 1..10, no duplicate cells, rot wrap), `cellToLocal`.
 - `models/ProjectStay.js`, `models/WorldHouse.js` (new) — per-user-per-project ms totals (unique `(userId, projectId)`, keeper index) and per-project decorations. Kept off `Project` so the CMS export / reseed never touch player edits.
 - `routes/world-socket.js` — `stay` on the player record; touched by every accepted `world:*` action, drained on island change / disconnect / eviction; `flushStays()` bulk-`$inc`s once a minute (`unref`'d timer) and is exported with `broadcastWorld` for the HTTP route. Voice: `voicePeersInSameRoom('world')` and `voice:peer-joined` fan-out are now `ChatLogic.islandPeers(...)`; the `world:pos` zone transition sends `voice:peer-left` both ways, then `voice:peers` / `voice:peer-joined` for the new island; the single-presence eviction also retires the old socket from the voice mesh (it used to linger with a dead mesh).
@@ -593,7 +600,7 @@ Every project house in `/world` is now editable — by exactly one person: the *
 - Portrait: the keeper can upload a photo (same `/api/upload` Cloudinary route as memories; the PUT pins the URL to the app's Cloudinary prefix) that hangs inside every `frame` prop. Frames are wall-hung: `validateHouse` snaps a frame to the nearest wall cell and fixes its facing (`snapFrameToWall` / `frameWall`), `_buildProps` places it on that wall's inner face, and it registers no collision box — `WorldHouse.portrait`, `PG3DProps.make(..., { hasPortrait })` leaves the picture plane white and `_buildProps` textures it via `_loadTexture` (material flagged `keepMap` so the cached texture survives rebuilds). Uploading auto-places a frame if the house has none.
 - `js/views/world.js` — header HUD (`🏠 Edit house` for the keeper, `🔑 <name> · <stay> · you <stay>` for others, hidden off-island), `_loadHouses`, the editor overlay (swatch rows, sign input, prop chips, rotate / remove, SVG grid, live local preview, Save → PUT / Cancel → restore). Voice button title / `.idle` state reflect the island; the "voice trouble" toast now fires only on a real `failed` / `disconnected` (it used to fire on every routine teardown).
 - `js/voice-chat.js` — `getZone` option and `zone` in `_diag()` / the diagnostics panel ("island: …", island-aware empty states); `onPeerStateChange` carries a `reason`.
-- `styles.css` — `.world-house-*` HUD + editor, `.pg3d-voice.idle`. `scripts/build.mjs` — new files in the `world` chunk; `PG3DProps`, `WorldHouseLogic` globals.
+- `styles.css` (now `styles/legacy/18-world-hud.css`) — `.world-house-*` HUD + editor, `.pg3d-voice.idle`. `scripts/build.mjs` — new files in the `world` chunk; `PG3DProps`, `WorldHouseLogic` globals.
 - Tests: `test/world-stay.test.js`, `test/world-house.test.js` (new), `islandPeers` cases in `test/world-chat.test.js`. Docs: `docs/VOICE-TURN-SETUP.md` notes the island scope.
 
 ---
@@ -608,7 +615,7 @@ The shell used to load 62 separate unminified scripts (~1.1 MB) on every route, 
 - `js/router.js` — `navigate` is async; a route registered with a function is lazy (await → memoize); a navigation started while a chunk downloads supersedes it; a failed chunk load does one full reload (sessionStorage-guarded).
 - `js/boot.js` — `/home`, `/customize`, `/world`, `/friend/:u/home` load `world`; `/admin` loads `world` then `admin` (its Config tab reads `WorldNpcLogic` + `Playground`).
 - `spa.html`, `sw.js` — now templates with `build:` markers / `__PLACEHOLDERS__`; absolute asset URLs (relative ones broke on hard reload of `/home/edit`).
-- `server.js` — fails fast without `dist/spa.html`; `/dist` served `immutable, max-age=1y`; `spa.html` + `sw.js` from `dist/`; `/js` mount and the content data files removed from the static allowlist (the legacy `index.html` + `auth.js` + raw `styles.css` stay).
+- `server.js` — fails fast without `dist/spa.html`; `/dist` served `immutable, max-age=1y`; `spa.html` + `sw.js` from `dist/`; `/js` mount and the content data files removed from the static allowlist (the legacy `index.html` + `auth.js` + raw `styles.css` stayed until they were removed on 2026-09-29).
 - `package.json` — `build`, `postinstall`, `start`, `dev` scripts; `esbuild` dependency; name `mcu-tracker`. `.gitignore` — `dist/`. CI — `npm ci` step so the build runs in CI. `.claude/launch.json` — `dev` config.
 
 ---
@@ -673,7 +680,7 @@ New `/feed` tab (Watch Order · Feed · World): a Facebook-style card whenever y
 - `routes/friends.js` — accepting a watch-party request merges both users into one post (awaited, so the accepter's follow-up save doesn't duplicate it).
 - `routes/feed.js` (new) — `GET /api/feed?before=` (self + friends, 15/page), `POST /api/feed/:id/comments`, `DELETE /api/feed/:id/comments/:cid` (comment author or post author).
 - `js/views/feed.js` (new), `spa.html`, `js/boot.js`, `server.js` — view + route; names only link to people you're friends with.
-- `js/views/watchorder.js`, `js/views/app.js` — Feed tab added. `styles.css` — `.feed-*` rules; `.view-tab` no longer wraps on phones.
+- `js/views/watchorder.js`, `js/views/app.js` — Feed tab added. `styles.css` (now `styles/legacy/24-feed.css`) — `.feed-*` rules; `.view-tab` no longer wraps on phones.
 - `sw.js` — cache bumped to `mcu-v15`.
 - **Follow-up (same day): reactions + captions.** `FeedPost` gains `caption` (author-only, 500 chars) and `reactions` (one per user: like/love/haha/wow/sad/angry). New `PUT /api/feed/:id/reaction { type | null }` (anyone who can see the post) and `PUT /api/feed/:id/caption` (author only). Cards show the caption (✎ to add/edit inline — Enter saves, Esc cancels), a "You and 3 others" reaction summary that opens a who-reacted list with per-reaction tabs, and a Like button: tap to like/unlike, hover or long-press for the six-reaction picker, ArrowUp from the keyboard. Cache bumped to `mcu-v16`.
 
@@ -686,8 +693,8 @@ Four independent UX changes. Full details in each area's plan; summary per file:
 - `routes/admin.js` — `sanitizeProject()` now omits `gridX`/`gridY` from the update when the caller doesn't send them (was defaulting to 0 and silently teleporting projects on every plain form save). New `PUT /content/projects/bulk/positions` — validates, merges against DB state, 409s on cell collisions, `bulkWrite`s the diff, one `contentEdit` audit entry.
 - `js/views/admin/cms-projects-board.js` (new) — drag-to-move board for the CMS Projects tab: every project as an SVG node at its `gridX/gridY` with prerequisite arrows, pointer-based drag with a free-cell drop check, click-empty-cell to create, click-node to edit, keyboard arrow-key move, staged moves committed via one "Save layout".
 - `js/views/admin/cms-projects.js` — List/Board mode toggle; the position fields in the per-project form are now a read-only display fed by the board (or by the clicked empty cell for a new project); `adoptItems()` re-seeds both from a save response.
-- `styles.css` — `.admin-cms-modes`/`.admin-cms-board`/`.admin-board-*` rules.
-- `js/theme.js`, `spa.html`, `index.html`, `manifest.json` — dark mode is now the hard default: an unset/invalid `mcu-theme` resolves to dark regardless of OS preference; only an explicit `'system'` choice follows the OS live. `theme-color` meta and PWA manifest colors updated to match.
+- `styles.css` (now `styles/legacy/17-admin.css`) — `.admin-cms-modes`/`.admin-cms-board`/`.admin-board-*` rules.
+- `js/theme.js`, `spa.html`, `index.html` (removed 2026-09-29), `manifest.json` — dark mode is now the hard default: an unset/invalid `mcu-theme` resolves to dark regardless of OS preference; only an explicit `'system'` choice follows the OS live. `theme-color` meta and PWA manifest colors updated to match.
 - `js/goals.js` (new) — Goals guide panel. `computeGoals()` lists locked projects one step ahead only (every requirement already watched or revealed — never recurses into projects the user can't see yet), reusing `isUnlocked`/`isPhaseUnlocked`/`isRevealed`/`allPrereqs` from `js/utils.js`. `showGoalsPanel()` follows the `showFriendsPanel()` pattern; wired to a new "Goals" nav-drawer button in `js/views/watchorder.js` and `js/views/app.js`.
 - `js/views/login.js` — fixed the bug where the post-register tab switch immediately hid its own success message; register now plays an animated success step (checkmark + toast) before landing on the Login tab with the username prefilled and password focused. Skips the animation under `prefers-reduced-motion`.
 - `sw.js` — `CACHE_VERSION` → `mcu-v8`.
@@ -719,7 +726,7 @@ Replaced the per-player daily stone hunt (batch 3) with the real MCU dynamic: **
 - `js/playground3d.js` — `spawnStones`/`clearStones`/`setStoneHandler`/`getStoneWorld` public API; emissive octahedron meshes (shared geometry), spin+bob, pickup in the world tick; stones cleared in `destroy()`. **Bug fix:** `WORLD.PROXIMITY` was referenced but never defined, so the "enter project" node prompt could never appear — now `PROXIMITY: 9`.
 - `routes/progress.js` — `GET/POST /api/progress/stones`: server date is the daily key (client clocks can't farm ahead), stone-id whitelist, streak computed on completion (yesterday-completed chains it), 30-day pruning of the Mixed blob, `markModified` on save.
 - `routes/friends.js` — `GET /api/friends/stones` leaderboard (self + accepted friends, sorted by today's count then streak).
-- `models/user.js` — `stoneHunt` Mixed field. `js/views/world.js` — chip, pickup toasts, snap effect, leaderboard modal (Esc/backdrop via `wireModalDismiss`), scene-ready retry, unmount cleanup. `styles.css` — chip/panel/flash (scene-dark in both themes). `sw.js` → `mcu-v5`.
+- `models/user.js` — `stoneHunt` Mixed field. `js/views/world.js` — chip, pickup toasts, snap effect, leaderboard modal (Esc/backdrop via `wireModalDismiss`), scene-ready retry, unmount cleanup. `styles.css` (now `styles/legacy/18-world-hud.css`) — chip/panel/flash (scene-dark in both themes). `sw.js` → `mcu-v5`.
 
 **2D map walker polish.** Walker chips (the circular character portraits roaming /map) grew 24→28px, moved their visual styling from JS inline styles into CSS (`.map-walker img`) — which also killed the last pre-retheme GOLD ring literals — and gained life while moving: a fast bob + a lean into the walk direction (applied to the wrapper so `.hit-flash`/`.fainted` on the img are untouched). `js/walkers.js` `createWalkerElement` + `applyWalkerPosition`.
 
@@ -743,8 +750,8 @@ The big one. Five workstreams shipped together:
 
 Replaced the gold accent theme with Marvel brand red (#ED1D24) — the gold never matched the Marvel identity. The palette flows through CSS variables, so the swap is centralized; the legacy `--gold-*` variable names are kept (values now red) to avoid a mass rename across ~5,500 lines. Text on the accent gradient flipped from black to white (black-on-gold worked; black-on-red didn't). The danger confirm button deepened to crimson so destructive actions stay visually distinct now that the brand accent is also red.
 
-- `styles.css` — `--color-primary` → `#ED1D24`, `--color-primary-light` → `#ff4b51`; all `rgba(201, 162, 39, …)` literals → `rgba(237, 29, 36, …)`; new `--gold: var(--color-primary)` (a few rules referenced `var(--gold)` which was previously **undefined** — silent inherit bug, now fixed); all `color: #000` on the accent gradient → `#fff`; `.confirm-btn.confirm-ok.danger` → deep crimson gradient; boot-splash logo filter retuned from gold to red tint.
-- `spa.html`, `index.html`, `manifest.json` — `theme-color`/`theme_color` `#daa520` → `#ED1D24`.
+- `styles.css` (now `styles/legacy/` + `styles/tokens/`) — `--color-primary` → `#ED1D24`, `--color-primary-light` → `#ff4b51`; all `rgba(201, 162, 39, …)` literals → `rgba(237, 29, 36, …)`; new `--gold: var(--color-primary)` (a few rules referenced `var(--gold)` which was previously **undefined** — silent inherit bug, now fixed); all `color: #000` on the accent gradient → `#fff`; `.confirm-btn.confirm-ok.danger` → deep crimson gradient; boot-splash logo filter retuned from gold to red tint.
+- `spa.html`, `index.html` (removed 2026-09-29), `manifest.json` — `theme-color`/`theme_color` `#daa520` → `#ED1D24`.
 - `sw.js` — `CACHE_VERSION` → `mcu-v3`.
 
 ### 2026-07-07 — UX batch 1 + security quick wins
@@ -752,7 +759,7 @@ Replaced the gold accent theme with Marvel brand red (#ED1D24) — the gold neve
 Shipped the first batch of the improvement roadmap: killed the blank screen during boot with a themed splash, replaced every remaining native `window.confirm` on the admin surface with the branded `confirmDialog`, gave the friends panel real error/retry states (a failed pending-requests fetch used to hang on "Loading…" forever), wired Esc/backdrop dismissal into the home-edit modals and the friends panel, and landed three security quick wins (JWT_SECRET strength guard, `.env.example`, CSP in Report-Only mode). Secrets from the original leaked `.env` (first commit) still need rotating in Cloudinary + Render — the local `.env` JWT_SECRET has been regenerated.
 
 - `spa.html` — static `#boot-splash` (gold-tinted logo + sweep bar, painted before any JS runs) + `#boot-splash-status` a11y announcement.
-- `styles.css` — splash styles (reduced-motion aware), `.friends-retry-btn`.
+- `styles.css` (now `styles/legacy/23-splash.css`) — splash styles (reduced-motion aware), `.friends-retry-btn`.
 - `js/boot.js` — removes splash + status after `Router.init`; content fetches capped at 4s via `AbortSignal.timeout` (feature-checked) so a cold server can't hold boot hostage.
 - `sw.js` — `CACHE_VERSION` → `mcu-v2`; `avengers-logo.svg` precached.
 - `js/views/admin/{users,moderation,config,cms-projects,cms-characters,cms-locations,cms-dialogues}.js` — all 10 `window.confirm` calls → `await confirmDialog({...})`, destructive ones styled `danger`.
@@ -770,7 +777,7 @@ Added opt-in WebRTC proximity voice chat to `/world`, `/home`, and `/friend/:use
 - `js/playground3d.js` — added `getRemotePlayers()` returning `[{id, x, y, z, username}]` snapshot read from the `current` (lerped) position, and `setRemotePlayerSpeaking(id, on)` toggling `.speaking` on the existing `.pg3d-nametag` element. Stored `username` on the `_remotePlayers` entry shape so the accessor can expose it.
 - `js/views/world.js`, `js/views/home.js`, `js/views/friend-home.js` — added 🎙️ `#world-voice-btn` to `.world-chat-inputrow` next to the emote button; lazy `VoiceManager.start` on first click; `aria-pressed` reflects state; unmount cleanup ordering is `voice.stop() → mp.stop() → Playground3D.destroy()` so `voice:leave` reaches the server while the socket is still open.
 - `spa.html` — `<script defer src="js/voice-chat.js">` wired after `js/home-socket.js` and before the view scripts.
-- `styles.css` — `.pg3d-voice` button styled to match `.pg3d-emote`, `[aria-pressed="true"]` green glow when active; `.pg3d-nametag.speaking` green outline ring; mobile 600px breakpoint shrinks button to 36px to match the emote button.
+- `styles.css` (now `styles/legacy/18-world-hud.css`) — `.pg3d-voice` button styled to match `.pg3d-emote`, `[aria-pressed="true"]` green glow when active; `.pg3d-nametag.speaking` green outline ring; mobile 600px breakpoint shrinks button to 36px to match the emote button.
 
 ### 2026-05-16 — Production hardening + PWA shell
 
@@ -781,7 +788,7 @@ Shipped five wins from the prioritized improvement menu: baseline security heade
 - `server.js` — `ROOT_FILES` extended with `manifest.json` and `sw.js`. New `NO_CACHE_FILES` set forces `Cache-Control: no-cache` on `sw.js`; `Service-Worker-Allowed: /` header set defensively for root scope.
 - `manifest.json` (new) — name, short_name, theme/background color, 192/512 icons referencing `/assets/favicon.jpg`, `display: standalone`.
 - `sw.js` (new) — `install` precaches the SPA shell + static fallback data, `fetch` does network-only for `/api/*` and `/socket.io/*`, navigation fallback to cached `/spa.html`, stale-while-revalidate for `/js/*` and `/assets/*`. `CACHE_VERSION` bump invalidates on next activate.
-- `spa.html`, `index.html` — added `<link rel="manifest" href="/manifest.json">` and `<meta name="theme-color" content="#daa520">`.
+- `spa.html`, `index.html` (removed 2026-09-29) — added `<link rel="manifest" href="/manifest.json">` and `<meta name="theme-color" content="#daa520">`.
 - `js/boot.js` — registers `/sw.js` inside a `load` listener so registration never competes with first paint.
 - `js/playground3d.js` — module-scoped `_textureCache` Map + lazy `_textureLoader`, surfaced via `_loadTexture(url, onReady)`. Replaces the two inline `new THREE.TextureLoader()` + `loader.load(...)` sites in `_buildLayoutScene` and `_rebuildWorldNodes`. New `_sceneAlive` flag (set true at the end of `_initInternal`, false at the top of `destroy`) guards late-firing texture callbacks against writing to a disposed scene. Module-scoped `_hudAnchor` Vector3 replaces the per-frame `new THREE.Vector3(...)` in `_tickHUD`'s remote-player loop. `destroy` no longer disposes textures (the cache owns them across mount cycles); per-material/geometry disposal preserved.
 - `js/views/friend-profile.js:35`, `js/popup.js:63`, `js/memory.js:42`, `js/memory.js:117`, `js/views/home-edit.js:276` — added `loading="lazy"` to remaining `<img>` tags. `js/nodeFactory.js` and `js/views/characters.js` already had it.
@@ -801,7 +808,7 @@ A new `/home` route: a fixed 1500×1000 px room where the user's customized laye
 - Modified: `js/boot.js` — `Router.register('/home', HomeView)`.
 - Modified: `server.js` — `/home` added to SPA route list.
 - Modified: `spa.html` — `js/playground.js`, `js/views/home-builder.js`, `js/views/home.js` script tags wired in.
-- Styles: `.pg-stage`, `.pg-room`, `.pg-sprite`, `.pg-joy`, `.pg-modal*` appended to `styles.css`. Mobile breakpoint at 600 px scales the joystick down and stacks the modal preview.
+- Styles: `.pg-stage`, `.pg-room`, `.pg-sprite`, `.pg-joy`, `.pg-modal*` appended to `styles.css` (now `styles/legacy/18-world-hud.css`). Mobile breakpoint at 600 px scales the joystick down and stacks the modal preview.
 
 ### 2026-05-02 — Centralized auth gate in the router
 
@@ -852,7 +859,7 @@ Admin can tune walker physics (speed, pause, encounter distance/cooldown, fight 
 
 `body { overflow: hidden; height: 100vh }` clipped the admin page's bottom content (notably the user detail panel below the fold).
 
-- `styles.css` — `.admin-page` now has its own `height: 100dvh; overflow-y: auto` scroll container.
+- `styles.css` (now `styles/legacy/17-admin.css`) — `.admin-page` now has its own `height: 100dvh; overflow-y: auto` scroll container.
 - `js/views/admin/users.js` — `openDetail` calls `scrollIntoView({ behavior: 'smooth', block: 'start' })` so the panel slides into view instead of expecting the user to scroll.
 
 ### 2026-05-02 — Phase 1: Admin panel MVP
@@ -868,7 +875,7 @@ Hidden `/admin` route gated by `isAdmin` boolean on the user document. Tabs: Use
 - Modified: `routes/auth.js` — JWT now carries `{id, isAdmin, tv}`; banned users get 403 at login.
 - Modified: `middleware/auth.js` — 30-second validation cache keyed on `${userId}|${tokenVersion}`; rejects on tokenVersion mismatch (forces re-login after ban / password reset / forced logout).
 - Modified: `server.js` — `/admin` added to SPA route list; `/api/admin` mounted with tighter 60/min limiter behind `requireAdmin`.
-- Styles: full admin theme appended to `styles.css` matching the dark/gold palette; mobile breakpoint at 480 px.
+- Styles: full admin theme appended to `styles.css` (now `styles/legacy/17-admin.css`) matching the dark/gold palette; mobile breakpoint at 480 px.
 
 ---
 
