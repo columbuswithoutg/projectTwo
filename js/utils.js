@@ -116,8 +116,15 @@ function topModal() {
   return null;
 }
 // Any dialog open — ours, or an aria-modal overlay built without the stack.
+// A dialog inside an `inert` subtree is closed: the nav drawer keeps its
+// aria-modal panel in the DOM while shut, which used to make this always
+// true and swallow every map / chart keyboard shortcut.
 function isModalOpen() {
-  return !!topModal() || !!document.querySelector('[aria-modal="true"]');
+  if (topModal()) return true;
+  for (const el of document.querySelectorAll('[aria-modal="true"]')) {
+    if (!el.closest('[inert]')) return true;
+  }
+  return false;
 }
 // Close every stacked dialog (navigating away must not leave one floating).
 function closeAllModals() {
