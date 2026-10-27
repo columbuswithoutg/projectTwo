@@ -544,6 +544,8 @@ const Multiplayer = (() => {
 
     // Chat input — same DOM ids as /world's HTML (.world-chat-row).
     const input = document.getElementById('world-chat-input');
+    let homeSending = false;      // a /home message waiting for the server's ack
+    let stopped = false;          // set by stop(): late acks / timeouts stay quiet
     const onChatKey = (e) => {
       if (events.channels) {
         if (e.key === 'Enter') { e.preventDefault(); sendChannelChat(); }
@@ -554,19 +556,32 @@ const Multiplayer = (() => {
         e.preventDefault();
         const text = input.value.trim();
         if (!text) { input.value = ''; return; }
-        // Only clear the input once the message is actually on its way —
-        // clearing before the connected check silently ate text typed while
-        // disconnected.
-        if (socket.connected) {
-          socket.emit(events.chat, { text });
-          input.value = '';
-          // Mirror our own message as an in-world bubble over the local rig —
-          // the server echo only renders bubbles for REMOTE ids, so without
-          // this the sender never sees the bubble everyone else sees.
-          if (Playground3D.showLocalChat) Playground3D.showLocalChat(text);
-        } else if (typeof toast === 'function') {
-          toast('Not connected — message not sent.', 'warn');
+        if (homeSending) return;
+        if (!socket.connected) { chatWarn('Not connected — message not sent.'); return; }
+        // Only clear the input once the server has accepted the message: one
+        // sent inside the 1 s floor is refused, and used to vanish silently.
+        homeSending = true;
+        let settled = false;
+        const guard = setTimeout(() => done({ ok: false, error: 'timeout' }), 6000);
+        function done(res) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(guard);
+          homeSending = false;
+          if (stopped) return;
+          if (res && res.ok) {
+            if (input.value.trim() === text) input.value = '';
+            // Mirror our own message as an in-world bubble over the local rig —
+            // the server echo only renders bubbles for REMOTE ids, so without
+            // this the sender never sees the bubble everyone else sees.
+            if (Playground3D.showLocalChat) Playground3D.showLocalChat(text);
+            return;
+          }
+          chatWarn(res && res.error === 'cooldown' ? 'Slow down — wait a moment, then press Enter again.'
+            : res && res.error === 'timeout' ? 'Message not sent — the server didn’t answer.'
+            : 'Message not sent.');
         }
+        socket.emit(events.chat, { text }, done);
       } else if (e.key === 'Escape') {
         input.value = '';
         input.blur();
@@ -637,6 +652,7 @@ const Multiplayer = (() => {
     }, POS_INTERVAL_MS);
 
     function stop() {
+      stopped = true;
       if (posTimer) { clearInterval(posTimer); posTimer = null; }
       if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
       if (input) input.removeEventListener('keydown', onChatKey);

@@ -943,17 +943,23 @@ module.exports = (io) => {
       socket.to('home:' + p.ownerId).emit('home:pos', posRelay(socket.id, p));
     });
 
-    socket.on('home:chat', (raw) => {
+    // `ack` (optional) reports the outcome, like world:chat: a message inside
+    // the 1 s floor used to vanish while the sender's box cleared and their
+    // own bubble showed, so they never knew it wasn't sent.
+    socket.on('home:chat', (raw, ack) => {
+      const reply = (typeof ack === 'function') ? ack : () => {};
       const p = homePlayers.get(socket.id);
-      if (!p) return;
+      if (!p) return reply({ ok: false, error: 'not-joined' });
       const msg = (typeof raw?.text === 'string' ? raw.text : '').trim().slice(0, MAX_CHAT_LEN);
-      if (!msg) return;
+      if (!msg) return reply({ ok: false, error: 'empty' });
       const nowChat = Date.now();
-      if (floorLeft(socket, 'homeChat', CHAT_INTERVAL_MS, nowChat) > 0) return;
+      const retryInMs = floorLeft(socket, 'homeChat', CHAT_INTERVAL_MS, nowChat);
+      if (retryInMs > 0) return reply({ ok: false, error: 'cooldown', retryInMs });
       markFloor(socket, 'homeChat', nowChat);
       io.to('home:' + p.ownerId).emit('home:chat', {
         id: socket.id, username: p.username, text: msg
       });
+      reply({ ok: true });
     });
 
     socket.on('home:emote', (raw) => {
