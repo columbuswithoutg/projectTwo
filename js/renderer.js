@@ -94,7 +94,7 @@ class MapRenderer {
       const project = state.byId.get(id);
       if (!project) return;
 
-      const isReadonly = this.nodesContainer.classList.contains('readonly');
+      const isReadonly = !!state.readonly;   // a friend's map (FriendView)
 
       if (isReadonly && !state.isWatched(project.id)) return;
       if (!isReadonly && !isUnlocked(project)) return;

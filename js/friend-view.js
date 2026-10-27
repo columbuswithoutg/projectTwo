@@ -16,6 +16,7 @@ const FriendView = (() => {
 
   let _active = null;        // { id, username, profilePicture, watchedProjects, walkers, homeLayout, homeCharacter }
   let _origData = null;      // saved state.data Map prior to swap
+  let _origSessions = null;  // saved state.sessions (our own running timers)
   let _enterSeq = 0;         // bumped by exit() / each enter() to cancel stale loads
 
   function isActive()  { return !!_active; }
@@ -58,8 +59,12 @@ const FriendView = (() => {
 
     // Snapshot current state so exit() can restore.
     _origData = new Map(state.data);
+    // Our own timers too — otherwise the friend's chart and map show our
+    // "▶ Watching" ribbons (the friend payload carries no sessions).
+    _origSessions = new Map(state.sessions);
     state.readonly = true;
     state.data.clear();
+    state.sessions.clear();
     (data.watchedProjects || []).forEach(entry => {
       state.data.set(entry.projectId, {
         count: entry.count,
@@ -86,6 +91,8 @@ const FriendView = (() => {
     if (!_active) return;
     state.data.clear();
     if (_origData) _origData.forEach((v, k) => state.data.set(k, v));
+    state.sessions.clear();
+    if (_origSessions) _origSessions.forEach((v, k) => state.sessions.set(k, v));
     state.readonly = false;
     state.listeners.forEach(fn => fn(state.data));
     if (typeof Walkers !== 'undefined' && typeof Walkers.restoreSelections === 'function') {
@@ -93,6 +100,7 @@ const FriendView = (() => {
     }
     _active = null;
     _origData = null;
+    _origSessions = null;
   }
 
   // ── shared chrome ──

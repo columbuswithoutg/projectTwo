@@ -8,12 +8,10 @@ function showPopup(project) {
   const count = state.getCount(project.id);
   const memories = state.getMemories(project.id);
   const watchedWith = state.getWatchedWith(project.id);
-  // Readonly mode only exists on the map view (set when viewing a friend's
-  // progress). On the watch-order view there's no map renderer mounted, so
-  // default to false rather than crashing on a null container.
-  const isReadonly = renderer.nodesContainer
-    ? renderer.nodesContainer.classList.contains('readonly')
-    : false;
+  // Read-only while a friend's progress is shown (FriendView.enter sets
+  // state.readonly on every /friend/:username tab): no watch controls,
+  // memory edits or co-watch requests — those would act on OUR account.
+  const isReadonly = !!state.readonly;
 
   const popup = document.createElement('div');
   popup.className = 'node-popup';
