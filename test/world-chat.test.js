@@ -37,15 +37,21 @@ test('projectAt: bad input is null, never a throw', () => {
 });
 
 // The server can only tell which island a player is on by redoing the
-// client's layout math, so the constants must match js/playground3d.js.
+// client's layout math, so the constants must match the /world engine's.
 // When SCALE went 18 → 24 there and not here, a player inside one island
-// was put in another island's Project chat.
+// was put in another island's Project chat. The grid now lives in
+// PG3DPhysics.WORLD_GRID; check both that this module matches it AND that
+// js/playground3d.js really builds its WORLD table from it (a literal there
+// would let the two drift apart again).
 test('zone constants match the /world engine layout', () => {
+  const G = require('../js/playground3d-physics.js').WORLD_GRID;
+  assert.equal(L.C.GRID_SCALE, G.SCALE);
+  assert.equal(L.C.ZONE_HALF, (G.PLATFORM_W + G.APRON_MARGIN) / 2);
   const src = fs.readFileSync(path.join(__dirname, '../js/playground3d.js'), 'utf8');
-  const world = src.slice(src.indexOf('const WORLD = {'));
-  const num = (key) => Number((world.match(new RegExp(`\\b${key}:\\s*([\\d.]+)`)) || [])[1]);
-  assert.equal(L.C.GRID_SCALE, num('SCALE'));
-  assert.equal(L.C.ZONE_HALF, (num('PLATFORM_W') + num('APRON_MARGIN')) / 2);
+  const world = src.slice(src.indexOf('const WORLD = {'), src.indexOf('};', src.indexOf('const WORLD = {')));
+  for (const key of ['SCALE', 'PLATFORM_W', 'APRON_MARGIN']) {
+    assert.match(world, new RegExp(`\\b${key}:\\s*PG3DPhysics\\.WORLD_GRID\\.${key}\\b`), `WORLD.${key} must read PG3DPhysics.WORLD_GRID`);
+  }
 });
 
 test('hasCooldown: only World chat is rate limited', () => {
@@ -127,4 +133,19 @@ test('islandPeers: off-island or unknown self is empty', () => {
 test('islandPeers: members filter applies to others but not to self', () => {
   const members = new Set(['s2']);            // s1 already removed from the voice set
   assert.deepEqual(L.islandPeers('s1', playersMap(), members), ['s2']);
+});
+
+// A source check like the one above: the server's join refusals and the
+// watched-list zone re-check are plumbing (no pure logic to call), and a
+// renamed event on one side silently brings back the empty-world bug.
+test('join refusals: server event names match the client maps; watched load re-derives the zone', () => {
+  const server = fs.readFileSync(path.join(__dirname, '../routes/world-socket.js'), 'utf8');
+  const client = fs.readFileSync(path.join(__dirname, '../js/home-socket.js'), 'utf8');
+  for (const ev of ['world:join-refused', 'home:join-refused']) {
+    assert.ok(server.includes(`'${ev}'`), `server emits ${ev}`);
+    assert.ok(client.includes(`joinRefused: '${ev}'`), `client maps ${ev}`);
+  }
+  assert.ok(/d\.onWatched\(\)/.test(server), 'refreshWatched runs the onWatched hook');
+  assert.ok(/socket\.data\.onWatched = /.test(server), 'each connection installs the hook');
+  assert.ok(/applyZone\(p, nowPos\)/.test(server), 'world:pos shares the same zone helper');
 });

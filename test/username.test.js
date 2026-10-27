@@ -46,6 +46,27 @@ function stubFind(docsByQuery) {
   return calls;
 }
 
+// Like stubFind, but honours select() the way Mongo does: only the projected
+// fields (plus _id) come back. This is what made exists() heal with ''.
+function stubFindProjected(docsByQuery) {
+  const selects = [];
+  User.findOne = (q) => {
+    const full = docsByQuery[Object.keys(q)[0]] || null;
+    let fields = null;
+    const chain = {
+      select: (s) => { fields = s.split(/\s+/).filter(Boolean); selects.push(s); return chain; },
+      lean: async () => {
+        if (!full || !fields) return full;
+        const out = { _id: full._id };
+        for (const f of fields) if (f in full) out[f] = full[f];
+        return out;
+      }
+    };
+    return chain;
+  };
+  return selects;
+}
+
 test('findByUsername: stops at the first hit; heals a legacy doc found by fallback', async () => {
   U.setReady(false);
   const updates = [];
@@ -63,7 +84,7 @@ test('findByUsername: stops at the first hit; heals a legacy doc found by fallba
   doc = await U.findByUsername('Bob');
   assert.equal(doc._id, '2');
   assert.equal(calls.length, 2);
-  assert.deepEqual(updates[0].filter, { _id: '2', usernameLower: { $exists: false } });
+  assert.deepEqual(updates[0].filter, { _id: '2', usernameLower: { $in: [null, ''] } });
   assert.deepEqual(updates[0].update, { $set: { usernameLower: 'bob' } });
 
   // Nothing matches: every query tried, null.
@@ -87,5 +108,52 @@ test('refreshReady flips to true only when no user is missing the field', async 
   User.exists = async () => null;
   await U.refreshReady();
   assert.equal(U.isReady(), true);
+  U.setReady(false);
+});
+
+test('exists() on a legacy account heals with the real lowercase name, never "" (SRV-01)', async () => {
+  U.setReady(false);
+  const updates = [];
+  User.updateOne = (filter, update) => { updates.push({ filter, update }); return { catch() {} }; };
+
+  // Legacy "Bob" (no usernameLower) found by the regex fallback on register("bob").
+  const selects = stubFindProjected({ username: { _id: '7', username: 'Bob', password: 'h' } });
+  assert.equal(await U.exists('bob'), true);
+  assert.ok(selects[0].split(/\s+/).includes('username'), 'username must be projected');
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0].update, { $set: { usernameLower: 'bob' } });
+
+  // Same through findByUsername with a narrow select.
+  updates.length = 0;
+  stubFindProjected({ username: { _id: '8', username: 'Tony' } });
+  await U.findByUsername('Tony', '_id');
+  assert.deepEqual(updates[0].update, { $set: { usernameLower: 'tony' } });
+
+  // A doc already stuck on '' (older build) is healed too, not treated as done.
+  updates.length = 0;
+  stubFindProjected({ username: { _id: '9', username: 'Ann', usernameLower: '' } });
+  await U.findByUsername('Ann', '_id');
+  assert.deepEqual(updates[0].update, { $set: { usernameLower: 'ann' } });
+});
+
+test('heal() never writes when the doc has no usable username', () => {
+  const updates = [];
+  User.updateOne = (filter, update) => { updates.push({ filter, update }); return { catch() {} }; };
+  const warn = console.warn; console.warn = () => {};
+  try {
+    U.heal({ _id: '1' });
+    U.heal({ _id: '2', username: '   ' });
+    U.heal({ _id: '3', username: 42 });
+  } finally { console.warn = warn; }
+  assert.equal(updates.length, 0);
+});
+
+test('refreshReady counts an empty usernameLower as NOT backfilled', async () => {
+  U.setReady(false);
+  let filter;
+  User.exists = async (f) => { filter = f; return null; };
+  await U.refreshReady();
+  assert.deepEqual(filter.usernameLower, { $in: [null, ''] });
+  assert.deepEqual(filter.usernameLowerConflict, { $ne: true });
   U.setReady(false);
 });

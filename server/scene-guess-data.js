@@ -37,16 +37,19 @@ events.setMaxListeners(20);
 
 // A value loaded from Mongo, cached for TTL_MS. An invalidate during a load
 // makes that load's result count as stale, so the next read loads again.
-function cached(name, loadFn, initial) {
+// A failed load keeps the old value (logged) and the next read retries.
+// Unlike server/ttl-cache.js it never rejects and has a sync `peek`.
+// `ttlMs` / `now` are injectable for tests (test/scene-data-cache.test.js).
+function cached(name, loadFn, initial, { ttlMs = TTL_MS, now = Date.now } = {}) {
   let value = initial, at = 0, gen = 0, inflight = null, inflightGen = -1;
-  const stale = () => !at || Date.now() - at > TTL_MS;
+  const stale = () => !at || now() - at > ttlMs;
   function refresh() {
     if (inflight && inflightGen === gen) return inflight;
     const g = gen;
     const p = Promise.resolve()
       .then(loadFn)
       .then(v => {
-        if (g === gen) { value = v; at = Date.now(); return v; }
+        if (g === gen) { value = v; at = now(); return v; }
         return value;
       }, err => {
         console.error(`sceneGuess: ${name} read failed:`, err && err.message);
@@ -128,11 +131,6 @@ const pool = cached('pool', async () => {
 
 function isPlayableSync(projectId) {
   return (pool.peek().get(projectId) || 0) >= Logic.C.MIN_POOL;
-}
-
-async function playableIds() {
-  const counts = await pool.get();
-  return [...counts].filter(([, n]) => n >= Logic.C.MIN_POOL).map(([id]) => id);
 }
 
 // Island switched on AND enough stills (the global switch is checked by the
@@ -217,11 +215,11 @@ function invalidate(kind, projectId) {
 }
 
 module.exports = {
-  TTL_MS, events, invalidate, stillUrl, prime,
+  TTL_MS, cached, events, invalidate, stillUrl, prime,
   settings, enabledSync, roundSecSync,
   islands, isLiveSync, liveIslands,
   projects, projectSync,
-  pool, isPlayableSync, playableIds,
+  pool, isPlayableSync,
   champions, publicRecord,
   drawStills
 };

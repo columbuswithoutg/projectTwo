@@ -125,9 +125,20 @@ function leaveHomeVoice(io, sid, ownerId) {
 let _io = null;
 const pendingCredits = new Map();      // "userId|projectId" → ms
 let _flushing = null;                  // in-flight flush promise (PUT awaits it)
+let _stayTimer = null;                 // the periodic flush; cleared by shutdownStays()
+
+// Users an admin just deleted (id string → expiry timer). Deleting a user
+// disconnects their live sockets AFTER their ProjectStay rows are gone, and
+// the disconnect handler drains the stay into pendingCredits — the next
+// flush's upsert would then re-create the rows (and maybe a keeper). So
+// queueCredit and flushStays skip these ids. Ten minutes is plenty: the
+// sockets are gone and the handshake rejects a deleted user from then on.
+const deletedUsers = new Map();
+const DELETED_USER_TTL_MS = 10 * 60 * 1000;
 
 function queueCredit(userId, projectId, ms) {
   if (!userId || !projectId || !(ms > 0)) return;
+  if (deletedUsers.has(String(userId))) return;
   const key = `${userId}|${projectId}`;
   pendingCredits.set(key, (pendingCredits.get(key) || 0) + ms);
 }
@@ -138,8 +149,26 @@ function drainStay(p, now) {
   if (!p || !p.stay) return;
   queueCredit(p.userId, p.stay.projectId, Stay.drain(p.stay, now || Date.now()));
 }
+// Which ops of a failed `ordered: false` bulkWrite did NOT land (RT-08).
+// The driver's MongoBulkWriteError carries `result` plus `writeErrors`
+// ([WriteError], `.index` = position in the ops sent): every other op was
+// applied, so re-queueing all of them double-counted those. Mongoose drops
+// ops that fail its own casting before sending and then maps outcomes back
+// to OUR indexes in `err.mongoose.results` (a WriteError, null = applied, or
+// the cast Error — permanent, never retried). No `result` at all (network
+// error, timeout): nothing is known to have landed, so all of them.
+function unappliedOps(ops, err) {
+  if (!err || !err.result) return ops;
+  const results = err.mongoose && Array.isArray(err.mongoose.results) ? err.mongoose.results : null;
+  if (results) return ops.filter((_, i) => results[i] && !(results[i] instanceof Error));
+  const failed = new Set((err.writeErrors || [])
+    .map(e => (e && Number.isInteger(e.index) ? e.index : e && e.err && e.err.index)));
+  return ops.filter((_, i) => failed.has(i));
+}
+
 // Credit every live stay, then write the whole pending map. On a DB error the
-// credits stay queued for the next flush (at most one interval is at risk).
+// credits that didn't land stay queued for the next flush (at most one
+// interval is at risk).
 function flushStays() {
   if (_flushing) return _flushing;
   const now = Date.now();
@@ -148,6 +177,7 @@ function flushStays() {
   const ops = [];
   for (const [key, ms] of pendingCredits) {
     const i = key.indexOf('|');
+    if (deletedUsers.has(key.slice(0, i))) continue;
     ops.push({ updateOne: {
       filter: { userId: key.slice(0, i), projectId: key.slice(i + 1) },
       update: { $inc: { ms } },
@@ -155,9 +185,14 @@ function flushStays() {
     } });
   }
   pendingCredits.clear();
+  if (!ops.length) return Promise.resolve();
   _flushing = ProjectStay.bulkWrite(ops, { ordered: false })
-    .catch(() => {
-      for (const op of ops) queueCredit(op.updateOne.filter.userId, op.updateOne.filter.projectId, op.updateOne.update.$inc.ms);
+    .catch((err) => {
+      const retry = unappliedOps(ops, err);
+      // Dead-letter note: these credits wait in memory for the next flush
+      // (lost on a crash before it). queueCredit still skips deleted users.
+      console.error(`[stays] flush failed (${err && err.message}): re-queued ${retry.length} of ${ops.length} credit(s)`);
+      for (const op of retry) queueCredit(op.updateOne.filter.userId, op.updateOne.filter.projectId, op.updateOne.update.$inc.ms);
     })
     .finally(() => { _flushing = null; });
   return _flushing;
@@ -180,12 +215,31 @@ function deliverWhisper(userId, out) {
   return n;
 }
 
+// Every socket.on handler is registered through this: a sync throw or a
+// rejected promise (async handlers, handleWhisper's Mongo round-trip) is
+// logged as `[ws] <name> failed` instead of reaching the process-level
+// unhandledRejection logger. Never throws; arguments (incl. the ack) pass
+// through untouched. `name` is the event with '.' for ':' so the socket
+// contract test doesn't read it as an emitted event.
+function guard(name, fn) {
+  const fail = (e) => console.error(`[ws] ${name} failed:`, e);
+  return function guarded(...args) {
+    try {
+      const r = fn.apply(this, args);
+      if (r && typeof r.catch === 'function') r.catch(fail);
+    } catch (e) {
+      fail(e);
+    }
+  };
+}
+
 // Whisper branch of 'world:chat'. Online target → live delivery exactly as
 // before, plus a best-effort Message row (readAt set: they saw it). Offline
 // target → look the username up in Mongo; a real user gets the message stored
 // (readAt null → counts as unread in their inbox) and the sender an echo
 // flagged `offline`; an unknown name is still 'not-found'.
-async function handleWhisper(io, socket, p, m, out, reply) {
+// `onSent` runs only for a whisper that went out (marks the chat floor).
+async function handleWhisper(io, socket, p, m, out, reply, onSent = () => {}) {
   let target = null;
   for (const other of worldPlayers.values()) {
     if (ChatLogic.sameName(other.username, m.to)) { target = other; break; }
@@ -197,6 +251,7 @@ async function handleWhisper(io, socket, p, m, out, reply) {
     const d = await DmPolicy.check(p.userId, target.userId).catch(() => ({ ok: false, error: 'not-sent' }));
     if (!d.ok) return reply(d);
     out.to = target.username;
+    onSent();
     io.to(target.socketId).emit('world:chat', out);
     socket.emit('world:chat', out);
     Message.create({
@@ -231,6 +286,7 @@ async function handleWhisper(io, socket, p, m, out, reply) {
   }
   out.to = user.username;
   out.offline = true;
+  onSent();
   socket.emit('world:chat', out);
   reply({ ok: true, cooldownMs: 0, offline: true, to: user.username });
 }
@@ -327,16 +383,22 @@ const PROJECT_GRID_TTL_MS = 60000;
 let _projectGrid = [];
 let _projectGridAt = 0;
 let _projectGridRefreshing = false;
+let _projectGridGen = 0;   // bumped by invalidateProjectGrid()
 function projectGrid() {
   if (Date.now() - _projectGridAt >= PROJECT_GRID_TTL_MS && !_projectGridRefreshing) {
     _projectGridRefreshing = true;
+    const gen = _projectGridGen;
     Project.find({}).select('id gridX gridY').lean()
-      .then((docs) => { _projectGrid = docs || []; _projectGridAt = Date.now(); })
+      // A read that started before an invalidate is still newer than what we
+      // had, but isn't stamped fresh: the next call reads again.
+      .then((docs) => { _projectGrid = docs || []; if (gen === _projectGridGen) _projectGridAt = Date.now(); })
       .catch(() => { /* keep last known grid */ })
       .finally(() => { _projectGridRefreshing = false; });
   }
   return _projectGrid;
 }
+// After an admin project write (routes/admin.js): re-read on the next use.
+function invalidateProjectGrid() { _projectGridGen++; _projectGridAt = 0; }
 
 // Centre of the Infinity Stone ring: the START island (Iron Man 1) for every
 // player — the client places the free stones around the same point. Falls
@@ -392,8 +454,8 @@ module.exports = (io) => {
   projectGrid();          // prime the island grid for Project chat
   // Persist island stays once a minute; unref'd so it never keeps the
   // process alive on its own.
-  const stayTimer = setInterval(() => { flushStays(); }, Stay.C.FLUSH_INTERVAL_MS);
-  if (stayTimer.unref) stayTimer.unref();
+  _stayTimer = setInterval(() => { flushStays(); }, Stay.C.FLUSH_INTERVAL_MS);
+  if (_stayTimer.unref) _stayTimer.unref();
   const rlTimer = setInterval(() => { const t = Date.now(); userRl.sweep(t); ipRl.sweep(t); }, 60 * 1000);
   if (rlTimer.unref) rlTimer.unref();
   const trustHops = parseTrustProxy(process.env.TRUST_PROXY);
@@ -489,7 +551,18 @@ module.exports = (io) => {
     User.findById(d.userId).select('watchedProjects.projectId').lean()
       .then(u => { d.watched = new Set(((u && u.watchedProjects) || []).map(e => e.projectId)); })
       .catch(() => {})
-      .finally(() => { d.watchedLoading = false; d.watchedAt = Date.now(); });
+      .finally(() => {
+        d.watchedLoading = false; d.watchedAt = Date.now();
+        // Re-derive the island now the list is in (see applyZone): the
+        // client only resends its position when it moves, so a player who
+        // joined (or whose island just unlocked) while standing still would
+        // otherwise never get their world:zone.
+        // Guarded like the socket handlers: a throw here would otherwise
+        // surface as an unhandled rejection of this .finally() chain.
+        if (typeof d.onWatched === 'function') {
+          try { d.onWatched(); } catch (e) { console.error('[ws] onWatched failed:', e); }
+        }
+      });
   }
 
   // The island a player stands on by their last broadcast position, or null.
@@ -510,10 +583,15 @@ module.exports = (io) => {
     SceneGuess.register(socket);
 
     // Client must emit 'world:join' before broadcasting anything else.
-    socket.on('world:join', (raw) => {
+    socket.on('world:join', guard('world.join', (raw) => {
       // Each join hits the DB (watched list) and fans out to the whole room.
       // A real client joins once per socket (a reconnect is a new socket).
-      if (!rateOk(socket, 'join')) return;
+      // A bare return here left the client connected to an empty world (no
+      // snapshot, nobody sees it, chat says not-joined). Tell it when to try
+      // again; js/home-socket.js re-sends the join after retryInMs.
+      if (!rateOk(socket, 'join')) {
+        return socket.emit('world:join-refused', { reason: 'slow-down', retryInMs: NetLogic.refillMs('join') });
+      }
       // Username comes from the verified token, NOT the client payload, so a
       // user can't join as someone else in chat/nametag.
       const username  = String(socket.data.username || 'Anon').slice(0, MAX_USERNAME);
@@ -591,9 +669,9 @@ module.exports = (io) => {
       socket.to('world').emit('world:joined', NetLogic.publicPlayer(player));
       // Back on a new socket mid-game (reload / reconnect / new tab)? Retake the seat.
       SceneGuess.resume(socket);
-    });
+    }));
 
-    socket.on('world:pos', (raw) => {
+    socket.on('world:pos', guard('world.pos', (raw) => {
       const p = worldPlayers.get(socket.id);
       if (!p) return;
       const nowPos = Date.now();
@@ -608,45 +686,65 @@ module.exports = (io) => {
       // changes so its Project chat tab can relabel / enable itself. The
       // island is also the voice scope and the stay-credit bucket.
       // Only islands the user has watched count (see zoneOf / refreshWatched).
-      const zone = zoneOf(socket, p);
-      if (zone !== p.projectId) {
-        const prevZone = p.projectId;
-        // Voice: peers are computed from projectId, so snapshot the OLD
-        // island's peers before mutating it. Both sides tear down, then the
-        // mover gets a fresh snapshot of the new island and its residents get
-        // a peer-joined. Per-socket emit order is preserved by Socket.IO, so
-        // the client always destroys before it dials.
-        const inVoice = voiceWorld.has(socket.id);
-        const oldPeers = inVoice ? islandVoicePeers() : [];
-        drainStay(p, nowPos);
-        p.stay = zone ? Stay.enter(zone, nowPos) : null;
-        p.projectId = zone;
-        socket.emit('world:zone', { projectId: zone });
-        // After the zone so the client knows its island before the game shows.
-        SceneGuess.onZone(socket, p, prevZone, zone);
-        if (inVoice) {
-          for (const id of oldPeers) {
-            io.to(id).emit('voice:peer-left', { id: socket.id });
-            socket.emit('voice:peer-left', { id });
-          }
-          if (zone) {
-            const newPeers = islandVoicePeers();
-            socket.emit('voice:peers', { scope: 'world', peers: newPeers });
-            for (const id of newPeers) io.to(id).emit('voice:peer-joined', { id: socket.id });
-          }
-        }
-      } else {
-        touchStay(p, nowPos);
-      }
+      if (!applyZone(p, nowPos)) touchStay(p, nowPos);
       socket.to('world').emit('world:pos', posRelay(socket.id, p));
-    });
+    }));
+
+    // Re-derive the island `p` stands on and, if it changed, apply it: stay
+    // credit, world:zone, Scene Guess and the island voice mesh. Shared by
+    // world:pos and the watched-list load (onWatched below), so an island
+    // found without a move behaves exactly like walking onto it. Idempotent:
+    // a load that lands after a move already set the zone sends nothing.
+    // Returns true when the zone changed.
+    function applyZone(p, now) {
+      const zone = zoneOf(socket, p);
+      if (zone === p.projectId) return false;
+      const prevZone = p.projectId;
+      // Voice: peers are computed from projectId, so snapshot the OLD
+      // island's peers before mutating it. Both sides tear down, then the
+      // mover gets a fresh snapshot of the new island and its residents get
+      // a peer-joined. Per-socket emit order is preserved by Socket.IO, so
+      // the client always destroys before it dials.
+      const inVoice = voiceWorld.has(socket.id);
+      const oldPeers = inVoice ? islandVoicePeers() : [];
+      drainStay(p, now);
+      p.stay = zone ? Stay.enter(zone, now) : null;
+      p.projectId = zone;
+      socket.emit('world:zone', { projectId: zone });
+      // After the zone so the client knows its island before the game shows.
+      SceneGuess.onZone(socket, p, prevZone, zone);
+      if (inVoice) {
+        for (const id of oldPeers) {
+          io.to(id).emit('voice:peer-left', { id: socket.id });
+          socket.emit('voice:peer-left', { id });
+        }
+        if (zone) {
+          const newPeers = islandVoicePeers();
+          socket.emit('voice:peers', { scope: 'world', peers: newPeers });
+          for (const id of newPeers) io.to(id).emit('voice:peer-joined', { id: socket.id });
+        }
+      }
+      return true;
+    }
+
+    // The join's watched-list read (refreshWatched) is async and usually
+    // lands AFTER the client's first position packet, which then found no
+    // island (zoneOf needs the list). Re-run the zone check against where
+    // the player stands now (joinPos until they move). Skipped when the
+    // socket left /world (or disconnected) before the read came back: the
+    // record is gone from worldPlayers then.
+    socket.data.onWatched = () => {
+      if (!socket.connected) return;
+      const p = worldPlayers.get(socket.id);
+      if (p) applyZone(p, Date.now());
+    };
 
     // Chat, split into channels: 'world' (everyone), 'project' (players on
     // the sender's island) and 'whisper' (one named player). Only 'world' has
     // the 10s cooldown. `ack` (optional) reports the real outcome so the
     // client only clears the box / shows the bubble / starts its countdown
     // for a message that actually went out — a rejected send costs nothing.
-    socket.on('world:chat', (raw, ack) => {
+    socket.on('world:chat', guard('world.chat', (raw, ack) => {
       const reply = (typeof ack === 'function') ? ack : () => {};
       const p = worldPlayers.get(socket.id);
       if (!p) return reply({ ok: false, error: 'not-joined' });
@@ -666,37 +764,41 @@ module.exports = (io) => {
       }
 
       // An accepted message counts as island activity (people chatting stand
-      // still) — rejected sends above never reach this line.
-      touchStay(p, now);
-      markFloor(socket, 'anyChat', now);
+      // still) and spends the anyChat floor. Only sends that go out call
+      // this: the rejections above, 'no-project' below and a whisper that
+      // handleWhisper refuses (not-found, self, DM policy) cost nothing (RT-10).
+      const accept = () => { touchStay(p, now); markFloor(socket, 'anyChat', now); };
       // Sender always gets its own copy (so its log shows what went out).
       const out = { channel: m.channel, id: socket.id, username: p.username, text: m.text };
       if (m.channel === 'world') {
+        accept();
         io.to('world').emit('world:chat', out);
       } else if (m.channel === 'project') {
         if (!p.projectId) return reply({ ok: false, error: 'no-project' });
+        accept();
         out.projectId = p.projectId;
         for (const [sid, other] of worldPlayers) {
           if (other.projectId === p.projectId) io.to(sid).emit('world:chat', out);
         }
       } else {
         // Whisper has no cooldown, so nothing below this branch applies —
-        // handleWhisper owns the ack (it may need a Mongo round-trip).
-        return handleWhisper(io, socket, p, m, out, reply);
+        // handleWhisper owns the ack (it may need a Mongo round-trip) and
+        // calls accept() only once the whisper is actually sent.
+        return handleWhisper(io, socket, p, m, out, reply, accept);
       }
       if (!limited) return reply({ ok: true, cooldownMs: 0 });
       markFloor(socket, 'worldChat', now);
       reply({ ok: true, cooldownMs: ChatLogic.C.COOLDOWN_MS });
-    });
+    }));
 
-    socket.on('world:emote', (raw) => {
+    socket.on('world:emote', guard('world.emote', (raw) => {
       const p = worldPlayers.get(socket.id);
       if (!p) return;
       const out = emoteRelay(socket, p, raw);
       if (!out) return;
       touchStay(p);
       socket.to('world').emit('world:emote', out);
-    });
+    }));
 
     // Punch relay. Same per-user cooldown pattern as chat. `target` must be
     // null (a whiffed swing everyone still sees) or a current world player's
@@ -711,7 +813,7 @@ module.exports = (io) => {
     // as a whiff, and the ack tells the attacker's client to undo its
     // optimistic knockdown. Without this one modified client could stun-lock
     // anyone, anywhere on the map.
-    socket.on('world:punch', (raw, ack) => {
+    socket.on('world:punch', guard('world.punch', (raw, ack) => {
       const reply = (typeof ack === 'function') ? ack : () => {};
       const p = worldPlayers.get(socket.id);
       if (!p) return reply({ ok: false, reason: 'not-joined' });
@@ -764,13 +866,13 @@ module.exports = (io) => {
           io.to('world').emit('world:stone-update', { stone, holder: socket.id });
         }
       }
-    });
+    }));
 
     // A hero swings at ITS TARGET — requested by the target's own client (the
     // only one that knows where it really stands), gated by a per-hero
     // cooldown. Broadcast to everyone including the sender, which knocks
     // itself down on the echo, the same way world:punch works.
-    socket.on('world:npc-punch', (raw) => {
+    socket.on('world:npc-punch', guard('world.npc-punch', (raw) => {
       const me = worldPlayers.get(socket.id);
       if (!me) return;
       const npc = raw && raw.npc;
@@ -785,7 +887,7 @@ module.exports = (io) => {
       me.downAt = now;
       me.emote = null;
       io.to('world').emit('world:npc-punch', { npc, target: socket.id });
-    });
+    }));
 
     // Claim a FREE stone the client reached on foot. Authoritative: only the
     // first grab wins; losers reconcile from the world:stone-update broadcast.
@@ -793,7 +895,7 @@ module.exports = (io) => {
     // position it broadcasts) — a script can no longer sweep all six from
     // anywhere. A refused grab gets the true state back so its optimistic
     // hide undoes itself.
-    socket.on('world:stone-grab', (raw) => {
+    socket.on('world:stone-grab', guard('world.stone-grab', (raw) => {
       if (!stonesEventEnabled()) return;      // event off — no stones to grab
       const p = worldPlayers.get(socket.id);
       if (!p) return;
@@ -812,12 +914,12 @@ module.exports = (io) => {
       touchStay(p);
       worldStones[stone].holder = socket.id;
       io.to('world').emit('world:stone-update', { stone, holder: socket.id });
-    });
+    }));
 
     // Snap — only valid while holding all six. Dusts a random ~50% of the
     // OTHER players (they fade + respawn at spawn client-side), then all six
     // stones scatter free for a fresh round. Lifetime snap count persists.
-    socket.on('world:snap', () => {
+    socket.on('world:snap', guard('world.snap', () => {
       if (!stonesEventEnabled()) return;      // event off — snapping disabled
       const p = worldPlayers.get(socket.id);
       if (!p) return;
@@ -845,7 +947,7 @@ module.exports = (io) => {
       io.to('world').emit('world:stones', { stones: stonesSnapshot() });
 
       if (scored) User.findByIdAndUpdate(socket.data.userId, { $inc: { stoneSnaps: 1 } }).catch(() => {});
-    });
+    }));
 
     // ── home:* events ──
     //
@@ -854,13 +956,20 @@ module.exports = (io) => {
     // resolves it to an id so the visitor doesn't need the owner's id.
     // Shape mirrors world:* so the client uses the same handlers.
 
-    socket.on('home:join', async (raw) => {
+    socket.on('home:join', guard('home.join', async (raw) => {
       // One or two DB lookups per join — rate-limited like world:join (its
       // own bucket: the user-keyed `join` bucket is shared by every tab).
-      if (!rateOk(socket, 'homeJoin')) return;
+      // Every refusal below is answered with home:join-refused; a bare return
+      // left the client in an empty home with no hint why. 'slow-down' and
+      // 'error' are retried by js/home-socket.js, the others are final. A
+      // stale() join (socket gone or superseded) stays silent: nobody waits on it.
+      const refuse = (reason, retryInMs) => {
+        socket.emit('home:join-refused', retryInMs ? { reason, retryInMs } : { reason });
+      };
+      if (!rateOk(socket, 'homeJoin')) return refuse('slow-down', NetLogic.refillMs('homeJoin'));
       // typeof guard: String() on a crafted object throws and crashes the process.
       const ownerUsername = (typeof raw?.ownerUsername === 'string' ? raw.ownerUsername : '').slice(0, MAX_USERNAME);
-      if (!ownerUsername) return;
+      if (!ownerUsername) return refuse('bad-request');
       // The lookups below are async: if the socket disconnects (quick reload /
       // navigate-away) or leaves / re-joins while they run, the disconnect
       // handler has nothing to remove yet, and adding the player afterwards
@@ -869,10 +978,12 @@ module.exports = (io) => {
       const stale = () => !socket.connected || socket.data.homeJoinSeq !== seq;
       let owner;
       try {
-        owner = await User.findOne({ username: ownerUsername })
-          .select('_id').lean();
-      } catch (_) { return; }
-      if (!owner || stale()) return;
+        // Case-insensitive, like GET /api/friends/by-username: /friend/Bob/home
+        // renders the page, so the join must find the same owner.
+        owner = await Username.findByUsername(ownerUsername, '_id');
+      } catch (_) { if (!stale()) refuse('error', 3000); return; }
+      if (stale()) return;
+      if (!owner) return refuse('not-found');
 
       // Only the owner and their accepted friends may enter — same rule as
       // GET /api/friends/by-username. Without it any logged-in user could
@@ -880,9 +991,9 @@ module.exports = (io) => {
       if (String(owner._id) !== String(socket.data.userId)) {
         try {
           const ok = await Friend.exists(friendFilter(socket.data.userId, owner._id));
-          if (!ok) return;
-        } catch (_) { return; }
-        if (stale()) return;
+          if (stale()) return;
+          if (!ok) return refuse('not-friends');
+        } catch (_) { if (!stale()) refuse('error', 3000); return; }
       }
 
       const ownerId  = String(owner._id);
@@ -934,9 +1045,9 @@ module.exports = (io) => {
         .map(NetLogic.publicPlayer);
       socket.emit('home:snapshot', { players: others });
       socket.to('home:' + ownerId).emit('home:joined', NetLogic.publicPlayer(player));
-    });
+    }));
 
-    socket.on('home:pos', (raw) => {
+    socket.on('home:pos', guard('home.pos', (raw) => {
       const p = homePlayers.get(socket.id);
       if (!p) return;
       const nowPos = Date.now();
@@ -946,12 +1057,12 @@ module.exports = (io) => {
       if (!s) return;
       applyPos(p, s);
       socket.to('home:' + p.ownerId).emit('home:pos', posRelay(socket.id, p));
-    });
+    }));
 
     // `ack` (optional) reports the outcome, like world:chat: a message inside
     // the 1 s floor used to vanish while the sender's box cleared and their
     // own bubble showed, so they never knew it wasn't sent.
-    socket.on('home:chat', (raw, ack) => {
+    socket.on('home:chat', guard('home.chat', (raw, ack) => {
       const reply = (typeof ack === 'function') ? ack : () => {};
       const p = homePlayers.get(socket.id);
       if (!p) return reply({ ok: false, error: 'not-joined' });
@@ -965,17 +1076,17 @@ module.exports = (io) => {
         id: socket.id, username: p.username, text: msg
       });
       reply({ ok: true });
-    });
+    }));
 
-    socket.on('home:emote', (raw) => {
+    socket.on('home:emote', guard('home.emote', (raw) => {
       const p = homePlayers.get(socket.id);
       if (!p) return;
       const out = emoteRelay(socket, p, raw);
       if (!out) return;
       socket.to('home:' + p.ownerId).emit('home:emote', out);
-    });
+    }));
 
-    socket.on('home:leave', () => {
+    socket.on('home:leave', guard('home.leave', () => {
       // Also cancels a home:join still waiting on the DB (see home:join).
       socket.data.homeJoinSeq = (socket.data.homeJoinSeq || 0) + 1;
       const p = homePlayers.get(socket.id);
@@ -984,7 +1095,7 @@ module.exports = (io) => {
       leaveHomeVoice(io, socket.id, p.ownerId);
       socket.leave('home:' + p.ownerId);
       socket.to('home:' + p.ownerId).emit('home:left', { id: socket.id });
-    });
+    }));
 
     // ── voice:* events ──
     //
@@ -1036,7 +1147,7 @@ module.exports = (io) => {
     // remote peers treat a repeated peer-joined as "that peer restarted" and
     // rebuild their WebRTC connection, so re-broadcasting on every retry (or
     // on a scripted flood) made a whole island tear its calls down.
-    socket.on('voice:announce', (raw) => {
+    socket.on('voice:announce', guard('voice.announce', (raw) => {
       if (!rateOk(socket, 'announce')) return;
       const scope = raw && raw.scope;
       let already = false;
@@ -1058,9 +1169,9 @@ module.exports = (io) => {
       const peers = voicePeersInSameRoom(scope);
       socket.emit('voice:peers', { scope, peers });
       if (!already) emitVoicePeerEvent(scope, 'voice:peer-joined', { id: socket.id });
-    });
+    }));
 
-    socket.on('voice:leave', () => {
+    socket.on('voice:leave', guard('voice.leave', () => {
       const scope = socket.data.voiceScope;
       if (!scope) return;
       let removed = false;
@@ -1078,9 +1189,9 @@ module.exports = (io) => {
       }
       if (removed) emitVoicePeerEvent(scope, 'voice:peer-left', { id: socket.id });
       socket.data.voiceScope = null;
-    });
+    }));
 
-    socket.on('voice:signal', (raw) => {
+    socket.on('voice:signal', guard('voice.signal', (raw) => {
       const scope = socket.data.voiceScope;
       if (!scope) return;
       if (!raw || typeof raw.to !== 'string') return;
@@ -1110,9 +1221,9 @@ module.exports = (io) => {
         kind,
         data: raw.data
       });
-    });
+    }));
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', guard('disconnect', () => {
       // A home:join still awaiting the DB must not add us after this.
       socket.data.homeJoinSeq = (socket.data.homeJoinSeq || 0) + 1;
       if (worldPlayers.has(socket.id)) {
@@ -1135,7 +1246,7 @@ module.exports = (io) => {
         socket.to('world').emit('voice:peer-left', { id: socket.id });
       }
       if (home) leaveHomeVoice(io, socket.id, home.ownerId);
-    });
+    }));
   });
 };
 
@@ -1145,6 +1256,38 @@ module.exports.broadcastWorld = (event, payload) => { if (_io) _io.to('world').e
 // Everyone in one user's home (the owner + visiting friends).
 module.exports.broadcastHome = (ownerId, event, payload) => { if (_io) _io.to('home:' + String(ownerId)).emit(event, payload); };
 module.exports.flushStays = flushStays;
+module.exports.unappliedOps = unappliedOps;
+module.exports.invalidateProjectGrid = invalidateProjectGrid;
+// For the admin user delete (routes/admin.js): stop crediting `userId` —
+// mark them deleted (queueCredit / flushStays skip them), drop their queued
+// credit and end their live stays. Resolves once a flush already in flight
+// has landed, so the caller's ProjectStay delete runs after it, not before.
+module.exports.dropCreditsFor = (userId) => {
+  const id = String(userId || '');
+  if (!id) return Promise.resolve();
+  if (!deletedUsers.has(id)) {
+    const t = setTimeout(() => deletedUsers.delete(id), DELETED_USER_TTL_MS);
+    if (t.unref) t.unref();
+    deletedUsers.set(id, t);
+  }
+  const prefix = id + '|';
+  for (const key of [...pendingCredits.keys()]) {
+    if (key.startsWith(prefix)) pendingCredits.delete(key);
+  }
+  for (const p of worldPlayers.values()) {
+    if (String(p.userId) === id) p.stay = null;
+  }
+  return Promise.resolve(_flushing);
+};
+// For server.js graceful shutdown: stop the periodic flush, then bank every
+// live stay and write the pending map one last time (await the result).
+// A flush already in flight is waited out first — flushStays() would just
+// hand back that promise, and anything queued since would never be written.
+module.exports.shutdownStays = () => {
+  if (_stayTimer) clearInterval(_stayTimer);
+  _stayTimer = null;
+  return Promise.resolve(_flushing).then(() => flushStays());
+};
 // For routes/messages.js (via server/messages.js): live-deliver an inbox
 // message to the recipient's Whisper tab when they're in /world.
 module.exports.deliverWhisper = deliverWhisper;
@@ -1165,3 +1308,5 @@ module.exports.ejectFromHome = (a, b) => {
   }
   return list.length;
 };
+// Exported for test/world-socket-guard.test.js.
+module.exports.guard = guard;

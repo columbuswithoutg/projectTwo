@@ -67,10 +67,3 @@ test('keeperOf: highest total wins, ties go to the earlier updatedAt, empty is n
   assert.equal(S.keeperOf([]), null);
   assert.equal(S.keeperOf(null), null);
 });
-
-test('formatStay', () => {
-  assert.equal(S.formatStay(0), '<1m');
-  assert.equal(S.formatStay(59 * 1000), '<1m');
-  assert.equal(S.formatStay(45 * MIN), '45m');
-  assert.equal(S.formatStay(3 * 60 * MIN + 12 * MIN), '3h 12m');
-});

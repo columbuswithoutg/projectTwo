@@ -117,3 +117,42 @@ test('defaultNewCell lands below the lowest row and never on a project', () => {
   assert.ok(!L.occupiedCells(BUNDLED).has(`${cell.gx},${cell.gy}`));
   assert.deepEqual(L.defaultNewCell([]), { gx: 0, gy: 0 });
 });
+
+// ADM-04: the form's runtime box. An empty box reads '' or null (the
+// number field's get()) and means "no runtime" — it used to become
+// String(null) → NaN → a refused save.
+test('parseRuntimeInput: empty / null / undefined mean no runtime (0)', () => {
+  assert.deepEqual(L.parseRuntimeInput(''), { runtime: 0 });
+  assert.deepEqual(L.parseRuntimeInput('   '), { runtime: 0 });
+  assert.deepEqual(L.parseRuntimeInput(null), { runtime: 0 });
+  assert.deepEqual(L.parseRuntimeInput(undefined), { runtime: 0 });
+  assert.deepEqual(L.parseRuntimeInput(0), { runtime: 0 });
+});
+
+test('parseRuntimeInput: numbers and decimals round to whole minutes', () => {
+  assert.deepEqual(L.parseRuntimeInput(126), { runtime: 126 });
+  assert.deepEqual(L.parseRuntimeInput('126'), { runtime: 126 });
+  assert.deepEqual(L.parseRuntimeInput(125.6), { runtime: 126 });
+  assert.deepEqual(L.parseRuntimeInput('90.4'), { runtime: 90 });
+  assert.deepEqual(L.parseRuntimeInput(600), { runtime: 600 });
+});
+
+test('parseRuntimeInput: out of range or not a number is an error', () => {
+  for (const v of [-1, 601, '1000', 'abc', NaN, Infinity]) {
+    const r = L.parseRuntimeInput(v);
+    assert.ok(r.error, `expected an error for ${String(v)}`);
+    assert.equal(r.runtime, undefined);
+  }
+});
+
+test('parseEpisodesInput: lists, separators, decimals and bad entries', () => {
+  assert.deepEqual(L.parseEpisodesInput('53, 55, 51'), [53, 55, 51]);
+  assert.deepEqual(L.parseEpisodesInput('53;55 51\n49'), [53, 55, 51, 49]);
+  assert.deepEqual(L.parseEpisodesInput('52.6, 40.2'), [53, 40]);
+  assert.deepEqual(L.parseEpisodesInput(''), []);
+  assert.deepEqual(L.parseEpisodesInput(null), []);
+  assert.equal(L.parseEpisodesInput('53, x'), null);
+  assert.equal(L.parseEpisodesInput('53, 0'), null);
+  assert.equal(L.parseEpisodesInput('53, -5'), null);
+  assert.equal(L.parseEpisodesInput('601'), null);
+});

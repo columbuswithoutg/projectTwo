@@ -2,12 +2,21 @@ require('dotenv').config();
 
 // Fail fast at boot if critical env is missing — otherwise jwt.sign throws
 // mid-request and the user gets an opaque 500 on their first login attempt.
-['MONGO_URI', 'JWT_SECRET'].forEach(key => {
-  if (!process.env[key]) {
-    console.error(`FATAL: ${key} is not set in environment. Aborting.`);
-    process.exit(1);
-  }
+// In production the Cloudinary vars are required too: without them every
+// upload 502s and server/cloudinary-url.js rejects every memory/profile/
+// portrait URL as "must be uploaded through the app", with nothing saying
+// why. Dev (and the QA recipes, which run with only MONGO_URI/JWT_SECRET)
+// just gets a warning. The rules live in server/boot-checks.js (unit-tested).
+const BootChecks = require('./server/boot-checks');
+BootChecks.requiredMissing(process.env).forEach(key => {
+  console.error(`FATAL: ${key} is not set in environment. Aborting.`);
+  process.exit(1);
 });
+const cloudinaryMissing = BootChecks.warnMissing(process.env);
+if (cloudinaryMissing.length) {
+  console.warn(`WARNING: ${cloudinaryMissing.join(', ')} not set — uploads will fail and every ` +
+    'memory/profile/portrait URL will be rejected until Cloudinary is configured.');
+}
 // A guessable JWT_SECRET lets anyone mint valid session tokens. Require
 // real entropy. Generate one with:
 //   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
@@ -16,9 +25,11 @@ if (process.env.JWT_SECRET.length < 32) {
   process.exit(1);
 }
 
-// Force Google DNS for local dev — fixes SRV lookup issues on some networks
+// Force Google DNS for local dev — fixes SRV lookup issues on some networks.
+// Production keeps the host's resolver (Render's, for the mongodb+srv
+// SRV/TXT lookup) unless FORCE_PUBLIC_DNS=1 opts back in.
 const dns = require('dns');
-dns.setServers(['8.8.8.8', '8.8.4.4']);
+if (BootChecks.usePublicDns(process.env)) dns.setServers(['8.8.8.8', '8.8.4.4']);
 const express = require('express');
 const http = require('http');
 const mongoose = require('mongoose');
@@ -104,7 +115,27 @@ app.use(cors({
 }));
 // Cap body size — progress payloads are small; the upload route uses multer
 // and is not affected by this limit.
-app.use(express.json({ limit: '64kb' }));
+// Exception: the CMS dialogues save (PUT /api/admin/content/dialogues in
+// routes/admin.js) sends the WHOLE dialogue document — ~20 KB today, so a
+// few rounds of writing would hit 64 KB and every save would 413. That path
+// gets a 512 KB parser, but it is mounted INSIDE routes/admin.js, i.e. after
+// adminLimiter and requireAdmin, so an unauthenticated client can never make
+// the server read more than it would on any other path (and, because the
+// gate answers first, not even that). For it to work the global parser here
+// must leave the dialogues body alone: express.json's `type` option may be a
+// function, and body-parser 2.x (lib/read.js) calls next() WITHOUT touching
+// the stream when it returns false ("skip parsing"). So the predicate below
+// keeps the default application/json check for every other path and says
+// "not mine" for the dialogues path. It mirrors how the router's
+// router.use('/content/dialogues') matches: case-insensitive, the path itself
+// or anything under it (req.path here is the full path, no query string).
+// (test/body-limit.test.js pins the mechanism and both mount points.)
+const DIALOGUES_BODY_PATH = '/api/admin/content/dialogues';
+function isDialoguesPath(req) {
+  const p = String(req.path || '').toLowerCase();
+  return p === DIALOGUES_BODY_PATH || p.startsWith(DIALOGUES_BODY_PATH + '/');
+}
+app.use(express.json({ limit: '64kb', type: (req) => !isDialoguesPath(req) && Boolean(req.is('application/json')) }));
 
 // SPA routes — BEFORE static middleware so they take priority over index.html
 const spaFile = path.join(DIST, 'spa.html');
@@ -131,7 +162,18 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 // folder, so a given URL never changes → cache it for good in production.
 app.use('/assets/models/humanoid', express.static(path.join(__dirname, 'assets', 'models', 'humanoid'),
   IS_PROD ? { immutable: true, maxAge: '1y', index: false } : { maxAge: 0, index: false }));
-app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: IS_PROD ? '30d' : 0 }));
+// Everything else under /assets keeps its name when it changes —
+// scripts/optimize-images.mjs rewrites files in place — so the browser cache
+// may hold a copy for at most a day in production (it was 30 days, so an
+// updated poster could stay stale for a month). The pieces together:
+//   - URLs built with assetUrl() (js/config.js) carry ?v=ASSET_VERSION; bump
+//     it and every client fetches a new URL at once, cache or no cache.
+//   - Everything else (CSS backgrounds, manifest icons, unversioned srcs) is
+//     at most 1 day stale in the HTTP cache.
+//   - The service worker (sw.js) serves /assets stale-while-revalidate and
+//     revalidates with cache: 'no-cache', i.e. a conditional request that
+//     skips this max-age, so an installed PWA is at most one load behind.
+app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: IS_PROD ? '1d' : 0 }));
 // Built client. Every file under dist/static carries a content hash in its
 // name (core.a1b2c3d4.js, styles.<hash>.css …), so it is cached forever: a
 // new build produces new names and the generated spa.html points at them.
@@ -148,10 +190,9 @@ app.use('/dist', express.static(path.join(DIST, 'static'), { immutable: true, ma
 // stylesheet) is gone — old links land on the SPA's /login.
 app.get('/index.html', (req, res) => res.redirect(301, '/login'));
 const ROOT_FILES = ['manifest.json'];
-const HTML_FILES = new Set();
 ROOT_FILES.forEach(name => {
   app.get('/' + name, (req, res) => {
-    if (HTML_FILES.has(name) || !IS_PROD) {
+    if (!IS_PROD) {
       res.set('Cache-Control', 'no-cache');
     } else {
       res.set('Cache-Control', 'public, max-age=86400');
@@ -177,7 +218,14 @@ mongoose.connect(process.env.MONGO_URI)
     // case-insensitive regex fallback switches off (server/username.js).
     require('./server/username').startReadinessPoll();
   })
-  .catch(err => console.error(err));
+  // Mongoose never retries a failed INITIAL connect: the process would stay
+  // up with no database — every DB request hanging to the buffer timeout,
+  // /api/health 503 forever, the backfill and readiness poll never run.
+  // Exit instead so Render restarts us (same fail-fast as the env checks).
+  .catch(err => {
+    console.error('FATAL: initial MongoDB connection failed. Exiting so the platform restarts the process.', err);
+    process.exit(1);
+  });
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -256,6 +304,9 @@ app.use('/api/config', publicConfigLimiter, require('./routes/config'));
 // same modest IP limiter as /api/config since both are cached and called
 // once at boot per client.
 app.use('/api/content', publicConfigLimiter, require('./routes/content'));
+// Unknown /api/* paths answer JSON, not Express's "Cannot GET …" HTML page —
+// a stale client calling a removed route would otherwise throw in res.json().
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 // Terminal error handler — Express 5 forwards async rejections here. Without
 // this, unhandled errors in route handlers leak stack traces to the client.
@@ -273,6 +324,13 @@ app.use((err, req, res, next) => {
 
 // Wrap the Express app in a Node HTTP server so Socket.IO can share the
 // same listener. /world's real-time presence + chat + emotes ride on this.
+//
+// SINGLE INSTANCE ONLY. All realtime and cache state lives in this process:
+// worldPlayers, Scene Guess games, pendingCredits (island stay), the rate
+// buckets, the SceneData caches and the auth caches. Two Render instances —
+// or a zero-downtime deploy where old and new overlap — split the world in
+// two (players on one can't see the other, credits/games/limits diverge).
+// Scaling out would need the socket.io Redis adapter plus shared caches.
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   // Same-origin only; /world is auth-gated and never expected to be
@@ -284,7 +342,66 @@ const io = new SocketIOServer(server, {
   // "character" blob that the server re-broadcasts to every joiner.
   maxHttpBufferSize: 32 * 1024
 });
-require('./routes/world-socket')(io);
+const worldSocket = require('./routes/world-socket');
+worldSocket(io);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// Graceful shutdown. Render sends SIGTERM on every deploy; without this the
+// process died mid-flight: up to one flush interval of queued island-stay
+// credit per player was lost, live Scene Guess games just vanished and
+// in-flight requests were cut. Runs once (a second signal is ignored), and a
+// hard timeout exits anyway so a hung step can't hold the deploy. Order:
+//   1. end live Scene Guess games with reason 'restart' (while sockets are up)
+//   2. io.close() — disconnects every socket (their disconnect handlers bank
+//      stay time), stops new connections and closes the HTTP server, which
+//      waits for in-flight requests to finish
+//   3. clear the stay timer and write every pending/live stay one last time
+//   4. wait for the HTTP drain, then mongoose.disconnect(), then exit
+const SHUTDOWN_TIMEOUT_MS = 8000;
+let shuttingDown = false;
+function shutdown(why, exitCode = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${why}: shutting down (hard exit in ${SHUTDOWN_TIMEOUT_MS} ms)`);
+  setTimeout(() => {
+    console.error('[shutdown] timed out; exiting anyway');
+    process.exit(exitCode || 1);
+  }, SHUTDOWN_TIMEOUT_MS).unref();
+  (async () => {
+    try {
+      const ended = require('./server/scene-guess').instance().endAll('restart');
+      console.log(`[shutdown] ended ${ended} live Scene Guess game(s)`);
+    } catch (err) { console.error('[shutdown] Scene Guess:', err); }
+    const httpClosed = io.close();
+    console.log('[shutdown] sockets disconnected; no new connections');
+    try {
+      await worldSocket.shutdownStays();
+      console.log('[shutdown] island stays flushed');
+    } catch (err) { console.error('[shutdown] stay flush:', err); }
+    await httpClosed;
+    console.log('[shutdown] in-flight requests finished');
+    try {
+      await mongoose.disconnect();
+      console.log('[shutdown] MongoDB disconnected');
+    } catch (err) { console.error('[shutdown] MongoDB disconnect:', err); }
+    process.exit(exitCode);
+  })().catch(err => {
+    console.error('[shutdown] failed:', err);
+    process.exit(exitCode || 1);
+  });
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+// A stray rejection (e.g. a throw after an await in an async socket handler)
+// would terminate the process on modern Node and drop all in-memory world
+// state. The handlers are written carefully, so log it and keep serving.
+process.on('unhandledRejection', (reason) => console.error('unhandledRejection', reason));
+// A synchronous throw nobody caught leaves the process in an unknown state:
+// log it, then take the graceful path (exit 1) so Render restarts us cleanly.
+process.on('uncaughtException', (err) => {
+  console.error('uncaughtException', err);
+  shutdown('uncaughtException', 1);
+});

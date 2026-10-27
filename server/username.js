@@ -56,6 +56,11 @@ function searchFilter(q, ready, excludeId) {
 }
 
 // ── Readiness: true once every user has usernameLower (or is a known conflict) ──
+// "Has it" means a non-empty value: an older heal() could write '' (SRV-01),
+// and an account stuck on '' is only findable by exact-case name, so it must
+// keep the regex fallback alive until it is repaired. `$in: [null, '']`
+// matches a missing field, null and ''.
+const NOT_BACKFILLED = { $in: [null, ''] };
 let _ready = false;
 let _timer = null;
 function isReady() { return _ready; }
@@ -63,7 +68,7 @@ function setReady(v) { _ready = !!v; }     // tests
 
 async function refreshReady() {
   try {
-    const missing = await User.exists({ usernameLower: { $exists: false }, usernameLowerConflict: { $ne: true } });
+    const missing = await User.exists({ usernameLower: NOT_BACKFILLED, usernameLowerConflict: { $ne: true } });
     _ready = !missing;
   } catch (_) { /* keep the previous answer */ }
   if (_ready && _timer) { clearInterval(_timer); _timer = null; }
@@ -80,21 +85,35 @@ function startReadinessPoll(intervalMs = READY_POLL_MS) {
 
 // Write usernameLower onto a user found through a fallback query. Fire and
 // forget; a duplicate key (two legacy accounts differing only by case) is
-// left for the backfill script to report.
+// left for the backfill script to report. A doc fetched without `username`
+// (or with a blank one) is skipped: lowerName(undefined) is '', and writing
+// '' would mark the account backfilled while hiding it from every
+// case-insensitive lookup (SRV-01). The filter also repairs a doc an older
+// build already left on ''.
+let _healSkipLogged = false;
 function heal(doc) {
+  const lower = doc && typeof doc.username === 'string' ? lowerName(doc.username) : '';
+  if (!lower) {
+    if (!_healSkipLogged) {
+      _healSkipLogged = true;
+      console.warn('[username] heal skipped: doc has no username (was it projected out?)', doc && doc._id);
+    }
+    return;
+  }
   User.updateOne(
-    { _id: doc._id, usernameLower: { $exists: false } },
-    { $set: { usernameLower: lowerName(doc.username) } }
+    { _id: doc._id, usernameLower: NOT_BACKFILLED },
+    { $set: { usernameLower: lower } }
   ).catch(() => {});
 }
 
-// → lean user doc or null. `select` limits the fields (usernameLower is
-// always added so the heal check works).
+// → lean user doc or null. `select` limits the fields (username and
+// usernameLower are always added so the heal check and heal() itself work —
+// exists() selects only '_id').
 async function findByUsername(name, select) {
   const queries = lookupQueries(name, _ready);
   for (let i = 0; i < queries.length; i++) {
     let q = User.findOne(queries[i]);
-    if (select) q = q.select(select + ' usernameLower');
+    if (select) q = q.select(select + ' username usernameLower');
     const doc = await q.lean();
     if (!doc) continue;
     if (i > 0 && !doc.usernameLower) heal(doc);
@@ -109,5 +128,6 @@ async function exists(name) {
 
 module.exports = {
   MAX_LEN, lowerName, escapeRegex, lookupQueries, searchFilter,
-  isReady, setReady, refreshReady, startReadinessPoll, findByUsername, exists
+  isReady, setReady, refreshReady, startReadinessPoll, findByUsername, exists,
+  heal   // tests
 };

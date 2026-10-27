@@ -40,6 +40,47 @@ router.get('/public', async (req, res) => {
   }
 });
 
+// The /world heroes for the admin Config tab's NPC body-type picker:
+// { npcs: [{ id, name }], bodyTypes: [...] }. The tab used to read these
+// from the world chunk's globals (WorldNpcLogic.NPC_IDS, Playground.
+// CHARACTER_PRESETS / BODY_TYPES), which made every /admin visit download
+// and run the whole 3D bundle. Ids come from the same UMD module the
+// socket server uses; js/playground.js is a browser script (no exports),
+// so it is evaluated in a bare vm context — exactly as test/character.test.js
+// loads it — once, on first request. Public like /public (hero names and a
+// renderer list are not sensitive) and rate-limited by the /api/config
+// limiter in server.js; it only changes on deploy, hence the hour of cache.
+let npcMeta = null;
+function loadNpcMeta() {
+  if (npcMeta) return npcMeta;
+  const { NPC_IDS } = require('../js/world-npc-logic');
+  let pg = null;
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const vm = require('vm');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'playground.js'), 'utf8');
+    pg = vm.runInContext(src + '\n;Playground', vm.createContext({ console }));
+  } catch (err) {
+    // Names fall back to the id suffix; the picker still works.
+    console.error('playground.js load failed:', err && err.message);
+  }
+  const presets = (pg && Array.isArray(pg.CHARACTER_PRESETS)) ? pg.CHARACTER_PRESETS : [];
+  npcMeta = {
+    npcs: NPC_IDS.map(id => {
+      const p = presets.find(x => 'npc_' + x.id === id);
+      return { id, name: p ? p.name : id.replace(/^npc_/, '') };
+    }),
+    bodyTypes: (pg && Array.isArray(pg.BODY_TYPES)) ? pg.BODY_TYPES.slice() : ['Realistic', 'Box']
+  };
+  return npcMeta;
+}
+
+router.get('/npcs', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json(loadNpcMeta());
+});
+
 // Voice-chat ICE config — STUN by default, TURN when configured
 // (server/turn.js: time-limited HMAC credentials with TURN_SECRET, or the
 // static TURN_USERNAME / TURN_CREDENTIAL pair). Authed so anonymous traffic

@@ -1,7 +1,16 @@
 // Build the web-ready humanoid assets from the raw Quaternius downloads
-// (_incoming/quaternius/, gitignored) into assets/models/humanoid/v1/.
+// (_incoming/quaternius/, gitignored) into assets/models/humanoid/<vN>/.
 //
-//   node scripts/build-humanoid-assets.mjs [--no-quantize]
+//   node scripts/build-humanoid-assets.mjs --out v2 [--no-quantize] [--force]
+//
+// Production serves assets/models/humanoid immutable for a year (server.js)
+// and the service worker caches it cache-first, so a URL there must never
+// change content: a rebuilt model goes into a NEW folder. --out names it
+// (default v1, the folder that exists today); the script refuses to write
+// into a folder that already has files unless --force is passed — only for
+// a folder no deployed bundle has pointed at yet. Afterwards bump ASSET_BASE
+// in js/playground3d-humanoid-logic.js to the new folder and KEEP the old
+// one: clients still running the previous bundle keep requesting it.
 //
 // Outputs:
 //   body_male.glb / body_female.glb  Superhero bodies + eyes + eyebrows. The
@@ -28,7 +37,11 @@ import sharp from 'sharp';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = path.join(ROOT, '_incoming', 'quaternius');
-const OUT = path.join(ROOT, 'assets', 'models', 'humanoid', 'v1');
+const argValue = (flag) => { const i = process.argv.indexOf(flag); return i >= 0 ? process.argv[i + 1] : undefined; };
+const OUT_NAME = argValue('--out') || 'v1';
+if (!/^v\d+$/.test(OUT_NAME)) { console.error(`--out must be a version folder name like v2 (got ${OUT_NAME}).`); process.exit(1); }
+const OUT = path.join(ROOT, 'assets', 'models', 'humanoid', OUT_NAME);
+const FORCE = process.argv.includes('--force');
 const UBC = path.join(SRC, 'Universal Base Characters[Standard]');
 const BODY_DIR = path.join(UBC, 'Base Characters', 'Godot - UE');
 const SKIN_DIR = path.join(UBC, 'Base Characters', 'Textures');
@@ -229,6 +242,11 @@ async function buildAnims() {
 }
 
 if (!fs.existsSync(SRC)) { console.error(`Missing ${SRC} — download the Quaternius Standard packs first.`); process.exit(1); }
+if (!FORCE && fs.existsSync(OUT) && fs.readdirSync(OUT).length) {
+  console.error(`${path.relative(ROOT, OUT)} already has files and is served immutable for a year — ` +
+    'pass --out with a new folder (e.g. --out v' + (Number(OUT_NAME.slice(1)) + 1) + '), or --force if no deployed bundle uses it yet.');
+  process.exit(1);
+}
 fs.mkdirSync(OUT, { recursive: true });
 
 const manifest = {
@@ -252,3 +270,5 @@ for (const c of manifest.anims.clips) console.log(`  ${c.name.padEnd(20)} ${c.du
 fs.writeFileSync(path.join(OUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 const total = Object.values(manifest.bodies).reduce((s, b) => s + b.bytes, 0) + manifest.hair.bytes + manifest.anims.bytes;
 console.log(`total ${kb(total)} → ${path.relative(ROOT, OUT)}`);
+console.log(`Next: set ASSET_BASE in js/playground3d-humanoid-logic.js to '/assets/models/humanoid/${OUT_NAME}/', ` +
+  'and keep the old folder — clients on the previous bundle still load it.');

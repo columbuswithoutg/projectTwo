@@ -96,3 +96,59 @@ test('watchedIdsOf: object and legacy string entries', () => {
   assert.deepEqual([...H.watchedIdsOf({ watchedProjects: ['a', { projectId: 'b' }, null] })], ['a', 'b']);
   assert.equal(H.watchedIdsOf(null).size, 0);
 });
+
+// ── PUT /api/profile/home-layout checks ──
+
+test('isLayoutConnected: one component vs two islands', () => {
+  assert.equal(H.isLayoutConnected([]), true);
+  assert.equal(H.isLayoutConnected([{ gx: 5, gy: 5 }]), true);
+  assert.equal(H.isLayoutConnected([{ gx: 0, gy: 0 }, { gx: 1, gy: 0 }, { gx: 1, gy: 1 }]), true);
+  assert.equal(H.isLayoutConnected([{ gx: 0, gy: 0 }, { gx: 2, gy: 0 }]), false);
+  // Diagonal neighbours don't share a wall, so they don't connect.
+  assert.equal(H.isLayoutConnected([{ gx: 0, gy: 0 }, { gx: 1, gy: 1 }]), false);
+});
+
+test('maxHomeRooms: one room per two watched projects', () => {
+  assert.equal(H.maxHomeRooms(0), 0);
+  assert.equal(H.maxHomeRooms(1), 0);
+  assert.equal(H.maxHomeRooms(5), 2);
+  assert.equal(H.maxHomeRooms(undefined), 0);
+});
+
+test('checkLayoutRooms: a valid layout comes back rebuilt (only the three fields)', () => {
+  const out = H.checkLayoutRooms([{ projectId: 'a', gx: 0, gy: 0, extra: 'x' }, { projectId: 'b', gx: -32, gy: 32 }]);
+  assert.deepEqual(out, { rooms: [{ projectId: 'a', gx: 0, gy: 0 }, { projectId: 'b', gx: -32, gy: 32 }] });
+});
+
+test('checkLayoutRooms: non-integer, non-number and out-of-grid coords are rejected', () => {
+  for (const bad of [1.5, '1', NaN, Infinity, null, undefined, 33, -33]) {
+    const out = H.checkLayoutRooms([{ projectId: 'a', gx: bad, gy: 0 }]);
+    assert.match(out.error || '', /integers within ±32/, `gx=${String(bad)}`);
+    assert.match(H.checkLayoutRooms([{ projectId: 'a', gx: 0, gy: bad }]).error || '', /integers/);
+  }
+});
+
+test('checkLayoutRooms: 1.2 and 1.7 can no longer slip into the same cell', () => {
+  // These passed the old check (raw values differ) and were both floored to 1.
+  assert.ok(H.checkLayoutRooms([{ projectId: 'a', gx: 1.2, gy: 0 }, { projectId: 'b', gx: 1.7, gy: 0 }]).error);
+  assert.match(H.checkLayoutRooms([{ projectId: 'a', gx: 1, gy: 0 }, { projectId: 'b', gx: 1, gy: 0 }]).error,
+    /share grid cell \(1, 0\)/);
+});
+
+test('checkLayoutRooms: a project twice, or a bad projectId, is rejected', () => {
+  assert.match(H.checkLayoutRooms([{ projectId: 'a', gx: 0, gy: 0 }, { projectId: 'a', gx: 1, gy: 0 }]).error, /appears twice/);
+  assert.match(H.checkLayoutRooms([{ projectId: '', gx: 0, gy: 0 }]).error, /projectId/);
+  assert.match(H.checkLayoutRooms([{ projectId: 'x'.repeat(65), gx: 0, gy: 0 }]).error, /projectId/);
+  assert.match(H.checkLayoutRooms([null]).error, /projectId/);
+  assert.deepEqual(H.checkLayoutRooms([]), { rooms: [] });
+});
+
+test('validProfilePictureUrl: bundled character art or our own uploads only', () => {
+  assert.equal(H.validProfilePictureUrl('assets/characters/ironman.png'), true);
+  assert.equal(H.validProfilePictureUrl('assets/characters/../secret'), false);
+  assert.equal(H.validProfilePictureUrl('javascript:alert(1)'), false);
+  assert.equal(H.validProfilePictureUrl('data:image/png;base64,AAAA'), false);
+  assert.equal(H.validProfilePictureUrl('https://evil.example/x.png'), false);
+  assert.equal(H.validProfilePictureUrl(42), false);
+  assert.equal(H.validProfilePictureUrl('assets/characters/' + 'a'.repeat(600)), false);
+});

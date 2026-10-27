@@ -85,13 +85,6 @@
     return Number.isFinite(t) ? t : Infinity;
   }
 
-  // "3h 12m" / "45m" / "<1m"
-  function formatStay(ms) {
-    const mins = Math.floor((Number(ms) || 0) / 60000);
-    if (mins < 1) return '<1m';
-    const h = Math.floor(mins / 60), m = mins % 60;
-    return h ? `${h}h ${m}m` : `${m}m`;
-  }
-
-  return { C, enter, settle, touch, drain, keeperOf, formatStay };
+  // (Stay labels are formatted client-side by WorldHouseLogic.formatStay.)
+  return { C, enter, settle, touch, drain, keeperOf };
 });

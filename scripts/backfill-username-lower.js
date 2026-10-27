@@ -7,7 +7,8 @@
 //   node scripts/backfill-username-lower.js --dry-run   # report only
 //   node scripts/backfill-username-lower.js             # write
 //
-// Idempotent: users that already have the field are skipped. Two legacy
+// Idempotent: users that already have the field are skipped; a value of
+// '' (written by an old bug) counts as missing and is repaired. Two legacy
 // accounts whose names differ only by case ("Bob" / "bob") can't both own
 // the lower-cased key — the OLDER one gets it, the newer one is marked
 // usernameLowerConflict and keeps working through the exact-name lookup.
@@ -17,9 +18,10 @@
 
 require('dotenv').config();
 
-// Match server.js: force Google DNS for the Atlas SRV lookup.
+// Match server.js: force Google DNS for the Atlas SRV lookup (off in
+// production unless FORCE_PUBLIC_DNS=1, see server/boot-checks.js).
 const dns = require('dns');
-dns.setServers(['8.8.8.8', '8.8.4.4']);
+if (require('../server/boot-checks').usePublicDns(process.env)) dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 const mongoose = require('mongoose');
 const User = require('../models/user');
@@ -60,7 +62,7 @@ const dryRun = process.argv.includes('--dry-run');
     filled++;
     if (dryRun) continue;
     try {
-      await User.updateOne({ _id: u._id, usernameLower: { $exists: false } }, { $set: { usernameLower: lower } });
+      await User.updateOne({ _id: u._id, usernameLower: { $in: [null, ''] } }, { $set: { usernameLower: lower } });
     } catch (e) {
       if (e && e.code === 11000) {
         // Raced by a live lookup that healed another account first.
@@ -74,7 +76,7 @@ const dryRun = process.argv.includes('--dry-run');
   console.log(`${dryRun ? '[dry run] ' : ''}users: ${users.length}, filled: ${filled}, already had it: ${skipped}, conflicts: ${conflicts}`);
   for (const line of conflictNames) console.log('  conflict:', line);
   if (!dryRun) {
-    const missing = await User.countDocuments({ usernameLower: { $exists: false }, usernameLowerConflict: { $ne: true } });
+    const missing = await User.countDocuments({ usernameLower: { $in: [null, ''] }, usernameLowerConflict: { $ne: true } });
     console.log(missing === 0
       ? 'Done — every account has usernameLower; the server switches off the regex fallback within 10 minutes (or on restart).'
       : `Done — ${missing} account(s) still missing the field (re-run to retry).`);

@@ -21,7 +21,7 @@
  *
  * Events (all payloads typeof-checked; client → server ones are acked
  * { ok, error } and rate-limited by NetLogic.RATES sg*):
- *   C→S  world:sg-start / sg-join / sg-leave / sg-go / sg-guess / sg-pick / sg-sync
+ *   C→S  world:sg-start / sg-join / sg-leave / sg-go / sg-guess / sg-pick
  *   S→island  world:sg-state (the whole public game) · sg-fanfare · sg-arrived
  *   S→world   world:sg-live · sg-islands · sg-records
  *
@@ -376,15 +376,6 @@ function create(deps) {
     }
   }
 
-  // The current game on an island (or idle) — after a reload / reconnect.
-  function onSync(socket, raw, reply) {
-    const c = check(socket, raw, reply, 'sgMisc');
-    if (!c) return;
-    const g = games.get(c.projectId);
-    reply({ ok: true });
-    socket.emit('world:sg-state', g ? payload(g) : idlePayload(c.projectId, null));
-  }
-
   // ── hooks from routes/world-socket.js ──
 
   function attach(_io, _world) {
@@ -439,7 +430,6 @@ function create(deps) {
     on('world:sg-go', onGo);
     on('world:sg-guess', onGuess);
     on('world:sg-pick', onPick);
-    on('world:sg-sync', onSync);
   }
 
   // A player's island changed (world:pos). Shows them the new island's game;
@@ -520,11 +510,18 @@ function create(deps) {
     return out;
   }
 
+  // For server.js graceful shutdown: end every live game (players see the
+  // idle state with `reason`, the world loses its "live" badge). Returns
+  // how many were ended.
+  function endAll(reason) {
+    const list = [...games.values()];
+    for (const g of list) end(g, reason);
+    return list.length;
+  }
+
   return {
     attach, register, onZone, socketGone, retire, resume,
-    isPlaying, liveSnapshot,
-    // tests / debugging
-    _games: games, _broadcastIslands: broadcastIslands, _broadcastRecords: broadcastRecords
+    isPlaying, liveSnapshot, endAll
   };
 }
 

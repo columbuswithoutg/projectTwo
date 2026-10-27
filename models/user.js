@@ -47,7 +47,7 @@ const UserSchema = new mongoose.Schema({
   // Incremented server-side in routes/world-socket.js on a successful snap;
   // ranked in the /api/friends/stones leaderboard. (Replaced the old
   // per-player daily stoneHunt, which is gone with the shared redesign.)
-  stoneSnaps: { type: Number, default: 0, index: true },
+  stoneSnaps: { type: Number, default: 0 },
   // Admin-panel fields. isAdmin is set manually in MongoDB (no public path
   // to admin promotion). banned/bannedAt/banReason gate the user out of the
   // app; tokenVersion is bumped on ban so existing JWTs invalidate without

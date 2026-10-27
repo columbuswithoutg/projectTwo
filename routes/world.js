@@ -16,7 +16,7 @@
 const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
-const Project = require('../models/Project');
+const watchRules = require('../server/watchRules');
 const ProjectStay = require('../models/ProjectStay');
 const WorldHouse = require('../models/WorldHouse');
 const User = require('../models/user');
@@ -117,7 +117,10 @@ router.put('/houses/:projectId', auth, async (req, res) => {
   if (!portraitOk(v.house.portrait)) {
     return res.status(400).json({ error: 'portrait must be an image uploaded through this app' });
   }
-  if (!(await Project.exists({ id: projectId }))) return res.status(404).json({ error: 'Unknown project' });
+  // Same source as /world's islands and routes/progress.js: the cached Mongo
+  // copy, or projects.js when the collection is empty / unreachable — a bare
+  // Project.exists() 404'd houses on islands the world was still showing.
+  if (!(await watchRules.getProject(projectId))) return res.status(404).json({ error: 'Unknown project' });
 
   await WorldSocket.flushStays();
   const top = await ProjectStay.findOne({ projectId }).sort({ ms: -1, updatedAt: 1 }).select('userId ms').lean();
@@ -135,7 +138,7 @@ router.put('/houses/:projectId', auth, async (req, res) => {
   const saved = await WorldHouse.findOneAndUpdate(
     { projectId },
     { $set: { ...v.house, editedBy: req.user.id } },
-    { upsert: true, new: true, projection: HOUSE_FIELDS }
+    { upsert: true, returnDocument: 'after', projection: HOUSE_FIELDS }
   ).lean();
   const house = toHouse(saved);
   sharedHouses.invalidate();

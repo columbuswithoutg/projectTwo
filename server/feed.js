@@ -6,12 +6,8 @@ const FeedPost = require('../models/FeedPost');
 const User = require('../models/user');
 
 // Activity on the same project within this window counts as one "session"
-// and updates the existing post instead of creating a new one. Also absorbs
-// watched → undo → watched flurries.
+// and updates the existing post instead of creating a new one.
 const SESSION_WINDOW_MS = 12 * 60 * 60 * 1000;
-// A single save that adds more than this many projects is a bulk import /
-// restore, not a watch — don't flood friends' feeds with it.
-const MAX_POSTS_PER_SAVE = 3;
 
 const sinceWindow = () => new Date(Date.now() - SESSION_WINDOW_MS);
 
@@ -29,35 +25,53 @@ function safe(fn) {
     };
 }
 
-// The user finished a timed watch of `projectId` (count = their new total).
-// Every finished watch is a real, runtime-long event (POST /progress/complete),
-// so it gets its own post — a rewatch within the session window used to just
-// bump the old post's count silently, never resurfacing, and kept the first
-// watch's co-watchers as if they'd been at the rewatch too.
-// Only the user's OWN recent post is reused, and only when it doesn't already
-// cover this watch (e.g. a memory-only post made moments before finishing).
-async function recordWatch(userId, projectId, count, watchedWith = []) {
-    const post = await FeedPost.findOne({
-        author: userId,
-        projectId,
-        createdAt: { $gte: sinceWindow() }
-    }).sort({ createdAt: -1 });
-    if (post && post.kind === 'memory') {
-        post.kind = 'watch';
-        post.count = count || 1;
-        post.activityAt = new Date();
-        await post.save();
-        return;
+const byCreatedAt = (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+
+// Pure: fold duplicate posts into `target` (all plain objects with comments /
+// reactions / memories arrays). Comments from every post, ordered by
+// createdAt (stable: ties keep target-first order; no de-dup). One reaction
+// per user and one memory per url — what the target already has wins, then
+// the earliest dupe. Inputs are not mutated. removedIds = the dupes' _ids,
+// i.e. exactly the posts the caller deletes once the target is saved.
+function mergeInto(target, dupes) {
+    let comments = [...(target.comments || [])];
+    const reactions = [...(target.reactions || [])];
+    const memories = [...(target.memories || [])];
+    for (const d of dupes) {
+        comments = [...comments, ...(d.comments || [])].sort(byCreatedAt);
+        for (const r of d.reactions || []) {
+            if (!reactions.some(x => String(x.user) === String(r.user))) reactions.push(r);
+        }
+        for (const m of d.memories || []) {
+            if (!memories.some(x => x.url === m.url)) memories.push(m);
+        }
     }
-    if (post && (post.count || 1) >= (count || 1)) return; // already posted
-    await FeedPost.create({
-        author: userId,
-        participants: [userId],
-        projectId,
-        kind: 'watch',
-        count: count || 1,
-        watchedWith
+    return { comments, reactions, memories, removedIds: dupes.map(d => d._id) };
+}
+
+// Pure: `list` plus each of `ids` not already in it (compared as strings).
+function unionIds(list, ids) {
+    const out = [...list];
+    for (const id of ids) if (!out.some(p => String(p) === String(id))) out.push(id);
+    return out;
+}
+
+// Apply mergeInto() to a FeedPost document. Plain copies — subdocuments
+// belong to their own parent document. Returns the ids to delete AFTER
+// post.save() has succeeded.
+function foldDupes(post, dupes) {
+    if (!dupes.length) return [];
+    const plain = (doc) => ({
+        _id: doc._id,
+        comments: doc.comments.map(c => c.toObject()),
+        reactions: doc.reactions.map(r => r.toObject()),
+        memories: doc.memories.map(m => m.toObject())
     });
+    const m = mergeInto(plain(post), dupes.map(plain));
+    post.comments = m.comments;
+    post.reactions = m.reactions;
+    post.memories = m.memories;
+    return m.removedIds;
 }
 
 // The post for one finished step (movie, or one series episode), exactly as
@@ -87,38 +101,6 @@ async function createWatchPost(userId, projectId, { count = 1, episode = null, c
     });
 }
 
-// Diff a /progress/save payload against the previous document.
-async function diffSave(userId, before, after) {
-    const prev = new Map((before || []).map(e => [e.projectId, e]));
-    const next = new Map(after.map(e => [e.projectId, e]));
-
-    const watched = [];
-    for (const e of after) {
-        const old = prev.get(e.projectId);
-        const oldWith = old ? (old.watchedWith || []) : [];
-        const newNames = (e.watchedWith || []).filter(n => !oldWith.includes(n));
-        if (!old || e.count > (old.count || 1) || newNames.length) watched.push(e);
-    }
-    if (watched.length <= MAX_POSTS_PER_SAVE) {
-        for (const e of watched) {
-            await recordWatch(userId, e.projectId, e.count, e.watchedWith || []);
-        }
-    }
-
-    // Un-watched: retract a fresh post nobody has engaged with yet (the
-    // "oops, wrong movie" case). Posts with comments/memories stay.
-    const removed = [...prev.keys()].filter(id => !next.has(id));
-    if (removed.length) {
-        await FeedPost.deleteMany({
-            author: userId,
-            projectId: { $in: removed },
-            createdAt: { $gte: sinceWindow() },
-            'comments.0': { $exists: false },
-            'memories.0': { $exists: false }
-        });
-    }
-}
-
 // A watch-party request was accepted: merge both users into one post.
 async function recordCoWatch(requester, recipient, projectId) {
     // requester / recipient: { _id, username }
@@ -144,9 +126,7 @@ async function recordCoWatch(requester, recipient, projectId) {
     const authorIsRequester = String(post.author) === String(requester._id);
     const other = authorIsRequester ? recipient : requester;
     const author = authorIsRequester ? requester : recipient;
-    for (const id of [requester._id, recipient._id]) {
-        if (!post.participants.some(p => String(p) === String(id))) post.participants.push(id);
-    }
+    post.participants = unionIds(post.participants, [requester._id, recipient._id]);
     if (!post.watchedWith.includes(other.username)) post.watchedWith.push(other.username);
     post.watchedWith = post.watchedWith.filter(n => n !== author.username);
     post.kind = 'watch';
@@ -161,20 +141,9 @@ async function recordCoWatch(requester, recipient, projectId) {
         projectId,
         createdAt: { $gte: sinceWindow() }
     });
-    for (const d of dupes) {
-        // Plain copies — subdocuments belong to their own parent document.
-        const merged = [...post.comments.map(c => c.toObject()), ...d.comments.map(c => c.toObject())]
-            .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
-        post.comments = merged;
-        for (const r of d.reactions) {
-            if (!post.reactions.some(x => String(x.user) === String(r.user))) post.reactions.push(r.toObject());
-        }
-        for (const m of d.memories) {
-            if (!post.memories.some(x => x.url === m.url)) post.memories.push(m.toObject());
-        }
-    }
+    const removedIds = foldDupes(post, dupes);
     await post.save();
-    if (dupes.length) await FeedPost.deleteMany({ _id: { $in: dupes.map(d => d._id) } });
+    if (removedIds.length) await FeedPost.deleteMany({ _id: { $in: removedIds } });
 }
 
 // A tag request from the post composer was accepted: add the friend to that
@@ -185,7 +154,7 @@ async function tagPost(postId, friend) {
     // friend: { _id, username }
     const post = await FeedPost.findById(postId);
     if (!post) return false;
-    if (!post.participants.some(p => String(p) === String(friend._id))) post.participants.push(friend._id);
+    post.participants = unionIds(post.participants, [friend._id]);
     if (!post.watchedWith.includes(friend.username)) post.watchedWith.push(friend.username);
     post.activityAt = new Date();
     const dupes = await FeedPost.find({
@@ -195,18 +164,9 @@ async function tagPost(postId, friend) {
         episode: post.episode ?? null,
         createdAt: { $gte: sinceWindow() }
     });
-    for (const d of dupes) {
-        post.comments = [...post.comments.map(c => c.toObject()), ...d.comments.map(c => c.toObject())]
-            .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
-        for (const r of d.reactions) {
-            if (!post.reactions.some(x => String(x.user) === String(r.user))) post.reactions.push(r.toObject());
-        }
-        for (const m of d.memories) {
-            if (!post.memories.some(x => x.url === m.url)) post.memories.push(m.toObject());
-        }
-    }
+    const removedIds = foldDupes(post, dupes);
     await post.save();
-    if (dupes.length) await FeedPost.deleteMany({ _id: { $in: dupes.map(d => d._id) } });
+    if (removedIds.length) await FeedPost.deleteMany({ _id: { $in: removedIds } });
     return true;
 }
 
@@ -246,9 +206,11 @@ async function removeMemory(userId, projectId, url) {
 module.exports = {
     createWatchPost,   // not wrapped: the caller needs the post back (and catches)
     tagPost,           // same
-    diffSave: safe(diffSave),
-    recordWatch: safe(recordWatch),
     recordCoWatch: safe(recordCoWatch),
     recordMemory: safe(recordMemory),
-    removeMemory: safe(removeMemory)
+    removeMemory: safe(removeMemory),
+    // Pure pieces, exported for test/feed.test.js.
+    mergeInto,
+    unionIds,
+    safe
 };

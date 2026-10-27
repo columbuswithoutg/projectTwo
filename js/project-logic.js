@@ -11,6 +11,8 @@
  *                          (unknown ids, self, both lists, too many, bad ids)
  *   occupiedCells() / firstFreeCell() / defaultNewCell()
  *                          a board cell for "+ Add new" that isn't taken
+ *   parseRuntimeInput() / parseEpisodesInput()
+ *                          the form's watch-runtime inputs → minutes
  *
  * Shared by: routes/admin.js (server validation),
  *            js/views/admin/cms-projects.js + prereq-picker.js (the form).
@@ -29,6 +31,12 @@
   const DEFAULT_PHASE_UNLOCKERS = { 2: 'avengers1', 3: 'ageofultron', 4: 'endgame', 5: 'loki1', 6: 'loki2' };
   const ID_REGEX = /^[a-z0-9_-]{1,80}$/i;
   const PREREQ_MAX = 20;
+  // Board cells are integers within ±GRID_LIMIT on both axes (the bundled
+  // projects.js spans |gridX| ≤ 8, |gridY| ≤ 31). An outlying cell made the
+  // client road router size its chart to the whole span and freeze the page
+  // (two projects at ±500 → one road took 1.8 s and 48 MB), so the server
+  // refuses anything further out (server/admin-sanitize.js).
+  const GRID_LIMIT = 60;
 
   function parsePhase(phase) {
     if (typeof phase === 'number') return phase;
@@ -198,8 +206,36 @@
     return firstFreeCell(occupiedCells(projects), { anchor: { gx: 0, gy: maxY + 1 } }) || { gx: 0, gy: maxY + 1 };
   }
 
+  // Watch-runtime inputs of the project form. Same bound as the server's
+  // MAX_RUNTIME_MIN (server/watchRules.js), which rounds and clamps again.
+  const RUNTIME_MAX = 600;
+
+  // Movie runtime box → { runtime } or { error }. Empty (the number field
+  // reads '' or null) means "no runtime": 0, so "Mark as watched" unlocks
+  // at once — as the form's hint promises. (String(null) used to be
+  // "null" → NaN → a refused save.)
+  function parseRuntimeInput(v) {
+    const raw = v == null ? '' : String(v).trim();
+    if (raw === '') return { runtime: 0 };
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || n > RUNTIME_MAX) {
+      return { error: `Runtime must be between 1 and ${RUNTIME_MAX} minutes (or empty for none).` };
+    }
+    return { runtime: Math.round(n) };
+  }
+
+  // "53, 55, 51" → [53, 55, 51]; null if any entry isn't a positive number
+  // up to RUNTIME_MAX. Empty text → [].
+  function parseEpisodesInput(text) {
+    const parts = String(text == null ? '' : text).split(/[\s,;]+/).filter(Boolean);
+    const nums = parts.map(Number);
+    if (nums.some(n => !Number.isFinite(n) || n <= 0 || n > RUNTIME_MAX)) return null;
+    return nums.map(Math.round);
+  }
+
   return {
-    DEFAULT_PHASE_UNLOCKERS, ID_REGEX, PREREQ_MAX,
+    DEFAULT_PHASE_UNLOCKERS, ID_REGEX, PREREQ_MAX, RUNTIME_MAX, GRID_LIMIT,
+    parseRuntimeInput, parseEpisodesInput,
     parsePhase, lockDeps, findPrereqCycle, dependentsOf, requiredBy,
     validatePrereqLists, errorText,
     occupiedCells, firstFreeCell, defaultNewCell

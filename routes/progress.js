@@ -14,79 +14,12 @@ router.get('/load', auth, async (req, res) => {
   res.json(sessionPayload(user));
 });
 
-// Strip incoming watched-project entries to known-safe primitives so a
-// malicious client can't cram arbitrary nested objects, other users'
-// usernames, or unbounded memory lists into a doc.
+// Caps on a user's watched list and on the memories kept per entry.
 const MAX_WATCHED_PROJECTS = 200;
 const MAX_MEMORIES_PER_ENTRY = 40;
 
-function sanitizeEntry(e) {
-  if (!e || typeof e !== 'object') return null;
-  if (typeof e.projectId !== 'string' || e.projectId.length === 0 || e.projectId.length > 80) return null;
-  const count = Number.isFinite(e.count) ? Math.max(1, Math.min(Math.floor(e.count), 9999)) : 1;
-  const watchedWith = Array.isArray(e.watchedWith)
-    ? e.watchedWith.filter(v => typeof v === 'string' && v.length <= 40).slice(0, 20)
-    : [];
-  const memories = Array.isArray(e.memories)
-    ? e.memories.map(sanitizeMemory).filter(Boolean).slice(0, MAX_MEMORIES_PER_ENTRY)
-    : [];
-  return { projectId: e.projectId, count, watchedWith, memories };
-}
-
 // Cloudinary-only URL check — shared with routes/feed.js (post editing).
 const { sanitizeMemory } = require('../server/memory');
-
-// Save full progress. The client still sends its whole list (watched-with
-// tags, memories, un-watching), but it can no longer ADD a watch or raise a
-// count this way: entries the server doesn't already have are dropped and
-// counts are taken from the stored copy. Watches only come from finishing a
-// timed session (POST /complete) — see server/watchRules.js.
-//
-// It can only REMOVE things from entries the server already has: drop a
-// watched-with tag or a memory. It never deletes a whole entry (a stale tab
-// whose list predates a just-finished watch would otherwise erase it; there
-// is no way to un-watch a title) and never adds tags (those come only from
-// accepted co-watch requests), so it can't forge "watched with <anyone>".
-// Writes go per-entry through arrayFilters, so a concurrent /complete $inc
-// on the count is never overwritten.
-router.post('/save', auth, async (req, res) => {
-  const { watchedProjects } = req.body || {};
-  if (!Array.isArray(watchedProjects)) return res.status(400).json({ error: 'watchedProjects must be an array' });
-  const stored = await User.findById(req.user.id, { watchedProjects: 1 }).lean();
-  if (!stored) return res.status(404).json({ error: 'User not found' });
-
-  // Last copy of each projectId wins; duplicates can't be introduced.
-  const incoming = new Map();
-  for (const e of watchedProjects.slice(0, MAX_WATCHED_PROJECTS).map(sanitizeEntry)) {
-    if (e) incoming.set(e.projectId, e);
-  }
-
-  const $set = {};
-  const arrayFilters = [];
-  const after = (stored.watchedProjects || []).map(entry => {
-    const want = incoming.get(entry.projectId);
-    if (!want) return entry;
-    const keepNames = new Set(want.watchedWith);
-    const keepUrls = new Set(want.memories.map(m => m.url));
-    const watchedWith = (entry.watchedWith || []).filter(n => keepNames.has(n));
-    const memories = (entry.memories || []).filter(m => keepUrls.has(m.url));
-    if (watchedWith.length === (entry.watchedWith || []).length &&
-        memories.length === (entry.memories || []).length) return entry;
-    const f = `e${arrayFilters.length}`;
-    arrayFilters.push({ [`${f}.projectId`]: entry.projectId });
-    $set[`watchedProjects.$[${f}].watchedWith`] = watchedWith;
-    $set[`watchedProjects.$[${f}].memories`] = memories;
-    return { ...entry, watchedWith, memories };
-  });
-
-  if (arrayFilters.length) {
-    await User.updateOne({ _id: req.user.id }, { $set }, { arrayFilters });
-  }
-  res.json({ message: 'Saved' });
-  // The feed diffs what changed (e.g. a removed co-watcher). It runs after
-  // the response and never blocks or fails the save.
-  if (arrayFilters.length) feed.diffSave(req.user.id, stored.watchedProjects, after);
-});
 
 const MAX_SESSIONS = 50;
 // Timers that may tick at the same time (a movie + a series episode, say).
@@ -139,7 +72,7 @@ router.post('/start', auth, async (req, res) => {
     updated = await User.findOneAndUpdate(
       { _id: req.user.id, watchSessions: { $elemMatch: { projectId, startedAt: null } }, $expr: RUNNING_UNDER_CAP },
       { $set: { 'watchSessions.$.startedAt': new Date() } },
-      { new: true, projection: SESSION_PROJECTION }
+      { returnDocument: 'after', projection: SESSION_PROJECTION }
     ).lean();
   } else {
     if (!watched.has(projectId) && !watchRules.isAvailable(project, watched)) {
@@ -155,7 +88,7 @@ router.post('/start', auth, async (req, res) => {
         ] }
       },
       { $push: { watchSessions: { projectId, episode: 0, startedAt: new Date(), rewatch: watched.has(projectId) } } },
-      { new: true, projection: SESSION_PROJECTION }
+      { returnDocument: 'after', projection: SESSION_PROJECTION }
     ).lean();
   }
   if (updated) return res.json(sessionPayload(updated));
@@ -246,7 +179,7 @@ router.post('/complete', auth, async (req, res) => {
   // Matching on the exact session guards against a double-click completing
   // the same step twice.
   const sessionMatch = { $elemMatch: { projectId, episode, startedAt: session.startedAt } };
-  const opts = { new: true, projection: SESSION_PROJECTION };
+  const opts = { returnDocument: 'after', projection: SESSION_PROJECTION };
 
   if (episode + 1 < watchRules.stepCount(project)) {
     const updated = await User.findOneAndUpdate(
@@ -309,7 +242,7 @@ router.post('/cancel', auth, async (req, res) => {
   const { projectId } = req.body || {};
   if (!validProjectId(projectId)) return res.status(400).json({ error: 'Invalid projectId' });
   const updated = await User.findByIdAndUpdate(req.user.id, { $pull: { watchSessions: { projectId } } },
-    { new: true, projection: SESSION_PROJECTION }).lean();
+    { returnDocument: 'after', projection: SESSION_PROJECTION }).lean();
   if (!updated) return res.status(404).json({ error: 'User not found' });
   res.json(sessionPayload(updated));
 });
@@ -322,30 +255,52 @@ router.post('/memory', auth, async (req, res) => {
   }
   const memory = sanitizeMemory(req.body);
   if (!memory) return res.status(400).json({ error: 'Invalid memory payload (Cloudinary URL required)' });
-  const user = await User.findById(req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });   // deleted mid-session
-  const entry = user.watchedProjects.find(e => e.projectId === projectId);
-  if (!entry) return res.status(404).json({ error: 'Project not watched yet' });
-  if (entry.memories.length >= MAX_MEMORIES_PER_ENTRY) {
+  // One atomic $push, guarded by the cap: `memories.<cap-1>` not existing
+  // means the entry has fewer than the cap. The old read → push → save()
+  // rewrote the whole watchedProjects array, so a memory added (or deleted)
+  // from another tab in between was silently undone.
+  const updated = await User.findOneAndUpdate(
+    {
+      _id: req.user.id,
+      watchedProjects: { $elemMatch: { projectId, [`memories.${MAX_MEMORIES_PER_ENTRY - 1}`]: { $exists: false } } }
+    },
+    { $push: { 'watchedProjects.$.memories': memory } },
+    { returnDocument: 'after', projection: { 'watchedProjects.projectId': 1, 'watchedProjects.memories': 1 } }
+  ).lean();
+  if (!updated) {
+    // Nothing pushed — say why, with the same answers as before.
+    const user = await User.findById(req.user.id).select('watchedProjects.projectId').lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });   // deleted mid-session
+    const entry = (user.watchedProjects || []).find(e => e.projectId === projectId);
+    if (!entry) return res.status(404).json({ error: 'Project not watched yet' });
     return res.status(400).json({ error: 'Memory cap reached for this project' });
   }
-  entry.memories.push(memory);
-  await user.save();
-  res.json({ memories: entry.memories });
+  const entry = (updated.watchedProjects || []).find(e => e.projectId === projectId);
+  res.json({ memories: (entry && entry.memories) || [] });
   feed.recordMemory(req.user.id, projectId, memory);
 });
 
 // Delete a memory
 router.delete('/memory', auth, async (req, res) => {
   const { projectId, url } = req.body || {};
-  const user = await User.findById(req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const entry = user.watchedProjects.find(e => e.projectId === projectId);
-  if (!entry) return res.status(404).json({ error: 'Not found' });
-  entry.memories = entry.memories.filter(m => m.url !== url);
-  await user.save();
+  // Strings only: both go straight into the update filter below (an object
+  // would be an operator), and a non-string url could never match anyway.
+  if (typeof projectId !== 'string' || !projectId || typeof url !== 'string') {
+    return res.status(400).json({ error: 'Invalid memory' });
+  }
+  // Atomic $pull of just that memory — rewriting the whole array (the old
+  // read → filter → save()) could drop a memory added meanwhile.
+  const r = await User.updateOne(
+    { _id: req.user.id, 'watchedProjects.projectId': projectId },
+    { $pull: { 'watchedProjects.$.memories': { url } } }
+  );
+  if (!r.matchedCount) {
+    const user = await User.exists({ _id: req.user.id });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    return res.status(404).json({ error: 'Not found' });
+  }
   res.json({ message: 'Deleted' });
-  if (typeof url === 'string') feed.removeMemory(req.user.id, projectId, url);
+  feed.removeMemory(req.user.id, projectId, url);
 });
 
 // Load walker selections

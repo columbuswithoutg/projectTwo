@@ -88,3 +88,22 @@ test('every static project has a watch runtime', () => {
     assert.ok(total > 0, `${p.id} has no runtime`);
   }
 });
+
+// RT-07: the runtime backfill is a one-time fill for docs with NO runtime
+// field — an admin's deliberate runtime of 0 must survive every boot.
+test('backfillRuntimes only matches docs without a runtime field', async () => {
+  const Project = require('../models/Project');
+  const origFind = Project.find, origBulk = Project.bulkWrite;
+  let filter = null;
+  Project.find = (f) => { filter = f; return { select: () => ({ lean: async () => [] }) }; };
+  Project.bulkWrite = async () => ({});
+  try {
+    await W.backfillRuntimes();
+  } finally {
+    Project.find = origFind;
+    Project.bulkWrite = origBulk;
+  }
+  assert.deepEqual(filter.runtime, { $exists: false });
+  assert.ok(!JSON.stringify(filter).includes('"runtime":0'));
+  assert.ok(!JSON.stringify(filter).includes('"runtime":null'));
+});

@@ -63,7 +63,8 @@ function normalizeProject(p) {
 // the final return so it ALSO exports __pairs/__vdl/__vvl. Then read
 // them off WALKER_DIALOGUES on the sandbox.
 function evalDialoguesFile() {
-  let src = fs.readFileSync(FILES.dialogues, 'utf8');
+  const raw = fs.readFileSync(FILES.dialogues, 'utf8');
+  let src = raw;
   // Match the last `return { ... };` at the bottom of the IIFE. Anchored
   // with `}\)\(\)` afterward to be specific to the IIFE close, so we
   // don't accidentally rewrite an early `return` inside a helper.
@@ -71,6 +72,12 @@ function evalDialoguesFile() {
     /return\s*\{([^}]*)\};\s*\}\s*\)\s*\(\s*\)\s*;?/m,
     'return { __pairs: typeof pairs !== "undefined" ? pairs : {}, __vdl: typeof villainDefeatLines !== "undefined" ? villainDefeatLines : {}, __vvl: typeof villainVictoryLines !== "undefined" ? villainVictoryLines : {}, $1 };})();'
   );
+  // No match = the IIFE's closing `return { ... }; })();` changed shape and
+  // this fallback would quietly serve no dialogue. Say so, but don't throw:
+  // it's only used when Mongo has no Dialogue doc.
+  if (src === raw) {
+    console.error('contentLoader: js/walker-dialogues.js closing `return { ... }; })();` not found — dialogue fallback will be empty (update the regex in evalDialoguesFile)');
+  }
   src += captureEpilogue(['WALKER_DIALOGUES']);
   const sandbox = makeSandbox();
   vm.runInNewContext(src, sandbox, { filename: FILES.dialogues, timeout: 5000 });

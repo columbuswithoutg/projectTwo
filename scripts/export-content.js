@@ -22,7 +22,9 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const dns = require('dns');
-dns.setServers(['8.8.8.8', '8.8.4.4']);   // same Windows-SRV workaround as server.js
+// Same Windows-SRV workaround as server.js (off in production unless
+// FORCE_PUBLIC_DNS=1, see server/boot-checks.js).
+if (require('../server/boot-checks').usePublicDns(process.env)) dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 const mongoose = require('mongoose');
 const Project = require('../models/Project');

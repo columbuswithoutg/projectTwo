@@ -127,3 +127,18 @@ test('Scene Guess events each have a bucket (an unknown key would be unlimited)'
   }
   assert.ok(N.RATES.sgStart.perSec <= 0.1, 'starting a lobby is the tightest');
 });
+
+test('join buckets: roomy enough for reloads / reconnects, refillMs says when to retry', () => {
+  for (const key of ['join', 'homeJoin']) {
+    assert.ok(N.RATES[key].cap >= 8, `${key}: burst covers a run of reloads`);
+    assert.ok(N.RATES[key].perSec >= 0.5, `${key}: refills within seconds`);
+    const store = {};
+    for (let i = 0; i < N.RATES[key].cap; i++) assert.ok(N.allow(store, key, 0));
+    assert.equal(N.allow(store, key, 0), false, `${key}: refused once spent`);
+    const wait = N.refillMs(key);
+    assert.equal(wait, Math.ceil(1000 / N.RATES[key].perSec));
+    assert.equal(N.allow(store, key, wait - 1), false, `${key}: not yet`);
+    assert.ok(N.allow(store, key, wait), `${key}: a retry after refillMs is let in`);
+  }
+  assert.equal(N.refillMs('no-such-limit'), 3000, 'unknown key: flat fallback');
+});

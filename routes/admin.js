@@ -21,6 +21,8 @@ const Dialogue = require('../models/Dialogue');
 const Report = require('../models/Report');
 const ProjectStay = require('../models/ProjectStay');
 const SceneScore = require('../models/SceneScore');
+const SceneStill = require('../models/SceneStill');
+const SceneIsland = require('../models/SceneIsland');
 const FeedPost = require('../models/FeedPost');
 const SceneData = require('../server/scene-guess-data');
 const Messages = require('../server/messages');
@@ -30,6 +32,12 @@ const { parseAsset } = require('../server/cloudinary-url');
 const feed = require('../server/feed');
 const MessagingLogic = require('../js/messaging-logic');
 const auth = require('../middleware/auth');
+// Pure payload validators for the config / CMS / board routes below.
+const {
+  pickNumber, diffConfig,
+  sanitizeProject, parsePositions, planPositions,
+  sanitizeCharacter, sanitizeLocation, sanitizePairs, sanitizeVillainLines
+} = require('../server/admin-sanitize');
 
 // Cloudinary is already configured in routes/upload.js; the SDK is a
 // singleton so reading env here would double-register. We rely on the
@@ -125,6 +133,8 @@ router.get('/users/stats/signups', async (req, res) => {
   res.json({ days, buckets: fillDailyBuckets(buckets, days) });
 });
 
+const { deleteUser: deleteUserCascade } = require('../server/delete-user');
+
 router.delete('/users/:id', async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) {
     return res.status(400).json({ error: 'Invalid user id' });
@@ -134,21 +144,47 @@ router.delete('/users/:id', async (req, res) => {
   }
   const user = await User.findById(req.params.id).select('username isAdmin').lean();
   if (!user) return res.status(404).json({ error: 'User not found' });
+  // One admin must not be able to remove another; demoting is a deliberate
+  // separate step (there is no demote route yet — it's a DB edit).
+  if (user.isAdmin) return res.status(400).json({ error: 'Demote this admin before deleting them' });
 
-  await Promise.all([
-    User.deleteOne({ _id: req.params.id }),
-    Friend.deleteMany({ $or: [{ requester: req.params.id }, { recipient: req.params.id }] }),
-    // Island stay time — otherwise a deleted user stays "keeper" of a house
-    // and nobody can edit it until someone out-stays them.
-    ProjectStay.deleteMany({ userId: req.params.id }),
-    // Scene Guess bests — same reason: a deleted user's record (and crown)
-    // would otherwise sit on the island forever.
-    SceneScore.deleteMany({ userId: req.params.id })
-  ]);
+  // Lazy: world-socket is only needed here, and keeps admin.js loadable on
+  // its own (tests, scripts).
+  let WorldSocket = null;
+  try { WorldSocket = require('./world-socket'); } catch (_) {}
+  const dropCredits = () => (WorldSocket && WorldSocket.dropCreditsFor
+    ? WorldSocket.dropCreditsFor(req.params.id).catch(() => {})
+    : Promise.resolve());
+  // Stop island stay credit BEFORE the cascade (and wait out a flush in
+  // flight) — otherwise the next flush upserts their ProjectStay rows back.
+  await dropCredits();
+
+  // The whole cascade (posts, messages, uploads + Cloudinary, watchedWith,
+  // houses, friends, stays, scores) lives in server/delete-user.js; each
+  // step is independent and the summary says which, if any, failed.
+  const summary = await deleteUserCascade({
+    User, Friend, ProjectStay, SceneScore, FeedPost, Report, Upload,
+    Message: require('../models/Message'),
+    WorldHouse: require('../models/WorldHouse')
+  }, cloudinary, { userId: req.params.id, username: user.username });
   SceneData.invalidate('board', null);
+  // Live sockets drop last. Their disconnect handlers drain any stay into
+  // pendingCredits; dropCreditsFor marked the user, so that credit is
+  // discarded — the second call just sweeps anything queued meanwhile.
   auth.invalidateUser(req.params.id);
-  logAudit(req, 'deleteUser', req.params.id, { username: user.username });
-  res.json({ message: 'User deleted' });
+  dropCredits();
+  logAudit(req, 'deleteUser', req.params.id, {
+    username: user.username,
+    failed: summary.ok ? undefined : summary.steps.filter(s => s.error).map(s => s.name)
+  });
+  const userStep = summary.steps.find(s => s.name === 'user');
+  if (!userStep || userStep.error) {
+    return res.status(500).json({ error: 'User delete failed', steps: summary.steps });
+  }
+  res.json({
+    message: summary.ok ? 'User deleted' : 'User deleted — some cleanup steps failed (see server log)',
+    steps: summary.steps
+  });
 });
 
 router.post('/users/:id/password', async (req, res) => {
@@ -162,12 +198,22 @@ router.post('/users/:id/password', async (req, res) => {
   // Bump tokenVersion to invalidate the user's existing sessions — a
   // password reset should always log out everywhere, otherwise a stolen
   // token outlives the reset.
-  const user = await User.findByIdAndUpdate(
-    req.params.id,
+  // Another admin's password is off limits (resetting it is a takeover);
+  // your own is fine. isAdmin sits in the filter so check and write are one.
+  const filter = req.params.id === req.adminUser.id
+    ? { _id: req.params.id }
+    : { _id: req.params.id, isAdmin: { $ne: true } };
+  const user = await User.findOneAndUpdate(
+    filter,
     { password: hashed, $inc: { tokenVersion: 1 } },
-    { new: true }
+    { returnDocument: 'after' }
   ).select('username').lean();
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!user) {
+    if (await User.exists({ _id: req.params.id })) {
+      return res.status(400).json({ error: 'Demote this admin before resetting their password' });
+    }
+    return res.status(404).json({ error: 'User not found' });
+  }
   auth.invalidateUser(req.params.id);
   logAudit(req, 'resetPassword', req.params.id, { username: user.username });
   res.json({ message: 'Password updated' });
@@ -181,12 +227,19 @@ router.post('/users/:id/ban', async (req, res) => {
     return res.status(400).json({ error: "You can't ban yourself" });
   }
   const reason = (req.body?.reason || '').toString().slice(0, 280);
-  const user = await User.findByIdAndUpdate(
-    req.params.id,
+  // isAdmin in the filter, not a read-then-write: an admin is never banned
+  // by another admin, even if promoted between a check and the update.
+  const user = await User.findOneAndUpdate(
+    { _id: req.params.id, isAdmin: { $ne: true } },
     { banned: true, bannedAt: new Date(), banReason: reason, $inc: { tokenVersion: 1 } },
-    { new: true }
+    { returnDocument: 'after' }
   ).select('username').lean();
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!user) {
+    if (await User.exists({ _id: req.params.id })) {
+      return res.status(400).json({ error: 'Demote this admin before banning them' });
+    }
+    return res.status(404).json({ error: 'User not found' });
+  }
   auth.invalidateUser(req.params.id);
   logAudit(req, 'ban', req.params.id, { username: user.username, reason });
   res.json({ message: 'User banned' });
@@ -199,7 +252,7 @@ router.post('/users/:id/unban', async (req, res) => {
   const user = await User.findByIdAndUpdate(
     req.params.id,
     { banned: false, bannedAt: null, banReason: '', $inc: { tokenVersion: 1 } },
-    { new: true }
+    { returnDocument: 'after' }
   ).select('username').lean();
   if (!user) return res.status(404).json({ error: 'User not found' });
   auth.invalidateUser(req.params.id);
@@ -232,7 +285,7 @@ router.post('/users/:id/watched', async (req, res) => {
       $push: { watchedProjects: { $each: AdminWatch.newEntries(plan.add) } },
       $pull: { watchSessions: { projectId: { $in: plan.add } } }
     },
-    { new: true, projection: { _id: 1 } }
+    { returnDocument: 'after', projection: { _id: 1 } }
   ).lean();
   if (!updated) {
     return res.status(409).json({ error: 'Their progress just changed. Reopen the user and try again.' });
@@ -256,11 +309,6 @@ router.post('/users/:id/watched', async (req, res) => {
 // pagination can skip into a known total.
 router.get('/memories', async (req, res) => {
   const { page, limit, skip } = clampPage(req);
-  const userIdFilter = req.query.userId && mongoose.isValidObjectId(req.query.userId)
-    ? new mongoose.Types.ObjectId(req.query.userId)
-    : null;
-
-  const matchStage = userIdFilter ? { _id: userIdFilter } : {};
   // Photos live in two places: the project's Memories (watchedProjects) and
   // feed posts. Photos added on a mid-series episode post exist ONLY on the
   // post, so they were invisible here and couldn't be moderated — both
@@ -279,14 +327,12 @@ router.get('/memories', async (req, res) => {
         episode: '$episode',
         source: 'post'
     }},
-    ...(userIdFilter ? [{ $match: { userId: userIdFilter } }] : []),
     { $lookup: { from: User.collection.name, localField: 'userId', foreignField: '_id', as: 'u',
                  pipeline: [{ $project: { username: 1 } }] } },
     { $addFields: { username: { $arrayElemAt: ['$u.username', 0] } } },
     { $project: { u: 0 } }
   ];
   const pipeline = [
-    { $match: matchStage },
     { $unwind: '$watchedProjects' },
     { $unwind: '$watchedProjects.memories' },
     { $project: {
@@ -399,9 +445,6 @@ router.get('/audit', async (req, res) => {
   const { page, limit, skip } = clampPage(req);
   const filter = {};
   if (req.query.action) filter.action = req.query.action;
-  if (req.query.actorId && mongoose.isValidObjectId(req.query.actorId)) {
-    filter.actor = req.query.actorId;
-  }
   const [items, total] = await Promise.all([
     AuditLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
     AuditLog.countDocuments(filter)
@@ -434,13 +477,6 @@ router.get('/reports', async (req, res) => {
     Report.countDocuments(filter)
   ]);
   res.json({ items, total, page, limit });
-});
-
-router.get('/reports/:id', async (req, res) => {
-  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid report id' });
-  const doc = await Report.findById(req.params.id).lean();
-  if (!doc) return res.status(404).json({ error: 'Not found' });
-  res.json(doc);
 });
 
 router.patch('/reports/:id', async (req, res) => {
@@ -539,33 +575,7 @@ const CONFIG_RULES = {
 // Playground.BODY_TYPES index (0 Realistic, 1 Box).
 const NPC_BODY_RULE = { min: 0, max: 1, integer: true };
 
-function pickNumber(value, rule) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  if (value < rule.min || value > rule.max) return null;
-  if (rule.integer && !Number.isInteger(value)) return null;
-  return value;
-}
-
-function diffConfig(prev, next) {
-  const out = {};
-  const sections = ['walker', 'encounter', 'fight', 'flags', 'world'];
-  for (const sec of sections) {
-    const p = (prev && prev[sec]) || {};
-    const n = (next && next[sec]) || {};
-    for (const k of Object.keys(n)) {
-      // One level of nesting (world.npcBodyTypes) — diff per NPC, not the map.
-      if (n[k] && typeof n[k] === 'object') {
-        const pk = (p[k] && typeof p[k] === 'object') ? p[k] : {};
-        for (const kk of Object.keys(n[k])) {
-          if (pk[kk] !== n[k][kk]) out[`${sec}.${k}.${kk}`] = { from: pk[kk], to: n[k][kk] };
-        }
-        continue;
-      }
-      if (p[k] !== n[k]) out[`${sec}.${k}`] = { from: p[k], to: n[k] };
-    }
-  }
-  return out;
-}
+// pickNumber / diffConfig: server/admin-sanitize.js.
 
 router.get('/config', async (req, res) => {
   const defaults = AdminConfig.defaults();
@@ -638,7 +648,7 @@ router.put('/config', async (req, res) => {
       $set: { ...update, updatedBy: req.adminUser.username },
       $inc: { version: 1 }
     },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   ).lean();
 
   logAudit(req, 'configChange', null, { diff: diffConfig(before || AdminConfig.defaults(), after) });
@@ -655,7 +665,7 @@ router.post('/config/reset', async (req, res) => {
       $set: { ...defaults, updatedBy: req.adminUser.username },
       $inc: { version: 1 }
     },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   ).lean();
   logAudit(req, 'configChange', null, { reset: true, diff: diffConfig(before || defaults, after) });
   SceneData.invalidate('settings');
@@ -687,90 +697,101 @@ router.get('/analytics/overview', async (req, res) => {
 // CONTENT CMS (Phase 3 — projects, characters, locations, dialogues)
 // -----------------------------------------------------------------------
 
-// id slugs are referenced from many places (project.prerequisites,
-// character.debut, dialogue requires, watch progress) — we accept these
-// chars and reject anything else. Renaming an id is therefore a delete +
-// recreate flow, not an update; the editor disables the id field on
-// existing rows.
-const ID_REGEX = /^[a-z0-9_-]{1,80}$/i;
-
-// String fields are bounded to keep documents sane and prevent a stuck
-// admin from accidentally storing megabytes via copy-paste.
-const STR_MAX = 280;
-const STAGE_MAX = 20;
+// Payload shaping (id slugs, string bounds, grid coords, dialogue lines)
+// lives in server/admin-sanitize.js; the routes here do the Mongo side.
 const PREREQ_MAX = 20;
-const DIALOG_LINE_MAX = 600;
-const DIALOG_LINES_MAX = 12;
 
 function badRequest(res, msg, fields) {
   return res.status(400).json({ error: msg, fields: fields || undefined });
 }
 
-function trimStr(v, max = STR_MAX) {
-  if (typeof v !== 'string') return '';
-  return v.slice(0, max);
-}
-
 // ---------- Projects ----------
 
-const GRID_MIN = -500, GRID_MAX = 500;
-
-function _gridCoord(v) {
-  if (!Number.isFinite(v)) return 0;
-  return Math.max(GRID_MIN, Math.min(GRID_MAX, Math.trunc(v)));
-}
-
-function sanitizeProject(body, requireId = true) {
-  const errors = {};
-  const out = {};
-  if (requireId) {
-    if (!ID_REGEX.test(body.id || '')) errors.id = 'invalid id';
-    else out.id = body.id;
-  }
-  if (typeof body.title !== 'string' || !body.title.trim()) errors.title = 'required';
-  else out.title = trimStr(body.title);
-  out.release = trimStr(body.release || '', 40);
-  // Prerequisite lists are checked by checkPrereqs() against the real
-  // project list — bad, unknown, self or duplicate-list ids, a list over
-  // PREREQ_MAX and lock loops are all explicit 400s now. (They used to be
-  // dropped or truncated silently, and an unknown id locked a project forever.)
-  out.prerequisites = Array.isArray(body.prerequisites) ? body.prerequisites : (body.prerequisites == null ? [] : body.prerequisites);
-  out.recommendedPrerequisites = Array.isArray(body.recommendedPrerequisites)
-    ? body.recommendedPrerequisites
-    : (body.recommendedPrerequisites == null ? [] : body.recommendedPrerequisites);
-  out.phase = trimStr(body.phase || '', 40);
-  // Board position is owned by the CMS board editor (PUT
-  // /content/projects/bulk/positions). Omit the keys entirely when the
-  // caller doesn't send them so `Project.create` falls back to the schema
-  // default and `findOneAndUpdate`'s $set leaves the stored coords
-  // untouched — otherwise every plain form save (e.g. editing just the
-  // title) would silently reset the project to (0,0).
-  if (body.gridX !== undefined) out.gridX = _gridCoord(body.gridX);
-  if (body.gridY !== undefined) out.gridY = _gridCoord(body.gridY);
-  out.location = trimStr(body.location || '', 80);
-  out.image = trimStr(body.image || '', 200);
-  // Watch timer: minutes for a movie, or one entry per episode for a series
-  // (a non-empty episode list makes it a series and runtime is ignored).
-  out.episodes = watchRules.sanitizeEpisodes(body.episodes);
-  out.runtime = out.episodes.length ? 0 : watchRules.sanitizeRuntime(body.runtime);
-  return { out, errors };
-}
-
-// The public site falls back to the built-in projects.js while the
+// The public site falls back to the built-in content files while a
 // collection is empty (routes/content.js). The first admin write must not
-// replace those 84 titles with a one-project database, so every write seeds
-// the collection from the built-in list first.
-async function ensureProjectsSeeded() {
-  if (await Project.exists({})) return;
-  const items = contentLoader.get('projects') || [];
-  if (!items.length) return;
+// replace those 84 titles (130 characters, 36 locations) with a one-row
+// database, so every write seeds the collection from the built-in list
+// first. `type` is the contentLoader key. → true when it seeded.
+async function ensureSeeded(Model, type) {
+  if (await Model.exists({})) return false;
+  const items = contentLoader.get(type) || [];
+  if (!items.length) return false;
   try {
-    await Project.insertMany(items, { ordered: false });
+    await Model.insertMany(items, { ordered: false });
   } catch (err) {
     // A concurrent seed (two admins at once) only duplicates ids — fine.
     if (err && err.code !== 11000 && !(err.writeErrors && err.writeErrors.every(e => e.code === 11000))) throw err;
   }
+  return true;
+}
+
+async function ensureProjectsSeeded() {
+  if (await ensureSeeded(Project, 'projects')) watchRules.invalidate();
+}
+
+// The public /api/content/{characters,locations,dialogues} responses are
+// cached for 30 s (routes/content.js); drop them after every write here.
+// Required lazily, like world-socket below.
+function contentChanged(kind) {
+  let Content = null;
+  try { Content = require('./content'); } catch (_) {}
+  if (Content && Content.invalidate) Content.invalidate(kind);
+}
+
+// ADM-09: the same guard for the other CMS collections (they had none, so
+// saving one character on an empty DB made the site serve only that one).
+async function ensureCharactersSeeded() {
+  if (await ensureSeeded(Character, 'characters')) contentChanged('characters');
+}
+async function ensureLocationsSeeded() {
+  if (await ensureSeeded(Location, 'locations')) contentChanged('locations');
+}
+
+// The dialogue singleton: created from js/walker-dialogues.js when there is
+// none yet ($setOnInsert, so a doc that exists is never touched).
+async function ensureDialoguesSeeded() {
+  if (await Dialogue.exists({})) return;
+  const d = contentLoader.get('dialogues') || {};
+  await Dialogue.findOneAndUpdate({}, {
+    $setOnInsert: { pairs: d.pairs || {}, villainDefeatLines: d.villainDefeatLines || {}, villainVictoryLines: d.villainVictoryLines || {} }
+  }, { upsert: true, setDefaultsOnInsert: true });
+  contentChanged('dialogues');
+}
+
+// RT-06: after any project write, drop every cache that holds projects —
+// the watch rules, Scene Guess's guessing line (runtime / episodes / title)
+// and the /world socket's island grid (Project chat, the stone ring).
+// world-socket is required lazily, as in the user delete above.
+function projectsChanged(id) {
   watchRules.invalidate();
+  SceneData.invalidate('projects', id || null);
+  let WorldSocket = null;
+  try { WorldSocket = require('./world-socket'); } catch (_) {}
+  if (WorldSocket && WorldSocket.invalidateProjectGrid) WorldSocket.invalidateProjectGrid();
+}
+
+// A deleted project's Scene Guess data: island switch, stills (+ their
+// Cloudinary images, destroyed like DELETE /scenes/still/:id) and scores.
+// Best-effort — the project is already gone; a failure is logged and the
+// summary says so. → { stills, scores } counts, or { error }.
+async function deleteProjectScenes(projectId) {
+  try {
+    const stills = await SceneStill.find({ projectId }).select('publicId imageUrl').lean();
+    const [, , scores] = await Promise.all([
+      SceneIsland.deleteMany({ projectId }),
+      SceneStill.deleteMany({ projectId }),
+      SceneScore.deleteMany({ projectId })
+    ]);
+    const { destroyStill } = require('./admin-scenes');
+    for (const s of stills) destroyStill(s, parseCloudinary);
+    SceneData.invalidate('islands', projectId);
+    SceneData.invalidate('pool', projectId);
+    SceneData.invalidate('board', projectId);
+    return { stills: stills.length, scores: scores.deletedCount || 0 };
+  } catch (err) {
+    console.error('Project delete → Scene Guess cleanup failed:', err && err.message);
+    return { error: true };
+  }
 }
 
 // Prerequisite rules on every project write. → { ok, required, recommended }
@@ -832,7 +853,7 @@ router.post('/content/projects', async (req, res) => {
     });
   }
   await Project.create(out);
-  watchRules.invalidate();
+  projectsChanged(out.id);
   logAudit(req, 'contentEdit', { type: 'project', id: out.id }, { action: 'create' });
   res.json(out);
 });
@@ -848,8 +869,8 @@ router.put('/content/projects/:id', async (req, res) => {
   if (!check.ok) return res.status(check.status).json(check.body);
   out.prerequisites = check.required;
   out.recommendedPrerequisites = check.recommended;
-  const after = await Project.findOneAndUpdate({ id: req.params.id }, out, { new: true }).lean();
-  watchRules.invalidate();
+  const after = await Project.findOneAndUpdate({ id: req.params.id }, out, { returnDocument: 'after' }).lean();
+  projectsChanged(req.params.id);
   logAudit(req, 'contentEdit', { type: 'project', id: req.params.id }, { action: 'update' });
   res.json(after);
 });
@@ -867,8 +888,11 @@ router.delete('/content/projects/:id', async (req, res) => {
   if (linked.length) {
     await Project.updateMany({}, { $pull: { prerequisites: id, recommendedPrerequisites: id, hiddenPrerequisites: id } });
   }
-  watchRules.invalidate();
-  logAudit(req, 'contentEdit', { type: 'project', id }, { action: 'delete', unlinked: linked.map(p => p.id) });
+  projectsChanged(id);
+  // RT-06: its Scene Guess island goes too — the switch, the stills (rows +
+  // Cloudinary images, as the still delete does) and the scoreboard.
+  const scenes = await deleteProjectScenes(id);
+  logAudit(req, 'contentEdit', { type: 'project', id }, { action: 'delete', unlinked: linked.map(p => p.id), scenes });
   res.json({ message: 'Deleted', unlinked: linked.map(p => p.id) });
 });
 
@@ -880,34 +904,12 @@ router.delete('/content/projects/:id', async (req, res) => {
 // /content/projects/:id` is declared above, and "positions" would pass
 // ID_REGEX, so a two-segment `/content/projects/positions` path would be
 // silently swallowed by the :id route instead of reaching this handler.
-const POSITIONS_MAX = 500;
-
 router.put('/content/projects/bulk/positions', async (req, res) => {
   const body = req.body || {};
-  if (!Array.isArray(body.positions)) {
-    return badRequest(res, 'positions must be an array');
-  }
-  if (body.positions.length > POSITIONS_MAX) {
-    return badRequest(res, `At most ${POSITIONS_MAX} positions per request`);
-  }
-
-  // --- shape validation ---------------------------------------------------
-  const seen = new Set();
-  const wanted = new Map(); // id -> { gridX, gridY }
-  for (const p of body.positions) {
-    if (!p || typeof p !== 'object') return badRequest(res, 'Invalid position entry');
-    if (!ID_REGEX.test(p.id || '')) return badRequest(res, 'Invalid project id', { id: String(p.id) });
-    if (seen.has(p.id)) return badRequest(res, 'Duplicate id in payload', { id: p.id });
-    // Integers only — a fractional coord means a client bug, don't silently truncate it away.
-    if (!Number.isInteger(p.gridX) || !Number.isInteger(p.gridY)) {
-      return badRequest(res, 'gridX/gridY must be integers', { id: p.id });
-    }
-    if (p.gridX < GRID_MIN || p.gridX > GRID_MAX || p.gridY < GRID_MIN || p.gridY > GRID_MAX) {
-      return badRequest(res, `Coordinates must be between ${GRID_MIN} and ${GRID_MAX}`, { id: p.id });
-    }
-    seen.add(p.id);
-    wanted.set(p.id, { gridX: p.gridX, gridY: p.gridY });
-  }
+  // --- shape validation (server/admin-sanitize.js parsePositions) ---------
+  const parsed = parsePositions(body.positions);
+  if (parsed.error) return badRequest(res, parsed.error, parsed.fields);
+  const wanted = parsed.wanted; // id -> { gridX, gridY }
 
   // --- merge against current DB state -------------------------------------
   await ensureProjectsSeeded();
@@ -916,25 +918,8 @@ router.put('/content/projects/bulk/positions', async (req, res) => {
   const unknown = [...wanted.keys()].filter(id => !known.has(id));
   if (unknown.length) return badRequest(res, 'Unknown project id(s)', { ids: unknown });
 
-  const cells = new Map(); // "gx,gy" -> [id]
-  const changes = [];
-  for (const p of all) {
-    const next = wanted.get(p.id) || { gridX: p.gridX | 0, gridY: p.gridY | 0 };
-    const key = `${next.gridX},${next.gridY}`;
-    if (!cells.has(key)) cells.set(key, []);
-    cells.get(key).push(p.id);
-    if (wanted.has(p.id) && (next.gridX !== p.gridX || next.gridY !== p.gridY)) {
-      changes.push({ id: p.id, from: { gridX: p.gridX, gridY: p.gridY }, to: next });
-    }
-  }
-
-  // --- collision check on the MERGED state --------------------------------
-  const conflicts = [...cells.entries()]
-    .filter(([, ids]) => ids.length > 1)
-    .map(([key, ids]) => {
-      const [gridX, gridY] = key.split(',').map(Number);
-      return { gridX, gridY, ids };
-    });
+  // --- collision check on the MERGED state (planPositions) ----------------
+  const { changes, conflicts } = planPositions(all, wanted);
   if (conflicts.length) {
     // 409, not 400: the payload itself is well-formed, the resulting state isn't.
     return res.status(409).json({ error: 'Two or more projects would share a cell', conflicts });
@@ -951,6 +936,7 @@ router.put('/content/projects/bulk/positions', async (req, res) => {
     })),
     { ordered: false }
   );
+  projectsChanged(null);   // RT-06: the socket's island grid moved
 
   logAudit(
     req,
@@ -967,41 +953,23 @@ router.put('/content/projects/bulk/positions', async (req, res) => {
 
 // ---------- Characters ----------
 
-function sanitizeCharacter(body, requireId = true) {
-  const errors = {};
-  const out = {};
-  if (requireId) {
-    if (!ID_REGEX.test(body.id || '')) errors.id = 'invalid id';
-    else out.id = body.id;
-  }
-  if (typeof body.name !== 'string' || !body.name.trim()) errors.name = 'required';
-  else out.name = trimStr(body.name);
-  out.debut = trimStr(body.debut || '', 80);
-  out.image = trimStr(body.image || '', 200);
-  out.stages = Array.isArray(body.stages)
-    ? body.stages
-        .map(s => s && typeof s === 'object' ? {
-          after: trimStr(s.after || '', 80),
-          image: trimStr(s.image || '', 200),
-          look:  trimStr(s.look || '', STR_MAX)
-        } : null)
-        .filter(s => s && s.after)
-        .slice(0, STAGE_MAX)
-    : [];
-  return { out, errors };
-}
-
 router.get('/content/characters', async (req, res) => {
   const items = await Character.find({}).sort({ name: 1 }).lean();
-  res.json({ items });
+  if (items.length) return res.json({ source: 'db', items });
+  // Empty collection: show what the site serves (characters.js), like projects.
+  const fallback = (contentLoader.get('characters') || []).slice()
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  res.json({ source: 'fallback', items: fallback });
 });
 
 router.post('/content/characters', async (req, res) => {
   const { out, errors } = sanitizeCharacter(req.body || {}, true);
   if (Object.keys(errors).length) return badRequest(res, 'Validation failed', errors);
+  await ensureCharactersSeeded();
   const exists = await Character.exists({ id: out.id });
   if (exists) return badRequest(res, 'A character with that id already exists', { id: 'duplicate' });
   await Character.create(out);
+  contentChanged('characters');
   logAudit(req, 'contentEdit', { type: 'character', id: out.id }, { action: 'create' });
   res.json(out);
 });
@@ -1009,139 +977,125 @@ router.post('/content/characters', async (req, res) => {
 router.put('/content/characters/:id', async (req, res) => {
   const { out, errors } = sanitizeCharacter(req.body || {}, false);
   if (Object.keys(errors).length) return badRequest(res, 'Validation failed', errors);
-  const after = await Character.findOneAndUpdate({ id: req.params.id }, out, { new: true }).lean();
+  await ensureCharactersSeeded();
+  const after = await Character.findOneAndUpdate({ id: req.params.id }, out, { returnDocument: 'after' }).lean();
   if (!after) return res.status(404).json({ error: 'Not found' });
+  contentChanged('characters');
   logAudit(req, 'contentEdit', { type: 'character', id: req.params.id }, { action: 'update' });
   res.json(after);
 });
 
 router.delete('/content/characters/:id', async (req, res) => {
+  await ensureCharactersSeeded();
   const r = await Character.deleteOne({ id: req.params.id });
   if (r.deletedCount === 0) return res.status(404).json({ error: 'Not found' });
+  contentChanged('characters');
   logAudit(req, 'contentEdit', { type: 'character', id: req.params.id }, { action: 'delete' });
   res.json({ message: 'Deleted' });
 });
 
 // ---------- Locations ----------
 
-function sanitizeLocation(body, requireId = true) {
-  const errors = {};
-  const out = {};
-  if (requireId) {
-    if (!ID_REGEX.test(body.id || '')) errors.id = 'invalid id';
-    else out.id = body.id;
-  }
-  if (typeof body.label !== 'string' || !body.label.trim()) errors.label = 'required';
-  else out.label = trimStr(body.label);
-  out.worldX = Number.isFinite(body.worldX) ? body.worldX : 0;
-  out.worldY = Number.isFinite(body.worldY) ? body.worldY : 0;
-  out.width = Number.isFinite(body.width) && body.width > 0 ? body.width : 280;
-  out.height = Number.isFinite(body.height) && body.height > 0 ? body.height : 200;
-  out.clusterRadius = Number.isFinite(body.clusterRadius) && body.clusterRadius >= 0 ? body.clusterRadius : 100;
-  out.region = trimStr(body.region || '', 60);
-  return { out, errors };
-}
-
 router.get('/content/locations', async (req, res) => {
   const items = await Location.find({}).sort({ region: 1, label: 1 }).lean();
-  res.json({ items });
+  if (items.length) return res.json({ source: 'db', items });
+  // Empty collection: show what the site serves (locations.js), like projects.
+  const fallback = (contentLoader.get('locations') || []).slice()
+    .sort((a, b) => String(a.region || '').localeCompare(String(b.region || '')) || String(a.label || '').localeCompare(String(b.label || '')));
+  res.json({ source: 'fallback', items: fallback });
 });
 
 router.post('/content/locations', async (req, res) => {
   const { out, errors } = sanitizeLocation(req.body || {}, true);
   if (Object.keys(errors).length) return badRequest(res, 'Validation failed', errors);
+  await ensureLocationsSeeded();
   const exists = await Location.exists({ id: out.id });
   if (exists) return badRequest(res, 'A location with that id already exists', { id: 'duplicate' });
   await Location.create(out);
+  contentChanged('locations');
   logAudit(req, 'contentEdit', { type: 'location', id: out.id }, { action: 'create' });
   res.json(out);
 });
 
 router.put('/content/locations/:id', async (req, res) => {
+  // Numeric fields left out of the body are left out of `out` too, so this
+  // $set keeps their stored values (ADM-11).
   const { out, errors } = sanitizeLocation(req.body || {}, false);
   if (Object.keys(errors).length) return badRequest(res, 'Validation failed', errors);
-  const after = await Location.findOneAndUpdate({ id: req.params.id }, out, { new: true }).lean();
+  await ensureLocationsSeeded();
+  const after = await Location.findOneAndUpdate({ id: req.params.id }, out, { returnDocument: 'after' }).lean();
   if (!after) return res.status(404).json({ error: 'Not found' });
+  contentChanged('locations');
   logAudit(req, 'contentEdit', { type: 'location', id: req.params.id }, { action: 'update' });
   res.json(after);
 });
 
 router.delete('/content/locations/:id', async (req, res) => {
+  await ensureLocationsSeeded();
   const r = await Location.deleteOne({ id: req.params.id });
   if (r.deletedCount === 0) return res.status(404).json({ error: 'Not found' });
+  contentChanged('locations');
   logAudit(req, 'contentEdit', { type: 'location', id: req.params.id }, { action: 'delete' });
   res.json({ message: 'Deleted' });
 });
 
 // ---------- Dialogues (singleton document) ----------
 
-// Pair keys must be "id1|id2" where both halves are valid ids and are
-// in canonical (alphabetical) order. Reject anything that doesn't match;
-// otherwise the runtime getDialogue lookup (which sorts the args before
-// joining) will silently miss admin-saved entries with a non-canonical key.
-const PAIR_KEY_REGEX = /^([a-z0-9_-]{1,80})\|([a-z0-9_-]{1,80})$/i;
-
-function sanitizePairs(input) {
-  if (!input || typeof input !== 'object') return {};
-  const out = {};
-  for (const [key, exchanges] of Object.entries(input)) {
-    const m = PAIR_KEY_REGEX.exec(key);
-    if (!m) continue;
-    const [, a, b] = m;
-    const sortedKey = [a, b].sort().join('|');
-    if (sortedKey !== key) continue; // require canonical order
-    if (!Array.isArray(exchanges)) continue;
-    const cleaned = exchanges
-      .map(e => e && typeof e === 'object' ? {
-        requires: trimStr(e.requires || '', 80),
-        startsWith: e.startsWith ? trimStr(e.startsWith, 80) : undefined,
-        lines: Array.isArray(e.lines)
-          ? e.lines.filter(l => typeof l === 'string').map(l => trimStr(l, DIALOG_LINE_MAX)).slice(0, DIALOG_LINES_MAX)
-          : []
-      } : null)
-      .filter(e => e && e.requires && e.lines.length >= 2);
-    if (cleaned.length > 0) out[key] = cleaned;
-  }
-  return out;
-}
-
-function sanitizeVillainLines(input) {
-  if (!input || typeof input !== 'object') return {};
-  const out = {};
-  for (const [key, lines] of Object.entries(input)) {
-    if (!ID_REGEX.test(key)) continue;
-    if (!Array.isArray(lines)) continue;
-    const cleaned = lines
-      .filter(l => typeof l === 'string')
-      .map(l => trimStr(l, DIALOG_LINE_MAX))
-      .slice(0, DIALOG_LINES_MAX);
-    if (cleaned.length > 0) out[key] = cleaned;
-  }
-  return out;
-}
+// Pair keys / line rules: sanitizePairs + sanitizeVillainLines in
+// server/admin-sanitize.js (DIALOG_LINES_MAX / DIALOG_LINE_MAX live there).
 
 router.get('/content/dialogues', async (req, res) => {
   const doc = await Dialogue.findOne({}).lean();
-  res.json(doc || { pairs: {}, villainDefeatLines: {}, villainVictoryLines: {} });
+  // Same rule as the public /api/content/dialogues: no doc, or one with no
+  // pairs, means the site serves js/walker-dialogues.js — so the editor
+  // starts from that instead of a blank page (ADM-09).
+  if (doc && doc.pairs && Object.keys(doc.pairs).length) return res.json({ ...doc, source: 'db' });
+  const d = contentLoader.get('dialogues') || {};
+  res.json({
+    pairs: d.pairs || {},
+    villainDefeatLines: d.villainDefeatLines || {},
+    villainVictoryLines: d.villainVictoryLines || {},
+    source: 'fallback'
+  });
 });
+
+// The dialogue save sends the whole document, so it gets a 512 KB parser
+// instead of the global 64 KB one (server.js skips this path via its
+// express.json `type` predicate). It lives here, not in server.js, so it
+// only ever runs after adminLimiter + requireAdmin (server.js mounts this
+// router behind both): an unauthenticated request is turned away before a
+// byte of its body is read. Must stay ahead of the PUT below.
+router.use('/content/dialogues', express.json({ limit: '512kb' }));
 
 router.put('/content/dialogues', async (req, res) => {
   const body = req.body || {};
+  // ADM-07: too many lines / an over-long line is a 400 now, not a silent cut.
+  const pairs = sanitizePairs(body.pairs);
+  const defeat = sanitizeVillainLines(body.villainDefeatLines, 'villainDefeatLines');
+  const victory = sanitizeVillainLines(body.villainVictoryLines, 'villainVictoryLines');
+  const fields = { ...pairs.errors, ...defeat.errors, ...victory.errors };
+  if (Object.keys(fields).length) return badRequest(res, 'Validation failed', fields);
   const update = {
-    pairs: sanitizePairs(body.pairs),
-    villainDefeatLines: sanitizeVillainLines(body.villainDefeatLines),
-    villainVictoryLines: sanitizeVillainLines(body.villainVictoryLines)
+    pairs: pairs.out,
+    villainDefeatLines: defeat.out,
+    villainVictoryLines: victory.out
   };
+  // ADM-09: the first write on an empty DB starts from the built-in set, and
+  // only the maps the body sends are replaced (a partial save keeps the rest).
+  await ensureDialoguesSeeded();
+  for (const k of Object.keys(update)) if (body[k] === undefined) delete update[k];
+  if (!Object.keys(update).length) return badRequest(res, 'No editable fields provided');
   const after = await Dialogue.findOneAndUpdate(
     {},
     { $set: update },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   ).lean();
+  contentChanged('dialogues');
   logAudit(req, 'contentEdit', { type: 'dialogues' }, {
     action: 'update',
-    pairCount: Object.keys(update.pairs).length,
-    defeatCount: Object.keys(update.villainDefeatLines).length,
-    victoryCount: Object.keys(update.villainVictoryLines).length
+    pairCount: Object.keys(update.pairs || {}).length,
+    defeatCount: Object.keys(update.villainDefeatLines || {}).length,
+    victoryCount: Object.keys(update.villainVictoryLines || {}).length
   });
   res.json(after);
 });

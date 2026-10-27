@@ -125,9 +125,14 @@
   // join from any tab, `homeJoin` likewise for homes. The handshake pair
   // bounds reconnect churn (per user) and token-less connection floods
   // (per IP, checked before any JWT or DB work).
+  // The join buckets used to be cap 4 / 0.1/s: a few reloads, /map <-> /world
+  // hops or flaky mobile reconnects (each one a new socket + join) spent it
+  // and the next join was dropped, leaving an empty world. A refused join is
+  // now answered (world:join-refused / home:join-refused) and retried by the
+  // client, so the bucket only has to stop floods.
   const RATES = Object.freeze({
-    join:      Object.freeze({ cap: 4, perSec: 0.1 }),
-    homeJoin:  Object.freeze({ cap: 5, perSec: 0.2 }),
+    join:      Object.freeze({ cap: 8, perSec: 0.5 }),
+    homeJoin:  Object.freeze({ cap: 8, perSec: 0.5 }),
     handshakeUser: Object.freeze({ cap: 10, perSec: 0.1 }),
     handshakeIp:   Object.freeze({ cap: 30, perSec: 1 }),
     emote:     Object.freeze({ cap: 4, perSec: 0.5 }),
@@ -164,11 +169,21 @@
     return take(b, now);
   }
 
+  // How long a refused caller should wait before retrying: the time an empty
+  // `key` bucket takes to mint one token (it just refused, so it holds < 1).
+  // Unknown or non-refilling keys get a flat 3 s. Sent as retryInMs with
+  // world:join-refused / home:join-refused.
+  function refillMs(key) {
+    const r = RATES[key];
+    if (!r || !(r.perSec > 0)) return 3000;
+    return Math.ceil(1000 / r.perSec);
+  }
+
   return {
     MV, MV_MAX, packMove, unpackMove, sanitizeMove,
     POSITION_BOUND, sanitizePos, joinPos,
     EMOTES, isEmoteKind, isLoopingEmote,
     PUBLIC_KEYS, publicPlayer,
-    RATES, bucket, take, allow
+    RATES, bucket, take, allow, refillMs
   };
 });

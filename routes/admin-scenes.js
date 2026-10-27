@@ -41,22 +41,9 @@ function httpError(status, message) {
   return err;
 }
 
-// Episode field from a form: '' / 'null' / missing → null, else an integer.
-function parseEpisode(v) {
-  if (v == null || v === '' || v === 'null') return null;
-  const n = typeof v === 'number' ? v : Number(v);
-  return Number.isInteger(n) ? n : NaN;
-}
-
-// { ok, fields: { timeSec, episode } } or { ok:false, error } for a still on `tl`.
-function checkFields(tl, time, episode) {
-  const timeSec = Logic.parseTime(time);
-  const ep = tl && tl.kind === 'series' ? parseEpisode(episode) : (episode == null || episode === '' || episode === 'null' ? null : NaN);
-  if (timeSec == null) return { ok: false, error: 'Enter the time as h:mm:ss, m:ss or seconds.' };
-  if (Number.isNaN(ep)) return { ok: false, error: tl && tl.kind === 'series' ? 'Pick an episode.' : 'Movies have no episodes.' };
-  const v = Logic.validStill(tl, { timeSec, episode: ep });
-  return v.ok ? { ok: true, fields: { timeSec, episode: ep } } : v;
-}
+// Time / episode form fields → { ok, fields } or { ok:false, error }
+// (parseEpisode + checkFields, server/admin-sanitize.js).
+const { checkFields } = require('../server/admin-sanitize');
 
 function toAdminStill(doc, tl) {
   const episode = doc.episode == null ? null : doc.episode;
@@ -124,6 +111,13 @@ function destroyAsset(publicId) {
   if (!publicId) return;
   cloudinary.uploader.destroy(publicId, { resource_type: 'image', invalidate: true })
     .catch(err => console.error('Cloudinary destroy failed:', err && err.message));
+}
+
+// A deleted still's image: its stored public_id, or one parsed from the URL
+// (older rows). Also used by the project delete in routes/admin.js.
+function destroyStill(doc, parseCloudinary) {
+  const parsed = doc.publicId ? null : parseCloudinary(doc.imageUrl);
+  destroyAsset(doc.publicId || (parsed && parsed.public_id));
 }
 
 module.exports = function adminScenes({ logAudit, parseCloudinary }) {
@@ -255,7 +249,7 @@ module.exports = function adminScenes({ logAudit, parseCloudinary }) {
       set.active = body.active;
     }
     if (!Object.keys(set).length) return badRequest(res, 'Nothing to change');
-    const after = await SceneStill.findByIdAndUpdate(doc._id, { $set: set }, { new: true }).lean();
+    const after = await SceneStill.findByIdAndUpdate(doc._id, { $set: set }, { returnDocument: 'after' }).lean();
     SceneData.invalidate('pool', doc.projectId);
     // A champion's pick that was just hidden falls back to the default screen.
     if (set.active === false) SceneData.invalidate('board', doc.projectId);
@@ -267,8 +261,7 @@ module.exports = function adminScenes({ logAudit, parseCloudinary }) {
     if (!mongoose.isValidObjectId(req.params.id)) return badRequest(res, 'Invalid still id');
     const doc = await SceneStill.findByIdAndDelete(req.params.id).lean();
     if (!doc) return res.status(404).json({ error: 'Still not found' });
-    const parsed = doc.publicId ? null : parseCloudinary(doc.imageUrl);
-    destroyAsset(doc.publicId || (parsed && parsed.public_id));
+    destroyStill(doc, parseCloudinary);
     const unpicked = await SceneScore.updateMany({ pick: doc._id }, { $set: { pick: null } });
     SceneData.invalidate('pool', doc.projectId);
     if (unpicked.modifiedCount) SceneData.invalidate('board', doc.projectId);
@@ -314,3 +307,6 @@ module.exports = function adminScenes({ logAudit, parseCloudinary }) {
 
   return router;
 };
+
+// For routes/admin.js (project delete): destroy a still row's image.
+module.exports.destroyStill = destroyStill;

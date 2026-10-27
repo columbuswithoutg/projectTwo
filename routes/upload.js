@@ -63,10 +63,21 @@ router.post('/', auth, async (req, res) => {
   if (!q.ok) return res.status(q.status).json({ error: q.error });
 
   inflight.set(userId, (inflight.get(userId) || 0) + 1);
+  // Idempotent: an aborted upload (phone drops mid-video) frees the slot on
+  // 'close' instead of waiting out Cloudinary's 60 s socket timeout
+  // (multer-storage-cloudinary's .pipe doesn't pass the source error on);
+  // the finally below then becomes a no-op.
+  let released = false;
   const release = () => {
+    if (released) return;
+    released = true;
     const n = (inflight.get(userId) || 1) - 1;
     if (n <= 0) inflight.delete(userId); else inflight.set(userId, n);
   };
+  // req 'close' also fires once the body is fully read (Cloudinary may still
+  // be working), so only an incomplete body counts as an abort there.
+  req.on('close', () => { if (!req.complete) release(); });
+  res.on('close', release);
 
   upload.single('file')(req, res, async (err) => {
     try {

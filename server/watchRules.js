@@ -139,15 +139,15 @@ async function getProject(id) {
 function invalidate() { _cache = null; }
 
 // One-time fill for the DB copy: projects created by the seed script before
-// runtimes existed get theirs from projects.js. Only touches docs with no
-// runtime AND no episodes, so an admin's edits are never overwritten.
+// runtimes existed get theirs from projects.js. Only touches docs with NO
+// runtime field at all AND no episodes. A runtime of 0 (or null) is an
+// admin's deliberate "no timer" (the CMS saves 0 for an empty box) — this
+// used to match those too and put the projects.js runtime back on every boot.
 async function backfillRuntimes() {
   try {
     const missing = await Project.find({
-      $and: [
-        { $or: [{ runtime: { $exists: false } }, { runtime: 0 }, { runtime: null }] },
-        { $or: [{ episodes: { $exists: false } }, { episodes: { $size: 0 } }] }
-      ]
+      runtime: { $exists: false },
+      $or: [{ episodes: { $exists: false } }, { episodes: { $size: 0 } }]
     }).select('id').lean();
     const src = new Map(contentLoader.get('projects').map(p => [p.id, p]));
     const ops = [];

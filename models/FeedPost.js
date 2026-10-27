@@ -61,7 +61,12 @@ const FeedPostSchema = new mongoose.Schema({
     activityAt: { type: Date, default: Date.now }
 }, { timestamps: true });
 
-FeedPostSchema.index({ participants: 1, activityAt: -1 });
+// The feed pages by the (activityAt, _id) cursor with sort
+// { activityAt: -1, _id: -1 } (routes/feed.js), so _id is the index's
+// tie-break too — without it Mongo sorts equal-activityAt posts in memory.
+// Replaces { participants: 1, activityAt: -1 }; drop that one in Atlas:
+//   db.feedposts.dropIndex('participants_1_activityAt_-1')
+FeedPostSchema.index({ participants: 1, activityAt: -1, _id: -1 });
 FeedPostSchema.index({ author: 1, projectId: 1, createdAt: -1 });
 
 module.exports = mongoose.model('FeedPost', FeedPostSchema);

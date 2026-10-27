@@ -64,15 +64,47 @@ function shapePost(p, userId) {
     };
 }
 
-// GET /api/feed?before=<ISO date> — newest activity first, cursor-paged.
+// Feed page cursor: "<activityAt ms>_<post _id>" — the last post of the
+// page. A bare `activityAt $lt` cursor skipped every post that tied the last
+// one's timestamp (several posts written in the same millisecond, e.g. a
+// co-watch posting to both people); with the _id tie-break the order is
+// total, so no post is skipped or repeated at a page boundary. The client
+// passes it back untouched (js/views/feed.js). An older cursor — a plain
+// date (ISO or ms) from a tab loaded before this change — still works, with
+// the old timestamp-only meaning. null = no (usable) cursor.
+const CURSOR_RE = /^(\d{1,15})_([0-9a-f]{24})$/i;
+function encodeFeedCursor(post) {
+    const t = post && post.activityAt ? new Date(post.activityAt).getTime() : NaN;
+    if (!Number.isFinite(t) || !post._id) return null;
+    return `${t}_${String(post._id)}`;
+}
+function decodeFeedCursor(raw) {
+    if (raw == null || raw === '') return null;
+    const str = String(raw).slice(0, 64);
+    const m = CURSOR_RE.exec(str);
+    if (m) return { t: new Date(Number(m[1])), id: m[2].toLowerCase() };
+    const t = /^\d+$/.test(str) ? new Date(Number(str)) : new Date(str);
+    return isNaN(t) ? null : { t, id: null };
+}
+// The Mongo filter for "strictly after the cursor" in { activityAt: -1, _id: -1 } order.
+function feedCursorFilter(cursor) {
+    if (!cursor) return null;
+    if (!cursor.id) return { activityAt: { $lt: cursor.t } };
+    const id = new mongoose.Types.ObjectId(cursor.id);
+    return { $or: [{ activityAt: { $lt: cursor.t } }, { activityAt: cursor.t, _id: { $lt: id } }] };
+}
+
+// GET /api/feed?before=<cursor> — newest activity first, cursor-paged. A post
+// bumped (new comment / reaction) while someone pages still moves to the top
+// and isn't shown again further down — that's what activity order means.
 router.get('/', auth, async (req, res) => {
     const circle = await circleIds(req.user.id);
     const query = { participants: { $in: [...circle] } };
-    const before = req.query.before ? new Date(String(req.query.before)) : null;
-    if (before && !isNaN(before)) query.activityAt = { $lt: before };
+    const after = feedCursorFilter(decodeFeedCursor(req.query.before));
+    if (after) Object.assign(query, after);
 
     const posts = await FeedPost.find(query)
-        .sort({ activityAt: -1 })
+        .sort({ activityAt: -1, _id: -1 })
         .limit(PAGE_SIZE + 1)
         .populate('author', 'username profilePicture')
         .populate('comments.author', 'username profilePicture')
@@ -83,7 +115,7 @@ router.get('/', auth, async (req, res) => {
     const hasMore = posts.length > PAGE_SIZE;
     res.json({
         posts: page.map(p => shapePost(p, req.user.id)),
-        nextBefore: hasMore ? posts[PAGE_SIZE - 1].activityAt : null
+        nextBefore: hasMore ? encodeFeedCursor(posts[PAGE_SIZE - 1]) : null
     });
 });
 
@@ -276,3 +308,7 @@ router.delete('/:postId/comments/:commentId', auth, async (req, res) => {
 });
 
 module.exports = router;
+// Pure cursor helpers, for test/feed-cursor.test.js.
+module.exports.encodeFeedCursor = encodeFeedCursor;
+module.exports.decodeFeedCursor = decodeFeedCursor;
+module.exports.feedCursorFilter = feedCursorFilter;

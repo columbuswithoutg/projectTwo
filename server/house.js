@@ -105,7 +105,82 @@ function watchedIdsOf(user) {
   return new Set(((user && user.watchedProjects) || []).map(e => (typeof e === 'string' ? e : e && e.projectId)).filter(Boolean));
 }
 
+// ── Saving a /home layout (PUT /api/profile/home-layout) ──
+// Each room is a 1×1 grid cell { projectId, gx, gy }; |gx|, |gy| ≤ this
+// bounds growth to a sane region.
+const HOME_GRID_LIMIT = 32;
+
+// Every 2 watched projects unlock one room (the same rule effectiveLayout
+// applies when showing a home).
+function maxHomeRooms(watchedCount) {
+  return Math.floor((Number(watchedCount) || 0) / 2);
+}
+
+// True when the rooms form one 4-connected component (0 or 1 room always is).
+function isLayoutConnected(rooms) {
+  if (rooms.length <= 1) return true;
+  const set = new Set(rooms.map(r => `${r.gx},${r.gy}`));
+  const seen = new Set([`${rooms[0].gx},${rooms[0].gy}`]);
+  const queue = [rooms[0]];
+  while (queue.length) {
+    const r = queue.shift();
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const k = `${r.gx + dx},${r.gy + dy}`;
+      if (set.has(k) && !seen.has(k)) {
+        seen.add(k);
+        queue.push({ gx: r.gx + dx, gy: r.gy + dy });
+      }
+    }
+  }
+  return seen.size === rooms.length;
+}
+
+// The user-independent half of the layout PUT: shape, integer coords within
+// the grid, no shared cell, no project twice. → { rooms } (rebuilt, nothing
+// but the three fields) or { error }. Coords must be real integers — 1.2 and
+// 1.7 used to pass, get floored on save and land in the same cell after the
+// duplicate check had already looked at the raw values. Watched-list
+// membership, the room cap and connectivity need the user and are checked
+// by the route.
+function checkLayoutRooms(list) {
+  const rooms = [];
+  for (const r of list) {
+    if (!r || typeof r.projectId !== 'string' || r.projectId.length === 0 || r.projectId.length > 64) {
+      return { error: 'each room needs a non-empty projectId string' };
+    }
+    if (!Number.isInteger(r.gx) || Math.abs(r.gx) > HOME_GRID_LIMIT ||
+        !Number.isInteger(r.gy) || Math.abs(r.gy) > HOME_GRID_LIMIT) {
+      return { error: `grid coords must be integers within ±${HOME_GRID_LIMIT}` };
+    }
+    rooms.push({ projectId: r.projectId, gx: r.gx, gy: r.gy });
+  }
+  const cellSet = new Set();
+  const idSet = new Set();
+  for (const r of rooms) {
+    const k = `${r.gx},${r.gy}`;
+    if (cellSet.has(k)) return { error: `two rooms share grid cell (${r.gx}, ${r.gy})` };
+    cellSet.add(k);
+    if (idSet.has(r.projectId)) return { error: `project ${r.projectId} appears twice` };
+    idSet.add(r.projectId);
+  }
+  return { rooms };
+}
+
+// Whitelist of acceptable profile-picture sources (POST /api/profile/picture):
+//   - relative path into the bundled character art (assets/characters/…)
+//   - one of this app's own Cloudinary uploads (server/cloudinary-url.js —
+//     the same strict check memories use; a bare cloud prefix also let
+//     fetch-proxy and transformation URLs through)
+// Blocks javascript: URIs, data: URIs, and arbitrary attacker-controlled URLs.
+function validProfilePictureUrl(url) {
+  if (typeof url !== 'string') return false;
+  if (url.length > 512) return false;
+  if (/^assets\/characters\/[\w.\-]+$/.test(url)) return true;
+  return isOurAssetUrl(url);
+}
+
 module.exports = {
   portraitOk, READ_CAP, toHouse, homeMaxPropsNow, housesForRooms, pickRoof, homeRoofFor,
-  effectiveLayout, watchedIdsOf
+  effectiveLayout, watchedIdsOf,
+  HOME_GRID_LIMIT, maxHomeRooms, isLayoutConnected, checkLayoutRooms, validProfilePictureUrl
 };

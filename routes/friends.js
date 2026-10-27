@@ -9,6 +9,7 @@ const feed = require('../server/feed');
 const watchRules = require('../server/watchRules');
 const { housesForRooms, homeRoofFor, effectiveLayout, watchedIdsOf } = require('../server/house');
 const Username = require('../server/username');
+const { sanitizeWalkers } = require('../server/walkers');
 
 // Outgoing friend requests still waiting for an answer. Past this a user
 // is mass-adding, not making friends.
@@ -122,10 +123,19 @@ router.post('/respond', auth, async (req, res) => {
     const request = await Friend.findOneAndUpdate(
         { _id: requestId, recipient: req.user.id, status: 'pending' },
         { status: action },
-        { new: true, runValidators: true }
+        { returnDocument: 'after', runValidators: true }
     ).populate('requester', 'username');
 
     if (!request) return res.status(404).json({ error: 'Request not found' });
+
+    // The requester's account was deleted (populate leaves null) before the
+    // cascade reached this doc. Answering it can't mean anything, and every
+    // branch below reads request.requester — drop the orphan instead of
+    // throwing a 500 and leaving it in the recipient's list forever.
+    if (!request.requester) {
+        await Friend.deleteOne({ _id: request._id });
+        return res.status(404).json({ error: 'That user no longer exists' });
+    }
 
     if (request.type === 'watch' && action === 'accepted' && request.projectId) {
         const requesterUsername = request.requester.username;
@@ -218,10 +228,10 @@ router.get('/stones', auth, async (req, res) => {
     res.json(rows);
 });
 
-// View a friend's progress
+// View a friend's progress.
 // Username-keyed lookup used by the dedicated /friend/:username SPA routes.
-// Resolves the username to an _id, verifies friendship, and returns the
-// same payload as /progress/:friendId (plus profilePicture so the friend
+// Resolves the username to an _id, verifies friendship, and returns their
+// watched list, walkers and home (plus profilePicture so the friend
 // profile tab can show their avatar). 404 for unknown user, 403 for not-
 // friends — the SPA treats both as a generic 404 visit page.
 router.get('/by-username/:username', auth, async (req, res) => {
@@ -230,8 +240,12 @@ router.get('/by-username/:username', auth, async (req, res) => {
         return res.status(404).json({ error: 'User not found' });
     }
     try {
-        const friend = await User.findOne({ username })
-            .select('_id username profilePicture watchedProjects walkers homeLayout homeCharacter homeHouses homeRoof');
+        // Case-insensitive like every other username lookup (server/username.js),
+        // so /friend/Bob and /friend/bob are the same page. Lean doc: the
+        // fields below are all read defensively (`|| []`, `|| null`), the same
+        // way the owner's own lean GETs read them.
+        const friend = await Username.findByUsername(username,
+            '_id username profilePicture watchedProjects walkers homeLayout homeCharacter homeHouses homeRoof');
         if (!friend) return res.status(404).json({ error: 'User not found' });
 
         const friendship = await Friend.findOne(friendFilter(req.user.id, friend._id));
@@ -256,7 +270,9 @@ router.get('/by-username/:username', auth, async (req, res) => {
             username: friend.username,
             profilePicture: friend.profilePicture || '',
             watchedProjects,
-            walkers: friend.walkers || [],
+            // Sanitize on read, same as the owner's GET /api/progress — a doc
+            // saved before server/walkers.js existed can hold anything.
+            walkers: sanitizeWalkers(friend.walkers || []),
             homeLayout: shownLayout,
             homeCharacter: friend.homeCharacter || null,
             // Read-only here: only the owner can save a room (routes/profile.js).
@@ -265,43 +281,6 @@ router.get('/by-username/:username', auth, async (req, res) => {
         });
     } catch (err) {
         console.error('by-username error', err);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
-
-router.get('/progress/:friendId', auth, async (req, res) => {
-    if (!validId(req.params.friendId))
-        return res.status(400).json({ error: 'Invalid friend id' });
-    try {
-        const friendship = await Friend.findOne(friendFilter(req.user.id, req.params.friendId));
-        if (!friendship) return res.status(403).json({ error: 'Not friends' });
-
-        const friend = await User.findById(req.params.friendId)
-            .select('username watchedProjects walkers homeLayout homeCharacter');
-        if (!friend) return res.status(404).json({ error: 'User not found' });
-
-        // Normalize data shape — handle both old string array and new object array
-        const watchedProjects = friend.watchedProjects.map(entry => {
-            if (typeof entry === 'string') {
-                return { projectId: entry, count: 1, watchedWith: [], memories: [] };
-            }
-            return {
-                projectId: entry.projectId,
-                count: entry.count || 1,
-                watchedWith: entry.watchedWith || [],
-                memories: entry.memories || []
-            };
-        });
-
-        res.json({
-            username: friend.username,
-            watchedProjects,
-            walkers: friend.walkers || [],
-            homeLayout: effectiveLayout(friend.homeLayout, watchedIdsOf(friend)),
-            homeCharacter: friend.homeCharacter || null
-        });
-    } catch (e) {
-        console.error('Progress route error:', e);
         res.status(500).json({ error: 'Server error' });
     }
 });
