@@ -3479,6 +3479,11 @@ const Playground3D = (() => {
       const prev = node.house || null;
       const now = _houses.get(node.project.id) || null;
       if (prev === now || (!prev && !now)) continue;
+      // The 30 s poll (js/views/world.js) hands over freshly parsed copies, so
+      // an unchanged house is a different object — compare the contents, or
+      // every decorated house is torn down and rebuilt (a hitch, and walls the
+      // player was seeing through pop solid again).
+      if (prev && now && JSON.stringify(prev) === JSON.stringify(now)) { node.house = now; continue; }
       _applyHouseToNode(node, now);
     }
   }
