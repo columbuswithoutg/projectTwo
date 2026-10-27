@@ -67,6 +67,22 @@ const FriendMapView = {
       FriendMapView._deployTimer = null;
     }
     if (typeof Walkers !== 'undefined' && Walkers.destroy) Walkers.destroy();
-    if (typeof renderer !== 'undefined' && renderer.destroy) renderer.destroy();
+    if (typeof renderer !== 'undefined' && renderer.destroy) {
+      renderer.destroy();
+      // Drop the DOM refs too, as AppView.unmount does: a left-over
+      // mapContainer makes MapWalkerAdapter.container() look mounted, so a
+      // late Walkers.deploy() would build walkers in the detached map.
+      renderer.wrapper = null;
+      renderer.viewport = null;
+      renderer.mapContainer = null;
+      renderer.nodesContainer = null;
+      renderer.svg = null;
+      renderer.labelsContainer = null;
+      renderer.glowsContainer = null;
+      renderer.continentsSvg = null;
+      renderer.worldViewBtn = null;
+      renderer.shelfTrack = null;
+      renderer.shelfContainer = null;
+    }
   }
 };

@@ -86,3 +86,40 @@ test('pinchZoom scales by the finger-gap ratio within bounds', () => {
   assert.equal(L.pinchZoom(2, 100, 400, 0.4, 2.5), 2.5);
   assert.equal(L.pinchZoom(1.2, 0, 50, 0.4, 2.5), 1.2);
 });
+
+test('pointInView: inside the rect, outside it, and with slack', () => {
+  const v = { left: 100, top: 50, width: 400, height: 300 };
+  assert.equal(L.pointInView(300, 200, v), true);
+  assert.equal(L.pointInView(100, 50, v), true);          // edges count
+  assert.equal(L.pointInView(99, 200, v), false);
+  assert.equal(L.pointInView(300, 351, v), false);
+  // One viewport of slack reaches a full width/height beyond each side.
+  assert.equal(L.pointInView(-250, 200, v, 1), true);
+  assert.equal(L.pointInView(-301, 200, v, 1), false);
+  assert.equal(L.pointInView(NaN, 200, v), false);
+  assert.equal(L.pointInView(300, 200, null), false);
+});
+
+test('shouldFrame: never mid-drag or right after user input', () => {
+  const base = { now: 10000, lastInputAt: -Infinity, isPanning: false, onScreen: true };
+  assert.equal(L.shouldFrame({ ...base, kind: 'encounter' }), true);
+  assert.equal(L.shouldFrame({ ...base, kind: 'fight' }), true);
+  assert.equal(L.shouldFrame({ ...base, kind: 'encounter', isPanning: true }), false);
+  assert.equal(L.shouldFrame({ ...base, kind: 'fight', isPanning: true }), false);
+  // Input 1 s ago blocks both; once the idle window has passed it doesn't.
+  assert.equal(L.shouldFrame({ ...base, kind: 'encounter', lastInputAt: 9000 }), false);
+  assert.equal(L.shouldFrame({ ...base, kind: 'fight', lastInputAt: 9000 }), false);
+  assert.equal(L.shouldFrame({ ...base, kind: 'fight', lastInputAt: 10000 - L.C.FRAME_IDLE_MS }), true);
+  assert.equal(L.shouldFrame({ ...base, kind: 'fight', lastInputAt: 9000, idleMs: 500 }), true);
+});
+
+test('shouldFrame: an encounter only frames a pair already on screen', () => {
+  const base = { now: 10000, lastInputAt: 0, isPanning: false };
+  assert.equal(L.shouldFrame({ ...base, kind: 'encounter', onScreen: false }), false);
+  assert.equal(L.shouldFrame({ ...base, kind: 'encounter', onScreen: true }), true);
+  // A fight's follow-centring doesn't need the point on screen.
+  assert.equal(L.shouldFrame({ ...base, kind: 'fight', onScreen: false }), true);
+  // Unknown kinds and missing input never move the camera.
+  assert.equal(L.shouldFrame({ ...base, kind: 'other', onScreen: true }), false);
+  assert.equal(L.shouldFrame(null), false);
+});

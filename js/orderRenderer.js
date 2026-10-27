@@ -155,9 +155,9 @@ class OrderRenderer {
 
   /* ── Zoom ───────────────────────────────────────────────────────────── */
 
+  // Shared, tested clamp (test/pan-zoom.test.js); a non-finite level falls back to 1.
   _clampZoom(z) {
-    if (!isFinite(z)) return 1;
-    return Math.min(ORDER_ZOOM.max, Math.max(ORDER_ZOOM.min, z));
+    return PanZoomLogic.clampZoom(z, ORDER_ZOOM.min, ORDER_ZOOM.max, 1);
   }
 
   _loadZoom() {
@@ -201,16 +201,15 @@ class OrderRenderer {
 
     if (ax == null) ax = wrapper.clientWidth / 2;
     if (ay == null) ay = wrapper.clientHeight / 2;
-    // Unscaled canvas coordinates of whatever is under the anchor right now.
-    const cx = (wrapper.scrollLeft + ax) / z0;
-    const cy = (wrapper.scrollTop + ay) / z0;
+    // Read the scroll offsets before the resize below can move them.
+    const sx = wrapper.scrollLeft, sy = wrapper.scrollTop;
 
     this.zoom = z1;
     this._sizeCanvas();          // resize the sizer + re-apply the transform
-    // Put that same content point back under the anchor. Clamping to >= 0 is
-    // what the browser would do anyway, and keeps the numbers honest.
-    wrapper.scrollLeft = Math.max(0, cx * z1 - ax);
-    wrapper.scrollTop = Math.max(0, cy * z1 - ay);
+    // Put the content point that was under the anchor back under it
+    // (PanZoomLogic.anchorScroll, clamped to >= 0 like the browser would).
+    wrapper.scrollLeft = PanZoomLogic.anchorScroll(sx, ax, z0, z1);
+    wrapper.scrollTop = PanZoomLogic.anchorScroll(sy, ay, z0, z1);
 
     this._saveZoom();
     this._syncZoomUi();
@@ -372,19 +371,13 @@ class OrderRenderer {
     // Rook-style roads (js/road-router.js): horizontal/vertical runs through
     // the gaps between cards, never through one, each road in its own lane.
     // Every road is routed (hidden cards included) so nothing jumps when a
-    // card unlocks; only roads with both ends shown are drawn. Geometry MUST
-    // match walkerView.buildFlowRoadGeometry (same view, same radius) so
-    // walkers visibly travel along the rendered roads.
+    // card unlocks; only roads with both ends shown are drawn. The polylines
+    // come from flowRoads(), the same call walkerView.buildFlowRoadGeometry
+    // makes, so walkers visibly travel along the rendered roads.
     if (typeof RoadRouter === "undefined") return;
-    const routes = RoadRouter.route(projects);
-    const view = this._roadView();
 
-    routes.roads.forEach(road => {
-      const parent = state.byId?.get(road.fromId);
-      const child = state.byId?.get(road.toId);
-      if (!parent || !child) return;
-      if (!this._isShown(parent) || !this._isShown(child)) return;
-      const d = RoadRouter.pathD(RoadRouter.toView(road, view).points, ORDER_CELL.roadRadius);
+    this.flowRoads().forEach(({ road, points }) => {
+      const d = RoadRouter.pathD(points, ORDER_CELL.roadRadius);
       if (!d) return;
 
       if (road.required) {
@@ -403,6 +396,34 @@ class OrderRenderer {
       trail.setAttribute("stroke-linecap", "round");
       trail.setAttribute("fill", "none");
       this.svg.appendChild(trail);
+    });
+  }
+
+  // Every prerequisite road whose two cards are both shown, routed by
+  // RoadRouter and projected into canvas px: [{ road, points }]. This is the
+  // ONE geometry behind the drawn chart (renderArrows) and the walkers'
+  // roads (walkerView.buildFlowRoadGeometry) — two independent
+  // route + toView calls could drift apart (test/flow-roads.test.js).
+  // Routing ignores watch state, so the routed + projected set is cached
+  // per layout version / project list / bounds and only the cheap shown
+  // filter runs per call. Callers must not mutate the returned points.
+  flowRoads() {
+    if (typeof RoadRouter === "undefined") return [];
+    const version = typeof getLayoutVersion === "function" ? getLayoutVersion() : 0;
+    const bounds = this._getBounds();
+    let cache = this._flowRoadCache;
+    if (!cache || cache.version !== version || cache.projects !== projects || cache.bounds !== bounds) {
+      const view = this._roadView();
+      cache = this._flowRoadCache = {
+        version, projects, bounds,
+        all: RoadRouter.route(projects).roads.map(road => ({ road, points: RoadRouter.toView(road, view).points })),
+      };
+    }
+    const byId = state.byId;
+    return cache.all.filter(({ road }) => {
+      const parent = byId?.get(road.fromId);
+      const child = byId?.get(road.toId);
+      return !!(parent && child && this._isShown(parent) && this._isShown(child));
     });
   }
 
@@ -528,6 +549,7 @@ class OrderRenderer {
     }
     this.nodeElements = new Map();
     this._bounds = null;
+    this._flowRoadCache = null;
     this._didInitialCenter = false;
   }
 }

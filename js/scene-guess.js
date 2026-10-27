@@ -33,8 +33,23 @@ const SceneGuess = (() => {
     'slow-down': 'Slow down a moment, then try again.',
     'no-game': 'That game has ended.',
     'too-late': "Time's up — that guess didn't count.",
-    'not-champion': 'Only the island champion can do that.'
+    // A guess that crossed the round ending on the wire (the reveal got there
+    // first): the same outcome as too-late from the player's side.
+    'not-round': "Time's up — that guess didn't count.",
+    'wrong-round': "Time's up — that guess didn't count.",
+    'already': 'Already locked in.',
+    'bad-guess': "That spot isn't on the timeline — try again.",
+    'not-playing': "You're not in this game.",
+    'not-host': 'Only the host can do that.',
+    'not-joined': 'Still connecting to the world — try again in a moment.',
+    'bad': "That didn't work — reopen Scene Guess and try again.",
+    'not-champion': 'Only the island champion can do that.',
+    'error': 'Something went wrong on the server — try again.',
+    'offline': 'Not connected — try again in a moment.',
+    'timeout': "The server didn't answer — try again."
   };
+  // The server ends every live game with reason 'restart' as it shuts down.
+  const RESTART_MSG = 'Server restarting — the game will be back in a moment.';
 
   const DEFAULT_CFG = { enabled: false, islands: [], records: {}, live: {}, mine: {}, roundSec: 30 };
 
@@ -51,6 +66,11 @@ const SceneGuess = (() => {
   let _ticker = null;
   let _marker = null;          // { projectId, round, at, locked, sending }
   const _imgs = new Map();     // still url → Image (preloaded)
+  const _pending = new Set();  // finish() of every emit still awaiting its ack
+  // Islands whose live results I closed: the server keeps broadcasting that
+  // game for RESULTS_MS (someone disconnects, a record lands) and each
+  // broadcast would otherwise reopen the overlay. Cleared once it ends.
+  const _dismissed = new Set();
   const _off = [];             // socket listener removers
   let _started = false;
   let _lastRenderKey = '';
@@ -79,12 +99,23 @@ const SceneGuess = (() => {
   function initials(name) { return String(name || '?').replace(/^claude_qa_/, '').slice(0, 2).toUpperCase(); }
   function say(msg, type) { if (typeof toast === 'function') toast(msg, type || 'info'); }
   function errText(e) { return ERRORS[e] || "Couldn't do that — try again."; }
+  // 'stopped' = we left /world while the request was out: nobody's looking.
+  function warnErr(e) { if (e !== 'stopped' && _started) say(errText(e), 'warn'); }
+  // Resolves { ok:false, error:'stopped' } as soon as stop() runs, so a late
+  // ack or the 8 s timeout can't toast on whatever page the player went to.
   function emit(event, payload) {
     return new Promise((resolve) => {
+      if (!_started) return resolve({ ok: false, error: 'stopped' });
       if (!_socket || !_socket.connected) return resolve({ ok: false, error: 'offline' });
-      let done = false;
-      const t = setTimeout(() => { if (!done) { done = true; resolve({ ok: false, error: 'timeout' }); } }, 8000);
-      _socket.emit(event, payload, (r) => { if (done) return; done = true; clearTimeout(t); resolve(r || { ok: false }); });
+      let t = null;
+      const finish = (r) => {
+        if (!_pending.delete(finish)) return;     // already settled
+        clearTimeout(t);
+        resolve(_started ? (r || { ok: false }) : { ok: false, error: 'stopped' });
+      };
+      _pending.add(finish);
+      t = setTimeout(() => finish({ ok: false, error: 'timeout' }), 8000);
+      _socket.emit(event, payload, finish);
     });
   }
   function syncInput() {
@@ -165,11 +196,13 @@ const SceneGuess = (() => {
     removeLobby();
     if (_chip) { _chip.remove(); _chip = null; }
     _states.clear();
+    _dismissed.clear();
     _imgs.clear();
     _marker = null;
     _zone = null;
     _cfg = { ...DEFAULT_CFG };
     _started = false;
+    for (const finish of [..._pending]) finish(null);   // → 'stopped', guard timers cleared
     _socket = null;
     if (_engine) {
       if (_engine.setInputSuspended) _engine.setInputSuspended(false);
@@ -199,14 +232,18 @@ const SceneGuess = (() => {
     const prev = _states.get(st.projectId) || null;
     if (st.phase === 'idle') {
       _states.delete(st.projectId);
+      _dismissed.delete(st.projectId);
       onIdle(st, prev);
       return render();
     }
     _states.set(st.projectId, st);
     if (st.stills && st.stills.length) preload(st.stills);
+    if (st.phase !== 'results') _dismissed.delete(st.projectId);
     if (amIn(st)) {
-      // My game left the lobby → the play overlay opens by itself.
-      if (st.phase !== 'lobby' && !(_overlay && _overlay.projectId === st.projectId && _overlay.mode === 'play')) {
+      // My game left the lobby → the play overlay opens by itself (but not
+      // back onto results I already closed).
+      const closedResults = st.phase === 'results' && _dismissed.has(st.projectId);
+      if (st.phase !== 'lobby' && !closedResults && !(_overlay && _overlay.projectId === st.projectId && _overlay.mode === 'play')) {
         openOverlay(st.projectId, 'play');
       }
       if (st.phase === 'round' && (!_marker || _marker.projectId !== st.projectId || _marker.round !== st.round)) {
@@ -232,9 +269,12 @@ const SceneGuess = (() => {
         else if (st.reason === 'disabled') say('Scene Guess was switched off here.', 'warn');
         else if (wasMine && st.reason === 'no-stills') say("This island doesn't have enough screenshots yet.", 'warn');
         else if (wasMine && st.reason === 'error') say('The game hit a problem and stopped.', 'error');
+        else if (st.reason === 'restart') say(RESTART_MSG, 'warn');
       }
     } else if (wasMine && st.reason === 'moved') {
       say('Your game continued in another tab.', 'info');
+    } else if (wasMine && st.reason === 'restart') {
+      say(RESTART_MSG, 'warn');        // still in the lobby (no overlay yet)
     }
     if (_marker && _marker.projectId === st.projectId) _marker = null;
   }
@@ -453,18 +493,18 @@ const SceneGuess = (() => {
     if (act === 'join') r = await emit('world:sg-join', { projectId: st.projectId });
     else if (act === 'leave') r = await emit('world:sg-leave', {});
     else if (act === 'go') r = await emit('world:sg-go', {});
-    if (r && !r.ok) say(errText(r.error), 'warn');
+    if (r && !r.ok) warnErr(r.error);
     if (_lobbyEl) { delete _lobbyEl.dataset.key; renderLobby(); }
   }
 
   async function join(pid) {
     const r = await emit('world:sg-join', { projectId: pid });
-    if (!r.ok) say(errText(r.error), 'warn');
+    if (!r.ok) warnErr(r.error);
   }
 
   async function play(pid) {
     const r = await emit('world:sg-start', { projectId: pid });
-    if (!r.ok) say(errText(r.error), 'warn');
+    if (!r.ok) warnErr(r.error);
     return r.ok;
   }
 
@@ -510,8 +550,12 @@ const SceneGuess = (() => {
 
   function closePanel() {
     if (!_panel) return;
-    const el = _panel.el;
+    const { el, close } = _panel;
     _panel = null;
+    // Run wireModalDismiss's close too (it re-enters here and returns, as
+    // _panel is already null): a bare el.remove() leaked its capturing
+    // document keydown listener and its modal-stack entry.
+    try { if (close) close(); } catch (_) {}
     el.remove();
     syncInput();
   }
@@ -586,7 +630,7 @@ const SceneGuess = (() => {
       </div>`;
     box.querySelectorAll('.sg-pick').forEach(b => b.addEventListener('click', async () => {
       const r = await emit('world:sg-pick', { projectId: pid, index: +b.dataset.i });
-      if (!r.ok) return say(errText(r.error), 'warn');
+      if (!r.ok) return warnErr(r.error);
       box.querySelectorAll('.sg-pick').forEach(x => { x.classList.toggle('is-on', x === b); x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
       say('Your island screen will show this picture between games.', 'success');
     }));
@@ -667,6 +711,8 @@ const SceneGuess = (() => {
 
   function closeOverlay(silent) {
     if (!_overlay) return;
+    const live = _states.get(_overlay.projectId);
+    if (!_overlay.final && live && live.phase === 'results') _dismissed.add(live.projectId);
     const el = _overlay.el;
     _overlay = null;
     el.remove();
@@ -874,12 +920,17 @@ const SceneGuess = (() => {
       : `<div class="sg-banner">Final scores${_cfg.records[st.projectId] ? `<span>Island record ${fmt(_cfg.records[st.projectId].score)} · ${esc(_cfg.records[st.projectId].username)}</span>` : ''}</div>`;
     const island = _states.get(st.projectId);
     const canAgain = _overlay.mode === 'play' && liveIsland(st.projectId) && st.projectId === _zone;
+    // During the live results the server still holds this game, so Start
+    // would only rejoin it (and reopen these same results). Offer it once the
+    // game is over (`final`, set by its 'done' idle; the key re-renders then).
+    const over = !!_overlay.final;
     r.results.innerHTML = `
       ${banner}
       <ol class="sg-ranking">${rows}</ol>
       ${mineRecord ? '<div class="sg-results-picks"></div>' : ''}
       <div class="sg-results-actions">
-        ${canAgain ? `<button type="button" class="sg-btn sg-btn-primary" data-act="again">${island && island.phase === 'lobby' ? 'Join the next game' : 'Play again'}</button>` : ''}
+        ${canAgain && over ? `<button type="button" class="sg-btn sg-btn-primary" data-act="again">${island && island.phase === 'lobby' ? 'Join the next game' : 'Play again'}</button>` : ''}
+        ${canAgain && !over ? '<button type="button" class="sg-btn sg-btn-primary" disabled>Starting soon…</button>' : ''}
         <button type="button" class="sg-btn" data-act="close">Close</button>
       </div>`;
     if (mineRecord) {
@@ -980,10 +1031,11 @@ const SceneGuess = (() => {
     renderControls(st, st.timeline);
     const r = await emit('world:sg-guess', { round: m.round, at: m.at });
     m.sending = false;
+    if (r.error === 'stopped') return;
     if (r.ok) m.locked = true;
     else {
       if (r.error === 'too-late' || r.error === 'already' || r.error === 'not-round' || r.error === 'wrong-round') m.locked = true;
-      say(errText(r.error), 'warn');
+      warnErr(r.error);
     }
     const cur = overlayState();
     if (cur && cur.timeline) { renderLine(cur, cur.timeline); renderControls(cur, cur.timeline); }
@@ -997,7 +1049,7 @@ const SceneGuess = (() => {
       state: (pid) => _states.get(pid || _zone) || null,
       marker: () => _marker,
       overlay: () => _overlay && { projectId: _overlay.projectId, mode: _overlay.mode, final: !!_overlay.final },
-      place, lockIn, openPanel, openOverlay
+      place, lockIn, openPanel, openOverlay, emit
     }
   };
 })();

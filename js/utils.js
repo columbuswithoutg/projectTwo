@@ -2,7 +2,6 @@
  * UTILITY FUNCTIONS
  ************************************************/
 const $ = (sel, ctx = document) => ctx.querySelector(sel);
-const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
 
 const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const randBetween = (min, max) => min + Math.random() * (max - min);
@@ -387,6 +386,35 @@ function promptDialog(opts = {}) {
 }
 
 /************************************************
+ * AVATAR <img> WITH AN INITIAL FALLBACK
+ *
+ * A profile picture can point at a portrait that doesn't exist (Isaiah
+ * Bradley is pickable after Falcon & Winter Soldier, but there is no
+ * assets/characters/isaiah.jpg), which used to leave a broken-image icon.
+ * Inline onerror= is blocked by the CSP (script-src-attr 'none'), so — as
+ * PosterArt does for posters — ONE capture-phase listener swaps any failed
+ * img[data-avatar-initial] for a <span> with the same classes (plus
+ * opts.fallbackCls) showing the initial.
+ *   avatarImgHtml(url, name, cls, { fallbackCls, lazy = true })
+ ************************************************/
+function avatarImgHtml(url, name, cls, opts = {}) {
+  const initial = String(name || '').trim().charAt(0).toUpperCase() || '?';
+  return `<img class="${esc(cls || '')}" src="${esc(url)}" alt=""${opts.lazy === false ? '' : ' loading="lazy"'}` +
+    ` data-avatar-initial="${esc(initial)}"${opts.fallbackCls ? ` data-avatar-fallback-cls="${esc(opts.fallbackCls)}"` : ''} />`;
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('error', (e) => {
+    const img = e.target;
+    if (!img || img.tagName !== 'IMG' || !img.hasAttribute('data-avatar-initial')) return;
+    const span = document.createElement('span');
+    span.className = [img.className, img.getAttribute('data-avatar-fallback-cls')].filter(Boolean).join(' ');
+    span.setAttribute('aria-hidden', 'true');
+    span.textContent = img.getAttribute('data-avatar-initial') || '?';
+    img.replaceWith(span);
+  }, true);
+}
+
+/************************************************
  * HEADER AVATAR — instant initials, then upgrade to photo
  *
  * Used by the Watch Order and Map views. Sets the user's initial
@@ -406,7 +434,9 @@ function initHeaderAvatar() {
 
   // 2) Upgrade: fetch the profile, swap in the photo if present.
   if (typeof Auth === 'undefined' || !Auth.isLoggedIn || !Auth.isLoggedIn()) return;
-  fetch(`${API}/profile`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } })
+  // Auth.fetch: every view mounts this, so a revoked session (logout
+  // everywhere, password reset) is sent to /login here instead of toasting.
+  Auth.fetch(`${API}/profile`)
     .then(r => r.json())
     .then(data => {
       if (data.username) initials.textContent = data.username[0].toUpperCase();
@@ -515,8 +545,8 @@ function getNodePosition(id) {
 }
 
 // Subscribe once to state changes so cached artifacts invalidate whenever
-// visibility could have changed (watch/unwatch/clear). state.save fires
-// listeners, and state.clear does too — covers all mutations we care about.
+// visibility could have changed (a watch completing, an account switch).
+// state._applyServer and state.resetLocal both fire listeners.
 if (typeof state !== 'undefined' && typeof state.subscribe === 'function') {
   state.subscribe(invalidateLayoutCache);
 }

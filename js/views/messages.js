@@ -14,6 +14,8 @@ const MessagesView = (() => {
   let _screen = 'list';        // 'list' | 'thread'
   let _thread = null;          // { username } | { system: true }
   let _nextBefore = null;
+  let _seen = new Set();       // ids of the bubbles in the open thread's log
+  let _newestAt = null;        // createdAt of the newest of them
   let _pollTimer = null;
   let _sending = false;
 
@@ -37,7 +39,7 @@ const MessagesView = (() => {
     if (system) return `<span class="feed-avatar feed-avatar-md msg-avatar-system" aria-hidden="true">★</span>`;
     const name = user?.username || '?';
     return user?.profilePicture
-      ? `<img class="feed-avatar feed-avatar-md" src="${esc(profilePicUrl(user.profilePicture))}" alt="" loading="lazy" />`
+      ? avatarImgHtml(profilePicUrl(user.profilePicture), name, 'feed-avatar feed-avatar-md')   // a missing portrait → the initial (js/utils.js)
       : `<span class="feed-avatar feed-avatar-md" aria-hidden="true">${esc(name[0].toUpperCase())}</span>`;
   }
 
@@ -130,6 +132,8 @@ const MessagesView = (() => {
     _thread = target;
     _screen = 'thread';
     _nextBefore = null;
+    _seen = new Set();
+    _newestAt = null;
     const title = target.system ? 'Admin' : target.username;
     const main = q('#messages-main');
     main.innerHTML = `
@@ -178,15 +182,35 @@ const MessagesView = (() => {
       const before = older ? _nextBefore : null;
       const data = _thread.system ? await Messages.systemThread(before) : await Messages.thread(_thread.username, before);
       if (seq !== _seq || _screen !== 'thread') return;
+      const msgs = data.messages || [];
       if (older) {
         _nextBefore = data.nextBefore;
         const prevHeight = log.scrollHeight;
-        log.insertAdjacentHTML('afterbegin', bubbles(data.messages));
+        log.insertAdjacentHTML('afterbegin', bubbles(msgs));
         log.scrollTop = log.scrollHeight - prevHeight;
+        remember(msgs);
       } else {
-        _nextBefore = data.nextBefore;
         const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-        log.innerHTML = data.messages.length ? bubbles(data.messages) : `<div class="msg-empty">No messages yet — say hi.</div>`;
+        // The poll and your own send refetch the newest page. Once bubbles
+        // are on screen only the new ones are appended: re-rendering the
+        // page threw away history paged in with "Load earlier" (and reset
+        // its cursor) every 15 s, and shifted the log under a reader who
+        // had scrolled up. A page that doesn't reach back to what's shown
+        // (more than a page arrived meanwhile) is the one case that starts over.
+        const merge = _seen.size ? newerMessages(_seen, _newestAt, msgs, !!data.nextBefore) : null;
+        if (merge && !merge.gap) {
+          if (merge.fresh.length) {
+            log.insertAdjacentHTML('beforeend', bubbles(merge.fresh));
+            remember(merge.fresh);
+          }
+        } else {
+          _nextBefore = data.nextBefore;
+          _seen = new Set();
+          _newestAt = null;
+          log.innerHTML = msgs.length ? bubbles(msgs) : `<div class="msg-empty">No messages yet — say hi.</div>`;
+          remember(msgs);
+        }
+        // Follow new messages only for a reader already at the bottom.
         if (!silent || atBottom) log.scrollTop = log.scrollHeight;
       }
       const earlier = q('#msg-earlier');
@@ -197,6 +221,28 @@ const MessagesView = (() => {
       if (seq !== _seq) return;
       if (!silent) log.innerHTML = `<div class="msg-empty">${esc(err.message)}</div>`;
     }
+  }
+
+  function remember(msgs) {
+    for (const m of msgs) {
+      if (!m || m.id == null) continue;
+      _seen.add(String(m.id));
+      if (m.createdAt && (!_newestAt || new Date(m.createdAt) > new Date(_newestAt))) _newestAt = m.createdAt;
+    }
+  }
+
+  // Pure: which messages of a freshly fetched newest page (oldest → newest)
+  // aren't on screen yet. `seen` = Set of rendered ids, `newestAt` = the
+  // newest rendered createdAt, `hasMore` = the page has older messages
+  // beyond it. Returns { fresh, gap }: `fresh` keeps the page's order;
+  // `gap` = a full page that shares no message with what's rendered, so
+  // appending it would leave a hole and the caller re-renders instead.
+  function newerMessages(seen, newestAt, page, hasMore) {
+    const list = Array.isArray(page) ? page.filter(m => m && m.id != null) : [];
+    const t0 = newestAt ? new Date(newestAt).getTime() : -Infinity;
+    const fresh = list.filter(m => !seen.has(String(m.id)) && !(new Date(m.createdAt).getTime() < t0));
+    const overlaps = list.some(m => seen.has(String(m.id)));
+    return { fresh, gap: !!hasMore && !overlaps };
   }
 
   function bubbles(msgs) {
@@ -267,5 +313,5 @@ const MessagesView = (() => {
     _screen = 'list';
   }
 
-  return { title: 'Messages — MCU Tracker', mount, unmount };
+  return { title: 'Messages — MCU Tracker', mount, unmount, newerMessages };
 })();

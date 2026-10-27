@@ -21,6 +21,7 @@ const Multiplayer = (() => {
   // Event-name maps. Keep these in sync with routes/world-socket.js.
   const WORLD_EVENTS = {
     join:        'world:join',
+    joinRefused: 'world:join-refused', // server: join rate-limited; re-send after retryInMs
     pos:         'world:pos',
     chat:        'world:chat',
     emote:       'world:emote',
@@ -44,6 +45,7 @@ const Multiplayer = (() => {
   };
   const HOME_EVENTS = {
     join:        'home:join',
+    joinRefused: 'home:join-refused',  // server: join refused (slow-down / error retried; not-found / not-friends final)
     pos:         'home:pos',
     chat:        'home:chat',
     emote:       'home:emote',
@@ -71,6 +73,20 @@ const Multiplayer = (() => {
   const YAW_EPSILON = 0.02;
   const CHAT_LOG_MAX = 20;
 
+  // Re-joins after a 'slow-down' / 'error' join-refused (an 'error' is the
+  // DB being down: each retry costs the server a lookup). At most
+  // JOIN_RETRY_MAX per sequence, doubling from JOIN_RETRY_BASE_MS (never
+  // under the server's retryInMs, never over JOIN_RETRY_CAP_MS): 2, 4, 8,
+  // 16, 30 s. `attempt` = re-joins already sent; null = give up.
+  const JOIN_RETRY_MAX = 5;
+  const JOIN_RETRY_BASE_MS = 2000;
+  const JOIN_RETRY_CAP_MS = 30000;
+  function joinRetryDelay(attempt, retryInMs) {
+    if (!Number.isInteger(attempt) || attempt < 0 || attempt >= JOIN_RETRY_MAX) return null;
+    const floor = Number.isFinite(retryInMs) ? retryInMs : 0;
+    return Math.min(JOIN_RETRY_CAP_MS, Math.max(1000, floor, JOIN_RETRY_BASE_MS * 2 ** attempt));
+  }
+
   // ── start ──
   //
   // Options:
@@ -86,7 +102,7 @@ const Multiplayer = (() => {
   // Returns { stop, getSocket, sendSnap, getProjectId } — call stop() in the
   // view's unmount(), BEFORE Playground3D.destroy(), so the leave event
   // reaches the room while the socket is still open.
-  function start({ events, joinPayload, character, onStoneChange, onSnapped, onZone, onHouse }) {
+  function start({ events, joinPayload, character, onStoneChange, onSnapped, onZone, onHouse, onKicked }) {
     if (typeof io !== 'function') {
       console.warn('[Multiplayer] socket.io client not loaded');
       return { stop() {}, getSocket: () => null, sendSnap() {}, getProjectId: () => null, postSystem() {} };
@@ -290,6 +306,7 @@ const Multiplayer = (() => {
         settled = true;
         clearTimeout(guard);
         chan.sending = false;
+        if (stopped) return;          // left /world: a late ack / timeout stays quiet
         if (res && res.ok) {
           input.value = '';
           syncInputState();
@@ -327,6 +344,10 @@ const Multiplayer = (() => {
     let joined = false;
     let errToasted = false;       // throttle connect_error toasts to once per outage
     let retryTimer = null;        // one delayed reconnect after a 'Too many connections' refusal
+    let joinRetryTimer = null;    // one delayed re-join after a join-refused (never two pending)
+    let joinRetries = 0;          // re-joins sent this sequence (joinRetryDelay); > MAX = gave up
+    let serverDropAt = 0;         // last 'io server disconnect' we reconnected after
+    let kicked = false;           // retired / removed: this tab is leaving, never reconnect
     socket.on('connect', () => {
       if (joined) {
         if (Playground3D.clearRemotePlayers) Playground3D.clearRemotePlayers();
@@ -355,6 +376,14 @@ const Multiplayer = (() => {
       if ((events.stones || events.punch) && Playground3D.setLocalId) Playground3D.setLocalId(socket.id);
       // Where we stand, so peers see us appear there (not at the origin
       // until our first position update).
+      // A retry still pending from the previous socket is superseded by
+      // this join, or it would join twice.
+      if (joinRetryTimer) { clearTimeout(joinRetryTimer); joinRetryTimer = null; }
+      joinRetries = 0;              // a fresh socket starts a fresh retry sequence
+      sendJoin();
+    });
+
+    function sendJoin() {
       const at = Playground3D.getLocalState ? Playground3D.getLocalState() : null;
       socket.emit(events.join, {
         username: Auth.getUsername() || 'Anon',
@@ -362,9 +391,43 @@ const Multiplayer = (() => {
         ...(at ? { x: at.x, z: at.z, yaw: at.yaw } : {}),
         ...(joinPayload || {})
       });
+    }
+
+    // The server used to drop a rate-limited join without a word, leaving
+    // this tab connected to an empty world: no snapshot, nobody sees us,
+    // chat says not-joined. Now it says so; retry after its retryInMs, a few
+    // times with growing gaps (joinRetryDelay), then give up with one toast.
+    // "Reconnecting…" shows once per sequence, not per attempt. A fresh
+    // connect or stop() cancels the retry; the snapshot (joined) resets it.
+    socket.on(events.joinRefused, (info) => {
+      if (stopped) return;
+      const reason = info && info.reason;
+      const where = events.channels ? 'the world' : 'this home';
+      if (reason !== 'slow-down' && reason !== 'error') {
+        if (typeof toast === 'function') {
+          toast(reason === 'not-friends' ? 'Only friends of the owner can enter this home.'
+            : reason === 'not-found' ? 'That home doesn’t exist.'
+            : `Couldn’t join ${where}.`, 'error');
+        }
+        return;
+      }
+      if (joinRetryTimer || joinRetries > JOIN_RETRY_MAX) return;   // one pending / already gave up
+      const wait = joinRetryDelay(joinRetries, Number(info && info.retryInMs));
+      if (wait == null) {
+        joinRetries = JOIN_RETRY_MAX + 1;
+        if (typeof toast === 'function') toast(`Couldn’t join ${where} — try again later.`, 'error');
+        return;
+      }
+      if (joinRetries === 0 && typeof toast === 'function') toast(`Reconnecting to ${where}…`, 'warn');
+      joinRetries++;
+      joinRetryTimer = setTimeout(() => {
+        joinRetryTimer = null;
+        if (!stopped && socket.connected) sendJoin();
+      }, wait);
     });
 
     socket.on(events.snapshot, ({ players, serverTime }) => {
+      joinRetries = 0;              // joined: a later refusal starts a new sequence
       // Adopt the server's clock. Local NPCs are simulated from it so every
       // client puts the same hero in the same place; without this they'd drift
       // apart by however far the two devices' clocks disagree.
@@ -390,6 +453,7 @@ const Multiplayer = (() => {
     });
     if (events.kicked) {
       socket.on(events.kicked, (info) => {
+        kicked = true;
         const reason = info && info.reason;
         const why = reason === 'elsewhere'
           ? `You opened ${events.channels ? 'the world' : 'this home'} in another tab or window, so it closed here.`
@@ -399,7 +463,14 @@ const Multiplayer = (() => {
         if (typeof toast === 'function') toast(why, 'warn');
         // 'elsewhere' goes somewhere with no room: rejoining the same one
         // would retire the other tab in turn, and the two would bounce.
-        if (typeof Router !== 'undefined') Router.go(reason === 'elsewhere' ? '/map' : '/home');
+        const dest = reason === 'elsewhere' ? '/map' : '/home';
+        // A view with an editor open hands the kick to onKicked instead:
+        // Router.go would run its unsaved-design guard, and "keep editing"
+        // left the tab sitting in a room the server had already dropped it
+        // from (peers frozen, chat refused). The view tears the
+        // multiplayer layer down itself and lets the user leave later.
+        if (typeof onKicked === 'function') { onKicked({ reason, message: why, dest }); return; }
+        if (typeof Router !== 'undefined') Router.go(dest);
       });
     }
     socket.on(events.chat, (msg) => {
@@ -516,8 +587,23 @@ const Multiplayer = (() => {
     // Surface a lost connection so the world doesn't silently look empty /
     // single-player. 'io client disconnect' is our own stop()/navigation —
     // not an error, so stay quiet for it.
+    // 'io server disconnect' is the server dropping us on purpose (ban,
+    // password reset, log-out-everywhere: routes/world-socket.js
+    // auth.onInvalidate). socket.io never reconnects after that by itself,
+    // so connect once: the handshake then refuses with 'Invalid token' /
+    // 'Account suspended' and connect_error shows the right toast. Once per
+    // 30 s at most (a server that keeps dropping us mustn't loop), and never
+    // after a kick: that tab is on its way out of the room.
     socket.on('disconnect', (reason) => {
-      if (reason === 'io client disconnect') return;
+      if (reason === 'io client disconnect' || stopped) return;
+      if (reason === 'io server disconnect') {
+        if (kicked || Date.now() - serverDropAt < 30000) {
+          if (!kicked && typeof toast === 'function') toast('Disconnected by the server — reload to try again.', 'error');
+          return;
+        }
+        serverDropAt = Date.now();
+        socket.connect();
+      }
       if (typeof toast === 'function') toast('Connection lost — reconnecting…', 'warn');
     });
 
@@ -660,6 +746,7 @@ const Multiplayer = (() => {
       stopped = true;
       if (posTimer) { clearInterval(posTimer); posTimer = null; }
       if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      if (joinRetryTimer) { clearTimeout(joinRetryTimer); joinRetryTimer = null; }
       if (input) input.removeEventListener('keydown', onChatKey);
       if (chatRow) {
         chatRow.removeEventListener('click', onChatRowClick);
@@ -702,5 +789,5 @@ const Multiplayer = (() => {
     return { stop, getSocket: () => socket, sendSnap, getProjectId: () => chan.projectId, postSystem };
   }
 
-  return { start, WORLD_EVENTS, HOME_EVENTS };
+  return { start, WORLD_EVENTS, HOME_EVENTS, joinRetryDelay, JOIN_RETRY_MAX };
 })();

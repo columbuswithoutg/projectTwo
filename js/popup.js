@@ -74,7 +74,7 @@ ${!isReadonly ? `
               : `<img src="${esc(m.url)}" alt="${esc(m.caption)}" loading="lazy" />`
             }
             <div class="memory-overlay">
-              <button class="memory-view-btn" data-index="${i}">View</button>
+              <button class="memory-view-btn" data-index="${i}" data-url="${esc(m.url)}">View</button>
               ${!isReadonly ? `<button class="memory-delete" type="button" data-url="${esc(m.url)}" title="Delete memory" aria-label="Delete memory${m.caption ? ': ' + esc(m.caption) : ''}">✕</button>` : ''}
             </div>
             ${m.caption ? `<p class="memory-caption">${esc(m.caption)}</p>` : ''}
@@ -131,15 +131,13 @@ ${!isReadonly ? `
         // failed delete looks done and the memory reappears on reload.
         let ok = false;
         try {
-          const res = await fetch(`${API}/progress/memory`, {
+          // Auth.fetch adds the bearer header and ends a dead session on 401.
+          const res = await Auth.fetch(`${API}/progress/memory`, {
             method: 'DELETE',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${Auth.getToken()}`
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectId: project.id, url })
           });
-          ok = res.ok;
+          ok = !!(res && res.ok);
         } catch (_) { /* network error → ok stays false */ }
         if (!ok) {
           toast("Couldn't delete that memory. Please try again.", 'error');
@@ -154,9 +152,15 @@ ${!isReadonly ? `
 
   popup.querySelectorAll('.memory-view-btn').forEach(btn => {
     btn.onclick = () => {
-      const index = parseInt(btn.dataset.index);
+      // Read the list now, not the copy captured when the popup opened: a
+      // memory deleted since then must not show (or be steppable) in the
+      // lightbox. Find it by URL — the indexes shift after a delete.
+      const current = state.getMemories(project.id);
+      let index = current.findIndex(m => m.url === btn.dataset.url);
+      if (index === -1) index = Math.min(parseInt(btn.dataset.index, 10) || 0, current.length - 1);
+      if (index < 0) return;
       close();
-      showMemoryLightbox(memories, index, project);
+      showMemoryLightbox(current, index, project);
     };
   });
 

@@ -44,6 +44,20 @@ const VoiceManager = (() => {
   // where the async home:join hasn't landed when we announce.
   const ANNOUNCE_RETRY_MS = 2000;
   const ANNOUNCE_MAX_TRIES = 5;
+  // Bounded rebuild after an ICE 'failed'. Without TURN a pair that can't
+  // traverse its NATs (cellular, symmetric NAT) fails every ~30 s, and an
+  // unbounded rebuild built a fresh RTCPeerConnection + <audio> element +
+  // STUN gathering each cycle for as long as both players shared an island.
+  // So: retry after 1 s, then after 10 s, then give up on that peer until it
+  // leaves scope and comes back (or a connection succeeds).
+  const FAIL_RETRY_DELAYS_MS = [1000, 10000];
+
+  // Delay before rebuilding after the Nth consecutive failure with a peer,
+  // or null once the retries are spent (→ give up). Pure, for the tests.
+  function failRetryDelay(failures) {
+    return (failures >= 1 && failures <= FAIL_RETRY_DELAYS_MS.length)
+      ? FAIL_RETRY_DELAYS_MS[failures - 1] : null;
+  }
 
   // Default config — STUN only. The actual config used for new
   // RTCPeerConnections is fetched per-session from /api/config/voice-turn
@@ -76,8 +90,11 @@ const VoiceManager = (() => {
   //   onPeerStateChange(peerId, {speaking, muted, connected, reason})
   //                        `reason` accompanies connected:false — 'failed' |
   //                        'disconnected' | 'closed' | 'left' | 'stop' |
-  //                        'reconnect' | 'rebuild' — so the view can tell a
-  //                        real connection problem from a routine teardown.
+  //                        'reconnect' | 'rebuild' | 'gave-up' — so the view
+  //                        can tell a real connection problem from a routine
+  //                        teardown. 'gave-up' (with `username` when known)
+  //                        means the failure retries are spent and this side
+  //                        won't try that peer again until it re-enters scope.
   //   getZone              Optional () → projectId | null (the island we stand
   //                        on, /world only) — shown in the diagnostics panel.
   //
@@ -113,6 +130,17 @@ const VoiceManager = (() => {
     // the server's response if it includes TURN. Falls back to STUN-only.
     let _iceConfig = DEFAULT_ICE_CONFIG;
     const peers = new Map();  // peerId → entry (see createPeer)
+    // Consecutive ICE failures per peer and the pending rebuild timers (see
+    // FAIL_RETRY_DELAYS_MS). Kept outside the entry because the entry is
+    // destroyed on every failure while the count must survive the rebuild.
+    const failCounts = new Map();   // peerId → number
+    const retryTimers = new Map();  // peerId → timeout id
+    function clearFailState(peerId) {
+      const t = retryTimers.get(peerId);
+      if (t) clearTimeout(t);
+      retryTimers.delete(peerId);
+      failCounts.delete(peerId);
+    }
 
     function shortId(id) { return id ? String(id).slice(0, 6) : '??'; }
     function isDeadPc(pc) {
@@ -277,16 +305,34 @@ const VoiceManager = (() => {
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
         _log(peerId, 'connState →', s);
+        // A late event from a PC we already replaced must not count twice.
+        if (peers.get(peerId) !== entry) return;
         if (s === 'failed') {
-          // ICE exhausted — this PC is dead for good. Tear it down and,
-          // if we're the deterministic initiator, immediately rebuild
-          // with a fresh offer. The other side rebuilds on that offer
-          // (or via its own 'failed' handler). ICE timeouts make any
-          // fail→rebuild loop self-limiting.
-          _log(peerId, 'connection failed — rebuilding');
+          // ICE exhausted — this PC is dead for good. Tear it down and, if
+          // we're the deterministic initiator, rebuild with a fresh offer
+          // after a backoff — a bounded number of times. The other side
+          // only tears down and answers whatever offer comes next; it keeps
+          // its own count from its own PC's failures, so both sides give up
+          // after the same number and neither is left holding a half-open
+          // PC. (If the counts drift and an offer still arrives after we
+          // gave up, handleSignal answers it: the initiator is bounded too.)
+          const failures = (failCounts.get(peerId) || 0) + 1;
+          failCounts.set(peerId, failures);
+          const delay = failRetryDelay(failures);
+          if (delay == null) {
+            _log(peerId, 'connection failed ' + failures + ' times — giving up on this peer');
+            destroyPeer(peerId, 'gave-up', { username: entry.username || null });
+            return;
+          }
+          _log(peerId, 'connection failed (' + failures + ') — rebuilding in ' + delay + 'ms');
           destroyPeer(peerId, 'failed');
           if (!stopped && String(socket.id) < String(peerId)) {
-            createPeer(peerId, true);
+            retryTimers.set(peerId, setTimeout(() => {
+              retryTimers.delete(peerId);
+              // Peer may have left, rejoined (fresh entry) or voice stopped.
+              if (stopped || peers.has(peerId)) return;
+              createPeer(peerId, true);
+            }, delay));
           }
           return;
         }
@@ -294,8 +340,9 @@ const VoiceManager = (() => {
           if (onPeerStateChange) {
             onPeerStateChange(peerId, { connected: false, speaking: false, reason: s });
           }
-        } else if (s === 'connected' && onPeerStateChange) {
-          onPeerStateChange(peerId, { connected: true });
+        } else if (s === 'connected') {
+          failCounts.delete(peerId);   // a success earns a fresh set of retries
+          if (onPeerStateChange) onPeerStateChange(peerId, { connected: true });
         }
       };
 
@@ -402,7 +449,7 @@ const VoiceManager = (() => {
       }
     }
 
-    function destroyPeer(peerId, reason) {
+    function destroyPeer(peerId, reason, extra) {
       const entry = peers.get(peerId);
       if (!entry) return;
       try { entry.pc.close(); } catch (_) {}
@@ -415,7 +462,8 @@ const VoiceManager = (() => {
       try { if (entry.analyser) entry.analyser.disconnect(); } catch (_) {}
       peers.delete(peerId);
       if (onPeerStateChange) {
-        onPeerStateChange(peerId, { connected: false, speaking: false, reason: reason || 'closed' });
+        onPeerStateChange(peerId, Object.assign(
+          { connected: false, speaking: false, reason: reason || 'closed' }, extra));
       }
     }
 
@@ -562,6 +610,9 @@ const VoiceManager = (() => {
         _log(id, 'stale entry for rejoining peer — rebuilding');
         destroyPeer(id, 'rebuild');
       }
+      // A fresh session (or the peer coming back into scope) gets a fresh
+      // set of failure retries, and any pending rebuild is superseded.
+      clearFailState(id);
       // Same deterministic rule as onVoicePeers (lower socket.id
       // initiates) — unconditional initiation here would cause
       // offer-glare ~half the time.
@@ -571,6 +622,7 @@ const VoiceManager = (() => {
 
     function onPeerLeft({ id }) {
       _log(id, 'voice:peer-left');
+      clearFailState(id);   // left scope: forget its failures, cancel a rebuild
       destroyPeer(id, 'left');
     }
 
@@ -603,6 +655,8 @@ const VoiceManager = (() => {
       if (stopped) return;
       _log(null, 'socket reconnected (id=' + shortId(socket.id) + ') — rebuilding voice session');
       [...peers.keys()].forEach(id => destroyPeer(id, 'reconnect'));
+      [...retryTimers.keys()].forEach(clearFailState);
+      failCounts.clear();
       announce();
     }
 
@@ -710,6 +764,8 @@ const VoiceManager = (() => {
       socket.off('voice:signal', handleSignal);
       socket.off('connect', onReconnect);
       [...peers.keys()].forEach(id => destroyPeer(id, 'stop'));
+      [...retryTimers.keys()].forEach(clearFailState);
+      failCounts.clear();
       if (localStream) {
         localStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
         localStream = null;
@@ -899,18 +955,55 @@ const VoiceManager = (() => {
           `);
         }
       }
-      body.innerHTML = rows.join('');
-      // Wire mute buttons (delegated would also work; keep it simple).
-      body.querySelectorAll('.pg3d-voice-mute').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const id = btn.getAttribute('data-peer');
-          handle.mutePeer(id, !handle.isMuted(id));
-          render();
-        });
-      });
+      // Patch the live rows in place instead of `body.innerHTML = ...`:
+      // this runs every 200 ms, and swapping the nodes wholesale meant a
+      // press that spanned a tick went mousedown-on-old / mouseup-on-new
+      // and never became a click (and keyboard focus was lost each tick).
+      const next = document.createElement('div');
+      next.innerHTML = rows.join('');
+      patchChildren(body, next);
       position();
     }
+
+    // Minimal DOM morph: same-shaped nodes keep their identity and only
+    // get attributes/text synced; a node whose tag or peer key differs
+    // is replaced. Rows are keyed by data-peer so a peer leaving never
+    // morphs its neighbour's mute button into its own.
+    function patchChildren(from, to) {
+      const fromKids = Array.from(from.childNodes);
+      const toKids = Array.from(to.childNodes);
+      for (let i = 0; i < toKids.length; i++) {
+        const t = toKids[i], f = fromKids[i];
+        if (!f) { from.appendChild(t); continue; }
+        const sameShape = f.nodeType === t.nodeType &&
+          (f.nodeType !== 1 || (f.tagName === t.tagName &&
+            f.getAttribute('data-peer') === t.getAttribute('data-peer')));
+        if (!sameShape) { from.replaceChild(t, f); continue; }
+        if (f.nodeType === 1) {
+          for (const a of Array.from(f.attributes)) {
+            if (!t.hasAttribute(a.name)) f.removeAttribute(a.name);
+          }
+          for (const a of Array.from(t.attributes)) {
+            if (f.getAttribute(a.name) !== a.value) f.setAttribute(a.name, a.value);
+          }
+          patchChildren(f, t);
+        } else if (f.nodeValue !== t.nodeValue) {
+          f.nodeValue = t.nodeValue;
+        }
+      }
+      for (let i = toKids.length; i < fromKids.length; i++) from.removeChild(fromKids[i]);
+    }
+
+    // One delegated listener on the body for every mute button, present
+    // or future (rows come and go as peers join/leave voice).
+    body.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest && e.target.closest('.pg3d-voice-mute');
+      if (!btn || !body.contains(btn)) return;
+      e.stopPropagation();
+      const id = btn.getAttribute('data-peer');
+      handle.mutePeer(id, !handle.isMuted(id));
+      render();
+    });
     render();
     const refresh = setInterval(render, 200);
 
@@ -949,6 +1042,7 @@ const VoiceManager = (() => {
   return {
     start,
     openDebugPanel,
+    _failRetryDelay: failRetryDelay,   // test hook (test/voice-retry.test.js)
     // Surface the last started handle for quick console poking:
     //   VoiceManager._lastHandle._diag()
     get _lastHandle() { return _lastHandle; }

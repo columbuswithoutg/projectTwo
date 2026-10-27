@@ -29,7 +29,11 @@ const WorldView = (() => {
   let _voiceTouchEnd = null;
   let _voiceLongPressTimer = null;
   let _voiceLongPressFired = false;
-  let _peerFailToastAt = 0;        // throttle the "voice trouble" hint toast
+  // Peers already toasted about this voice session ("trouble" / "gave up") —
+  // once per peer, so a pair that can't connect doesn't toast every cycle.
+  // Reset when a new voice session starts.
+  const _voiceTroubleToasted = new Set();
+  const _voiceGaveUpToasted = new Set();
   let _voiceState = 'off';         // last _voiceVisual state, re-painted when the island changes
   let _voiceMsg = '';
   // Keeper-editable houses. `_zone` mirrors the server's world:zone (the
@@ -54,6 +58,7 @@ const WorldView = (() => {
   let _liveInputHandler = null;
   let _houseBtnHandler = null;
   let _houseEditorClose = null;    // close fn of the open editor overlay, if any
+  let _kickNotice = null;          // dismiss fn of the sticky "you were disconnected" toast
   let _houseEditing = null;        // projectId whose editor is open (its preview survives the poll)
   let _houseMaxProps = null;       // admin cap from GET /houses (else public config, else the shared default)
   const SPAWN_PREF_KEY = 'world_spawn_pref';   // last "start at" choice (project id)
@@ -228,7 +233,8 @@ const WorldView = (() => {
         onStoneChange: stonesOn ? _refreshStoneHud : undefined,
         onSnapped: stonesOn ? _onSnapped : undefined,
         onZone: _onZone,
-        onHouse: _onHouse
+        onHouse: _onHouse,
+        onKicked: _onKicked
       });
     }
 
@@ -372,8 +378,21 @@ const WorldView = (() => {
     setTimeout(() => { if (flash.parentNode) flash.parentNode.removeChild(flash); }, 1000);
   }
 
+  // Close every open overlay matching `sel` through the close function
+  // wireModalDismiss stored on it (overlay._closeModal): a bare .remove()
+  // leaked its capturing document keydown listener and its modal-stack
+  // entry, so Escape/Tab kept being swallowed for a dialog that was gone.
+  // The close is idempotent; .remove() is only the fallback for an overlay
+  // that was never wired (or whose close threw).
+  function _dismissOverlays(sel) {
+    document.querySelectorAll(sel).forEach((el) => {
+      if (typeof el._closeModal === 'function') { try { el._closeModal(); } catch (_) {} }
+      if (el.parentNode) el.remove();
+    });
+  }
+
   async function _openStoneLeaderboard() {
-    document.querySelector('.world-lb')?.remove();
+    _dismissOverlays('.world-lb');
     const overlay = document.createElement('div');
     overlay.className = 'world-lb';
     overlay.setAttribute('role', 'dialog');
@@ -676,7 +695,7 @@ const WorldView = (() => {
   // they're offered first, then the islands. The last pick is remembered
   // (localStorage) and preselected so the usual answer is one tap.
   function _openSpawnPicker(islands, mode, extra) {
-    document.querySelector('.world-spawn')?.remove();
+    _dismissOverlays('.world-spawn');
     const houses = (extra && Array.isArray(extra.houses)) ? extra.houses : _myHouses(islands);
     let pref = null;
     try { pref = localStorage.getItem(SPAWN_PREF_KEY); } catch (_) {}
@@ -851,6 +870,8 @@ const WorldView = (() => {
       // after start() returns. Track which fired so we don't optimistically
       // paint the "transmitting" (green) state over a mic-denied/error state.
       let sawError = false, sawListenOnly = false;
+      _voiceTroubleToasted.clear();
+      _voiceGaveUpToasted.clear();
       const handle = VoiceManager.start({
         socket,
         scope,
@@ -891,13 +912,25 @@ const WorldView = (() => {
                 'iceTypes=' + (peer.iceCandidateTypes || []).join(','));
             }
             // Surface the otherwise-silent failure and point at the diagnostics
-            // panel (right-click / long-press the mic) — throttled so a flapping
-            // peer doesn't spam toasts.
-            const t = Date.now();
-            if (typeof toast === 'function' && t - _peerFailToastAt > 20000) {
-              _peerFailToastAt = t;
+            // panel (right-click / long-press the mic) — once per peer per
+            // voice session, so a flapping peer doesn't spam toasts.
+            if (typeof toast === 'function' && !_voiceTroubleToasted.has(peerId)) {
+              _voiceTroubleToasted.add(peerId);
               toast('Voice is having trouble connecting — long-press the mic for diagnostics.', 'warn');
             }
+          }
+          // VoiceManager spent its retries with this peer and stopped trying
+          // (until they leave the island and come back). Almost always a NAT
+          // pair that needs a TURN relay — see docs/VOICE-TURN-SETUP.md.
+          // toast() sets textContent, so the name needs no escaping.
+          if (st && st.reason === 'gave-up' && typeof toast === 'function' && !_voiceGaveUpToasted.has(peerId)) {
+            _voiceGaveUpToasted.add(peerId);
+            let name = st.username;
+            if (!name && Playground3D.getRemotePlayers) {
+              const rp = (Playground3D.getRemotePlayers() || []).find(p => p.id === peerId);
+              name = rp && rp.username;
+            }
+            toast('Couldn’t connect voice with ' + (name || 'a player') + ' — their network may need a TURN relay.', { type: 'warn', duration: 6000 });
           }
         }
       });
@@ -971,7 +1004,8 @@ const WorldView = (() => {
     if (houseBtn && _houseBtnHandler) houseBtn.removeEventListener('click', _houseBtnHandler);
     _houseBtnHandler = null;
     if (_houseEditorClose) { try { _houseEditorClose(); } catch (_) {} _houseEditorClose = null; }
-    document.querySelector('.world-house')?.remove();
+    _dismissOverlays('.world-house');
+    if (_kickNotice) { try { _kickNotice(); } catch (_) {} _kickNotice = null; }
     if (_housePoll) { clearInterval(_housePoll); _housePoll = null; }
     _zone = null; _houseMe = null; _houseKeepers = {}; _houseMine = {}; _housesAt = 0;
     if (_liveTick) { clearInterval(_liveTick); _liveTick = null; }
@@ -985,10 +1019,10 @@ const WorldView = (() => {
     // the chip/snap button/flash live inside the container and vanish with it.
     if (_snapKeyHandler) { window.removeEventListener('keydown', _snapKeyHandler); _snapKeyHandler = null; }
     _snapHinted = false;
-    document.querySelector('.world-lb')?.remove();
+    _dismissOverlays('.world-lb');
     // Settle a still-open spawn picker so its awaited promise doesn't dangle.
     if (_spawnPickerResolve) { _spawnPickerResolve(); _spawnPickerResolve = null; }
-    document.querySelector('.world-spawn')?.remove();
+    _dismissOverlays('.world-spawn');
     // Scene Guess before multiplayer: it quits a game in progress over the socket.
     if (typeof SceneGuess !== 'undefined') { try { SceneGuess.stop(); } catch (_) {} }
     if (_mp) { try { _mp.stop(); } catch (_) {} _mp = null; }
@@ -1004,6 +1038,28 @@ const WorldView = (() => {
   }
   function canLeave() {
     return !isDirty() || Router.confirmLeave('Your house design hasn’t been saved.');
+  }
+
+  // The server retired this tab (world opened elsewhere). With nothing
+  // unsaved, leave as before. With a house design open, forcing Router.go
+  // through canLeave() and getting "keep editing" left a dead room on
+  // screen — so drop the multiplayer layer now (the editor saves over
+  // HTTP, so it keeps working), and let the user leave when they're done.
+  function _onKicked({ dest }) {
+    if (!isDirty()) { Router.go(dest); return; }
+    // Same order as unmount(): voice, then Scene Guess, then the socket.
+    if (_voice) { try { _voice.stop(); } catch (_) {} _voice = null; _voiceVisual('off'); }
+    if (typeof SceneGuess !== 'undefined') { try { SceneGuess.stop(); } catch (_) {} }
+    if (_mp) { try { _mp.stop(); } catch (_) {} _mp = null; }
+    if (Playground3D.clearRemotePlayers) Playground3D.clearRemotePlayers();
+    if (_kickNotice) { try { _kickNotice(); } catch (_) {} }
+    _kickNotice = (typeof toast === 'function')
+      ? toast('You were disconnected — reopen /world to rejoin.', {
+          type: 'warn',
+          duration: 0,
+          action: { label: 'Leave', onClick: () => Router.go(dest) }
+        })
+      : null;
   }
 
   return { mount, unmount, isDirty, canLeave, title: 'World — MCU Tracker' };

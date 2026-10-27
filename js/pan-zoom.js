@@ -72,6 +72,9 @@ const PanZoom = (() => {
       if (!pan || e.pointerId !== pan.id) return;
       // A release outside the window never sends pointerup to us.
       if (e.buttons === 0) { endPan(e, false); return; }
+      // A walker fight took the camera mid-drag: let go rather than keep
+      // writing scroll offsets the fight transform now owns.
+      if (o.isLocked()) { endPan(e, false); return; }
       const dx = e.clientX - pan.x0, dy = e.clientY - pan.y0;
       if (!pan.moved) {
         if (!PZ.pastThreshold(dx, dy)) return;
@@ -100,21 +103,32 @@ const PanZoom = (() => {
     }, { passive: false });
 
     // ── two-finger pinch (touch) ──
+    // The container is the whole chart, so a non-passive touch listener on
+    // it would make every one-finger scroll wait on the main thread (janky
+    // or blocked on phones). touchstart stays passive; the non-passive
+    // touchmove that stops native scrolling exists only while two fingers
+    // are pinching, and is removed when the pinch ends.
     let pinch = null;   // { z0, g0, m }
     const gap = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
     const mid = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+    const PINCH_MOVE_OPT = { passive: false };
+    const stopPinch = () => {
+      if (!pinch) return;
+      pinch = null;
+      container.removeEventListener('touchmove', onPinchMove, PINCH_MOVE_OPT);
+    };
     on(container, 'touchstart', (e) => {
       if (e.touches.length !== 2 || o.isLocked()) {
-        if (e.touches.length < 2) pinch = null;
+        if (e.touches.length < 2) stopPinch();
         return;
       }
-      e.preventDefault();                 // no native page zoom / scroll fight
+      if (!pinch) container.addEventListener('touchmove', onPinchMove, PINCH_MOVE_OPT);
       pinch = { z0: o.getZoom(), g0: gap(e.touches), m: mid(e.touches) };
       if (o.onPinchStart) o.onPinchStart();
-    }, { passive: false });
-    on(container, 'touchmove', (e) => {
+    }, { passive: true });
+    function onPinchMove(e) {
       if (!pinch || e.touches.length !== 2) return;
-      e.preventDefault();
+      if (e.cancelable) e.preventDefault();   // no native page zoom / scroll fight
       const m = mid(e.touches);
       // Pan with the fingers' midpoint, then zoom about it.
       container.scrollLeft -= m.x - pinch.m.x;
@@ -122,19 +136,21 @@ const PanZoom = (() => {
       pinch.m = m;
       const r = container.getBoundingClientRect();
       o.setZoom(PZ.pinchZoom(pinch.z0, pinch.g0, gap(e.touches), o.min, o.max), m.x - r.left, m.y - r.top);
-    }, { passive: false });
-    const endPinch = (e) => { if (!e.touches || e.touches.length < 2) pinch = null; };
+    }
+    const endPinch = (e) => { if (!e.touches || e.touches.length < 2) stopPinch(); };
     on(container, 'touchend', endPinch);
     on(container, 'touchcancel', endPinch);
 
     return {
       // True while a mouse drag is moving the view.
       isPanning: () => !!(pan && pan.moved),
+      // True while two fingers are pinch-zooming.
+      isPinching: () => !!pinch,
       destroy() {
         for (const [t, ev, fn, opt] of listeners) t.removeEventListener(ev, fn, opt);
         listeners.length = 0;
         pan = null;
-        pinch = null;
+        stopPinch();                      // also drops the pinch-only touchmove
         container.classList.remove('panning');
       }
     };

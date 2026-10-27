@@ -205,7 +205,7 @@ const LoginView = {
           // Clean slate before this account's token lands (a different
           // account's leftovers may still be in memory in this tab).
           Auth.resetClientState();
-          localStorage.setItem('mcu_token', data.token);
+          Auth.setToken(data.token);
           // Start fetching the 3D character models in the background.
           if (window.HumanoidPrefetch) HumanoidPrefetch.warm();
           localStorage.setItem('mcu_username', data.username);

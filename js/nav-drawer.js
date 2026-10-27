@@ -15,7 +15,9 @@
  *                                 opts.actions wires the shared buttons
  *                                 (friends, goals, report, character,
  *                                 walkers, log out) for views that have no
- *                                 handlers of their own. Returns { open, close }.
+ *                                 handlers of their own; opts.walkerToggles
+ *                                 wires the Fights / Dialogues toggles of the
+ *                                 'full' drawer. Returns { open, close }.
  *
  * Closed = `inert` (unfocusable, hidden from assistive tech, CSS hides it).
  * Open = on the shared modal stack (wireModalDismiss): Escape closes it, Tab
@@ -167,6 +169,27 @@ const NavDrawer = (() => {
       });
       on('#logout-btn', () => Auth.logout());
       if (typeof MessagesBadge !== 'undefined' && MessagesBadge.apply) MessagesBadge.apply();
+    }
+
+    // Fights / Dialogues ('full' drawer: watch order + map). The labels are
+    // re-read on every open — the server's flag defaults (/api/config/public
+    // → Walkers.applyFlagDefaults) land after mount, so a label rendered
+    // once could disagree with the real setting and make the first tap look
+    // like a no-op.
+    if (opts.walkerToggles && typeof Walkers !== 'undefined') {
+      const toggles = [
+        { el: q('#fights-toggle-btn'), name: 'Fights', get: () => Walkers.getFightsEnabled(), set: (v) => Walkers.setFightsEnabled(v) },
+        { el: q('#dialogues-toggle-btn'), name: 'Dialogues', get: () => Walkers.getDialoguesEnabled(), set: (v) => Walkers.setDialoguesEnabled(v) }
+      ].filter(t => t.el);
+      const label = (t) => { const on = !!t.get(); t.el.textContent = `${t.name}: ${on ? 'On' : 'Off'}`; t.el.setAttribute('aria-pressed', String(on)); };
+      toggles.forEach(t => {
+        label(t);
+        t.el.addEventListener('click', () => { t.set(!t.get()); label(t); });
+      });
+      const userOnOpen = opts.onOpen;
+      opts = Object.assign({}, opts, {
+        onOpen() { toggles.forEach(label); if (userOnOpen) userOnOpen(); }
+      });
     }
 
     return { open, close };

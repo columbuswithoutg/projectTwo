@@ -3,7 +3,8 @@
  *
  * - One walker per watched node (slots = watched count)
  * - User picks which unlocked characters to deploy
- * - Walkers roam node-to-node via random paths
+ * - Walkers bounce around inside a node (a location on /map) and leave
+ *   along the roads (prerequisite edges) to the next one
  * - Selections saved in localStorage
  ************************************************/
 
@@ -84,9 +85,16 @@ const Walkers = (() => {
   let encounterRunning = false;
   let encounterTimers = [];            // setTimeout IDs for active dialogue, cleared on destroy
   let deployTime = 0;                  // timestamp of last deploy, used for grace period
-  let cachedGraph = null;              // cached adjacency (layout-version keyed)
-  let cachedRoads = null;              // cached road segments
+  let cachedRoads = null;              // cached road segments (layout-version keyed)
   let cachedRects = null;              // cached cluster rects
+  // Which adapter built the caches above. Flow keys clusters by project id,
+  // the map by location id, and going / -> /map bumps no layout version, so
+  // the version alone can't tell the two views' geometry apart.
+  let cachedAdapter = null;
+  // Signature (entries + resolved stages + images + slots) of the walkers on
+  // screen, so a state change that leaves the line-up alone doesn't respawn
+  // them. null = nothing deployed.
+  let deployedSig = null;
   let activeFights = new Map();        // nodeId -> { villain, participants: Set, started }
   let faintedWalkers = new Set();      // walkers waiting to revive after fight
   let activeProjectiles = [];          // { x, y, vx, vy, ownerId, dmg, el, isVillainProj }
@@ -204,27 +212,6 @@ const Walkers = (() => {
     return projects.filter(isVisible);
   }
 
-  // Build adjacency from visible arrows (prerequisites + unlocks)
-  function buildGraph() {
-    const graph = new Map();
-    const visible = new Set(getVisibleNodes().map(p => p.id));
-
-    projects.forEach(p => {
-      if (!visible.has(p.id)) return;
-      if (!graph.has(p.id)) graph.set(p.id, []);
-
-      // unlocks = children via prerequisites
-      (p.unlocks || []).forEach(childId => {
-        if (!visible.has(childId)) return;
-        if (!graph.has(childId)) graph.set(childId, []);
-        graph.get(p.id).push(childId);
-        graph.get(childId).push(p.id);   // bidirectional
-      });
-    });
-
-    return graph;
-  }
-
   // Node geometry — delegated to WalkerView so the same walker code works
   // on both the geographic map and the watch-order flowchart.
   function getNodeCenter(nodeId) {
@@ -268,6 +255,11 @@ const Walkers = (() => {
     if (w1._cx == null || w2._cx == null) return;
     const midX = (w1._cx + w2._cx) / 2;
     const midY = (w1._cy + w2._cy) / 2;
+    // Encounters come every ~15–30 s and dialogues are on by default, so
+    // only nudge a pair that's already on screen, and never while the user
+    // is dragging or has just used the page (see PanZoomLogic.shouldFrame).
+    // The dialogue plays either way — the bubbles follow the walkers.
+    if (!WalkerView.mayFrame('encounter', midX, midY)) return;
     // Route through the view adapter — works on both the geographic map
     // (camera pan) and the watch-order flow (smooth wrapper scroll).
     WalkerView.get().centerOn(midX, midY);
@@ -621,7 +613,7 @@ const Walkers = (() => {
   //
   // Returns Map<clusterId, rect>, and Map<nodeId, clusterId> for convenience
   // (walker.currentNode still resolves to a specific movie node for fights).
-  function buildNodeRects(graph, roadSegments) {
+  function buildNodeRects(roadSegments) {
     const clusterRects = WalkerView.get().allClusterRects();
     const rects = new Map();
 
@@ -953,6 +945,11 @@ const Walkers = (() => {
   // Fight visuals — swap the fight node's poster to its location image and
   // fade in a full-screen location backdrop. Reverted by clearFightVisuals.
   // Both are no-ops if the node has no location or no image.
+  let fightVisualToken = 0;
+  // clearFightVisuals' pending "remove the faded backdrop" timer. A new
+  // fight whose image loads inside that window reuses the element, so the
+  // removal must be cancelled or it deletes the new fight's backdrop.
+  let backdropRemoveTimer = null;
   function applyFightVisuals(nodeId) {
     const project = state.byId?.get(nodeId);
     if (!project) return;
@@ -960,36 +957,52 @@ const Walkers = (() => {
     if (!locationId) return;
     const bgUrl = assetUrl(`assets/backgrounds/${locationId}.webp`);
 
-    // 1. Swap the node's <img> src to the location image. Save original so
-    //    we can restore it when the fight ends.
     const nodeEl = WalkerView.get().nodeElement(nodeId);
-    if (nodeEl) {
-      const img = nodeEl.querySelector('img');
+    if (nodeEl) nodeEl.classList.add('fighting');
+
+    // Mark body so the active canvas can raise its z-index above the
+    // backdrop (so walkers/HP bars/the swapped node stay on top).
+    document.body.classList.add('fight-active');
+
+    // Not every location has a backdrop file (and the DB can add new
+    // location ids at any time), so preload first and only swap once the
+    // image is known to exist. Swapping img.src straight away turned the
+    // poster into a broken-image icon on a 404. On error the poster stays
+    // and no backdrop is shown. The token drops a load that lands after
+    // this fight already ended (or a newer fight started).
+    const token = ++fightVisualToken;
+    const probe = new Image();
+    probe.onload = () => {
+      if (token !== fightVisualToken) return;
+      // 1. Swap the node's <img> src to the location image. Save original
+      //    so we can restore it when the fight ends.
+      const el = WalkerView.get().nodeElement(nodeId);
+      const img = el && el.querySelector('img');
       if (img && !img.dataset.originalSrc) {
         img.dataset.originalSrc = img.src;
         img.src = bgUrl;
       }
-      nodeEl.classList.add('fighting');
-    }
 
-    // 2. Full-screen backdrop overlay. Single instance reused across fights.
-    let backdrop = document.querySelector('.fight-backdrop');
-    if (!backdrop) {
-      backdrop = document.createElement('div');
-      backdrop.className = 'fight-backdrop';
-      document.body.appendChild(backdrop);
-    }
-    backdrop.style.backgroundImage = `url("${bgUrl}")`;
-    // Force reflow so the .visible opacity transition fires from 0.
-    void backdrop.offsetWidth;
-    backdrop.classList.add('visible');
-
-    // 3. Mark body so the active canvas can raise its z-index above the
-    //    backdrop (so walkers/HP bars/the swapped node stay on top).
-    document.body.classList.add('fight-active');
+      // 2. Full-screen backdrop overlay. Single instance reused across fights.
+      if (backdropRemoveTimer) { clearTimeout(backdropRemoveTimer); backdropRemoveTimer = null; }
+      let backdrop = document.querySelector('.fight-backdrop');
+      if (!backdrop) {
+        backdrop = document.createElement('div');
+        backdrop.className = 'fight-backdrop';
+        document.body.appendChild(backdrop);
+      }
+      backdrop.style.backgroundImage = `url("${bgUrl}")`;
+      // Force reflow so the .visible opacity transition fires from 0.
+      void backdrop.offsetWidth;
+      backdrop.classList.add('visible');
+    };
+    probe.onerror = () => {};
+    probe.src = bgUrl;
   }
 
   function clearFightVisuals(nodeId) {
+    // Invalidate any backdrop preload still in flight for this fight.
+    fightVisualToken++;
     // Restore the node's original poster.
     const nodeEl = WalkerView.get().nodeElement(nodeId);
     if (nodeEl) {
@@ -1005,7 +1018,8 @@ const Walkers = (() => {
     const backdrop = document.querySelector('.fight-backdrop');
     if (backdrop) {
       backdrop.classList.remove('visible');
-      setTimeout(() => backdrop.remove(), 350);
+      if (backdropRemoveTimer) clearTimeout(backdropRemoveTimer);
+      backdropRemoveTimer = setTimeout(() => { backdropRemoveTimer = null; backdrop.remove(); }, 350);
     }
 
     document.body.classList.remove('fight-active');
@@ -1513,16 +1527,17 @@ const Walkers = (() => {
     lastTime = now;
 
     // Geometry rebuilds only when the layout version bumps (on every
-    // state.subscribe fire). Road segments, cluster rects, and the graph
-    // all invalidate together — they derive from the same source.
-    const version = WalkerView.get().layoutVersion();
-    if (!cachedRoads || tick._version !== version) {
-      cachedGraph = buildGraph();
-      cachedRoads = WalkerView.get().roadGeometry();
-      cachedRects = buildNodeRects(cachedGraph, cachedRoads);
+    // state.subscribe fire). Road segments and cluster rects invalidate
+    // together — they derive from the same source.
+    // Also keyed on the adapter, so a view switch always rebuilds.
+    const view = WalkerView.get();
+    const version = view.layoutVersion();
+    if (!cachedRoads || tick._version !== version || cachedAdapter !== view) {
+      cachedRoads = view.roadGeometry();
+      cachedRects = buildNodeRects(cachedRoads);
       tick._version = version;
+      cachedAdapter = view;
     }
-    const graph = cachedGraph;
     const roadSegments = cachedRoads;
     const nodeRects = cachedRects;
     const dtSec = dt / 1000;
@@ -1750,7 +1765,9 @@ const Walkers = (() => {
     if (activeFights.size > 0 && !fightZoomed) {
       const fightNodeId = activeFights.keys().next().value;
       if (!tick._lastFightCenter || now - tick._lastFightCenter > 1000) {
-        centerOnNode(fightNodeId);
+        // Re-centring every second would wrestle a user who is panning
+        // around the fight — only while they leave the camera alone.
+        if (WalkerView.mayFrame('fight')) centerOnNode(fightNodeId);
         tick._lastFightCenter = now;
       }
     } else {
@@ -1969,13 +1986,27 @@ const Walkers = (() => {
     return result;
   }
 
-  // Backward-compat: return just the IDs for external consumers
-  function getSelectedIds() {
-    return getSelectedEntries().map(e => e.id);
+  // What the walker line-up looks like right now: each entry's id, its
+  // resolved stage (stage -1 = "latest", which moves when something new is
+  // watched) and the image that stage draws, plus the slot count. Two equal
+  // signatures mean a redeploy would spawn the very same walkers.
+  function lineupSignature(entries) {
+    const charMap = new Map(characters.map(c => [c.id, c]));
+    const parts = entries.map(entry => {
+      const char = charMap.get(entry.id);
+      if (!char) return `${entry.id}:?`;
+      const resolved = entry.stage === -1 ? getCharStages(char, state).length - 1 : Math.max(0, entry.stage);
+      return `${entry.id}:${entry.stage}:${resolved}:${resolveWalkerImage(entry, char)}`;
+    });
+    return `${getMaxSlots()}|${parts.join(',')}`;
   }
 
   function deploy() {
-    if (!WalkerView.get().container()) return;  // view not mounted
+    // View not mounted — or mounted then torn down: a container that has
+    // left the document (e.g. a late timer after leaving /friend/:u/map)
+    // would host walkers and fight overlays nobody can see.
+    const mountedIn = WalkerView.get().container();
+    if (!mountedIn || !mountedIn.isConnected) return;
     // Remove old walkers
     destroy();
 
@@ -1986,7 +2017,6 @@ const Walkers = (() => {
     const visibleIds = getVisibleNodes().map(p => p.id);
     if (visibleIds.length === 0) return;
 
-    const graph = buildGraph();
     const container = WalkerView.get().container();
 
     // Track how many walkers share each start node for staggering
@@ -2058,6 +2088,7 @@ const Walkers = (() => {
 
     lastTime = 0;
     deployTime = performance.now();
+    deployedSig = lineupSignature(entries);
     animFrameId = requestAnimationFrame(tick);
   }
 
@@ -2088,15 +2119,36 @@ const Walkers = (() => {
     faintedWalkers.clear();
     activeProjectiles.forEach(p => p.el.remove());
     activeProjectiles = [];
-    // Reset zoom if active
+    // Reset zoom if active. The adapter knows where the fight camera lives
+    // (flow: transform on .flow-zoom + .fight-zoom on .flow-wrapper; map:
+    // transform on #map-container + renderer.cameraLocked) — clearing
+    // container() alone left the chart or map camera locked. Synchronous,
+    // because the DOM may be wiped right after this returns.
     if (fightZoomed) {
-      const container = WalkerView.get().container();
-      if (container) { container.style.transform = ''; container.style.transformOrigin = ''; container.style.transition = ''; }
+      const view = WalkerView.get();
+      if (view && view.resetZoom) view.resetZoom();
       fightZoomed = false;
     }
+    // A state-change redeploy still waiting would otherwise run after an
+    // unmount and spawn walkers into whatever page comes next.
+    if (_pendingDeployTimer) {
+      clearTimeout(_pendingDeployTimer);
+      _pendingDeployTimer = null;
+    }
+    // Geometry belongs to the view we're leaving; the next tick rebuilds.
+    cachedRoads = null;
+    cachedRects = null;
+    cachedAdapter = null;
+    tick._version = undefined;
+    deployedSig = null;
     // Clean any in-flight visual overlays — backdrop + body class. If the
     // user navigates away mid-fight, these would otherwise persist.
     document.body.classList.remove('fight-active');
+    // Drop a backdrop preload still in flight, or it would paint the
+    // overlay onto whatever page comes next.
+    fightVisualToken++;
+    document.querySelectorAll('.node.fighting').forEach(n => n.classList.remove('fighting'));
+    if (backdropRemoveTimer) { clearTimeout(backdropRemoveTimer); backdropRemoveTimer = null; }
     const _backdrop = document.querySelector('.fight-backdrop');
     if (_backdrop) _backdrop.remove();
     // Best-effort restore for any node still showing the swapped poster.
@@ -2122,24 +2174,6 @@ const Walkers = (() => {
     }
     deploy();
     return true;
-  }
-
-  function setCharacterStage(charId, stageIndex) {
-    const current = getSelectedEntries();
-    const entry = current.find(e => e.id === charId);
-    if (entry) {
-      entry.stage = stageIndex;
-      saveSelections(current);
-      deploy();
-    }
-  }
-
-  function setSelections(entries) {
-    const maxSlots = getMaxSlots();
-    const unlocked = new Set(getUnlockedCharacters().map(c => c.id));
-    const valid = entries.map(normalizeEntry).filter(e => e && unlocked.has(e.id)).slice(0, maxSlots);
-    saveSelections(valid);
-    deploy();
   }
 
   /* ---- Walker Picker UI ---- */
@@ -2202,7 +2236,7 @@ const Walkers = (() => {
             <span class="walker-check">✔</span>
             <span class="walker-remove">✕</span>
           </div>
-          <span class="walker-card-name">${label}</span>
+          <span class="walker-card-name">${esc(label)}</span>
         `;
 
         card.addEventListener('click', () => {
@@ -2262,6 +2296,20 @@ const Walkers = (() => {
         if (_pendingDeployTimer) clearTimeout(_pendingDeployTimer);
         _pendingDeployTimer = setTimeout(() => {
           _pendingDeployTimer = null;
+          // Most state changes (marking something watched, filters) leave
+          // the line-up alone. A full redeploy then wiped every walker —
+          // positions reset, dialogue cut, fight dropped — and respawned
+          // them 3s apart. Keep them, and only invalidate the geometry
+          // caches: newly watched nodes can change the roads and node rects,
+          // and the tick re-homes any walker whose road or node has gone.
+          // (A forced version mismatch rather than nulling, so dialogue and
+          // fight timers reading cachedRects/cachedRoads keep working until
+          // the next tick rebuilds them.)
+          if (deployedSig !== null && animFrameId &&
+              lineupSignature(getSelectedEntries()) === deployedSig) {
+            tick._version = undefined;
+            return;
+          }
           deploy();
         }, 300);
       });
@@ -2309,6 +2357,19 @@ const Walkers = (() => {
       encounterQueue = [];
       activeBubbles.forEach(b => b.el.remove());
       activeBubbles = [];
+      // The running dialogue's remaining lines are already scheduled — clear
+      // them or they keep popping up after the toggle. That also clears the
+      // end-of-dialogue timer that would release the pair, so free them here.
+      encounterTimers.forEach(t => clearTimeout(t));
+      encounterTimers = [];
+      encounterRunning = false;
+      const resumeAt = performance.now();
+      activeWalkers.forEach(w => {
+        if (w.state !== W_STATE.ENCOUNTER) return;
+        w.state = W_STATE.WALKING;
+        w.paused = true;
+        w.pauseEnd = resumeAt + randBetween(300, 800);
+      });
     }
   }
 
@@ -2325,5 +2386,5 @@ const Walkers = (() => {
     step: () => { if (animFrameId) cancelAnimationFrame(animFrameId); tick(performance.now()); }
   };
 
-  return { _debug, init, deploy, destroy, resetInit, showWalkerPicker, getSelectedIds, getSelectedEntries, getMaxSlots, getUnlockedCharacters, toggleCharacter, setCharacterStage, setSelections, deployWithSelections, restoreSelections, setFightsEnabled, getFightsEnabled, setDialoguesEnabled, getDialoguesEnabled, applyConfig, applyFlagDefaults };
+  return { _debug, init, deploy, destroy, resetInit, showWalkerPicker, getSelectedEntries, toggleCharacter, deployWithSelections, restoreSelections, setFightsEnabled, getFightsEnabled, setDialoguesEnabled, getDialoguesEnabled, applyConfig, applyFlagDefaults };
 })();

@@ -51,7 +51,7 @@ const WatchControls = (() => {
       const s = state.getSession(p.id);
       const epLabel = eps ? `Episode ${s.episode + 1} of ${eps.length}` : '';
       const stepMin = state.stepMinutes(p, s.episode);
-      if (!s.startedAt) {
+      if (!s.startedAt && eps) {
         // Series, between episodes.
         return `
           <div class="wc-meta"><span class="wc-ep">${epLabel}</span><span>${fmtRuntime(stepMin)}</span></div>
@@ -61,14 +61,20 @@ const WatchControls = (() => {
             <button type="button" class="wc-btn wc-ghost" data-wc="cancel">Cancel</button>
           </div>${capHint}`;
       }
-      const left = state.remainingMs(p.id);
-      return `
-        <div class="wc-meta">${epLabel ? `<span class="wc-ep">${epLabel}</span>` : ''}<span class="wc-left" aria-live="off"></span></div>
-        <div class="wc-bar" aria-hidden="true"><i></i></div>
-        <div class="wc-actions">
-          <button type="button" class="wc-btn wc-primary" data-wc="complete" ${left > 0 ? 'disabled' : ''}>Mark as watched</button>
-          <button type="button" class="wc-btn wc-ghost" data-wc="cancel">Cancel</button>
-        </div>`;
+      // Between episodes but no episode list any more (an admin turned the
+      // series into a movie mid-run): falls through to the plain "Start
+      // watching" below — the bar's s.episode / eps.length used to throw and
+      // took every later Board card's buttons down with it.
+      if (s.startedAt) {
+        const left = state.remainingMs(p.id);
+        return `
+          <div class="wc-meta">${epLabel ? `<span class="wc-ep">${epLabel}</span>` : ''}<span class="wc-left" aria-live="off"></span></div>
+          <div class="wc-bar" aria-hidden="true"><i></i></div>
+          <div class="wc-actions">
+            <button type="button" class="wc-btn wc-primary" data-wc="complete" ${left > 0 ? 'disabled' : ''}>Mark as watched</button>
+            <button type="button" class="wc-btn wc-ghost" data-wc="cancel">Cancel</button>
+          </div>`;
+      }
     }
     if (status === 'done') {
       const count = state.getCount(p.id);
@@ -78,11 +84,12 @@ const WatchControls = (() => {
           <button type="button" class="wc-btn" data-wc="start" ${startAttr}>Watch again</button>
         </div>`;
     }
-    if (status === 'todo') {
+    if (status === 'todo' || status === 'progress') {
       return `
         <div class="wc-meta"><span>${esc(runtimeLine(p))}</span></div>
         <div class="wc-actions">
-          <button type="button" class="wc-btn wc-primary" data-wc="start" ${startAttr}>Start watching</button>
+          <button type="button" class="wc-btn wc-primary" data-wc="start" ${startAttr}>Start watching</button>${status === 'progress' ? `
+          <button type="button" class="wc-btn wc-ghost" data-wc="cancel">Cancel</button>` : ''}
         </div>${capHint}`;
     }
     return `<div class="wc-meta"><span>🔒 Watch its prerequisites first</span></div>`;

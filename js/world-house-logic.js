@@ -563,7 +563,7 @@
     });
   }
 
-  // "3h 12m" / "45m" / "<1m" — mirrors world-stay-logic.formatStay so the
+  // "3h 12m" / "45m" / "<1m" — the stay-label formatter; it lives here so the
   // client (which does not load the server-only stay module) can render it.
   function formatStay(ms) {
     const mins = Math.floor((Number(ms) || 0) / 60000);

@@ -25,6 +25,17 @@ const PostComposer = (() => {
   let _profilePic = null;
   let _open = null;
 
+  // A photo / video picked here is previewed from a blob: URL, which pins
+  // the whole file (up to 25 MB, 10 per post) in memory until revoked. Only
+  // media a kept draft still shows may hold on to theirs; `keep` = Set.
+  function revokeLocals(list, keep) {
+    for (const m of list || []) {
+      if (!m || !m.local || (keep && keep.has(m))) continue;
+      URL.revokeObjectURL(m.local);
+      m.local = null;
+    }
+  }
+
   function profilePicture() {
     if (_profilePic !== null) return Promise.resolve(_profilePic);
     return fetch(`${API}/profile`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } })
@@ -47,7 +58,7 @@ const PostComposer = (() => {
 
   function avatarHtml(username, pic) {
     return pic
-      ? `<img class="pc-avatar" src="${esc(profilePicUrl(pic))}" alt="" />`
+      ? avatarImgHtml(profilePicUrl(pic), username, 'pc-avatar', { lazy: false })   // falls back to the initial (js/utils.js)
       : `<span class="pc-avatar" aria-hidden="true">${esc((username || '?')[0].toUpperCase())}</span>`;
   }
 
@@ -451,17 +462,20 @@ const PostComposer = (() => {
     let pending = { result: null, saved: false };
     function teardown() {
       const { result, saved } = pending;
+      let kept = [];
       if (!saved && mode === 'complete') {
         // Keep what they wrote for next time (finished uploads only).
-        const kept = media.filter(m => m.status === 'done');
+        kept = media.filter(m => m.status === 'done');
         if (ta.value.trim() || kept.length || newTags.length) {
           drafts.set(draftKey, { caption: ta.value, media: kept, newTags: [...newTags] });
         } else drafts.delete(draftKey);
-      } else {
-        media.forEach(m => { if (m.local && m.status !== 'done') URL.revokeObjectURL(m.local); });
       }
       document.body.classList.remove('pc-open');
       overlay.remove();
+      // Posted, saved, skipped or not worth a draft: every blob goes (a
+      // posted file used to stay pinned until the tab closed). After the
+      // DOM is gone, so no thumbnail or preview still on screen loses it.
+      revokeLocals(media, new Set(kept));
       _open = null;
       resolve(result);
     }
@@ -515,6 +529,7 @@ const PostComposer = (() => {
   function reset() {
     if (_open) { try { _open.close(null); } catch (_) {} }
     _open = null;
+    drafts.forEach(d => revokeLocals(d.media));
     drafts.clear();
     _profilePic = null;
   }

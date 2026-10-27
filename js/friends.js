@@ -1,56 +1,37 @@
 /************************************************
- * FRIENDS API
+ * FRIENDS API — Auth.fetch adds the token and sends a dead session to /login.
  ************************************************/
 const Friends = {
   async search(username) {
-    const res = await fetch(`${API}/friends/search?username=${encodeURIComponent(username)}`, {
-      headers: { Authorization: `Bearer ${Auth.getToken()}` }
-    });
+    const res = await Auth.fetch(`${API}/friends/search?username=${encodeURIComponent(username)}`);
     return res.json();
   },
 
   async sendRequest(recipientId) {
-    const res = await fetch(`${API}/friends/request`, {
+    const res = await Auth.fetch(`${API}/friends/request`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${Auth.getToken()}`
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recipientId })
     });
     return res.json();
   },
 
   async getPending() {
-    const res = await fetch(`${API}/friends/pending`, {
-      headers: { Authorization: `Bearer ${Auth.getToken()}` }
-    });
+    const res = await Auth.fetch(`${API}/friends/pending`);
     return res.json();
   },
 
   async respond(requestId, action) {
-    const res = await fetch(`${API}/friends/respond`, {
+    const res = await Auth.fetch(`${API}/friends/respond`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${Auth.getToken()}`
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestId, action })
     });
     return res.json();
   },
 
   async getList() {
-    const res = await fetch(`${API}/friends/list`, {
-      headers: { Authorization: `Bearer ${Auth.getToken()}` }
-    });
-    return res.json();
-  },
-
-  async getProgress(friendId) {
-    const res = await fetch(`${API}/friends/progress/${friendId}`, {
-      headers: { Authorization: `Bearer ${Auth.getToken()}` }
-    });
+    const res = await Auth.fetch(`${API}/friends/list`);
     return res.json();
   },
 
@@ -59,16 +40,13 @@ const Friends = {
   // or { error } on 4xx/5xx — callers (FriendView.enter) coerce errors
   // to null so each friend view can render the 404 card uniformly.
   async getByUsername(username) {
-    const res = await fetch(`${API}/friends/by-username/${encodeURIComponent(username)}`, {
-      headers: { Authorization: `Bearer ${Auth.getToken()}` }
-    });
+    const res = await Auth.fetch(`${API}/friends/by-username/${encodeURIComponent(username)}`);
     return res.json();
   },
 
   async remove(friendId) {
-    const res = await fetch(`${API}/friends/remove/${friendId}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${Auth.getToken()}` }
+    const res = await Auth.fetch(`${API}/friends/remove/${friendId}`, {
+      method: 'DELETE'
     });
     return res.json();
   }
@@ -409,12 +387,9 @@ async function showWatchedWithFriendModal(project) {
       btn.textContent = 'Sending…';
       let data = null, ok = false;
       try {
-        const res = await fetch(`${API}/friends/watch-request`, {
+        const res = await Auth.fetch(`${API}/friends/watch-request`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${Auth.getToken()}`
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ recipientId, projectId: project.id, projectTitle: project.title })
         });
         try { data = await res.json(); } catch (_) {}

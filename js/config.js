@@ -11,10 +11,10 @@ const CONFIG = {
   // /friend/:username/assets/images/...).
   IMAGE_BASE: "/assets/images/",
   START_NODE_ID: "ironman1",
-  STORAGE_KEY: "watchProgress_v2",
   // Bumped when an asset file is replaced in-place (same filename, new
-  // bytes). The server caches /assets aggressively (max-age: 30d), so a
-  // browser that already fetched an old version will keep using it until
+  // bytes). The server caches /assets for a day in production (max-age:
+  // 1d; the service worker revalidates with cache: 'no-cache'), so a
+  // browser that already fetched an old version can keep using it until
   // this version number changes the URL. Increment this whenever you swap
   // an image/webp under assets/ and want every user to pick it up on
   // their next load.

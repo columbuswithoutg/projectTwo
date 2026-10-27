@@ -8,6 +8,8 @@
  ************************************************/
 const FeedView = (() => {
   let _root = null;
+  // Opaque page cursor from GET /api/feed ("<ms>_<postId>", routes/feed.js):
+  // sent back exactly as received, never parsed or rebuilt here.
   let _nextBefore = null;
   let _loading = false;
   let _friendNames = new Set();
@@ -28,10 +30,8 @@ const FeedView = (() => {
   const HOVER_OPEN_MS = 450;
   const LONG_PRESS_MS = 450;
 
-  const authHeaders = (json) => ({
-    ...(json ? { 'Content-Type': 'application/json' } : {}),
-    Authorization: `Bearer ${Auth.getToken()}`
-  });
+  // Authorization (and the dead-session → /login redirect) is Auth.fetch's job.
+  const authHeaders = (json) => (json ? { 'Content-Type': 'application/json' } : {});
 
   function timeAgo(date) {
     const s = Math.max(0, (Date.now() - new Date(date).getTime()) / 1000);
@@ -53,8 +53,10 @@ const FeedView = (() => {
   function avatar(user, size) {
     const name = user?.username || '?';
     const cls = `feed-avatar feed-avatar-${size}`;
+    // avatarImgHtml (js/utils.js): a portrait that 404s (isaiah.jpg) turns
+    // into the same initial span instead of a broken-image icon.
     return user?.profilePicture
-      ? `<img class="${cls}" src="${esc(profilePicUrl(user.profilePicture))}" alt="" loading="lazy" />`
+      ? avatarImgHtml(profilePicUrl(user.profilePicture), name, cls)
       : `<span class="${cls}" aria-hidden="true">${esc(name[0].toUpperCase())}</span>`;
   }
 
@@ -359,7 +361,7 @@ const FeedView = (() => {
       paint();
       const seq = ++requestSeq;
       try {
-        const res = await fetch(`${API}/feed/${post.id}/reaction`, {
+        const res = await Auth.fetch(`${API}/feed/${post.id}/reaction`, {
           method: 'PUT',
           headers: authHeaders(true),
           body: JSON.stringify({ type })
@@ -515,7 +517,7 @@ const FeedView = (() => {
       const [removed] = post.comments.splice(idx, 1);
       rerender();
       try {
-        const res = await fetch(`${API}/feed/${post.id}/comments/${id}`, { method: 'DELETE', headers: authHeaders() });
+        const res = await Auth.fetch(`${API}/feed/${post.id}/comments/${id}`, { method: 'DELETE', headers: authHeaders() });
         if (!res.ok) throw new Error();
       } catch (_) {
         post.comments.splice(idx, 0, removed);
@@ -533,7 +535,7 @@ const FeedView = (() => {
       send.disabled = true;
       input.disabled = true;
       try {
-        const res = await fetch(`${API}/feed/${post.id}/comments`, {
+        const res = await Auth.fetch(`${API}/feed/${post.id}/comments`, {
           method: 'POST',
           headers: authHeaders(true),
           body: JSON.stringify({ text })
@@ -599,7 +601,7 @@ const FeedView = (() => {
     more.hidden = true;
     const url = `${API}/feed${_nextBefore ? `?before=${encodeURIComponent(_nextBefore)}` : ''}`;
     try {
-      const res = await fetch(url, { headers: authHeaders() });
+      const res = await Auth.fetch(url, { headers: authHeaders() });
       if (!res.ok) throw new Error();
       const data = await res.json();
       if (seq !== _seq) return;
@@ -673,10 +675,9 @@ const FeedView = (() => {
 
     // The friends panel can accept watch-party requests, which save the
     // viewer's progress — make sure it's loaded first so that save can't
-    // overwrite the account with a near-empty list.
-    const stateReady = (WatchOrderView._initialized || AppView._initialized)
-      ? Promise.resolve()
-      : state.load().then(() => { WatchOrderView._initialized = true; AppView._initialized = true; });
+    // overwrite the account with a near-empty list. ensureLoaded: once per
+    // user, shared with an in-flight load, and retried if it failed.
+    const stateReady = state.ensureLoaded();
 
     const friendsReady = Friends.getList()
       .then(list => { if (Array.isArray(list)) _friendNames = new Set(list.map(f => f.username)); })

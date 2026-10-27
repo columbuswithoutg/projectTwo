@@ -57,6 +57,15 @@ const FriendView = (() => {
     if (seq !== _enterSeq) return null;
     if (!data || data.error) return null;
 
+    // Our own progress must be in state.data BEFORE we snapshot it: on a
+    // deep link to /friend/x the boot-time load can still be in flight, and
+    // a snapshot of the half-empty map is what exit() would restore —
+    // blanking our progress until reload. ensureLoaded shares that in-flight
+    // request. (If a load somehow lands after the swap anyway,
+    // state._applyServer routes it into replaceSaved() below.)
+    try { await state.ensureLoaded(); } catch (_) {}
+    if (seq !== _enterSeq) return null;
+
     // Snapshot current state so exit() can restore.
     _origData = new Map(state.data);
     // Our own timers too — otherwise the friend's chart and map show our
@@ -84,6 +93,15 @@ const FriendView = (() => {
 
     _active = data;
     return data;
+  }
+
+  // Our own server copy arrived while the friend's data is on screen
+  // (state._applyServer while readonly): replace the snapshot exit() will
+  // restore, leaving the friend's swapped-in maps untouched.
+  function replaceSaved(data, sessions) {
+    if (!_active) return;
+    _origData = data;
+    _origSessions = sessions;
   }
 
   function exit() {
@@ -169,5 +187,5 @@ const FriendView = (() => {
     if (back) back.addEventListener('click', () => Router.go('/'));
   }
 
-  return { enter, exit, isActive, getActive, renderHeader, wireHeader, render404 };
+  return { enter, exit, isActive, getActive, replaceSaved, renderHeader, wireHeader, render404 };
 })();

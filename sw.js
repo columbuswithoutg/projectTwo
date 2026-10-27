@@ -104,11 +104,19 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Stale-while-revalidate for images/models and the precached shell files.
+  // The revalidation goes out with cache: 'no-cache' — a conditional request
+  // (ETag / Last-Modified) past the browser HTTP cache. A plain fetch(req)
+  // would be answered by that cache for as long as /assets' max-age (server.js)
+  // and so "revalidate" to the same stale copy, while files like the posters
+  // are rewritten in place under the same name (scripts/optimize-images.mjs).
+  // Unchanged files cost a 304; a changed one lands in the SW cache and shows
+  // on the next load. URLs with ?v=ASSET_VERSION (assetUrl, js/config.js) are
+  // already distinct cache keys here, so the two schemes don't overlap.
   if (url.pathname.startsWith('/assets/') || PRECACHE.includes(url.pathname)) {
     event.respondWith(
       caches.open(CACHE_VERSION).then(async (cache) => {
         const cached = await cache.match(req);
-        const networkFetch = fetch(req).then((res) => {
+        const networkFetch = fetch(req, { cache: 'no-cache' }).then((res) => {
           if (res && res.status === 200) event.waitUntil(cache.put(req, res.clone()));
           return res;
         });

@@ -36,7 +36,7 @@ const FriendProfileView = {
 
     const initials = friend.username ? friend.username[0].toUpperCase() : '?';
     const avatarHtml = friend.profilePicture
-      ? `<img class="friend-profile-avatar" src="${safe(profilePicUrl(friend.profilePicture))}" alt="" loading="lazy" />`
+      ? avatarImgHtml(profilePicUrl(friend.profilePicture), friend.username, 'friend-profile-avatar', { fallbackCls: 'friend-profile-initials' })
       : `<div class="friend-profile-avatar friend-profile-initials">${safe(initials)}</div>`;
 
     container.innerHTML = `

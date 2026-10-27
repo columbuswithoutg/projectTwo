@@ -10,9 +10,7 @@ const ProfileView = {
   async championBadges(el, username) {
     if (!el || !username) return;
     try {
-      const res = await fetch(`${API}/world/scene/champions?user=${encodeURIComponent(username)}`, {
-        headers: { Authorization: `Bearer ${Auth.getToken()}` }
-      });
+      const res = await Auth.fetch(`${API}/world/scene/champions?user=${encodeURIComponent(username)}`);
       const data = res.ok ? await res.json() : null;
       const items = (data && Array.isArray(data.items)) ? data.items : [];
       if (!items.length || !el.isConnected) return;
@@ -153,16 +151,24 @@ const ProfileView = {
     const pickerGrid     = document.getElementById('avatar-picker-grid');
     const pickerEmpty    = document.getElementById('avatar-picker-empty');
 
+    function showInitials(username) {
+      avatarImg.style.display = 'none';
+      avatarInitials.textContent = (username || '?')[0].toUpperCase();
+      avatarInitials.style.display = 'flex';
+    }
     function setAvatar(src, username) {
       if (src) {
+        // A portrait file that doesn't exist (isaiah.jpg) falls back to the
+        // initial instead of a broken-image icon. (Property handlers are
+        // fine under the CSP; only inline onerror= attributes are blocked.)
+        avatarImg.onerror = () => showInitials(username);
         avatarImg.src = profilePicUrl(src);
         avatarImg.alt = username;
         avatarImg.style.display = 'block';
         avatarInitials.style.display = 'none';
       } else {
-        avatarImg.style.display = 'none';
-        avatarInitials.textContent = (username || '?')[0].toUpperCase();
-        avatarInitials.style.display = 'flex';
+        avatarImg.onerror = null;
+        showInitials(username);
       }
     }
 
@@ -189,20 +195,29 @@ const ProfileView = {
           btn.setAttribute('aria-pressed', String(src === currentPic));
 
           // Monogram under the portrait — shows when the file is missing.
-          PosterArt.charMount(btn, c, s.image);
+          // ...and a portrait that doesn't load can't be picked: saving it
+          // would put a broken picture on the profile, feed and messages.
+          // The portrait's own <img> is the probe (no second request per
+          // option); PosterArt's capture listener removes it first, but the
+          // event still reaches this target listener.
+          const portrait = PosterArt.charMount(btn, c, s.image, { lazy: false });
+          if (portrait) portrait.addEventListener('error', () => {
+            btn.disabled = true;
+            btn.classList.add('avatar-option-missing');   // styles/legacy/11-profile.css
+            btn.title = `${btn.title} (picture unavailable)`;
+            btn.setAttribute('aria-label', btn.title);
+          }, { once: true });
 
           btn.onclick = async () => {
+            if (btn.disabled) return;
             // A failed save used to do nothing at all (and a network error
             // threw out of the handler) — now it says so and keeps the old pick.
             if (btn.getAttribute('aria-busy') === 'true') return;
             btn.setAttribute('aria-busy', 'true');
             try {
-              const res = await fetch(`${API}/profile/picture`, {
+              const res = await Auth.fetch(`${API}/profile/picture`, {
                 method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${Auth.getToken()}`
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ profilePicture: src })
               });
               let data = null;
@@ -242,9 +257,7 @@ const ProfileView = {
     // Load profile data
     (async () => {
       try {
-        const res = await fetch(`${API}/profile`, {
-          headers: { Authorization: `Bearer ${Auth.getToken()}` }
-        });
+        const res = await Auth.fetch(`${API}/profile`);
         const data = await res.json();
         if (data.error) return;
 
@@ -261,9 +274,7 @@ const ProfileView = {
           coWatcherWrap.style.display = 'block';
         }
 
-        const progRes = await fetch(`${API}/progress/load`, {
-          headers: { Authorization: `Bearer ${Auth.getToken()}` }
-        });
+        const progRes = await Auth.fetch(`${API}/progress/load`);
         const prog = await progRes.json();
         const watchedIds = new Set(
           (prog.watchedProjects || []).filter(e => e.count > 0).map(e => e.projectId)

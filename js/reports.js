@@ -5,16 +5,15 @@
  * a user's own reports (with the admin's replies) is the /reports view.
  ************************************************/
 const Reports = (() => {
-  const headers = (json) => ({
-    ...(json ? { 'Content-Type': 'application/json' } : {}),
-    Authorization: `Bearer ${Auth.getToken()}`
-  });
+  // Authorization is added by Auth.fetch.
+  const headers = (json) => (json ? { 'Content-Type': 'application/json' } : {});
 
+  // A dead session (no token / 401) is Auth.fetch's job: one logout +
+  // redirect to /login; everything else throws the server's error.
   async function call(path, opts = {}) {
-    const res = await fetch(`${API}/reports${path}`, opts);
+    const res = await Auth.fetch(`${API}/reports${path}`, opts);
     let body = null;
     try { body = await res.json(); } catch (_) {}
-    if (res.status === 401) { Auth.logout({ next: location.pathname + location.search }); throw new Error('Session expired'); }
     if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
     return body;
   }

@@ -83,13 +83,11 @@ const CharactersView = {
     }
   },
 
+  // Every view is behind the auth gate, so there is no guest copy to read.
   async _getWatchedIds() {
-    const token = Auth.getToken();
-    if (token) {
+    if (Auth.getToken()) {
       try {
-        const res = await fetch(`${API}/progress/load`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        const res = await Auth.fetch(`${API}/progress/load`);
         if (res.ok) {
           const { watchedProjects } = await res.json();
           const ids = new Set();
@@ -102,17 +100,7 @@ const CharactersView = {
         console.warn('Failed to load from API:', e);
       }
     }
-    try {
-      const saved = JSON.parse(localStorage.getItem('watchProgress_v2') || '{}');
-      const ids = new Set();
-      Object.entries(saved).forEach(([id, val]) => {
-        if (val === true) ids.add(id);
-        else if (val && typeof val === 'object' && val.count > 0) ids.add(id);
-      });
-      return ids;
-    } catch {
-      return new Set();
-    }
+    return new Set();
   },
 
   unmount() {}

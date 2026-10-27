@@ -15,9 +15,35 @@ const WalkerView = (() => {
 
   function set(adapter) { active = adapter; }
   function get() { return active; }
-  function has() { return !!active; }
 
-  return { set, get, has };
+  // When did the user last touch the camera's inputs? One document-level
+  // capture listener serves both views: the chart's PanZoom and the map
+  // renderer each run their own pointer handling, and this only has to
+  // know "someone is using the page", not what the gesture does. A bare
+  // hover doesn't count — only a press, a drag, a wheel, a touch or a key.
+  let lastInputAt = -Infinity;
+  if (typeof document !== 'undefined') {
+    const note = () => { lastInputAt = performance.now(); };
+    const opt = { capture: true, passive: true };
+    ['pointerdown', 'wheel', 'touchstart', 'touchmove', 'keydown'].forEach(ev => document.addEventListener(ev, note, opt));
+    document.addEventListener('pointermove', (e) => { if (e.buttons) note(); }, opt);
+  }
+
+  // May walker code move the camera to (x, y) (view units) now? Policy in
+  // PanZoomLogic.shouldFrame: not mid-drag/pinch, not within a few seconds
+  // of input, and an encounter only when its point is already on screen.
+  function mayFrame(kind, x, y) {
+    if (!active) return false;
+    return PanZoomLogic.shouldFrame({
+      kind,
+      now: performance.now(),
+      lastInputAt,
+      isPanning: !!(active.isUserPanning && active.isUserPanning()),
+      onScreen: !!(active.isOnScreen && active.isOnScreen(x, y)),
+    });
+  }
+
+  return { set, get, mayFrame, lastInputAt: () => lastInputAt };
 })();
 
 // ─── Map Adapter ───────────────────────────────────────────────────────
@@ -38,14 +64,20 @@ const MapWalkerAdapter = {
   layoutVersion: () => getLayoutVersion(),
 
   // Camera / fight-zoom — real on the map.
-  wrapper: () => renderer.wrapper,
   worldZoom: () => renderer.worldZoom,
-  panX: () => renderer.panX,
-  panY: () => renderer.panY,
-  isCameraLocked: () => renderer.cameraLocked,
-  setCameraLocked: (v) => { renderer.cameraLocked = v; },
   setCamera: (...args) => renderer._setCamera(...args),
-  cancelTween: () => renderer._cancelTween?.(),
+
+  // Framing guards (WalkerView.mayFrame). The renderer marks a mouse/touch
+  // drag with .panning on the wrapper; a still-held pinch is covered by the
+  // input-recency check. World → screen is panX + x × worldZoom.
+  isUserPanning: () => !!renderer.wrapper?.classList.contains('panning'),
+  isOnScreen(x, y) {
+    const w = renderer.wrapper;
+    if (!w) return false;
+    const z = renderer.worldZoom || 1;
+    return PanZoomLogic.pointInView((renderer.panX || 0) + x * z, (renderer.panY || 0) + y * z,
+      { left: 0, top: 0, width: w.clientWidth, height: w.clientHeight });
+  },
 
   // Centre the viewport on a single point — used by dialogue framing.
   // Map: pan camera (gentle min-zoom of 0.9 like the original behaviour).
@@ -106,9 +138,22 @@ const MapWalkerAdapter = {
     }, 520);
     renderer.cameraLocked = false;
   },
-
-  // Identity — used by walkers to gate map-only features (fight zoom, etc.)
-  isMap: true,
+  // Synchronous release for teardown (Walkers.destroy mid-fight): no
+  // animation, no timer that would outlive the page. Always unlocks the
+  // camera, even if #map-container is already gone.
+  resetZoom() {
+    if (this._releaseTimer) {
+      clearTimeout(this._releaseTimer);
+      this._releaseTimer = null;
+    }
+    const container = renderer.mapContainer;
+    if (container) {
+      container.style.transform = '';
+      container.style.transformOrigin = '';
+      container.style.transition = '';
+    }
+    renderer.cameraLocked = false;
+  },
 };
 
 // ─── Flow Adapter ──────────────────────────────────────────────────────
@@ -144,17 +189,24 @@ const FlowWalkerAdapter = {
   layoutVersion: () => getLayoutVersion(),
 
   // No persistent camera on the flow view — flow uses native scroll. The
-  // wrapper/zoom/pan accessors return safe defaults so legacy fight code
-  // doesn't NaN out, but the actual fight zoom is implemented via
-  // zoomToCluster below.
-  wrapper: () => null,
+  // zoom/camera accessors are safe defaults so shared walker code doesn't
+  // NaN out; the actual fight zoom is implemented via zoomToCluster below.
   worldZoom: () => 1,
-  panX: () => 0,
-  panY: () => 0,
-  isCameraLocked: () => false,
-  setCameraLocked: () => {},
   setCamera: () => {},
-  cancelTween: () => {},
+
+  // Framing guards (WalkerView.mayFrame): the chart's PanZoom knows about
+  // drags and pinches; canvas units × the user's zoom = scroll pixels.
+  isUserPanning: () => {
+    const pz = typeof orderRenderer !== 'undefined' && orderRenderer._panZoom;
+    return !!(pz && (pz.isPanning() || pz.isPinching()));
+  },
+  isOnScreen(x, y) {
+    const w = document.querySelector('.flow-wrapper');
+    if (!w) return false;
+    const z = (typeof orderRenderer !== 'undefined' && orderRenderer.zoom) || 1;
+    return PanZoomLogic.pointInView(x * z, y * z,
+      { left: w.scrollLeft, top: w.scrollTop, width: w.clientWidth, height: w.clientHeight });
+  },
 
   // Centre the flow viewport on (x, y) via smooth scroll. Fight zoom is
   // off (no transform applied) so the scroll happens in regular canvas
@@ -265,8 +317,37 @@ const FlowWalkerAdapter = {
       }
     }, 520);
   },
-
-  isMap: false,
+  // Synchronous release for teardown (Walkers.destroy mid-fight). The fight
+  // transform sits on .flow-zoom and .fight-zoom on .flow-wrapper, not on
+  // container() (.flow-walkers), so both are undone here; the stashed scroll
+  // is put back and dropped so it can't leak into the next mount's fight.
+  resetZoom() {
+    if (this._releaseTimer) {
+      clearTimeout(this._releaseTimer);
+      this._releaseTimer = null;
+    }
+    const saved = this._savedScroll;
+    this._savedScroll = null;
+    const wrapper = document.querySelector('.flow-wrapper');
+    const canvas = document.querySelector('.flow-zoom') || document.querySelector('.flow-canvas');
+    if (wrapper) {
+      wrapper.classList.remove('fight-zoom');
+      if (saved) {
+        wrapper.scrollLeft = saved.left;
+        wrapper.scrollTop = saved.top;
+      }
+    }
+    if (canvas) {
+      canvas.style.transition = '';
+      // Same hand-back as releaseZoom: the renderer re-applies the user's
+      // zoom now that .fight-zoom is off.
+      if (typeof orderRenderer !== 'undefined' && orderRenderer._applyZoom) {
+        orderRenderer._applyZoom();
+      } else {
+        canvas.style.transform = '';
+      }
+    }
+  },
 };
 
 // Per-node clusters for the flow view. AABB matches the visible node
@@ -302,8 +383,10 @@ function buildFlowClusterRects() {
   return rects;
 }
 
-// Roads = prerequisite edges, routed rook-style by RoadRouter exactly as
-// orderRenderer.renderArrows draws them (same view, same corner radius).
+// Roads = prerequisite edges, routed rook-style by RoadRouter. The polylines
+// come from orderRenderer.flowRoads() — the same call renderArrows draws
+// from — and are sampled with the same corner radius, so walkers walk the
+// drawn roads (test/flow-roads.test.js).
 // Walker physics expects a Map<edgeKey, road> of sampled roads: points with
 // cumulative length, tangent (tx, ty) and normal (nx, ny) — the shape
 // LayoutSystem.sampleAt walks. Ends sit on the node boxes, where openings
@@ -311,16 +394,8 @@ function buildFlowClusterRects() {
 function buildFlowRoadGeometry() {
   const roads = new Map();
   if (!orderRenderer || !orderRenderer.nodeElements || typeof RoadRouter === 'undefined') return roads;
-  const routes = RoadRouter.route(projects);
-  const view = orderRenderer._roadView();
-
-  routes.roads.forEach(r => {
+  orderRenderer.flowRoads().forEach(({ road: r, points: pts }) => {
     if (!r.required) return;   // dashed trails aren't walkable roads
-    const parent = state.byId?.get(r.fromId);
-    const child = state.byId?.get(r.toId);
-    if (!parent || !child) return;
-    if (!orderRenderer._isShown(parent) || !orderRenderer._isShown(child)) return;
-    const pts = RoadRouter.toView(r, view).points;
     const { samples, length } = RoadRouter.samplePolyline(pts, ORDER_CELL.roadRadius);
     if (samples.length < 2 || length <= 0) return;
     const first = samples[0], last = samples[samples.length - 1];

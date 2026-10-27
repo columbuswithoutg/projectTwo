@@ -188,10 +188,18 @@ const BoardView = (() => {
     });
     if (focused) board.querySelector(`select[data-filter="${focused}"]`)?.focus();
 
+    // One card whose controls throw (odd data after an admin edit) must not
+    // leave every later card without buttons — log once per render, move on.
+    let controlsFailed = false;
     board.querySelectorAll('.kb-card').forEach(card => {
       const p = state.byId.get(card.dataset.id);
       if (!p) return;
-      WatchControls.mount(card.querySelector('.kb-controls'), p, { capHint: false });
+      try {
+        WatchControls.mount(card.querySelector('.kb-controls'), p, { capHint: false });
+      } catch (err) {
+        if (!controlsFailed) console.error('[board] watch controls failed for', p.id, err);
+        controlsFailed = true;
+      }
       card.querySelector('.kb-poster').addEventListener('click', () => showPopup(p));
       card.querySelector('.kb-title').addEventListener('click', () => showPopup(p));
     });
@@ -368,11 +376,9 @@ const BoardView = (() => {
     container.querySelector('.kb-board').addEventListener('pointerdown', onPointerDown);
     initHeaderAvatar();
 
-    if (!(WatchOrderView._initialized || AppView._initialized)) {
-      await state.load();
-      WatchOrderView._initialized = true;
-      AppView._initialized = true;
-    }
+    // Once per user, shared with an in-flight load, retried after a failure
+    // (the old view-flag gate marked a FAILED deep-link load as done).
+    await state.ensureLoaded();
     if (seq !== _seq) return;
     // Re-derive phaseNum/unlocks — boot.js may have swapped in the DB copy.
     state.initProjects(projects);
@@ -387,5 +393,5 @@ const BoardView = (() => {
     _root = null;
   }
 
-  return { title: 'Board — MCU Tracker', mount, unmount, _transition: transition };
+  return { title: 'Board — MCU Tracker', mount, unmount };
 })();

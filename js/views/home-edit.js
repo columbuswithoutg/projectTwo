@@ -31,6 +31,7 @@ const HomeEditView = (() => {
   // The saved layout couldn't be read: Save stays off — saving the empty
   // working copy would wipe every room the player had placed.
   let _loadFailed = false;
+  let _mountSeq = 0;   // bumped by mount/unmount; a stale _load() bails (see friend-home.js)
 
   // ── public API ──
 
@@ -40,6 +41,7 @@ const HomeEditView = (() => {
       return;
     }
     _container = container;
+    _mountSeq++;
     container.innerHTML = `
       <header class="pg-header">
         <button id="pg-edit-back" type="button" title="Back">← Back</button>
@@ -56,6 +58,7 @@ const HomeEditView = (() => {
   }
 
   function unmount() {
+    _mountSeq++;
     _container = null;
     _layout = [];
     _initialJson = null;
@@ -69,22 +72,28 @@ const HomeEditView = (() => {
   // ── data load ──
 
   async function _load() {
+    // A slow answer for an earlier mount (Back, then into the editor again)
+    // must not write its layout / unsaved-changes baseline into this one.
+    const myMount = _mountSeq;
     let layout = { rooms: [] };
     let serverIds = null;
-    _loadFailed = false;
+    let failed = false;
+    let maxRooms = 0, watchedCount = 0;
     try {
-      const res = await fetch(`${API}/profile/home-layout`, {
-        headers: { Authorization: `Bearer ${Auth.getToken()}` }
-      });
-      if (!res.ok) _loadFailed = true;
+      const res = await Auth.fetch(`${API}/profile/home-layout`);
+      if (!res.ok) failed = true;
       if (res.ok) {
         const data = await res.json();
         layout = data.homeLayout || { rooms: [] };
-        _maxRooms = data.maxRooms || 0;
-        _watchedCount = data.watchedCount || 0;
+        maxRooms = data.maxRooms || 0;
+        watchedCount = data.watchedCount || 0;
         if (Array.isArray(data.watchedIds)) serverIds = data.watchedIds;
       }
-    } catch (_) { _loadFailed = true; }
+    } catch (_) { failed = true; }
+    if (myMount !== _mountSeq) return;
+    _loadFailed = failed;
+    _maxRooms = maxRooms;
+    _watchedCount = watchedCount;
 
     _layout = (layout.rooms || []).map(r => ({
       projectId: r.projectId, gx: r.gx | 0, gy: r.gy | 0
@@ -125,7 +134,9 @@ const HomeEditView = (() => {
   }
 
   function _imageUrl(project) {
-    return project && project.image ? `${CONFIG.IMAGE_BASE}${project.image}` : '';
+    // Through assetUrl (?v=ASSET_VERSION) like every other poster, so an
+    // image replaced in place isn't served stale from the 30-day cache.
+    return project && project.image ? assetUrl(CONFIG.IMAGE_BASE + project.image) : '';
   }
 
   function _isConnected(rooms) {
@@ -255,7 +266,6 @@ const HomeEditView = (() => {
     const panel = document.getElementById('pg-edit-panel');
     if (!panel) return;
     const remaining = Math.max(0, _maxRooms - _layout.length);
-    const lockedCount = Math.max(0, Math.ceil((_watchedIds.length === _watchedCount ? _watchedCount : _watchedIds.length) / 2) - _maxRooms); // future capacity
     const available = _availableProjects();
 
     // "Locked slot" helper — how many more watches until the next room.
@@ -422,12 +432,9 @@ const HomeEditView = (() => {
     _saving = true;
     _renderPanel();
     try {
-      const res = await fetch(`${API}/profile/home-layout`, {
+      const res = await Auth.fetch(`${API}/profile/home-layout`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${Auth.getToken()}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rooms: _layout })
       });
       const data = await res.json().catch(() => ({}));

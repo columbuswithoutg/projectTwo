@@ -60,7 +60,9 @@ class MapRenderer {
 
     this.setupEventDelegation();
     this.setupNavigationControls();
-    this.renderContinents();
+    // (No continents layer: the Earth band is intentionally empty — the
+    // #world-continents element's CSS ocean is all there is, and location
+    // cards already sit at real equirectangular coords.)
     this.renderRegionGlows();
     this.renderClusterLabels();
 
@@ -176,6 +178,12 @@ class MapRenderer {
     });
 
     on(wrapper, "pointermove", (e) => {
+      // A mouse released outside the window never sends pointerup here: the
+      // first move back with no button held ends the drag (as PanZoom does).
+      if (e.pointerType === "mouse" && e.buttons === 0 && activePointers.has(e.pointerId)) {
+        endPointer(e);
+        return;
+      }
       if (this.cameraLocked) return;
       if (!activePointers.has(e.pointerId)) return;
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -232,6 +240,19 @@ class MapRenderer {
     };
     on(wrapper, "pointerup", endPointer);
     on(wrapper, "pointercancel", endPointer);
+    // Alt-Tab / a dialog mid-drag: no pointerup will come, so drop every
+    // press rather than resume panning on the next unrelated move.
+    on(window, "blur", () => {
+      for (const id of activePointers.keys()) {
+        try { wrapper.releasePointerCapture(id); } catch (_) {}
+      }
+      activePointers.clear();
+      lastPinchDist = null;
+      panning = false;
+      dragged = false;
+      wrapper.classList.remove("panning");
+      this.viewport.classList.remove("interacting");
+    });
 
     // Keyboard navigation
     on(window, "keydown", (e) => {
@@ -794,20 +815,6 @@ class MapRenderer {
     });
     this.glowsContainer.appendChild(frag);
     this._glowsVersion = version;
-  }
-
-  renderContinents() {
-    // Earth band is intentionally empty — no continents, no satellite
-    // image. The #world-continents element carries a sky-blue ocean
-    // background in CSS; every location card sits on top of it like an
-    // island. Location worldX/worldY values already use real-world
-    // equirectangular coords, so cards land at geographically honest
-    // positions (NYC where NYC should be, Tokyo where Tokyo should be)
-    // without needing a painted landmass underneath.
-    //
-    // This function is kept as a no-op so the init path in init() still
-    // finds something to call; the renderContinents → re-init contract
-    // is preserved for any future return of a painted layer.
   }
 
   updatePhaseIndicator() {

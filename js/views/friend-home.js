@@ -127,12 +127,18 @@ const FriendHomeView = (() => {
       }
       if (!_mp || !_mp.getSocket) return;
       _voiceBtn.classList.remove('listen-only', 'voice-error');
-      _voice = VoiceManager.start({
+      // onError can fire synchronously inside start() (no WebRTC / no
+      // mediaDevices — any non-https origin such as a phone on the LAN IP)
+      // and then start() returns a noop handle. Same pattern as world.js:
+      // don't keep that handle or paint "on" over the error state.
+      let sawError = false;
+      const handle = VoiceManager.start({
         socket: _mp.getSocket(),
         scope: 'home',
         getLocalState: () => Playground3D.getLocalState && Playground3D.getLocalState(),
         getRemotePlayers: () => Playground3D.getRemotePlayers && Playground3D.getRemotePlayers(),
         onError: (msg) => {
+          sawError = true;
           _voiceBtn.classList.remove('listen-only');
           _voiceBtn.classList.add('voice-error');
           _voiceBtn.setAttribute('aria-pressed', 'false');
@@ -165,6 +171,8 @@ const FriendHomeView = (() => {
           }
         }
       });
+      if (sawError) return;
+      _voice = handle;
       _voiceBtn.setAttribute('aria-pressed', 'true');
       _voiceBtn.title = 'Voice chat (on) — click to mute, right-click for diagnostics';
     };

@@ -103,16 +103,19 @@ const HomeView = {
     HomeView._homeRoof = homeRoof;
     HomeView._houseMaxProps = houseMaxProps;
 
+    // First visit with no character yet: go straight to the builder (now
+    // the /customize page) BEFORE booting the 3D engine or joining the home
+    // room — doing those first only to navigate away at once built a scene
+    // and opened a socket for nothing. Guarded so cancelling there (which
+    // returns here still "fresh") doesn't bounce the user back in a loop.
+    if (isFresh && !HomeView._firstVisitPrompted) {
+      HomeView._firstVisitPrompted = true;
+      HomeView._openBuilder({ firstTime: true });
+      return;
+    }
+
     if (!layout.rooms || layout.rooms.length === 0) {
       HomeView._renderEmptyHome();
-      // Open the character builder on the first visit so users still get
-      // the "make your character" moment even when there are no rooms yet.
-      // Builder is now the /customize page; guard so cancelling there (which
-      // returns here still "fresh") doesn't bounce the user back in a loop.
-      if (isFresh && !HomeView._firstVisitPrompted) {
-        HomeView._firstVisitPrompted = true;
-        HomeView._openBuilder({ firstTime: true });
-      }
       return;
     }
 
@@ -144,16 +147,12 @@ const HomeView = {
       HomeView._mp = Multiplayer.start({
         events: Multiplayer.HOME_EVENTS,
         joinPayload: { ownerUsername: Auth.getUsername() },
-        character: localChar
+        character: localChar,
+        onKicked: HomeView._onKicked
       });
     }
 
     HomeView._wireVoiceToggle();
-
-    if (isFresh && !HomeView._firstVisitPrompted) {
-      HomeView._firstVisitPrompted = true;
-      HomeView._openBuilder({ firstTime: true });
-    }
   },
 
   _wireVoiceToggle() {
@@ -184,12 +183,18 @@ const HomeView = {
       }
       if (!HomeView._mp || !HomeView._mp.getSocket) return;
       btn.classList.remove('listen-only', 'voice-error');
-      HomeView._voice = VoiceManager.start({
+      // onError can fire synchronously inside start() (no WebRTC / no
+      // mediaDevices — any non-https origin such as a phone on the LAN IP)
+      // and then start() returns a noop handle. Same pattern as world.js:
+      // don't keep that handle or paint "on" over the error state.
+      let sawError = false;
+      const handle = VoiceManager.start({
         socket: HomeView._mp.getSocket(),
         scope: 'home',
         getLocalState: () => Playground3D.getLocalState && Playground3D.getLocalState(),
         getRemotePlayers: () => Playground3D.getRemotePlayers && Playground3D.getRemotePlayers(),
         onError: (msg) => {
+          sawError = true;
           btn.classList.remove('listen-only');
           btn.classList.add('voice-error');
           btn.setAttribute('aria-pressed', 'false');
@@ -223,6 +228,8 @@ const HomeView = {
           }
         }
       });
+      if (sawError) return;
+      HomeView._voice = handle;
       btn.setAttribute('aria-pressed', 'true');
       btn.title = 'Voice chat (on) — click to mute, right-click for diagnostics';
     };
@@ -390,9 +397,34 @@ const HomeView = {
     return !HomeView.isDirty() || Router.confirmLeave('Your room design hasn’t been saved.');
   },
 
+  // Home opened in another tab retired this one. Same as /world: with a
+  // room design open, don't push through canLeave() (a "keep editing"
+  // stranded a dead room) — drop voice + the socket now, keep the editor
+  // (it saves over HTTP) and offer a Leave in a sticky toast.
+  _onKicked({ dest }) {
+    if (!HomeView.isDirty()) { Router.go(dest); return; }
+    if (HomeView._voice) { try { HomeView._voice.stop(); } catch (_) {} HomeView._voice = null; }
+    if (HomeView._voiceBtn) {
+      HomeView._voiceBtn.classList.remove('listen-only', 'voice-error');
+      HomeView._voiceBtn.setAttribute('aria-pressed', 'false');
+      HomeView._voiceBtn.title = 'Voice chat (off)';
+    }
+    if (HomeView._mp) { try { HomeView._mp.stop(); } catch (_) {} HomeView._mp = null; }
+    if (Playground3D.clearRemotePlayers) Playground3D.clearRemotePlayers();
+    if (HomeView._kickNotice) { try { HomeView._kickNotice(); } catch (_) {} }
+    HomeView._kickNotice = (typeof toast === 'function')
+      ? toast('You were disconnected — reopen your home to rejoin.', {
+          type: 'warn',
+          duration: 0,
+          action: { label: 'Leave', onClick: () => Router.go(dest) }
+        })
+      : null;
+  },
+
   unmount() {
     HomeView._loadSeq = (HomeView._loadSeq || 0) + 1;   // cancel an in-flight _loadAndStart
     HomeView._closeEditMenu();
+    if (HomeView._kickNotice) { try { HomeView._kickNotice(); } catch (_) {} HomeView._kickNotice = null; }
     if (HomeView._roomEditorClose) { try { HomeView._roomEditorClose(); } catch (_) {} HomeView._roomEditorClose = null; }
     if (HomeView._onDocClick) {
       document.removeEventListener('click', HomeView._onDocClick);

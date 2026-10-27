@@ -38,16 +38,22 @@ const Router = (() => {
   // or null. Patterns and paths are compared segment-by-segment; `:name`
   // segments capture into params. No regex, no nested catch-alls — flat
   // patterns only, which is all the SPA needs.
-  function matchPattern(path) {
+  // Pure (takes the route list) so test/router-match.test.js can drive it.
+  function matchPatternIn(routes, path) {
     const pathParts = path.split('/');
-    for (const r of patternRoutes) {
+    for (const r of routes) {
       if (r.parts.length !== pathParts.length) continue;
       const params = {};
       let ok = true;
       for (let i = 0; i < r.parts.length; i++) {
         const seg = r.parts[i];
         if (seg.startsWith(':')) {
-          const value = decodeURIComponent(pathParts[i] || '');
+          // A malformed escape (/friend/%E0%A4%A — the server still serves
+          // the SPA for it) throws URIError; uncaught it rejected navigate(),
+          // nothing mounted and the page stayed blank. Treat it as no match
+          // so the unknown-route fallback sends the visitor to /.
+          let value;
+          try { value = decodeURIComponent(pathParts[i] || ''); } catch (_) { value = ''; }
           if (!value) { ok = false; break; }
           params[seg.slice(1)] = value;
         } else if (seg !== pathParts[i]) {
@@ -57,6 +63,25 @@ const Router = (() => {
       if (ok) return { route: r, params };
     }
     return null;
+  }
+  function matchPattern(path) { return matchPatternIn(patternRoutes, path); }
+
+  // Split a raw URL into the bare route path plus the query + hash kept for
+  // the address bar: trailing slashes dropped (except the root "/"), the
+  // .html suffix and the synthetic /index path folded into their route.
+  function normalizePath(raw) {
+    let path = String(raw == null ? '' : raw);
+    let search = '', hash = '';
+    const hIdx = path.indexOf('#');
+    if (hIdx !== -1) { hash = path.slice(hIdx); path = path.slice(0, hIdx); }
+    const qIdx = path.indexOf('?');
+    if (qIdx !== -1) { search = path.slice(qIdx); path = path.slice(0, qIdx); }
+    if (search === '?') search = '';
+    if (hash === '#') hash = '';
+    if (path.length > 1) path = path.replace(/\/+$/, '');
+    if (path.endsWith('.html')) path = path.slice(0, -5);
+    if (path === '' || path === '/index' || path === '/index.html') path = '/';
+    return { path, search, hash };
   }
 
   function init(containerId) {
@@ -144,19 +169,9 @@ const Router = (() => {
     // Route on the bare path, but keep the query + hash for the address bar:
     // views read location.search (/messages?with=…, /reports?report=…), and
     // pushing the stripped path used to drop it on every in-app link.
-    let search = '', hash = '';
-    const hIdx = path.indexOf('#');
-    if (hIdx !== -1) { hash = path.slice(hIdx); path = path.slice(0, hIdx); }
-    const qIdx = path.indexOf('?');
-    if (qIdx !== -1) { search = path.slice(qIdx); path = path.slice(0, qIdx); }
-    if (search === '?') search = '';
-    if (hash === '#') hash = '';
-
-    // Drop trailing slashes (except for the root "/") so "/profile/" → "/profile".
-    if (path.length > 1) path = path.replace(/\/+$/, '');
-    // Strip .html suffix and the synthetic /index path.
-    if (path.endsWith('.html')) path = path.slice(0, -5);
-    if (path === '' || path === '/index' || path === '/index.html') path = '/';
+    const norm = normalizePath(path);
+    path = norm.path;
+    const search = norm.search, hash = norm.hash;
     const fullUrl = path + search + hash;
 
     // Leave guard: a view with unsaved work (customize, home editor, the
@@ -317,12 +332,6 @@ const Router = (() => {
     return navigate(fallback || '/', true, { replace: true });
   }
 
-  // Does the mounted view hold unsaved work? (The service-worker update
-  // prompt asks before reloading.)
-  function currentIsDirty() {
-    try { return !!(currentView && currentView.isDirty && currentView.isDirty()); } catch (_) { return false; }
-  }
-
   // Shared "Discard changes?" for views' canLeave(): resolves true to leave.
   function confirmLeave(message) {
     if (typeof confirmDialog !== 'function') return Promise.resolve(true);
@@ -335,5 +344,8 @@ const Router = (() => {
     });
   }
 
-  return { register, init, navigate, go, back, confirmLeave, firstMount, currentIsDirty, isLoading: () => _loading > 0 };
+  return { register, init, navigate, go, back, confirmLeave, firstMount,
+    _debug: { normalizePath, matchPatternIn } };
 })();
+// Node (test/router-match.test.js) only — the browser chunk has no `module`.
+if (typeof module !== 'undefined' && module.exports) module.exports = Router;

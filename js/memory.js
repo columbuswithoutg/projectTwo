@@ -17,6 +17,9 @@ function uploadMemoryFile(file, { onProgress, onProcessing } = {}) {
     };
     xhr.upload.onload = () => { if (onProgress) onProgress(1); if (onProcessing) onProcessing(); };
     xhr.onload = () => {
+      // XHR bypasses Auth.fetch: a dead session still goes to /login once
+      // (the returned promise never settles) instead of an upload error toast.
+      if (xhr.status === 401) { Auth.endSession(); return; }
       try {
         const json = JSON.parse(xhr.responseText || '{}');
         if (xhr.status >= 200 && xhr.status < 300 && json.url) resolve({ url: json.url, type: json.type });
@@ -120,12 +123,9 @@ async function showAddMemoryModal(project) {
         onProcessing: () => progressWrap.classList.add('processing')
       });
 
-      const saveRes = await fetch(`${API}/progress/memory`, {
+      const saveRes = await Auth.fetch(`${API}/progress/memory`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${Auth.getToken()}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: project.id, url, type, caption })
       });
       // The save used to be trusted blindly: a cap / validation error closed

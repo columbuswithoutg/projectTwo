@@ -7,8 +7,8 @@ class WatchState {
     this.byId = new Map();
     this.listeners = new Set();
     // When true, mutations don't persist. Set while the user is viewing a
-    // friend's progress so accidental watchAgain/toggle/walker edits can't
-    // PUT the friend's data to the current user's account.
+    // friend's progress so an accidental start/complete/cancel can't act on
+    // the current user's account with the friend's board on screen.
     this.readonly = false;
     // In-progress watches (board "In progress" column), keyed by projectId:
     // { episode, startedAt: ms|null, rewatch }. Server-owned — only changed
@@ -23,125 +23,63 @@ class WatchState {
   // progress API as the source of truth, then re-render.
   _applyServer(payload, { notify = true } = {}) {
     if (!payload || !Array.isArray(payload.watchedProjects)) return;
-    this.data.clear();
-    payload.watchedProjects.forEach(entry => this.data.set(entry.projectId, {
-      count: entry.count,
-      watchedWith: entry.watchedWith || [],
-      memories: entry.memories || [],
-      lastWatchedAt: entry.lastWatchedAt ? new Date(entry.lastWatchedAt).getTime() : null
-    }));
-    this.sessions.clear();
-    (payload.watchSessions || []).forEach(s => this.sessions.set(s.projectId, {
-      episode: s.episode || 0,
-      startedAt: s.startedAt ? new Date(s.startedAt).getTime() : null,
-      rewatch: !!s.rewatch
-    }));
+    // While a friend's progress is on screen (FriendView swapped it into
+    // this.data and set readonly), OUR server copy must not overwrite it —
+    // and must not be lost either: FriendView.exit() restores its saved
+    // snapshot, so hand the payload to FriendView to fold into that
+    // snapshot instead. (A load still in flight when the friend page opened
+    // used to land here, wipe the friend's map, and then be discarded by
+    // exit() — blanking our own progress until reload.)
+    if (this.readonly && typeof FriendView !== 'undefined' && FriendView.isActive()) {
+      const data = new Map(), sessions = new Map();
+      this._fillFromServer(payload, data, sessions);
+      FriendView.replaceSaved(data, sessions);
+      if (Number.isFinite(payload.serverNow)) this.clockOffset = payload.serverNow - Date.now();
+      return;
+    }
+    this._fillFromServer(payload, this.data, this.sessions);
     if (Number.isFinite(payload.serverNow)) this.clockOffset = payload.serverNow - Date.now();
     this.byId.forEach(p => { p.watched = this.isWatched(p.id); });
     if (notify) this.listeners.forEach(fn => fn(this.data));
   }
 
+  // Server payload → the given data / sessions maps (cleared first).
+  _fillFromServer(payload, data, sessions) {
+    data.clear();
+    payload.watchedProjects.forEach(entry => data.set(entry.projectId, {
+      count: entry.count,
+      watchedWith: entry.watchedWith || [],
+      memories: entry.memories || [],
+      lastWatchedAt: entry.lastWatchedAt ? new Date(entry.lastWatchedAt).getTime() : null
+    }));
+    sessions.clear();
+    (payload.watchSessions || []).forEach(s => sessions.set(s.projectId, {
+      episode: s.episode || 0,
+      startedAt: s.startedAt ? new Date(s.startedAt).getTime() : null,
+      rewatch: !!s.rewatch
+    }));
+  }
+
   async load() {
-    if (Auth.isLoggedIn()) {
-      try {
-        const res = await fetch(`${API}/progress/load`, {
-          headers: { Authorization: `Bearer ${Auth.getToken()}` }
-        });
-        if (res.ok) {
-          this._applyServer(await res.json(), { notify: false });
-          this.loadFailed = false;
-          return;
-        }
-      } catch (e) {
-        console.warn("Progress load failed:", e);
-      }
-      // Never fall back to localStorage for a logged-in user: it's usually
-      // empty, and the next save would overwrite the real server copy with it.
-      // Block saves until a successful load.
-      this.loadFailed = true;
-      toast("Couldn't load your progress. Changes won't be saved until you reload.", { type: 'error', duration: 6000 });
-      return;
-    }
+    // Every view is behind the auth gate, so there is no guest copy to load.
+    // sessionExpired(): the token ran out in this tab — still a signed-in
+    // user, so take the server path and let Auth.fetch send them to /login.
+    if (!Auth.isLoggedIn() && !Auth.sessionExpired()) return;
     try {
-      const saved = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY) || "{}");
-      Object.entries(saved).forEach(([id, val]) => {
-        if (typeof val === 'boolean') {
-          if (val) this.data.set(id, { count: 1, memories: [] });
-        } else {
-          this.data.set(id, val);
-        }
-      });
-    } catch (e) {
-      console.warn("Failed to load:", e);
-    }
-  }
-
-  save() {
-    // In readonly mode (friend-view), fire listeners so the UI updates but
-    // never push the friend's data back to the server or localStorage.
-    if (this.readonly) {
-      this.listeners.forEach(fn => fn(this.data));
-      return;
-    }
-    // Render synchronously — users should see the UI flip instantly — but
-    // coalesce network writes. A rapid "watched → undo → watched" flurry
-    // previously fired three full-document POSTs; now it sends one.
-    this.listeners.forEach(fn => fn(this.data));
-    this._schedulePersist();
-  }
-
-  _schedulePersist() {
-    if (this._persistTimer) clearTimeout(this._persistTimer);
-    this._persistTimer = setTimeout(() => {
-      this._persistTimer = null;
-      this._persistNow();
-    }, 400);
-  }
-
-  _persistNow() {
-    if (this.readonly) return;
-    if (Auth.isLoggedIn()) {
-      if (this.loadFailed) {
-        toast("Not saved — your progress didn't load. Please reload the page.", 'error');
+      // Auth.fetch: a dead session redirects to /login and never settles,
+      // so a 401 can no longer surface as "Couldn't load your progress".
+      const res = await Auth.fetch(`${API}/progress/load`);
+      if (res.ok) {
+        this._applyServer(await res.json(), { notify: false });
+        this.loadFailed = false;
         return;
       }
-      const watchedProjects = [...this.data.entries()].map(([projectId, val]) => ({
-        projectId,
-        count: val.count,
-        watchedWith: val.watchedWith || [],
-        memories: val.memories || []
-      }));
-      // keepalive lets the browser finish the request even if the page is
-      // unloading — otherwise a "click Watched, close tab" sequence would
-      // abort the save mid-flight and the server would never see it.
-      fetch(`${API}/progress/save`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${Auth.getToken()}`
-        },
-        body: JSON.stringify({ watchedProjects }),
-        keepalive: true
-      }).then(res => {
-        if (!res.ok) toast("Couldn't save your progress. Please try again.", 'error');
-      }).catch(e => {
-        console.warn("Save failed:", e);
-        toast("Couldn't save your progress. Check your connection.", 'error');
-      });
-    } else {
-      const obj = Object.fromEntries(this.data);
-      localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(obj));
+    } catch (e) {
+      console.warn("Progress load failed:", e);
     }
-  }
-
-  // Force any pending debounced write to run immediately. Called on logout so
-  // a user's last click isn't lost to the debounce window.
-  flushPersist() {
-    if (this._persistTimer) {
-      clearTimeout(this._persistTimer);
-      this._persistTimer = null;
-      this._persistNow();
-    }
+    // Block board changes (start / complete / cancel) until a successful load.
+    this.loadFailed = true;
+    toast("Couldn't load your progress. Changes won't be saved until you reload.", { type: 'error', duration: 6000 });
   }
 
   isWatched(id) { return this.data.has(id); }
@@ -229,13 +167,10 @@ class WatchState {
       toast("Your progress didn't load. Please reload the page.", 'error');
       return null;
     }
-    // Flush pending tag/memory edits first so the server copy we get back
-    // (and adopt) already includes them.
-    this.flushPersist();
     try {
-      const res = await fetch(`${API}/progress/${path}`, {
+      const res = await Auth.fetch(`${API}/progress/${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${Auth.getToken()}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
       const data = await res.json().catch(() => ({}));
@@ -263,18 +198,6 @@ class WatchState {
   // In progress → back to where it was (resets timer + episode progress).
   cancelWatching(id) { return this._sessionCall('cancel', { projectId: id }); }
 
-  // Rewatching goes through the same timed flow.
-  watchAgain(id) { return this.startWatching(id); }
-
-  // Un-watch only. Watches are added exclusively by completeWatching().
-  toggle(id) {
-    if (this.isWatched(id)) {
-      this.data.delete(id);
-      this.save();
-    }
-    return this.isWatched(id);
-  }
-
   // Local-only reset: used on logout and before loading a different user.
   // It never posts to the server, so the previous user's saved progress is
   // untouched. Fires listeners so subscribed caches
@@ -285,7 +208,10 @@ class WatchState {
     // The next account loads its own progress (ensureLoaded is per user).
     this._loadedFor = undefined;
     this.loadFailed = false;
-    if (this._persistTimer) { clearTimeout(this._persistTimer); this._persistTimer = null; }
+    // Forget an in-flight load: after a dead session it never settles
+    // (Auth.endSession), and the same user signing back in must not wait on it.
+    this._loading = null;
+    this._loadingFor = undefined;
     this.listeners.forEach(fn => fn(this.data));
   }
 
@@ -307,12 +233,18 @@ class WatchState {
     return p;
   }
 
+  // Where /map (and a friend's map) centres on open: the most RECENTLY
+  // watched title by lastWatchedAt(), so a rewatch or a fresh completion
+  // moves it. Entries with no timestamp at all fall back to the old rule —
+  // the last one in the server's order.
   getLastWatchedId() {
-    const watched = [];
-    for (const [id, isWatched] of this.data) {
-      if (isWatched) watched.push(id);
+    let bestId = null, bestAt = -Infinity, lastId = null;
+    for (const id of this.data.keys()) {
+      lastId = id;
+      const at = this.lastWatchedAt(id);
+      if (Number.isFinite(at) && at > bestAt) { bestAt = at; bestId = id; }
     }
-    return watched.length ? watched[watched.length - 1] : CONFIG.START_NODE_ID;
+    return bestId || lastId || CONFIG.START_NODE_ID;
   }
 
   subscribe(fn) {

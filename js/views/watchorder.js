@@ -4,7 +4,6 @@
  ************************************************/
 const WatchOrderView = {
   title: 'Watch Order',
-  _initialized: false,
   _mountSeq: 0,
 
   mount(container) {
@@ -43,6 +42,12 @@ const WatchOrderView = {
       </div>
     `;
 
+    // Wired before _setup()'s awaits: the avatar button used to stay dead
+    // until progress AND walkers had loaded.
+    container.querySelector('#header-profile-btn')?.addEventListener('click', () => {
+      Router.go('/profile');
+    });
+
     this._setup();
   },
 
@@ -53,7 +58,6 @@ const WatchOrderView = {
     // background content refresh) or left. Only the latest mount may build
     // the chart — two used to render every poster twice and deploy walkers twice.
     if (seq !== WatchOrderView._mountSeq) return;
-    this._initialized = true;
     // Re-derive on EVERY mount, not just the first. boot.js swaps `projects`
     // for the DB copy in the background; that array has no phaseNum/unlocks,
     // and without them isUnlocked() is false for everything and the flow
@@ -62,20 +66,10 @@ const WatchOrderView = {
 
     orderRenderer.init();
 
-    // Drawer (js/nav-drawer.js). Re-read the live toggle values every time it
-    // opens: the server's flag defaults (/api/config/public →
-    // Walkers.applyFlagDefaults) land AFTER this view mounts, so a label
-    // rendered once at mount can disagree with the real setting — and then
-    // the first tap appears to do nothing because it flips the value to
-    // whatever the label already claimed.
-    const refreshToggleLabels = () => {
-      if (typeof Walkers === 'undefined') return;
-      const f = document.getElementById('fights-toggle-btn');
-      if (f) { f.textContent = `Fights: ${Walkers.getFightsEnabled() ? 'On' : 'Off'}`; f.setAttribute('aria-pressed', String(!!Walkers.getFightsEnabled())); }
-      const d = document.getElementById('dialogues-toggle-btn');
-      if (d) { d.textContent = `Dialogues: ${Walkers.getDialoguesEnabled() ? 'On' : 'Off'}`; d.setAttribute('aria-pressed', String(!!Walkers.getDialoguesEnabled())); }
-    };
-    NavDrawer.wire(document, { onOpen: refreshToggleLabels });
+    // Drawer (js/nav-drawer.js): open / close, the shared buttons (log out,
+    // friends, report, goals, walkers, character editor, messages badge) and
+    // the Fights / Dialogues toggles, whose labels it re-reads on every open.
+    NavDrawer.wire(document, { actions: true, walkerToggles: true });
 
     // Tab toggle — switch to map view
     document.querySelectorAll('.view-tab').forEach(tab => {
@@ -83,42 +77,6 @@ const WatchOrderView = {
         const route = tab.dataset.route;
         if (route) Router.go(route);
       });
-    });
-
-    // One logout path for the whole app (js/auth.js): server-side sign-out
-    // everywhere + every per-user cache cleared.
-    $("#logout-btn")?.addEventListener("click", () => Auth.logout());
-
-    $("#friends-btn")?.addEventListener("click", () => showFriendsPanel());
-    $("#report-btn")?.addEventListener("click", () => showReportDialog());
-    MessagesBadge.apply();
-    $("#goals-btn")?.addEventListener("click", () => showGoalsPanel());
-    $("#walkers-btn")?.addEventListener("click", () => Walkers.showWalkerPicker());
-    // Character editor — HomeBuilder.open() now routes to the /customize page
-    // (stashing this route to return to). The next /home visit (or the page's
-    // own fetch) picks up the freshly saved character.
-    $("#nav-character-btn")?.addEventListener("click", () => HomeBuilder.open({}));
-
-    // Fight toggle — flips the persistent setting and updates the label.
-    const fightsBtn = $("#fights-toggle-btn");
-    const refreshFightsLabel = () => {
-      if (fightsBtn) fightsBtn.textContent = `Fights: ${Walkers.getFightsEnabled() ? 'On' : 'Off'}`;
-    };
-    refreshFightsLabel();
-    fightsBtn?.addEventListener('click', () => {
-      Walkers.setFightsEnabled(!Walkers.getFightsEnabled());
-      refreshFightsLabel();
-    });
-
-    // Dialogue toggle — same pattern.
-    const dialoguesBtn = $("#dialogues-toggle-btn");
-    const refreshDialoguesLabel = () => {
-      if (dialoguesBtn) dialoguesBtn.textContent = `Dialogues: ${Walkers.getDialoguesEnabled() ? 'On' : 'Off'}`;
-    };
-    refreshDialoguesLabel();
-    dialoguesBtn?.addEventListener('click', () => {
-      Walkers.setDialoguesEnabled(!Walkers.getDialoguesEnabled());
-      refreshDialoguesLabel();
     });
 
     // Render the flowchart
@@ -137,10 +95,6 @@ const WatchOrderView = {
 
     // Header avatar — instant initials, then upgrade to the profile photo.
     initHeaderAvatar();
-
-    document.getElementById('header-profile-btn')?.addEventListener('click', () => {
-      Router.go('/profile');
-    });
   },
 
   unmount() {

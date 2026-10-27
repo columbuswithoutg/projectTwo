@@ -11,6 +11,13 @@ const ReportsView = (() => {
   let _total = 0;
   let _items = [];
   let _open = new Set();
+  // Page size comes from the server's answer (it owns the default); 20 is
+  // only the guess until the first page arrives.
+  let _limit = 20;
+  // A deep-linked report (/reports?report=<id>, the "View report" link on an
+  // admin reply in /messages) that isn't on the page shown: fetched on its
+  // own and pinned above the list.
+  let _pinned = null;
 
   const STATUS_LABEL = {
     'open': 'Open', 'in-progress': 'In progress', 'fixed': 'Fixed', 'wontfix': 'Won’t fix', 'closed': 'Closed'
@@ -30,6 +37,7 @@ const ReportsView = (() => {
       if (seq !== _seq) return;
       _items = data.items || [];
       _total = data.total || 0;
+      if (Number.isInteger(data.limit) && data.limit > 0) _limit = data.limit;
       render();
     } catch (err) {
       if (seq !== _seq) return;
@@ -37,10 +45,11 @@ const ReportsView = (() => {
     }
   }
 
-  function card(r) {
+  function card(r, note) {
     const open = _open.has(r.id);
     const closed = r.status === 'closed';
-    return `
+    return `${note ? `
+      <p class="report-meta">${esc(note)}</p>` : ''}
       <article class="report-card${open ? ' open' : ''}" data-id="${esc(r.id)}" id="report-${esc(r.id)}">
         <button type="button" class="report-card-head" aria-expanded="${open}">
           <span class="report-pill report-kind-${esc(r.kind)}">${r.kind === 'bug' ? 'Bug' : 'Suggestion'}</span>
@@ -74,17 +83,19 @@ const ReportsView = (() => {
   function render() {
     const list = q('#reports-list');
     const pager = q('#reports-pager');
-    const last = Math.max(1, Math.ceil(_total / 20));
+    const last = Math.max(1, Math.ceil(_total / _limit));
     pager.hidden = last <= 1;
     q('#reports-page').textContent = `Page ${_page} / ${last}`;
     q('#reports-prev').disabled = _page <= 1;
     q('#reports-next').disabled = _page >= last;
 
-    if (!_items.length) {
+    const pinned = _pinned && !_items.some(r => r.id === _pinned.id) ? _pinned : null;
+    if (!_items.length && !pinned) {
       list.innerHTML = `<div class="msg-empty">You haven’t sent any reports yet.</div>`;
       return;
     }
-    list.innerHTML = _items.map(card).join('');
+    list.innerHTML = (pinned ? card(pinned, 'The report you opened — it’s on another page of your list.') : '')
+      + _items.map(r => card(r)).join('');
 
     list.querySelectorAll('.report-card').forEach(el => {
       const id = el.dataset.id;
@@ -109,6 +120,7 @@ const ReportsView = (() => {
             const data = await Reports.reply(id, v.text);
             const idx = _items.findIndex(r => r.id === id);
             if (idx !== -1 && data.report) _items[idx] = data.report;
+            if (_pinned && _pinned.id === id && data.report) _pinned = data.report;
             _open.add(id);
             render();
           } catch (err) {
@@ -125,6 +137,7 @@ const ReportsView = (() => {
     _root = container;
     _page = 1;
     _open = new Set();
+    _pinned = null;
     container.innerHTML = `
       <header id="header">
         <button id="back-btn">← Back</button>
@@ -153,9 +166,21 @@ const ReportsView = (() => {
 
     const focus = new URLSearchParams(location.search).get('report');
     if (focus) _open.add(focus);
-    load().then(() => {
-      if (!focus) return;
-      const el = container.querySelector(`#report-${CSS.escape(focus)}`);
+    const seq0 = _seq + 1;   // the load() below claims it
+    load().then(async () => {
+      if (!focus || _root !== container) return;
+      let el = container.querySelector(`#report-${CSS.escape(focus)}`);
+      if (!el) {
+        // Not on page 1 (older report): fetch it alone and pin it on top.
+        try {
+          const data = await Reports.get(focus);
+          // Still this mount, and the user hasn't paged / reloaded since.
+          if (_root !== container || _seq !== seq0 || !data || !data.report) return;
+          _pinned = data.report;
+          render();
+          el = container.querySelector(`#report-${CSS.escape(focus)}`);
+        } catch (_) { return; }   // gone or not theirs — just show the list
+      }
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }

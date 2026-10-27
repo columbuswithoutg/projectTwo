@@ -9,6 +9,8 @@
  *     so a 100 px mouse notch and ten 10 px trackpad events zoom alike
  *   - anchorScroll(): keep the content point under the cursor in place
  *   - pastThreshold(): has a press moved far enough to be a drag?
+ *   - shouldFrame() / pointInView(): may a walker encounter or fight move
+ *     the camera right now? (js/walkers.js, via js/walkerView.js)
  *
  * Shared by: js/pan-zoom.js, js/orderRenderer.js, js/renderer.js,
  *            js/views/admin/cms-projects-board.js
@@ -29,7 +31,8 @@
     MIN_FACTOR: 0.5,      // one event never more than halves / doubles the zoom
     MAX_FACTOR: 2,
     MAX_DY: 400,          // a page-mode wheel or a spike can't fling the zoom
-    DRAG_PX: 4            // screen pixels before a press counts as a drag
+    DRAG_PX: 4,           // screen pixels before a press counts as a drag
+    FRAME_IDLE_MS: 3000   // no walker camera moves this soon after user input
   };
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -83,5 +86,36 @@
     return clampZoom(z0 * (gap1 / gap0), min, max);
   }
 
-  return { C, normalizeWheel, wheelZoomFactor, clampZoom, anchorScroll, pastThreshold, pinchZoom };
+  // Is (x, y) inside the visible rect { left, top, width, height } (same
+  // units), grown on every side by `slack` × the rect's size?
+  function pointInView(x, y, view, slack) {
+    if (!view || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    const s = slack || 0;
+    const w = view.width || 0, h = view.height || 0;
+    const l = view.left || 0, t = view.top || 0;
+    return x >= l - w * s && x <= l + w * (1 + s) &&
+           y >= t - h * s && y <= t + h * (1 + s);
+  }
+
+  // May walker code move the camera now? The camera belongs to the user:
+  //   - never mid-drag or mid-pinch (the drag computes its scroll from where
+  //     it started, so a framing scroll would fight it);
+  //   - never within FRAME_IDLE_MS of pointer / wheel / touch / key input
+  //     (someone reading or about to drag shouldn't be yanked away);
+  //   - kind 'encounter' (a chat between two walkers, every ~15–30 s) only
+  //     when the pair is already on screen — the framing then just nudges it
+  //     to the centre instead of carrying the reader off to another part;
+  //   - kind 'fight' (keeping an un-zoomed fight centred) once idle.
+  // A fight's opening zoom is not asked: fights are opted into and their
+  // zoom locks the camera (PanZoom drops a drag when it does).
+  function shouldFrame(o) {
+    if (!o || o.isPanning) return false;
+    const idle = o.idleMs == null ? C.FRAME_IDLE_MS : o.idleMs;
+    if (Number.isFinite(o.lastInputAt) && o.now - o.lastInputAt < idle) return false;
+    if (o.kind === 'encounter') return !!o.onScreen;
+    return o.kind === 'fight';
+  }
+
+  return { C, normalizeWheel, wheelZoomFactor, clampZoom, anchorScroll, pastThreshold, pinchZoom,
+           pointInView, shouldFrame };
 });

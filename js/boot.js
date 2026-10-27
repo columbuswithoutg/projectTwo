@@ -46,10 +46,12 @@ async function bootContent() {
   // re-deriving here, isPhaseUnlocked() reads `undefined` for every project,
   // isUnlocked() goes false across the board, and the Watch Order flow / map
   // render zero nodes — which reads to the user as "the posters stopped
-  // loading". The views guard their own initProjects behind a once-only
-  // `_initialized` flag, so a remount alone does NOT re-derive.
+  // loading". Not every view calls initProjects on mount (the Watch Order
+  // view doesn't), so re-derive here. The map's layout cache was built from
+  // the old array — drop it too, or /map keeps the stale node positions.
   if (projRes && typeof state !== 'undefined' && state.initProjects) {
     state.initProjects(window.projects);
+    if (typeof invalidateLayoutCache === 'function') invalidateLayoutCache();
   }
   swap(charRes, 'characters');
   swap(locRes, 'LOCATIONS');
@@ -85,15 +87,16 @@ Router.register('/reports', ReportsView);
 // the admin panel in `admin` (chunk lists: scripts/build.mjs). Router.register
 // accepts a function that resolves to the view: Chunks.load injects the
 // chunk's scripts, after which the view's global exists and the arrow
-// function can return it. The admin Config tab lists /world NPCs via
-// WorldNpcLogic + Playground, so admin loads world first.
+// function can return it. /admin loads only its own chunk: the Config tab
+// gets the /world NPC names from GET /api/config/npcs (routes/config.js)
+// instead of the world chunk's WorldNpcLogic + Playground globals.
 const lazyRoute = (chunks, pick) => () =>
   chunks.reduce((p, c) => p.then(() => Chunks.load(c)), Promise.resolve()).then(pick);
 Router.register('/home', lazyRoute(['world'], () => HomeView));
 Router.register('/home/edit', HomeEditView);
 Router.register('/customize', lazyRoute(['world'], () => CustomizeView));
 Router.register('/world', lazyRoute(['world'], () => WorldView));
-Router.register('/admin', lazyRoute(['world', 'admin'], () => AdminView));
+Router.register('/admin', lazyRoute(['admin'], () => AdminView));
 Router.register('/friend/:username',         FriendWatchView);
 Router.register('/friend/:username/map',     FriendMapView);
 Router.register('/friend/:username/home',    lazyRoute(['world'], () => FriendHomeView));
@@ -125,12 +128,27 @@ Promise.race([Router.firstMount, new Promise(r => setTimeout(r, 15000))]).then(h
 // Background content refresh. Only the pure content views remount — the
 // 3D views (/world, /home) and /customize keep their session and pick up
 // fresh content on their next natural mount.
+// A remount runs closeAllModals(), so one landing while a popup / the goals
+// panel / the composer is open would throw away what the user opened in the
+// first seconds after load. Wait instead: re-check every 2 s and remount once
+// nothing modal is up (utils.js has no "modal closed" event to hook). After
+// ~30 s give up — the new content is already in window.projects etc., so the
+// next natural mount shows it. Also give up if the user has navigated away:
+// that navigation already mounted the fresh data.
 bootContent().then(changed => {
   if (!changed) return;
   const path = location.pathname;
-  if (path === '/' || path === '/map' || path === '/characters') {
+  if (path !== '/' && path !== '/map' && path !== '/characters') return;
+  let tries = 0;
+  const remount = () => {
+    if (location.pathname !== path) return;
+    if (typeof isModalOpen === 'function' && isModalOpen()) {
+      if (++tries <= 15) setTimeout(remount, 2000);
+      return;
+    }
     Router.navigate(path, false);
-  }
+  };
+  remount();
 }).catch(() => { /* fallbacks already rendered */ });
 
 // Fetch admin-tunable walker physics from the server in parallel with
@@ -152,12 +170,6 @@ fetch(`${API}/config/public`)
     if (cfg && cfg.world) window.APP_WORLD = cfg.world;   // /world settings (per-NPC body type)
   })
   .catch(() => { /* offline / blocked — defaults are fine */ });
-
-// Best-effort flush of the debounced progress save when the tab is hidden or
-// closed — pagehide fires on mobile Safari where beforeunload does not.
-// The fetch inside _persistNow uses keepalive so the browser preserves it
-// across the navigation.
-window.addEventListener('pagehide', () => state?.flushPersist?.());
 
 // iOS Safari ignores user-scalable=no and fires its own pinch "gesture"
 // events that zoom the whole page. Cancelling them stops page zoom only —

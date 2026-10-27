@@ -3,7 +3,6 @@
  ************************************************/
 const AppView = {
   title: 'Universe Map',
-  _initialized: false,
   _mountSeq: 0,
 
   mount(container) {
@@ -58,6 +57,12 @@ const AppView = {
       </div>
     `;
 
+    // Wired before _setup()'s awaits: the avatar button used to stay dead
+    // until progress AND walkers had loaded.
+    container.querySelector('#header-profile-btn')?.addEventListener('click', () => {
+      Router.go('/profile');
+    });
+
     this._setup();
   },
 
@@ -67,8 +72,7 @@ const AppView = {
     // Superseded while progress loaded (remounted by boot's content refresh,
     // or left): only the latest mount may build the map.
     if (seq !== AppView._mountSeq) return;
-    this._initialized = true;
-    // ...but re-derive the project fields on every mount: boot.js swaps
+    // Re-derive the project fields on every mount: boot.js swaps
     // `projects` for the DB copy in the background and that array carries no
     // phaseNum/unlocks, which makes isUnlocked() false for everything and
     // leaves the map with no pins at all.
@@ -77,19 +81,10 @@ const AppView = {
     // Re-bind renderer to fresh DOM elements
     renderer.init();
 
-    // Drawer (js/nav-drawer.js). Re-read the live toggle values every time it
-    // opens — the server's flag defaults (/api/config/public →
-    // Walkers.applyFlagDefaults) arrive after mount, so a label rendered
-    // once can disagree with the real setting and make the first tap look
-    // like a no-op.
-    const refreshToggleLabels = () => {
-      if (typeof Walkers === 'undefined') return;
-      const f = document.getElementById('fights-toggle-btn');
-      if (f) { f.textContent = `Fights: ${Walkers.getFightsEnabled() ? 'On' : 'Off'}`; f.setAttribute('aria-pressed', String(!!Walkers.getFightsEnabled())); }
-      const d = document.getElementById('dialogues-toggle-btn');
-      if (d) { d.textContent = `Dialogues: ${Walkers.getDialoguesEnabled() ? 'On' : 'Off'}`; d.setAttribute('aria-pressed', String(!!Walkers.getDialoguesEnabled())); }
-    };
-    NavDrawer.wire(document, { onOpen: refreshToggleLabels });
+    // Drawer (js/nav-drawer.js): open / close, the shared buttons (log out,
+    // friends, report, goals, walkers, character editor, messages badge) and
+    // the Fights / Dialogues toggles, whose labels it re-reads on every open.
+    NavDrawer.wire(document, { actions: true, walkerToggles: true });
 
     // View-mode tab toggle (Watch Order ↔ World) — the two focal surfaces.
     // On /map neither is active; the tabs act as quick jumps to a focal view.
@@ -98,41 +93,6 @@ const AppView = {
         const route = tab.dataset.route;
         if (route) Router.go(route);
       });
-    });
-
-    // One logout path for the whole app (js/auth.js): flushes the pending
-    // progress save, signs out everywhere, clears every per-user cache.
-    $("#logout-btn")?.addEventListener("click", () => Auth.logout());
-
-    $("#friends-btn")?.addEventListener("click", () => showFriendsPanel());
-    $("#report-btn")?.addEventListener("click", () => showReportDialog());
-    MessagesBadge.apply();
-    $("#goals-btn")?.addEventListener("click", () => showGoalsPanel());
-    $("#walkers-btn")?.addEventListener("click", () => Walkers.showWalkerPicker());
-    // Character editor — HomeBuilder.open() now routes to the /customize page
-    // (stashing this route to return to). The page fetches the saved character.
-    $("#nav-character-btn")?.addEventListener("click", () => HomeBuilder.open({}));
-
-    // Fight toggle — flips the persistent setting and updates the label.
-    const fightsBtn = $("#fights-toggle-btn");
-    const refreshFightsLabel = () => {
-      if (fightsBtn) fightsBtn.textContent = `Fights: ${Walkers.getFightsEnabled() ? 'On' : 'Off'}`;
-    };
-    refreshFightsLabel();
-    fightsBtn?.addEventListener('click', () => {
-      Walkers.setFightsEnabled(!Walkers.getFightsEnabled());
-      refreshFightsLabel();
-    });
-
-    // Dialogue toggle — same pattern.
-    const dialoguesBtn = $("#dialogues-toggle-btn");
-    const refreshDialoguesLabel = () => {
-      if (dialoguesBtn) dialoguesBtn.textContent = `Dialogues: ${Walkers.getDialoguesEnabled() ? 'On' : 'Off'}`;
-    };
-    refreshDialoguesLabel();
-    dialoguesBtn?.addEventListener('click', () => {
-      Walkers.setDialoguesEnabled(!Walkers.getDialoguesEnabled());
-      refreshDialoguesLabel();
     });
 
     // Render map
@@ -154,10 +114,6 @@ const AppView = {
 
     // Header avatar — instant initials, then upgrade to the profile photo.
     initHeaderAvatar();
-
-    document.getElementById('header-profile-btn')?.addEventListener('click', () => {
-      Router.go('/profile');
-    });
   },
 
   unmount() {

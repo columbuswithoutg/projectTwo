@@ -29,18 +29,29 @@ function isTokenValid(token) {
 }
 
 const Auth = {
+  // True once getToken/isLoggedIn dropped a token because it was past its
+  // `exp` — i.e. this tab WAS signed in and the session ran out under it.
+  // Lets a caller tell "expired, send them to /login" apart from "never
+  // signed in" after the token itself is already gone. Cleared by every
+  // setToken/clearToken (a new sign-in, or a deliberate logout).
+  _expired: false,
+  // Storm guard for endSession(): set by the first dead-session detection,
+  // so ten parallel 401s cause ONE logout + redirect, not ten.
+  _sessionEnding: false,
+
   getToken: () => {
     const t = localStorage.getItem("mcu_token");
     if (!t) return null;
     if (!isTokenValid(t)) {
       localStorage.removeItem("mcu_token");
+      Auth._expired = true;
       return null;
     }
     return t;
   },
   getUsername: () => localStorage.getItem("mcu_username"),
-  setToken: (t) => localStorage.setItem("mcu_token", t),
-  clearToken: () => localStorage.removeItem("mcu_token"),
+  setToken: (t) => { Auth._expired = false; Auth._sessionEnding = false; localStorage.setItem("mcu_token", t); },
+  clearToken: () => { Auth._expired = false; localStorage.removeItem("mcu_token"); },
   isLoggedIn: () => {
     const t = localStorage.getItem("mcu_token");
     if (!t) return false;
@@ -48,35 +59,58 @@ const Auth = {
       // Self-clean stale tokens so subsequent calls don't keep checking
       // the same dead JWT and so logout-style cleanup is unnecessary.
       localStorage.removeItem("mcu_token");
+      Auth._expired = true;
       return false;
     }
     return true;
+  },
+  // See _expired: the token ran out in this tab (not a deliberate logout).
+  sessionExpired: () => Auth._expired,
+
+  // The session is dead (token missing/expired, or the server answered 401):
+  // sign out ONCE and go to /login?next=<this page>, so signing back in lands
+  // the user where they were. Returns a promise that never settles — the page
+  // is being replaced, and resolving/rejecting would only make every caller
+  // paint its own "No token" / "Couldn't load your progress" error toast
+  // over the redirect. (state.resetLocal drops its in-flight load promise so
+  // the next sign-in doesn't wait on this one.)
+  endSession() {
+    if (!Auth._sessionEnding) {
+      Auth._sessionEnding = true;
+      const here = location.pathname + location.search;
+      try {
+        Auth.logout(location.pathname === '/login' ? undefined : { next: here });
+      } catch (e) { console.warn('logout failed:', e); }
+    }
+    return new Promise(() => {});
+  },
+
+  // fetch() for every SIGNED-IN API call: adds `Authorization: Bearer <token>`
+  // from a fresh getToken() (never "Bearer null"), and routes a missing /
+  // expired token or a 401 answer through endSession(). Every other status
+  // resolves as usual, so each module keeps its own error handling. NOT for
+  // /api/auth/* — a wrong password there is a legitimate 401 (login.js
+  // keeps using plain fetch).
+  fetch(url, opts) {
+    const token = Auth.getToken();
+    if (!token) return Auth.endSession();
+    const o = Object.assign({}, opts);
+    o.headers = Object.assign({}, o.headers, { Authorization: 'Bearer ' + token });
+    return fetch(url, o).then(res => {
+      if (res.status !== 401) return res;
+      // A request sent with a PREVIOUS account's token that answers after a
+      // new sign-in must not log the new account out; hand it back as a
+      // plain failed response.
+      const now = localStorage.getItem("mcu_token");
+      if (now && now !== token) return res;
+      return Auth.endSession();
+    });
   },
   isAdmin: () => {
     const token = localStorage.getItem("mcu_token");
     if (!token || !isTokenValid(token)) return false;
     const payload = decodeJwtPayload(token);
     return !!(payload && payload.isAdmin);
-  },
-
-  async register(username, password) {
-    const res = await fetch(`${API}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password })
-    });
-    return res.json();
-  },
-
-  async login(username, password) {
-    const res = await fetch(`${API}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password })
-    });
-    const data = await res.json();
-    if (data.token) Auth.setToken(data.token);
-    return data;
   },
 
   // Forget EVERYTHING that belongs to the signed-in user, in one place.
@@ -86,25 +120,18 @@ const Auth = {
   // login page on mount, and right before a new login stores its token.
   // Per-device preferences (theme, fights/dialogues toggles, zoom) stay.
   resetClientState() {
-    // 1. Save the outgoing user's last progress click while the token is valid.
-    try { if (typeof state !== 'undefined' && state.flushPersist) state.flushPersist(); } catch (_) {}
-    // 2. Leave friend mode first (it writes the saved state.data back), close dialogs.
+    // 1. Leave friend mode first (it writes the saved state.data back), close dialogs.
     if (typeof FriendView !== 'undefined') { try { FriendView.exit(); } catch (_) {} }
     if (typeof closeAllModals === 'function') { try { closeAllModals(); } catch (_) {} }
     if (typeof PostComposer !== 'undefined' && PostComposer.reset) { try { PostComposer.reset(); } catch (_) {} }
-    // 3. Credentials + per-user storage.
+    // 2. Credentials + per-user storage.
     Auth.clearToken();
     localStorage.removeItem("mcu_username");
     localStorage.removeItem("mcu_walkers");
-    if (typeof CONFIG !== 'undefined' && CONFIG.STORAGE_KEY) {
-      localStorage.removeItem(CONFIG.STORAGE_KEY);
-    }
-    // 4. In-memory per-user state. resetLocal fires listeners, so the layout
+    // 3. In-memory per-user state. resetLocal fires listeners, so the layout
     //    / renderer / walker caches rebuild for the next account.
     if (typeof Walkers !== 'undefined' && Walkers.resetInit) { try { Walkers.resetInit(); } catch (_) {} }
     if (typeof state !== 'undefined' && state.resetLocal) { try { state.resetLocal(); } catch (_) {} }
-    if (typeof WatchOrderView !== 'undefined') WatchOrderView._initialized = false;
-    if (typeof AppView !== 'undefined') AppView._initialized = false;
     if (typeof HomeView !== 'undefined') HomeView._firstVisitPrompted = false;
     if (typeof FeedView !== 'undefined' && FeedView.reset) { try { FeedView.reset(); } catch (_) {} }
     if (typeof MessagesBadge !== 'undefined' && MessagesBadge.apply) { try { MessagesBadge.apply(0); } catch (_) {} }

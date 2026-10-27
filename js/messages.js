@@ -8,18 +8,16 @@
  * page has.
  ************************************************/
 const Messages = (() => {
-  const headers = (json) => ({
-    ...(json ? { 'Content-Type': 'application/json' } : {}),
-    Authorization: `Bearer ${Auth.getToken()}`
-  });
+  // Authorization is added by Auth.fetch.
+  const headers = (json) => (json ? { 'Content-Type': 'application/json' } : {});
 
   // Parse JSON and throw the server's `error` on a non-2xx — every caller
-  // wants the message for a toast, not a status code.
+  // wants the message for a toast, not a status code. A dead session (no
+  // token / 401) is Auth.fetch's job: one logout + redirect to /login.
   async function call(path, opts = {}) {
-    const res = await fetch(`${API}/messages${path}`, opts);
+    const res = await Auth.fetch(`${API}/messages${path}`, opts);
     let body = null;
     try { body = await res.json(); } catch (_) {}
-    if (res.status === 401) { Auth.logout({ next: location.pathname + location.search }); throw new Error('Session expired'); }
     if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
     return body;
   }
@@ -50,7 +48,16 @@ const MessagesBadge = (() => {
   }
 
   async function refresh() {
-    if (typeof Auth === 'undefined' || !Auth.isLoggedIn()) { apply(0); return; }
+    if (typeof Auth === 'undefined') { apply(0); return; }
+    if (!Auth.isLoggedIn()) {
+      // The poll is the one call every page makes, so it's where a tab left
+      // open past the token's expiry finds out: a session that ran out here
+      // (not a deliberate logout) goes to /login instead of silently
+      // showing 0 while every other action toasts "No token".
+      if (Auth.sessionExpired()) Auth.endSession();
+      else apply(0);
+      return;
+    }
     try {
       const data = await Messages.unreadCount();
       apply(typeof data.count === 'number' ? data.count : 0);
@@ -67,10 +74,5 @@ const MessagesBadge = (() => {
     refresh();
   }
 
-  function stop() {
-    if (_timer) clearInterval(_timer);
-    _timer = null;
-  }
-
-  return { start, stop, refresh, apply, count: () => _count };
+  return { start, refresh, apply };
 })();

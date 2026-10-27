@@ -244,7 +244,10 @@ const WALKER_DIALOGUES = (() => {
     ],
 
     // ── Loki variants ──
-    "loki_tva|sylvie": [
+    // Keyed on "loki", not "loki_tva": the TVA look is a STAGE of the loki
+    // character, so no walker ever has the id loki_tva. `requires` still
+    // gates these on loki1 / loki2.
+    "loki|sylvie": [
       // Loki S1 — actual identity discussion
       { requires: "loki1", lines: ["What makes a Loki a Loki?", "Independence. Authority. Style.", "...I was going to say our inability to trust."] },
       // Loki S1 — actual pruning reference
@@ -253,7 +256,7 @@ const WALKER_DIALOGUES = (() => {
       { requires: "loki1", lines: ["For you.", "...For us."] }
     ],
 
-    "loki_tva|mobius": [
+    "loki|mobius": [
       // Loki S1 — actual Mobius wow moment
       { requires: "loki1", lines: ["What's so great about jet skis?", "Wow.", "That's... not an answer.", "It's the only answer that matters."] },
       // Loki S2 — actual Mobius encouragement

@@ -383,20 +383,27 @@ const HouseEditor = (() => {
       if (!file.type.startsWith('image/')) { if (typeof toast === 'function') toast('Please choose an image.', 'warn'); return; }
       uploadText.textContent = 'Uploading…';
       fileInput.disabled = true;
+      uploading = true;
       try {
         const fd = new FormData();
         fd.append('file', file);
         const res = await fetch(`${API}/upload`, { method: 'POST', headers: { Authorization: `Bearer ${Auth.getToken()}` }, body: fd });
+        // Cancelled / discarded meanwhile: preview() would put the thrown-away
+        // draft back on the live house (and auto-place a frame in it).
+        if (closed) return;
         const data = await res.json().catch(() => ({}));
+        if (closed) return;
         if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed');
         draft.portrait = data.url;
         ensureFrame();
         renderPortrait(); renderKinds(); renderGrid(); preview();
       } catch (e) {
+        if (closed) return;
         if (typeof toast === 'function') toast(e.message || 'Upload failed', 'error');
       } finally {
+        uploading = false;
         uploadText.textContent = 'Upload photo';
-        fileInput.disabled = false;
+        fileInput.disabled = saving;
       }
     });
     removeBtn.addEventListener('click', () => { draft.portrait = ''; renderPortrait(); preview(); });
@@ -405,6 +412,17 @@ const HouseEditor = (() => {
     renderAll();
     preview();
 
+    // While Save's PUT is in flight the editor takes no input: the snapshot
+    // already sent is what gets applied before the panel closes, so a piece
+    // placed meanwhile (a slow phone) used to vanish without a prompt.
+    // Capture phase on the overlay itself, so it runs before every editing,
+    // ✕ / Cancel and backdrop handler inside it.
+    let saving = false, uploading = false;
+    overlay.addEventListener('click', (e) => {
+      if (!saving) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }, true);
     overlay.addEventListener('click', (e) => {
       // Peek: hide the panel (and the dark backdrop) so the whole house is
       // visible; the pill brings the panel back. Nothing else is dismissed.
@@ -599,13 +617,13 @@ const HouseEditor = (() => {
       if (opts.onClose) opts.onClose();
     }, {
       initialFocus: overlay.querySelector('.popup-close'),
-      canClose: async () => !isDirty() || confirmDialog({
+      canClose: async () => !saving && (!isDirty() || confirmDialog({
         title: `Discard ${unit} changes?`,
         message: `Your edits to this ${unit} haven’t been saved.`,
         confirmLabel: 'Discard',
         cancelLabel: 'Keep editing',
         danger: true
-      })
+      }))
     });
     overlay.querySelector('.popup-close').addEventListener('click', close.request);
     overlay.querySelector('.world-house-cancel').addEventListener('click', close.request);
@@ -616,8 +634,19 @@ const HouseEditor = (() => {
       }
       const v = L.validateHouse(draft, { maxProps: maxProps() });
       if (!v.ok) { if (typeof toast === 'function') toast(v.error, 'warn'); return; }
+      // The photo would land in the draft after this snapshot was sent.
+      if (uploading) { if (typeof toast === 'function') toast('Wait for the photo to finish uploading.', 'info'); return; }
       const btn = overlay.querySelector('.world-house-save');
-      btn.disabled = true;
+      const setSaving = (on) => {
+        saving = on;
+        btn.disabled = on;
+        btn.textContent = on ? 'Saving…' : 'Save';
+        overlay.classList.toggle('saving', on);
+        overlay.setAttribute('aria-busy', on ? 'true' : 'false');
+        signInput.readOnly = on;   // typing in the sign is the one non-click edit
+        fileInput.disabled = on;
+      };
+      setSaving(true);
       try {
         const res = await fetch(opts.saveUrl, {
           method: 'PUT',
@@ -630,9 +659,11 @@ const HouseEditor = (() => {
           if (typeof toast === 'function') toast(data.error || `Couldn’t save the ${unit}.`, 'error');
           // A rule the server refused (cap, doorway, bad value) keeps the
           // editor open to fix it; only losing the keeper seat (403) ends it.
-          if (res.status === 403) close(); else btn.disabled = false;
+          setSaving(false);
+          if (res.status === 403) close();
           return;
         }
+        setSaving(false);
         didSave = true;
         if (Playground3D.applyHouse) Playground3D.applyHouse(projectId, data.house || v.house);
         if (sharedRoof) Playground3D.setHomeRoof(data.homeRoof || pickRoof(v.house));
@@ -641,7 +672,7 @@ const HouseEditor = (() => {
         close();
       } catch (_) {
         if (typeof toast === 'function') toast(`Couldn’t save the ${unit} — check your connection.`, 'error');
-        btn.disabled = false;
+        setSaving(false);
       }
     });
     // For the views' router hooks (isDirty / canLeave): browser Back, a link

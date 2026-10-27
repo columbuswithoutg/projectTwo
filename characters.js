@@ -440,6 +440,25 @@ const WALKER_STATS = {
   mystique:       { hp: 90,  melee: ['fist', 10],       range: ['pistol', 5],      moveSpeed: 47, atkSpeed: 1.4 },
   nightcrawler:   { hp: 85,  melee: ['sword', 9],       range: null,               moveSpeed: 52, atkSpeed: 1.5 },
 
+  // ── Spawn-only villains ──
+  // Every VILLAIN_DATA id needs a row here: without one, the fight fell
+  // back to _default and Galactus fought as an 80-HP fist (MAP-10).
+  // Cosmic threats sit with the S/A tiers, the rest with B/C fighters.
+  galactus:       { hp: 265, melee: ['fist', 20],       range: ['beam', 16],       moveSpeed: 28, atkSpeed: 0.7 },
+  sentry:         { hp: 250, melee: ['fist', 22],       range: ['photon', 12],     moveSpeed: 50, atkSpeed: 1.0 },
+  gorr:           { hp: 225, melee: ['necrosword', 20], range: ['tendril', 10],    moveSpeed: 44, atkSpeed: 1.1 },
+  highevolutionary: { hp: 205, melee: ['fist', 10],     range: ['blaster', 14],    moveSpeed: 38, atkSpeed: 1.0 },
+  he_who_remains: { hp: 200, melee: ['fist', 4],        range: ['beam', 16],       moveSpeed: 30, atkSpeed: 0.9 },
+  red_hulk:       { hp: 175, melee: ['fist', 22],       range: null,               moveSpeed: 37, atkSpeed: 0.8 },
+  namor:          { hp: 170, melee: ['sword', 16],      range: ['pulse', 6],       moveSpeed: 48, atkSpeed: 1.1 },
+  obadiah:        { hp: 160, melee: ['fist', 14],       range: ['repulsor', 10],   moveSpeed: 34, atkSpeed: 0.8 },
+  killian:        { hp: 150, melee: ['fist', 14],       range: ['beam', 8],        moveSpeed: 42, atkSpeed: 1.1 },
+  gravik:         { hp: 140, melee: ['fist', 12],       range: ['blaster', 8],     moveSpeed: 42, atkSpeed: 1.0 },
+  vulture:        { hp: 130, melee: ['claws', 12],      range: ['blaster', 8],     moveSpeed: 48, atkSpeed: 1.1 },
+  taskmaster:     { hp: 128, melee: ['sword', 12],      range: ['arrow', 8],       moveSpeed: 45, atkSpeed: 1.3 },
+  ghost:          { hp: 120, melee: ['fist', 10],       range: ['blaster', 8],     moveSpeed: 50, atkSpeed: 1.3 },
+  zemo:           { hp: 95,  melee: ['fist', 6],        range: ['pistol', 7],      moveSpeed: 41, atkSpeed: 1.0 },
+
   // Fallback
   _default:       { hp: 80,  melee: ['fist', 10],      range: null,               moveSpeed: 40, atkSpeed: 1.0 }
 };
