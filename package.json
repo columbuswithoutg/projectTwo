@@ -12,16 +12,19 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/columbuswithoutg/projectOne.git"
+    "url": "git+https://github.com/columbuswithoutg/projectTwo.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/columbuswithoutg/projectOne/issues"
+  "engines": {
+    "node": ">=20.19 <25"
   },
-  "homepage": "https://github.com/columbuswithoutg/projectOne#readme",
+  "bugs": {
+    "url": "https://github.com/columbuswithoutg/projectTwo/issues"
+  },
+  "homepage": "https://github.com/columbuswithoutg/projectTwo#readme",
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "cloudinary": "^1.41.3",
@@ -33,7 +36,6 @@
     "express-rate-limit": "^8.3.2",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.3",
-    "mongodb": "^7.1.0",
     "mongoose": "^9.2.1",
     "multer": "^2.0.2",
     "multer-storage-cloudinary": "^4.0.0",
@@ -43,7 +45,6 @@
     "@gltf-transform/core": "^4.5.0",
     "@gltf-transform/extensions": "^4.5.0",
     "@gltf-transform/functions": "^4.5.0",
-    "shadcn": "^4.5.0",
     "sharp": "^0.35.4"
   }
 }

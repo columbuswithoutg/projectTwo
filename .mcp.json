@@ -3,7 +3,7 @@
     "shadcn": {
       "command": "npx",
       "args": [
-        "shadcn@latest",
+        "shadcn@4.5.0",
         "mcp"
       ]
     }
