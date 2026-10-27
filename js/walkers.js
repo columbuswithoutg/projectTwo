@@ -239,9 +239,13 @@ const Walkers = (() => {
     // Visual styling (ring, glow, background) lives in styles.css under
     // .map-walker img so it stays consistent with the theme system. The
     // character's monogram sits underneath and shows when the image file is
-    // missing (PosterArt removes a broken <img data-poster>).
+    // missing (PosterArt removes a broken <img data-poster>). The img needs
+    // .char-art-img (position:relative; z-index:1 in poster.css): .char-art is
+    // absolutely positioned, so it paints over a static <img> and the chip
+    // showed only the initials even when the portrait had loaded.
     if (char) wrap.insertAdjacentHTML('beforeend', PosterArt.charHtml(char, null));
     const img = document.createElement('img');
+    img.className = 'char-art-img';
     img.setAttribute('data-poster', '');
     img.src = charImg;
     wrap.appendChild(img);
