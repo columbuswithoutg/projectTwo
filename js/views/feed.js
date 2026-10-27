@@ -54,7 +54,7 @@ const FeedView = (() => {
     const name = user?.username || '?';
     const cls = `feed-avatar feed-avatar-${size}`;
     return user?.profilePicture
-      ? `<img class="${cls}" src="${esc(user.profilePicture)}" alt="" loading="lazy" />`
+      ? `<img class="${cls}" src="${esc(profilePicUrl(user.profilePicture))}" alt="" loading="lazy" />`
       : `<span class="${cls}" aria-hidden="true">${esc(name[0].toUpperCase())}</span>`;
   }
 

@@ -23,10 +23,21 @@ const CONFIG = {
 
 // Append the cache-busting version to any asset URL. Use this everywhere
 // we construct a src pointing at /assets so replacing files in-place
-// propagates without manual cache clears.
+// propagates without manual cache clears. A bare "assets/…" path is made
+// root-relative first: on nested routes (/friend/:username/map) the browser
+// would otherwise look for /friend/:username/assets/… and get a 404.
 function assetUrl(path) {
-  const sep = path.includes('?') ? '&' : '?';
-  return `${path}${sep}v=${CONFIG.ASSET_VERSION}`;
+  const abs = /^(\/|[a-z][a-z0-9+.-]*:)/i.test(path) ? path : '/' + path;
+  const sep = abs.includes('?') ? '&' : '?';
+  return `${abs}${sep}v=${CONFIG.ASSET_VERSION}`;
+}
+
+// A profile picture is either a bundled portrait ("assets/characters/x.jpg",
+// the form the server stores) or a Cloudinary URL. Portraits go through
+// assetUrl so they load on nested routes and pick up ASSET_VERSION.
+function profilePicUrl(pic) {
+  if (!pic) return '';
+  return /^assets\//.test(pic) ? assetUrl(pic) : pic;
 }
 
 const PHASE_UNLOCKERS = {

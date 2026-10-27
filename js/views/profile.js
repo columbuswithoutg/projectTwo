@@ -155,7 +155,7 @@ const ProfileView = {
 
     function setAvatar(src, username) {
       if (src) {
-        avatarImg.src = src;
+        avatarImg.src = profilePicUrl(src);
         avatarImg.alt = username;
         avatarImg.style.display = 'block';
         avatarInitials.style.display = 'none';

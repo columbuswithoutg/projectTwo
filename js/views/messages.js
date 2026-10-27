@@ -37,7 +37,7 @@ const MessagesView = (() => {
     if (system) return `<span class="feed-avatar feed-avatar-md msg-avatar-system" aria-hidden="true">★</span>`;
     const name = user?.username || '?';
     return user?.profilePicture
-      ? `<img class="feed-avatar feed-avatar-md" src="${esc(user.profilePicture)}" alt="" loading="lazy" />`
+      ? `<img class="feed-avatar feed-avatar-md" src="${esc(profilePicUrl(user.profilePicture))}" alt="" loading="lazy" />`
       : `<span class="feed-avatar feed-avatar-md" aria-hidden="true">${esc(name[0].toUpperCase())}</span>`;
   }
 

@@ -408,7 +408,7 @@ function initHeaderAvatar() {
         // flash to a half-loaded or broken image.
         img.onload = () => { img.style.display = 'block'; initials.style.display = 'none'; };
         img.onerror = () => { img.style.display = 'none'; initials.style.display = ''; };
-        img.src = data.profilePicture;
+        img.src = profilePicUrl(data.profilePicture);
       }
     })
     .catch(() => { /* keep the initials we already set */ });

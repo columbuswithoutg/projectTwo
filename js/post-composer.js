@@ -47,7 +47,7 @@ const PostComposer = (() => {
 
   function avatarHtml(username, pic) {
     return pic
-      ? `<img class="pc-avatar" src="${esc(pic)}" alt="" />`
+      ? `<img class="pc-avatar" src="${esc(profilePicUrl(pic))}" alt="" />`
       : `<span class="pc-avatar" aria-hidden="true">${esc((username || '?')[0].toUpperCase())}</span>`;
   }
 
