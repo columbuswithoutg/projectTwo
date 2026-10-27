@@ -563,6 +563,10 @@ module.exports = (io) => {
           // everyone's positions and chat.
           io.in(sid).socketsLeave('world');
           io.to('world').emit('world:left', { id: sid });
+          // Tell that tab, or it sits there frozen: peers stop moving, its
+          // chat fails and nobody can see it. It leaves /world (never
+          // rejoins), so two open tabs can't keep retiring each other.
+          io.to(sid).emit('world:kicked', { reason: 'elsewhere' });
           freeStonesOf(sid);   // don't strand this user's stones on the retired socket
           releaseNpcTarget(sid);
         }
@@ -921,6 +925,7 @@ module.exports = (io) => {
           // receiving the home's chat / positions.
           io.in(sid).socketsLeave('home:' + ownerId);
           io.to('home:' + ownerId).emit('home:left', { id: sid });
+          io.to(sid).emit('home:kicked', { reason: 'elsewhere' });   // same as /world above
         }
       }
 

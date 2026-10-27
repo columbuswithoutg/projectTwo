@@ -36,7 +36,7 @@ const Multiplayer = (() => {
     snapshot:    'world:snapshot',
     joined:      'world:joined',
     left:        'world:left',
-    kicked:      null,             // nobody is ejected from /world
+    kicked:      'world:kicked',   // server: /world was opened in another tab, this one was retired
     leave:       null,             // /world auto-cleans on disconnect; no explicit leave
     zone:        'world:zone',     // server: the project island we're standing on changed
     house:       'world:house',    // server: a keeper saved an island's house decorations
@@ -59,7 +59,7 @@ const Multiplayer = (() => {
     snapshot:    'home:snapshot',
     joined:      'home:joined',
     left:        'home:left',
-    kicked:      'home:kicked',    // server: we were removed from this home (unfriended)
+    kicked:      'home:kicked',    // server: we were removed from this home (unfriended, or opened in another tab)
     leave:       'home:leave',     // emitted before disconnect so the room's owner gets prompt notice
     zone:        null,             // homes have one shared chat — no channels
     house:       'home:house',     // server: the owner saved a room (+ the home's roof)
@@ -390,11 +390,16 @@ const Multiplayer = (() => {
     });
     if (events.kicked) {
       socket.on(events.kicked, (info) => {
-        const why = info && info.reason === 'unfriended'
-          ? 'You’re no longer friends, so the visit ended.'
-          : 'You were removed from this home.';
+        const reason = info && info.reason;
+        const why = reason === 'elsewhere'
+          ? `You opened ${events.channels ? 'the world' : 'this home'} in another tab or window, so it closed here.`
+          : reason === 'unfriended'
+            ? 'You’re no longer friends, so the visit ended.'
+            : 'You were removed from this home.';
         if (typeof toast === 'function') toast(why, 'warn');
-        if (typeof Router !== 'undefined') Router.go('/home');
+        // 'elsewhere' goes somewhere with no room: rejoining the same one
+        // would retire the other tab in turn, and the two would bounce.
+        if (typeof Router !== 'undefined') Router.go(reason === 'elsewhere' ? '/map' : '/home');
       });
     }
     socket.on(events.chat, (msg) => {
