@@ -597,10 +597,19 @@
   const BACKPEDAL_STRIDE_K = 0.3;
 
   // `neutral`: the leaner Neutral frame on the male model (see bodyShapeFor).
+  //
+  // A model whose skeleton is missing a part the body code leans on (the
+  // spine chain sets the waistline and the chest anchor, the limbs the joint
+  // shifts and gear) throws here, naming the parts, instead of baking a body
+  // with a bad waist and a null chest. createInstance's caller
+  // (playground3d.js _upgradeActor) catches it and keeps the procedural rig.
+  // The verdict is cached per variant so every actor doesn't re-clone first.
+  const _badRigs = new Map();      // variant key → Error
   function _variant(model, build, neutral) {
     neutral = model === 'male' && !!neutral;
     const key = model + '|' + build + (neutral ? '|n' : '');
     if (_variants.has(key)) return _variants.get(key);
+    if (_badRigs.has(key)) throw _badRigs.get(key);
     const THREE = T();
     const proto = _protos[model];
     const shape = L.bodyShapeFor({ gender: model === 'female' ? 2 : (neutral ? 0 : 1), build });
@@ -611,6 +620,12 @@
     const body = meshes.find((m) => m.name === 'Body') || meshes[0];
     const bones = body.skeleton.bones.slice();
     const rig = _rigInfo(bones, shape);
+    const missing = L.missingParts(rig.cls);
+    if (missing.length) {
+      const err = new Error('[PG3DHumanoid] ' + model + ' rig is missing ' + missing.join(', '));
+      _badRigs.set(key, err);
+      throw err;
+    }
     const bone = (k) => { const nm = rig.cls[k] && rig.cls[k][0]; return nm ? bones[rig.idx.get(nm)] : null; };
     _shiftLateral(bone('upperArm.L'), shape.jointShift.shoulder);
     _shiftLateral(bone('upperArm.R'), shape.jointShift.shoulder);

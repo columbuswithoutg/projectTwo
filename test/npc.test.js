@@ -199,3 +199,30 @@ test('swingClip / hitClip alternate deterministically', () => {
   assert.deepEqual([0, 1, 2, 3].map(N.swingClip), ['Punch_Jab', 'Punch_Cross', 'Punch_Jab', 'Punch_Cross']);
   assert.deepEqual([0, 1, 2, 3, 4, 5].map(N.hitClip), ['Hit_Chest', 'Hit_Chest', 'Hit_Head', 'Hit_Chest', 'Hit_Chest', 'Hit_Head']);
 });
+
+// js/playground3d.js now calls npcPathTime / npcCombatPhase instead of its
+// own copies; these pin the shapes the engine hands them.
+test('npcPathTime: matches the engine\'s former holdT formula (stopAt ms → s, minus banked ms)', () => {
+  const old = (rec, nowMs) => ((rec.stopAt ? rec.stopAt / 1000 : 0) || nowMs / 1000) - (rec.pathOffsetMs || 0) / 1000;
+  const cases = [
+    { stopAt: 0, pathOffsetMs: 0 }, { stopAt: 0, pathOffsetMs: 12345 },
+    { stopAt: T0 + 777, pathOffsetMs: 0 }, { stopAt: T0 + 777, pathOffsetMs: 6000 },
+    { stopAt: 1.7e12 + 321, pathOffsetMs: 48000 }, {}   // a hero spawned before any record (fields unset)
+  ];
+  for (const rec of cases) {
+    for (const now of [T0, T0 + 5000, 1.7e12 + 99999]) {
+      assert.ok(Math.abs(N.npcPathTime(rec, now) - old(rec, now)) < 1e-6, JSON.stringify(rec) + ' @ ' + now);
+    }
+  }
+});
+
+test('npcCombatPhase: engine-shaped record (zeros for unset, get-up window on the local clock)', () => {
+  const rec = (o) => ({ koUntil: 0, getupUntil: 0, target: null, aggroUntil: 0, ...o });
+  assert.equal(N.npcCombatPhase(rec({}), T0), 'patrol');
+  assert.equal(N.npcCombatPhase(rec({ target: 'a' }), T0), 'patrol', 'a target without an aggro window is calm');
+  assert.equal(N.npcCombatPhase(rec({ aggroUntil: T0 + 10 }), T0), 'patrol', 'an aggro window without a target is calm');
+  assert.equal(N.npcCombatPhase(rec({ target: 'a', aggroUntil: T0 + 10 }), T0), 'aggro');
+  assert.equal(N.npcCombatPhase(rec({ target: 'a', aggroUntil: T0 }), T0), 'patrol', 'aggro ends exactly at aggroUntil');
+  assert.equal(N.npcCombatPhase(rec({ koUntil: T0 + 1, getupUntil: T0 + 9, target: 'a', aggroUntil: T0 + 9 }), T0), 'ko', 'ko beats getup and aggro');
+  assert.equal(N.npcCombatPhase(rec({ getupUntil: T0 + 9, target: 'a', aggroUntil: T0 + 9 }), T0), 'getup', 'getup beats aggro');
+});

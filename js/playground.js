@@ -1,13 +1,11 @@
 /************************************************
- * PLAYGROUND ENGINE — /home view
+ * PLAYGROUND — character palettes, presets and the SVG character sprite
  *
- * Top-down 2D fixed-room engine. Renders a layered-SVG character built
- * via the character builder; moves it via WASD/arrows on desktop or a
- * fixed bottom-center virtual joystick on mobile (portrait-first).
- *
- * Designed for one room now (loadRoom('default')) with a clean seam to
- * support multiple connected rooms in v2 — see README "Forward-
- * compatibility notes" in the plan.
+ * The source of truth for what the character builder offers (palettes,
+ * style lists, builds, presets), read by /customize, the 3D avatar
+ * (playground3d-*.js) and the admin Config tab. renderCharacter() draws
+ * the layered-SVG sprite /customize previews. (The 2D top-down /home
+ * engine that used to live here is gone — /home is the 3D Playground3D.)
  ************************************************/
 const Playground = (() => {
 
@@ -288,310 +286,15 @@ const Playground = (() => {
   const PROP_STYLES   = ['None', 'Shield', 'Hammer', 'Bow', 'Sword', 'Staff', 'Bow + quiver'];
   const EMBLEM_STYLES = ['None', 'Star', 'Arc reactor', 'Lightning', 'Spider', 'Badge', 'Soldier flag', 'Discs'];
 
-  // ------ engine state ------
-  const PHYSICS = {
-    SPEED: 220,           // px/sec at full stick deflection
-    ROOM_W: 1500,
-    ROOM_H: 1000,
-    SPRITE_W: 32,
-    SPRITE_H: 48,
-    BOB_PERIOD_MS: 280    // how often the walking bob flips
-  };
-
-  let _container = null;
-  let _roomEl = null;
-  let _spriteEl = null;
-  let _camera = { x: 0, y: 0 }; // top-left of the visible viewport in room coords
-  let _state = {
-    x: PHYSICS.ROOM_W / 2,
-    y: PHYSICS.ROOM_H / 2,
-    facing: 1,            // 1 = right, -1 = left
-    bobPhase: 0,
-    bobAccum: 0
-  };
-  let _input = null;        // input adapter instance
-  let _rafId = null;
-  let _lastTime = 0;
-  let _running = false;
-
-  // ------ public API ------
-
-  function init(container, character) {
-    _container = container;
-    _running = true;
-    _state.x = PHYSICS.ROOM_W / 2;
-    _state.y = PHYSICS.ROOM_H / 2;
-    _state.facing = 1;
-    _camera.x = 0;
-    _camera.y = 0;
-
-    // Build DOM. The viewport clips the room; the room is the
-    // translatable layer; the sprite sits inside the room.
-    container.innerHTML = '';
-    const viewport = document.createElement('div');
-    viewport.className = 'pg-viewport';
-
-    _roomEl = document.createElement('div');
-    _roomEl.className = 'pg-room';
-    _roomEl.style.width = PHYSICS.ROOM_W + 'px';
-    _roomEl.style.height = PHYSICS.ROOM_H + 'px';
-
-    // Backdrop layer — simple authored decoration, no external art.
-    const backdrop = document.createElement('div');
-    backdrop.className = 'pg-backdrop';
-    backdrop.innerHTML = scenerySvg();
-    _roomEl.appendChild(backdrop);
-
-    // Props layer (empty in v1; reserved z-index slot for future props).
-    const propsLayer = document.createElement('div');
-    propsLayer.className = 'pg-props';
-    _roomEl.appendChild(propsLayer);
-
-    _spriteEl = renderCharacter(character || defaultCharacter());
-    _spriteEl.classList.add('pg-sprite');
-    _spriteEl.style.left = (_state.x - PHYSICS.SPRITE_W / 2) + 'px';
-    _spriteEl.style.top = (_state.y - PHYSICS.SPRITE_H / 2) + 'px';
-    _roomEl.appendChild(_spriteEl);
-
-    viewport.appendChild(_roomEl);
-    container.appendChild(viewport);
-
-    _input = makeInput(viewport);
-
-    _lastTime = performance.now();
-    _rafId = requestAnimationFrame(tick);
-  }
-
-  function destroy() {
-    _running = false;
-    if (_rafId) cancelAnimationFrame(_rafId);
-    _rafId = null;
-    if (_input) {
-      _input.detach();
-      _input = null;
-    }
-    if (_container) _container.innerHTML = '';
-    _container = null;
-    _roomEl = null;
-    _spriteEl = null;
-  }
-
-  // Re-render the character sprite without restarting the engine. Used
-  // when the builder modal saves a new look mid-session.
-  function setCharacter(character) {
-    if (!_roomEl || !_spriteEl) return;
-    const fresh = renderCharacter(character);
-    fresh.classList.add('pg-sprite');
-    fresh.style.left = _spriteEl.style.left;
-    fresh.style.top = _spriteEl.style.top;
-    fresh.style.transform = _spriteEl.style.transform;
-    _roomEl.replaceChild(fresh, _spriteEl);
-    _spriteEl = fresh;
-  }
-
-  // ------ frame loop ------
-
-  function tick(now) {
-    if (!_running) return;
-    const dt = Math.min(0.05, (now - _lastTime) / 1000);
-    _lastTime = now;
-
-    const axis = _input ? _input.getAxis() : { x: 0, y: 0 };
-    const len = Math.hypot(axis.x, axis.y);
-    let nx = axis.x, ny = axis.y;
-    if (len > 1) { nx /= len; ny /= len; }
-
-    if (len > 0.05) {
-      _state.x += nx * PHYSICS.SPEED * dt;
-      _state.y += ny * PHYSICS.SPEED * dt;
-      // Mirror the sprite to face the dominant horizontal direction —
-      // pure-vertical movement keeps the previous facing.
-      if (Math.abs(nx) > 0.1) _state.facing = nx > 0 ? 1 : -1;
-      // Walking-bob accumulator
-      _state.bobAccum += dt * 1000;
-      if (_state.bobAccum >= PHYSICS.BOB_PERIOD_MS) {
-        _state.bobAccum = 0;
-        _state.bobPhase = _state.bobPhase ? 0 : 1;
-      }
-    } else {
-      _state.bobAccum = 0;
-      _state.bobPhase = 0;
-    }
-
-    // Clamp to room bounds (sprite center can't pass the wall).
-    const halfW = PHYSICS.SPRITE_W / 2;
-    const halfH = PHYSICS.SPRITE_H / 2;
-    if (_state.x < halfW) _state.x = halfW;
-    if (_state.y < halfH) _state.y = halfH;
-    if (_state.x > PHYSICS.ROOM_W - halfW) _state.x = PHYSICS.ROOM_W - halfW;
-    if (_state.y > PHYSICS.ROOM_H - halfH) _state.y = PHYSICS.ROOM_H - halfH;
-
-    // Camera-follow: center the viewport on the player, clamped so the
-    // room edge never reveals empty space outside it. On screens larger
-    // than the room, the room is centered and the camera doesn't move.
-    if (_roomEl && _spriteEl) {
-      const vw = _roomEl.parentElement.clientWidth;
-      const vh = _roomEl.parentElement.clientHeight;
-
-      let cx = _state.x - vw / 2;
-      let cy = _state.y - vh / 2;
-      if (PHYSICS.ROOM_W < vw) cx = (PHYSICS.ROOM_W - vw) / 2;
-      else cx = Math.max(0, Math.min(PHYSICS.ROOM_W - vw, cx));
-      if (PHYSICS.ROOM_H < vh) cy = (PHYSICS.ROOM_H - vh) / 2;
-      else cy = Math.max(0, Math.min(PHYSICS.ROOM_H - vh, cy));
-      _camera.x = cx;
-      _camera.y = cy;
-      _roomEl.style.transform = `translate(${-cx}px, ${-cy}px)`;
-
-      _spriteEl.style.left = (_state.x - halfW) + 'px';
-      _spriteEl.style.top = (_state.y - halfH) + 'px';
-      const bobOffset = _state.bobPhase ? -1 : 0;
-      _spriteEl.style.transform =
-        `scale(${_state.facing}, 1) translate(0, ${bobOffset}px)`;
-    }
-
-    _rafId = requestAnimationFrame(tick);
-  }
-
-  // ------ input ------
-
-  function makeInput(viewport) {
-    // Multi-source axis: keyboard always-on, joystick mobile-only. Whichever
-    // produced a non-zero reading most recently wins.
-    const keys = { up: false, down: false, left: false, right: false };
-    let joyAxis = { x: 0, y: 0 };
-    let joyActive = false;
-
-    function isTextField(el) {
-      if (!el) return false;
-      const tag = el.tagName;
-      return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
-    }
-
-    function onKey(e, down) {
-      if (isTextField(document.activeElement)) return;
-      let handled = true;
-      switch (e.key) {
-        case 'w': case 'W': case 'ArrowUp':    keys.up = down; break;
-        case 's': case 'S': case 'ArrowDown':  keys.down = down; break;
-        case 'a': case 'A': case 'ArrowLeft':  keys.left = down; break;
-        case 'd': case 'D': case 'ArrowRight': keys.right = down; break;
-        default: handled = false;
-      }
-      if (handled) e.preventDefault();
-    }
-    const onKeyDown = e => onKey(e, true);
-    const onKeyUp = e => onKey(e, false);
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-
-    // Touch joystick — only render on touch-capable devices. Show even on
-    // touch laptops; harmless for keyboard users.
-    let joyEl = null, stickEl = null, joyCenter = null, joyRadius = 56;
-    let activeTouchId = null;
-
-    if ('ontouchstart' in window) {
-      joyEl = document.createElement('div');
-      joyEl.className = 'pg-joy';
-      stickEl = document.createElement('div');
-      stickEl.className = 'pg-joy-stick';
-      joyEl.appendChild(stickEl);
-      viewport.appendChild(joyEl);
-    }
-
-    function joyStart(t) {
-      if (!joyEl) return;
-      activeTouchId = t.identifier;
-      joyActive = true;
-      const rect = joyEl.getBoundingClientRect();
-      joyCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-      joyRadius = rect.width / 2;
-      joyMove(t);
-    }
-    function joyMove(t) {
-      if (!joyEl || !joyCenter) return;
-      let dx = t.clientX - joyCenter.x;
-      let dy = t.clientY - joyCenter.y;
-      const d = Math.hypot(dx, dy);
-      if (d > joyRadius) { dx = dx / d * joyRadius; dy = dy / d * joyRadius; }
-      stickEl.style.transform = `translate(${dx}px, ${dy}px)`;
-      joyAxis = { x: dx / joyRadius, y: dy / joyRadius };
-    }
-    function joyEnd() {
-      activeTouchId = null;
-      joyActive = false;
-      joyAxis = { x: 0, y: 0 };
-      if (stickEl) stickEl.style.transform = 'translate(0,0)';
-    }
-
-    function onTouchStart(e) {
-      if (!joyEl) return;
-      for (const t of e.changedTouches) {
-        if (joyEl.contains(t.target)) {
-          e.preventDefault();
-          joyStart(t);
-          return;
-        }
-      }
-    }
-    function onTouchMove(e) {
-      if (activeTouchId === null) return;
-      for (const t of e.changedTouches) {
-        if (t.identifier === activeTouchId) {
-          e.preventDefault();
-          joyMove(t);
-          return;
-        }
-      }
-    }
-    function onTouchEnd(e) {
-      if (activeTouchId === null) return;
-      for (const t of e.changedTouches) {
-        if (t.identifier === activeTouchId) {
-          e.preventDefault();
-          joyEnd();
-          return;
-        }
-      }
-    }
-    if (joyEl) {
-      // passive:false so we can preventDefault and stop pinch/scroll.
-      viewport.addEventListener('touchstart', onTouchStart, { passive: false });
-      window.addEventListener('touchmove', onTouchMove, { passive: false });
-      window.addEventListener('touchend', onTouchEnd);
-      window.addEventListener('touchcancel', onTouchEnd);
-    }
-
-    function getAxis() {
-      // Joystick wins when actively held; otherwise sum keyboard.
-      if (joyActive) return { x: joyAxis.x, y: joyAxis.y };
-      let x = 0, y = 0;
-      if (keys.left)  x -= 1;
-      if (keys.right) x += 1;
-      if (keys.up)    y -= 1;
-      if (keys.down)  y += 1;
-      return { x, y };
-    }
-
-    function detach() {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      if (joyEl) {
-        viewport.removeEventListener('touchstart', onTouchStart);
-        window.removeEventListener('touchmove', onTouchMove);
-        window.removeEventListener('touchend', onTouchEnd);
-        window.removeEventListener('touchcancel', onTouchEnd);
-      }
-    }
-
-    return { getAxis, detach };
-  }
+  // Size of the SVG character sprite (renderCharacter), in CSS px.
+  const SPRITE_W = 32;
+  const SPRITE_H = 48;
 
   // ------ character renderer ------
 
   function defaultCharacter() {
-    // Used when no homeCharacter is saved yet — renders a neutral default
-    // so the engine has something to draw before the builder modal saves.
+    // Used when no homeCharacter is saved yet — a neutral default so there
+    // is something to draw before the builder saves.
     return {
       skin: 0, hairStyle: 0, hairColor: 0, shirtColor: 1, pantsColor: 0,
       eyeColor: 6, eyeShape: 0,
@@ -920,10 +623,10 @@ const Playground = (() => {
 
     const wrap = document.createElement('div');
     wrap.className = 'pg-char';
-    wrap.style.width = PHYSICS.SPRITE_W + 'px';
-    wrap.style.height = PHYSICS.SPRITE_H + 'px';
+    wrap.style.width = SPRITE_W + 'px';
+    wrap.style.height = SPRITE_H + 'px';
     wrap.innerHTML = `
-      <svg viewBox="0 0 32 48" width="${PHYSICS.SPRITE_W}" height="${PHYSICS.SPRITE_H}" xmlns="http://www.w3.org/2000/svg">
+      <svg viewBox="0 0 32 48" width="${SPRITE_W}" height="${SPRITE_H}" xmlns="http://www.w3.org/2000/svg">
         <!-- shadow -->
         <ellipse cx="16" cy="46" rx="9" ry="2" fill="rgba(0,0,0,0.35)" />
         <!-- cape (behind body) -->
@@ -976,38 +679,8 @@ const Playground = (() => {
     return wrap;
   }
 
-  // ------ scenery (authored room backdrop, no external assets) ------
-
-  function scenerySvg() {
-    return `
-      <svg viewBox="0 0 1500 1000" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <radialGradient id="pg-floor" cx="50%" cy="50%" r="70%">
-            <stop offset="0%" stop-color="#2a3050" />
-            <stop offset="100%" stop-color="#0e1024" />
-          </radialGradient>
-          <pattern id="pg-tiles" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse">
-            <rect width="100" height="100" fill="transparent" />
-            <path d="M 100 0 L 0 0 0 100" stroke="rgba(201,162,39,0.06)" stroke-width="1" fill="none" />
-          </pattern>
-        </defs>
-        <rect width="1500" height="1000" fill="url(#pg-floor)" />
-        <rect width="1500" height="1000" fill="url(#pg-tiles)" />
-        <!-- Soft glow rug at center -->
-        <ellipse cx="750" cy="500" rx="280" ry="180" fill="rgba(201,162,39,0.06)" />
-        <!-- Decorative corner tufts -->
-        <circle cx="120" cy="120" r="36" fill="rgba(74,222,128,0.06)" />
-        <circle cx="1380" cy="120" r="36" fill="rgba(245,99,99,0.06)" />
-        <circle cx="120" cy="880" r="36" fill="rgba(79,142,247,0.06)" />
-        <circle cx="1380" cy="880" r="36" fill="rgba(245,210,99,0.06)" />
-        <!-- Wall border -->
-        <rect x="2" y="2" width="1496" height="996" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="4" rx="12" />
-      </svg>
-    `;
-  }
-
   return {
-    init, destroy, setCharacter, renderCharacter, defaultCharacter,
+    renderCharacter, defaultCharacter,
     accentHex, characterHidden,
     SKIN_TONES, HAIR_COLORS, SHIRT_COLORS, PANTS_COLORS, HAIR_STYLES,
     EYE_COLORS, EYE_SHAPES, FACIAL_HAIR_STYLES, GLASSES_STYLES, HAT_STYLES, SHOE_COLORS,

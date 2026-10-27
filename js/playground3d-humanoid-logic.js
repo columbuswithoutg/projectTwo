@@ -26,6 +26,7 @@
   if (root) root.PG3DHumanoidLogic = api;
 })(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
+  // Rebuilt models go to a new folder: scripts/build-humanoid-assets.mjs --out v2, then bump this.
   const ASSET_BASE = '/assets/models/humanoid/v1/';
   const BODY_FILES = { male: 'body_male.glb', female: 'body_female.glb' };
 
@@ -236,7 +237,9 @@
   //        pose ('sit' | 'lie' | null) }
   // → { base, overlay, timeScale }
   function selectAnimState(inp, opts) {
-    const A = Object.assign({}, ANIM, opts || {});
+    // Read-only below, so the common no-override call (every actor, every
+    // frame) reads ANIM directly instead of copying it.
+    const A = opts ? Object.assign({}, ANIM, opts) : ANIM;
     const now = inp.now || 0;
     const speed = Math.max(0, inp.speed || 0);
     const maxSpeed = inp.maxSpeed || A.RUN_REF;

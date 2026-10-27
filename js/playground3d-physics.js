@@ -15,9 +15,48 @@
   if (root) root.PG3DPhysics = api;
 })(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
-  // Point-in-walkable test — same math as the engine's _isInWalkable.
-  // nodes: [{x, z}] platform centers, each an axis-aligned square of
-  //        half-extent `halfA` (platform + apron).
+  // ── Shared tuning ──
+  // playground3d.js builds its PHYSICS / JUMP / FALL / WORLD tables from
+  // these, and test/physics.test.js imports them. They used to be literals in
+  // the engine that the tests copied by hand — so when 1cdaeae moved islands
+  // from SCALE 18 to 24 the tests kept passing against a layout (2u gaps)
+  // that no longer existed.
+  const MOVE = Object.freeze({
+    SPEED: 4.0,                   // world units per second at full stick
+    // Exponential turn rate (1/s) for turnToward. 13.4 reproduces the old
+    // linear `min(1, 12 * dt)` lerp at 60 fps (1 - e^(-13.4/60) ≈ 0.20 of
+    // the remaining angle per frame) — but now a 30 fps phone and a 144 Hz
+    // monitor turn at the same speed, which the linear lerp didn't.
+    TURN_RATE: 13.4,
+    PLAYER_RADIUS: 0.45,          // half-extent of the player's collision square
+    BACKPEDAL_MUL: 0.6            // speed multiplier while stepping backwards
+  });
+
+  // Arcade hop: apex ≈ 1.28u, ≈ 0.68 s in the air.
+  const JUMP = Object.freeze({ GRAVITY: 22, INITIAL_V: 7.5 });
+
+  // Fall / respawn. AIR_SPEED_MUL is in-air feel only: a running jump carries
+  // SPEED × 1.25 × 0.68 s ≈ 3.4u, which matters for hopping onto props and
+  // over road corners. It no longer crosses anything between islands — at
+  // SCALE 24 neighbouring aprons are 8u apart (test/physics.test.js asserts
+  // that gap is NOT clearable); islands connect by roads only.
+  const FALL = Object.freeze({
+    AIR_SPEED_MUL: 1.25,
+    RESPAWN_DEPTH: -8,            // give up and respawn below this y
+    RESPAWN_DELAY_MS: 1000,
+    BROADCAST_Y_FLOOR: -2         // mirror the server's y clamp in getLocalState
+  });
+
+  // /world island grid. Neighbouring island centres are SCALE apart; each is
+  // a PLATFORM_W square room inside a walkable apron APRON_MARGIN wider, so
+  // the open ground between two neighbours' aprons is
+  // SCALE - (PLATFORM_W + APRON_MARGIN) = 8u — room for 2–3 road lanes.
+  const WORLD_GRID = Object.freeze({ SCALE: 24, PLATFORM_W: 12, APRON_MARGIN: 4 });
+
+  // Point-in-walkable test — the engine's _isInWalkable calls this.
+  // nodes: iterable of {x, z} platform centers, each an axis-aligned square
+  //        of half-extent `halfA` (platform + apron). An iterable (the
+  //        engine passes its node Map's values()) so no array is built.
   // roads: [{cx, cz, cosA, sinA, halfW, halfL}] rotated rectangles.
   function isWalkable(x, z, nodes, halfA, roads) {
     for (const n of nodes) {
@@ -88,11 +127,6 @@
   // Total airtime of a jump from flat ground (symmetric arc).
   function airtime(initialV, gravity) {
     return (2 * initialV) / gravity;
-  }
-
-  // Horizontal distance covered over a full jump arc at max stick.
-  function airCarry(speed, airSpeedMul, initialV, gravity) {
-    return speed * airSpeedMul * airtime(initialV, gravity);
   }
 
   // (The daily seeded stone-placement helpers — hashString/mulberry32/
@@ -328,6 +362,126 @@
     return lerpAngle(yaw, target, k);
   }
 
+  // ── Horizontal movement ──
+  // One axis step of the local player against collision boxes, other actors
+  // and (in /world) the walkable region. The engine calls it twice a frame —
+  // X then Z — so resolving only the moving axis is what makes the player
+  // slide along a wall instead of sticking to it.
+  //   out:        scratch {x, z} the result is written into (and returned) —
+  //               no allocation, this runs twice per frame
+  //   x0, z0:     where the step starts; feetY: feet height (a prop with a
+  //               `top` stops blocking once the feet are near it — blocksAt)
+  //   dx, dz:     the step (one of them 0 in practice)
+  //   r:          player half-extent; the footprint is the square ±r
+  //   boxes:      [{minX, maxX, minZ, maxZ, top?}]
+  //   actors:     [{x, z, r}] circles (remote players, NPCs) — the first
+  //               `actorCount` entries are used, so the caller can pool them
+  //   isWalkable: (x, z) → bool, or null for no region check (/home, or
+  //               airborne: a jump may leave the region, the landing judges)
+  function moveWithCollision(out, x0, z0, feetY, dx, dz, r, boxes, actors, actorCount, isWalkable) {
+    let x = x0 + dx;
+    let z = z0 + dz;
+    for (let i = 0; i < boxes.length; i++) {
+      const w = boxes[i];
+      if (!blocksAt(w, feetY)) continue;
+      // Already inside this box before the step (a keeper placed a prop onto
+      // us, a peer's house rebuilt around us): let us walk out of it. Pushing
+      // to the contact edge here snapped the player to the box's FAR side —
+      // straight through a house wall. Same rule as the actor circles below.
+      if (x0 + r > w.minX && x0 - r < w.maxX && z0 + r > w.minZ && z0 - r < w.maxZ) continue;
+      if (x + r <= w.minX || x - r >= w.maxX || z + r <= w.minZ || z - r >= w.maxZ) continue;
+      // Resolve along the axis we're moving on.
+      if (dx !== 0 && dz === 0) {
+        x = dx > 0 ? w.minX - r - 0.001 : w.maxX + r + 0.001;
+      } else if (dz !== 0 && dx === 0) {
+        z = dz > 0 ? w.minZ - r - 0.001 : w.maxZ + r + 0.001;
+      } else {
+        // Combined-axis fallback (the engine moves per axis): push out along
+        // the smaller penetration.
+        const penX = dx > 0 ? (w.minX - r - x) : (w.maxX + r - x);
+        const penZ = dz > 0 ? (w.minZ - r - z) : (w.maxZ + r - z);
+        if (Math.abs(penX) < Math.abs(penZ)) x += penX; else z += penZ;
+      }
+    }
+    // Solid bump against other actors, per axis like the boxes so the player
+    // slides round people. Before the walkability check, so a bump can't
+    // shove anyone off a road or platform.
+    for (let i = 0; i < actorCount; i++) {
+      const a = actors[i];
+      const sep = r + a.r;
+      const sep2 = sep * sep;
+      const ddx = x - a.x, ddz = z - a.z;
+      if (ddx * ddx + ddz * ddz >= sep2) continue;          // no overlap
+      // Already inside them before this step (a peer arrived on our spot, or
+      // walked into us): walk out freely — resolving to the contact edge
+      // would teleport us to their far side, or pin us in place.
+      const sdx = x0 - a.x, sdz = z0 - a.z;
+      if (sdx * sdx + sdz * sdz < sep2) continue;
+      if (dx !== 0 && dz === 0) {
+        const reach = Math.sqrt(Math.max(0, sep2 - ddz * ddz));
+        x = dx > 0 ? a.x - reach - 0.001 : a.x + reach + 0.001;
+      } else if (dz !== 0 && dx === 0) {
+        const reach = Math.sqrt(Math.max(0, sep2 - ddx * ddx));
+        z = dz > 0 ? a.z - reach - 0.001 : a.z + reach + 0.001;
+      }
+    }
+    // Stepping off the walkable region is refused for the axis that caused
+    // it — with per-axis input that's a natural slide along the edge.
+    if (isWalkable && !isWalkable(x, z)) {
+      if (dx !== 0 && dz === 0) x = x0;
+      else if (dz !== 0 && dx === 0) z = z0;
+      else { x = x0; z = z0; }
+    }
+    out.x = x;
+    out.z = z;
+    return out;
+  }
+
+  // ── Ceiling cap ──
+  // Max feet-Y at (x, z) before the head hits a roof, or null when under open
+  // sky (unrestricted jump). The doorway lintel underside (H - LINTEL_DROP) is
+  // the lowest indoor ceiling, so capping to it also clears the flat roof.
+  // The footprint is grown by `margin` so the doorway threshold (right on the
+  // platform edge) counts as indoors too.
+  //   nodes: iterable of {x, z, ceiling, wallHeight}; only roofed ones count.
+  const LINTEL_DROP = 0.45;
+  function ceilingCap(x, z, nodes, halfP, margin, headTop, defaultWallH) {
+    let cap = null;
+    const reach = halfP + margin;
+    for (const n of nodes) {
+      if (!n.ceiling) continue;
+      if (Math.abs(x - n.x) > reach || Math.abs(z - n.z) > reach) continue;
+      const H = n.wallHeight || defaultWallH;
+      const c = Math.max(0, (H - LINTEL_DROP) - headTop);   // head stays below the lintel
+      cap = (cap == null) ? c : Math.min(cap, c);
+    }
+    return cap;
+  }
+
+  // ── Spawn spreading ──
+  // Everyone entering an island or home shares its anchor, so landing exactly
+  // on it stacks players inside each other. Pick a random free spot on a ring
+  // round the anchor instead — eight points on the inner ring, the outer only
+  // when the inner is all taken. isFree(x, z) → bool is the caller's test
+  // (walkable, not in a box, clear of peers); rand() → [0, 1) (Math.random in
+  // the engine, a fixed sequence in tests). Spawn-time only, so allocation is
+  // fine. → {x, z}; the anchor itself when nowhere is free.
+  const SPAWN_RINGS = [1.3, 2.3];
+  function spreadSpawn(x, z, isFree, rand) {
+    const spots = [];
+    const a0 = rand() * TAU;
+    for (const r of SPAWN_RINGS) {
+      for (let i = 0; i < 8; i++) {
+        const a = a0 + i * Math.PI / 4;
+        const cx = x + Math.cos(a) * r, cz = z + Math.sin(a) * r;
+        if (isFree(cx, cz)) spots.push({ x: cx, z: cz });
+      }
+      if (spots.length) break;           // prefer the inner ring
+    }
+    if (spots.length) return spots[Math.floor(rand() * spots.length)];
+    return { x, z };
+  }
+
   // ── Knockdown timing + server punch validation ──
   // Shared by the engine's PUNCH block and routes/world-socket.js. A victim is
   // immune from a fresh knockdown until IMMUNE_MS after the last one (down +
@@ -401,9 +555,10 @@
   }
 
   return {
-    isWalkable, STEP, groundAt, blocksAt, stepVertical, shouldRespawn, airtime, airCarry, pickPunchTarget,
+    MOVE, JUMP, FALL, WORLD_GRID,
+    isWalkable, STEP, groundAt, blocksAt, stepVertical, shouldRespawn, airtime, pickPunchTarget,
     actorRadius, spawnIslands, PUNCH_COOLDOWN_MS, punchCooldown, hash01, npcPatrol, npcPathPoint,
     pinchZoom, fovForAspect, wallBetween,
-    wrapAngle, lerpAngle, turnToward, KNOCKDOWN, punchCheck, STONE_RING, stoneSlot, seatOccupied, snapShadowCenter
+    wrapAngle, lerpAngle, turnToward, moveWithCollision, LINTEL_DROP, ceilingCap, SPAWN_RINGS, spreadSpawn, KNOCKDOWN, punchCheck, STONE_RING, stoneSlot, seatOccupied, snapShadowCenter
   };
 });

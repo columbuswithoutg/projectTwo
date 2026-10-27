@@ -47,13 +47,45 @@ const Chunks = (() => {
     });
   }
 
-  function _module(src) {
-    if (document.querySelector('script[type="module"][src="' + src + '"]')) return;
+  // attempt > 0 (a retry) adds ?r=attempt: browsers memoise a failed module
+  // fetch per URL for the page's lifetime, so only a new URL refetches.
+  function _module(src, attempt) {
+    const url = attempt ? src + (src.indexOf('?') === -1 ? '?' : '&') + 'r=' + attempt : src;
+    if (document.querySelector('script[type="module"][src="' + url + '"]')) return;
     const s = document.createElement('script');
     s.type = 'module';
-    s.src = src;
-    s.onerror = () => console.warn('[chunks] module failed to load', src);
+    s.src = url;
+    s.onerror = () => {
+      console.warn('[chunks] module failed to load', url);
+      // Drop the dead element (the dedupe check above would otherwise match
+      // it forever) and say so: the only lazy module is the Three.js shim,
+      // and a failed fetch of it — or of a STATIC import inside it — surfaces
+      // only here. Playground3D listens for 'three-failed' to show Retry.
+      if (s.parentNode) s.parentNode.removeChild(s);
+      // The shim never ran, so nothing else records the outcome: a mount that
+      // starts AFTER this event checks window.__threeCore and would otherwise
+      // sit out the full THREE_WAIT_MS before showing Retry.
+      try { window.__threeCore = 'failed'; } catch (_) {}
+      try {
+        window.dispatchEvent(new CustomEvent('three-failed', { detail: { error: new Error('module failed to load: ' + url) } }));
+      } catch (_) {}
+    };
     document.head.appendChild(s);
+  }
+
+  // Re-inject a loaded chunk's modules under a fresh URL (Playground3D's
+  // "3D engine couldn't load — Retry"). → false when there's nothing to retry.
+  const moduleTries = new Map();   // name -> retry count
+  function retryModules(name) {
+    const spec = _manifest()[name];
+    if (!spec || !done.has(name) || !(spec.modules || []).length) return false;
+    const n = (moduleTries.get(name) || 0) + 1;
+    moduleTries.set(name, n);
+    // Clear a 'failed' left by the last attempt (ours or the shim's) so a
+    // mount during the retry waits for the new outcome instead of failing at once.
+    try { window.__threeCore = 'loading'; } catch (_) {}
+    spec.modules.forEach((src) => _module(src, n));
+    return true;
   }
 
   function load(name) {
@@ -63,7 +95,7 @@ const Chunks = (() => {
     if (!spec) return Promise.reject(new Error('unknown chunk: ' + name));
     const p = Promise.all((spec.scripts || []).map(_script))
       .then(() => {
-        (spec.modules || []).forEach(_module);
+        (spec.modules || []).forEach((src) => _module(src, 0));
         done.add(name);
         pending.delete(name);
       })
@@ -75,5 +107,5 @@ const Chunks = (() => {
     return p;
   }
 
-  return { load, isLoaded: (name) => done.has(name) };
+  return { load, retryModules, isLoaded: (name) => done.has(name) };
 })();

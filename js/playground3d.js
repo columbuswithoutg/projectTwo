@@ -27,12 +27,15 @@
  ************************************************/
 const Playground3D = (() => {
 
+  // Movement / jump / fall tuning and the island grid live in
+  // PG3DPhysics (js/playground3d-physics.js) so test/physics.test.js checks
+  // the numbers the engine actually runs on, not a hand-copied set.
   const PHYSICS = {
-    SPEED: 4.0,                   // world units per second at full stick
-    TURN_RATE: 12.0,              // yaw lerp speed (rad/sec equivalent)
-    PLAYER_RADIUS: 0.45,          // for wall AABB collision
+    SPEED: PG3DPhysics.MOVE.SPEED,            // world units per second at full stick
+    TURN_RATE: PG3DPhysics.MOVE.TURN_RATE,    // exponential yaw rate (1/s) for PG3DPhysics.turnToward
+    PLAYER_RADIUS: PG3DPhysics.MOVE.PLAYER_RADIUS,   // for wall AABB collision
     STEP_PERIOD: 0.45,            // seconds per full leg-swing cycle
-    BACKPEDAL_MUL: 0.6            // speed multiplier while stepping backwards
+    BACKPEDAL_MUL: PG3DPhysics.MOVE.BACKPEDAL_MUL    // speed multiplier while stepping backwards
   };
 
   // Collision footprint of OTHER actors (remote players + NPCs) when the local
@@ -50,7 +53,9 @@ const Playground3D = (() => {
     WORLD_MIN_ELEV: 0.40,         // ~23°: floor so you can't tilt under the walls
     ROTATE_SPEED: 0.005,          // radians per pixel
     ZOOM_SPEED: 0.0015,           // distance per wheel delta
-    FOLLOW_RATE: 4.0              // lerp speed for auto-follow azimuth
+    // Exponential auto-follow rate (1/s, PG3DPhysics.turnToward). 4.14 is the
+    // old linear min(1, 4 * dt) lerp's pull at 60 fps, now the same at any fps.
+    FOLLOW_RATE: 4.14
   };
 
   // Sun + shadow camera. The shadow camera FOLLOWS the player (_updateSunRig,
@@ -80,8 +85,8 @@ const Playground3D = (() => {
   // character feels at the same scale on either map. Roads are the only
   // walkable strips between platforms — see _isInWalkable() collision.
   const WORLD = {
-    SCALE: 24,                    // world units per project grid unit: room + apron + an 8u gap that fits 2–3 road lanes
-    PLATFORM_W: 12,
+    SCALE: PG3DPhysics.WORLD_GRID.SCALE,             // world units per project grid unit: room + apron + an 8u gap that fits 2–3 road lanes
+    PLATFORM_W: PG3DPhysics.WORLD_GRID.PLATFORM_W,
     PLATFORM_H: 0.4,
     PLATFORM_D: 12,
     PLATFORM_RAISE: -0.2,         // mesh center y; with PLATFORM_H=0.4 puts platform top at y=0
@@ -97,7 +102,7 @@ const Playground3D = (() => {
     GROUND_COLOR: 0x4f8a52,      // grass green
     ROAD_COLOR: 0xc2a878,        // warm stone path
     APRON_COLOR: 0xc7bca2,       // light stone pad around each building base
-    APRON_MARGIN: 4,             // apron extends this far beyond the platform (walkable)
+    APRON_MARGIN: PG3DPhysics.WORLD_GRID.APRON_MARGIN,   // apron extends this far beyond the platform (walkable)
     // Wall fence around each platform — tall rooms (4.5u, well above the
     // ~2.2u player head and a Huge build's ~3.1u) so each node reads as an
     // enclosed room with headroom and the full-height doorway clears everyone. You can't walk off the platform except
@@ -127,24 +132,18 @@ const Playground3D = (() => {
   };
 
   // Jump physics — applies in both /home and /world. Tuned for an arcade
-  // hop, max height ~1.3u, total air time ~0.7s.
-  const JUMP = {
-    GRAVITY: 22,                  // world units / s²
-    INITIAL_V: 7.5                // initial upward velocity on spacebar
-  };
+  // hop, max height ~1.3u, total air time ~0.7s ({ GRAVITY, INITIAL_V }).
+  const JUMP = PG3DPhysics.JUMP;
 
-  // Gap-jumping + fall/respawn (world mode). While airborne the walkability
-  // check is skipped, so a jump can carry across the 2.0u (orthogonal) /
-  // 2.8u (diagonal) gaps between islands: SPEED 4.0 × AIR_SPEED_MUL 1.25 ×
-  // 0.68s airtime ≈ 3.4u of carry. Land on nothing → fall below the world
-  // and respawn at the last safe spot. Distant islands (20u+) stay out of
-  // reach by design.
-  const FALL = {
-    AIR_SPEED_MUL: 1.25,
-    RESPAWN_DEPTH: -8,            // give up and respawn below this y
-    RESPAWN_DELAY_MS: 1000,
-    BROADCAST_Y_FLOOR: -2         // mirror the server's y clamp in getLocalState
-  };
+  // Fall/respawn (world mode). While airborne the walkability check is
+  // skipped, so a jump off a road or apron edge is allowed; landing on
+  // nothing → fall below the world and respawn at the last safe spot.
+  // Jumping BETWEEN islands is gone since SCALE went 18 → 24: a running jump
+  // carries ~3.4u (SPEED × AIR_SPEED_MUL × 0.68 s) and neighbouring aprons
+  // are 8u apart, so islands connect by roads only. AIR_SPEED_MUL stays as
+  // in-air feel (hopping onto props), not to clear a gap.
+  // { AIR_SPEED_MUL, RESPAWN_DEPTH, RESPAWN_DELAY_MS, BROADCAST_Y_FLOOR }
+  const FALL = PG3DPhysics.FALL;
 
   // Punch + knockdown. F / the 👊 touch button throws a quick right-arm jab;
   // an actor (remote player or NPC) within RANGE gets knocked down — falls
@@ -196,7 +195,7 @@ const Playground3D = (() => {
   let _resizeObs = null;
   let _rafId = null;
   let _onVisibility = null;       // pause the render loop while the tab is hidden
-  let _threeReadyHandler = null;  // pending 'three-ready' listener (CDN still loading)
+  let _threeWait = null;          // { cancel } while waiting on 'three-ready' (CDN still loading)
   let _lastTime = 0;
   let _running = false;
   let _stepClock = 0;             // animation phase accumulator
@@ -269,22 +268,37 @@ const Playground3D = (() => {
   // load callbacks check this before assigning to a material, so a late-firing
   // load doesn't write to a disposed scene.
   let _sceneAlive = false;
+  // Bumped by every _initInternal AND every destroy(). _sceneAlive alone can't
+  // tell one mount from the next: a quick /world → /home → /world hop made it
+  // true again before the first mount's late callbacks (a texture load, the
+  // warm-up's go(), a chat bubble's timers) fired, so they ran against the new
+  // scene. Those callbacks capture the generation they were started in and
+  // bail when it has moved on.
+  let _mountGen = 0;
   // Reused per-frame for HUD anchor projection — set() instead of new each tick.
   let _hudAnchor = null;
   let _hudProjScratch = null;     // reused by _placeHudEl so HUD projection allocates nothing per frame
 
   // Cached TextureLoader. Returns the cached Texture synchronously when hit;
   // otherwise loads once and stores. The onReady callback only fires while
-  // _sceneAlive is still true.
+  // the mount that asked is still the live one (_mountGen unchanged).
+  //
+  // Every caller uses the result as a colour .map (posters, portraits), so it
+  // is tagged sRGB here. Three r160 manages colour and outputs sRGB: an
+  // untagged texture is read as linear and encoded a second time on output,
+  // which is what made the floor posters look pale and washed out. A future
+  // caller wanting a data texture (bump/normal/alpha) must not use this cache.
   function _loadTexture(url, onReady) {
     const THREE = window.THREE;
     if (!THREE || !url) return;
     const cached = _textureCache.get(url);
     if (cached) { onReady(cached); return; }
     _textureLoader = _textureLoader || new THREE.TextureLoader();
+    const gen = _mountGen;
     _textureLoader.load(url, (tex) => {
+      if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
       _textureCache.set(url, tex);
-      if (_sceneAlive) onReady(tex);
+      if (_sceneAlive && gen === _mountGen) onReady(tex);
     });
   }
 
@@ -319,18 +333,120 @@ const Playground3D = (() => {
   function _waitForThree(container) {
     if (window.THREE) {
       _waitForCharacters(container);
-    } else {
-      const onReady = () => {
-        window.removeEventListener('three-ready', onReady);
-        _threeReadyHandler = null;
-        // Container may have been swapped out before THREE arrived.
-        if (_container === container) _waitForCharacters(container);
-      };
-      // Track it so destroy() can remove it if the view is left before THREE
-      // finishes loading from the CDN — otherwise the closure leaks per mount.
-      _threeReadyHandler = onReady;
-      window.addEventListener('three-ready', onReady);
+      return;
     }
+    _clearThreeWait();
+    const onReady = () => {
+      _clearThreeWait();
+      // Container may have been swapped out before THREE arrived.
+      if (_container !== container) return;
+      _clearEngineMessage(container);   // a late arrival after the error/timeout still starts
+      _waitForCharacters(container);
+    };
+    // Tracked so destroy() can remove the listeners if the view is left before
+    // THREE finishes loading — otherwise the closures leak per mount.
+    _threeWait = _awaitThree(onReady, (error) => {
+      if (_container === container) _showThreeError(container, error, () => _waitForThree(container));
+    });
+  }
+  function _clearThreeWait() {
+    if (_threeWait) { _threeWait.cancel(); _threeWait = null; }
+  }
+
+  // ── Three.js load failure ──
+  // The shim (js/three-shim.mjs) fetches Three from unpkg. When that fails it
+  // dispatches 'three-failed' (the chunk loader does too when the shim file
+  // itself can't be fetched); a load that simply hangs is caught by
+  // THREE_WAIT_MS. Either way the spinner turns into a message with Retry,
+  // instead of spinning forever. The ready listener stays attached past a
+  // timeout, so a slow-but-successful load still starts the scene.
+  const THREE_WAIT_MS = 15000;
+  let _threeFailed = false;   // a 'three-failed' already fired on this page
+  // → { cancel }. onReady() on 'three-ready'; onFail(error) once, on
+  // 'three-failed' or the timeout (or right away if a failure already fired —
+  // a later mount would otherwise wait out the full timeout for nothing).
+  function _awaitThree(onReady, onFail) {
+    let failed = false, timer = null;
+    const fail = (error) => {
+      if (failed) return;
+      failed = true;
+      clearTimeout(timer);
+      onFail(error);
+    };
+    const ready = () => { cancel(); onReady(); };
+    const failedEv = (ev) => { _threeFailed = true; fail((ev && ev.detail && ev.detail.error) || new Error('three-failed')); };
+    function cancel() {
+      clearTimeout(timer);
+      window.removeEventListener('three-ready', ready);
+      window.removeEventListener('three-failed', failedEv);
+    }
+    window.addEventListener('three-ready', ready);
+    window.addEventListener('three-failed', failedEv);
+    if (_threeFailed || window.__threeCore === 'failed') fail(new Error('three-failed'));
+    else timer = setTimeout(() => fail(new Error('Three.js load timed out')), THREE_WAIT_MS);
+    return { cancel };
+  }
+
+  // Retry re-injects the shim through the chunk loader (a fresh URL — see
+  // Chunks.retryModules) and waits again. Browsers memoise a failed module
+  // fetch for the page's lifetime, and the importmap'd `three` URL can't
+  // change, so when the in-page retry fails too the button becomes Reload.
+  let _threeRetries = 0;
+  function _showThreeError(container, error, rewait) {
+    console.warn('[pg3d] Three.js unavailable', error);
+    const canRetry = _threeRetries < 1 && typeof Chunks !== 'undefined' && Chunks.retryModules;
+    _engineMessage(container, '3D engine couldn’t load.', canRetry ? 'Retry' : 'Reload page', () => {
+      if (!canRetry) { location.reload(); return; }
+      _threeRetries++;
+      _threeFailed = false;
+      try { window.__threeCore = 'loading'; } catch (_) {}
+      _clearEngineMessage(container);
+      if (!Chunks.retryModules('world')) { location.reload(); return; }
+      rewait();
+    });
+  }
+
+  // A message in place of the spinner (or over a stopped scene) with one
+  // action button. Reuses the branded .world-loading cover; that cover is
+  // click-through by design (pointer-events: none), so the button opts back in.
+  function _engineMessage(container, text, label, onClick, extraClass) {
+    const cover = _loadingCover(container, text, extraClass);
+    const el = cover.el;
+    el.classList.add('pg3d-error');
+    el.setAttribute('role', 'alert');
+    const spin = el.querySelector('.world-loading-spinner');
+    if (spin) spin.style.display = 'none';
+    let btn = el.querySelector(':scope > .pg3d-error-btn');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--primary pg3d-error-btn';
+      btn.style.pointerEvents = 'auto';
+      el.appendChild(btn);
+    }
+    btn.textContent = label;
+    btn.onclick = onClick;
+    return el;
+  }
+  function _clearEngineMessage(container) {
+    const el = container && container.querySelector(':scope > .world-loading.pg3d-error');
+    if (!el) return;
+    el.classList.remove('pg3d-error');
+    el.removeAttribute('role');
+    const spin = el.querySelector('.world-loading-spinner');
+    if (spin) spin.style.display = '';
+    const btn = el.querySelector(':scope > .pg3d-error-btn');
+    if (btn) btn.remove();
+    const label = el.querySelector('.world-loading-text');
+    if (label) label.textContent = 'Loading 3D…';
+  }
+
+  // Removes the cover outright, also once Retry has reset it to a spinner
+  // (createPreview: its host has no loading state of its own, so a reset
+  // spinner would otherwise sit over the preview for good).
+  function _removeEngineMessage(container) {
+    const el = container && container.querySelector(':scope > .world-loading');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
   }
 
   // ── Character loading gate ──
@@ -346,11 +462,14 @@ const Playground3D = (() => {
   const WARMUP_MS = 4000;
   function _startWhenWarm() {
     const cover = _loadingCover(_viewport, 'Almost ready…', 'pg3d-cover');
+    const gen = _mountGen;
     let started = false;
     const go = () => {
       if (started) return;
       started = true;
-      if (!_running) return;
+      // A previous mount's warm-up finishing late must not start (or uncover)
+      // the next mount's loop — that one runs its own _startWhenWarm.
+      if (!_running || gen !== _mountGen) return;
       _lastTime = performance.now();
       if (!_rafId) _rafId = requestAnimationFrame(_tick);
       // Lift the cover once a real frame is on screen.
@@ -434,6 +553,7 @@ const Playground3D = (() => {
     if (_charWait) _charWait.cancel();
     _running = false;
     _sceneAlive = false;
+    _mountGen++;
     _occlusion.reset();
     clearStones();
     _onStoneGrab = null;
@@ -447,7 +567,7 @@ const Playground3D = (() => {
     if (_rafId) cancelAnimationFrame(_rafId);
     _rafId = null;
     if (_onVisibility) { document.removeEventListener('visibilitychange', _onVisibility); _onVisibility = null; }
-    if (_threeReadyHandler) { window.removeEventListener('three-ready', _threeReadyHandler); _threeReadyHandler = null; }
+    _clearThreeWait();
     if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
     if (_input) { _input.detach(); _input = null; }
     _inputSuspended = false;
@@ -489,6 +609,11 @@ const Playground3D = (() => {
     _matPlatformSide = null;
     _matApron = null;
     _ceilMatByPhase = null;
+    // The sweep only reached shared materials still on a mesh; ones whose
+    // walls / props were rebuilt away live only in the cache. (A second
+    // dispose() of a swept one is a no-op.)
+    if (_sharedLamberts) _sharedLamberts.forEach(m => { try { m.dispose(); } catch (_) {} });
+    _sharedLamberts = null;
     _homeRoof = null;
     _homeRoofMat = null;
     _walkableRoads = [];
@@ -551,6 +676,7 @@ const Playground3D = (() => {
     const THREE = window.THREE;
     _running = true;
     _sceneAlive = true;
+    _mountGen++;
     // Reset jump/fall/punch state — none of it may survive a remount
     // (leaving /world mid-fall or mid-knockdown and entering /home would
     // otherwise keep input dead or the rig tipped over).
@@ -559,6 +685,9 @@ const Playground3D = (() => {
     _airborne = false;
     _lastSafe.x = 0;
     _lastSafe.z = 0;
+    _tickFails = 0;            // a fresh scene gets a fresh error budget + log
+    _tickErrorLogged = false;
+    _loopStopped = false;
     _localPunchUntil = 0;
     _lastPunchAt = 0;
     _localDownUntil = 0;
@@ -695,7 +824,7 @@ const Playground3D = (() => {
     _onVisibility = () => {
       if (document.hidden) {
         if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
-      } else if (_running && !_rafId) {
+      } else if (_running && !_loopStopped && !_rafId) {
         _lastTime = performance.now();
         _rafId = requestAnimationFrame(_tick);
       }
@@ -795,6 +924,7 @@ const Playground3D = (() => {
       const node = {
         home: true, room, hasNbr, openings, plainWallMat: wallMat,
         mesh: floor, project: project || { id: room.projectId },
+        x: cx, z: cz,                   // centre, for PG3DPhysics.ceilingCap
         wallHeight: HOME_WALL_HEIGHT,   // one height → one continuous roof line
         house: _houses.get(room.projectId) || null,
         ceiling: null, walls: [], decor: [], props: [], lockIcons: [], roofExtra: null, roofTopY: 0
@@ -1247,6 +1377,10 @@ const Playground3D = (() => {
   function _disposeActor(root) {
     if (!root) return;
     root.userData.disposed = true;
+    // Unsubscribe the pending model-ready upgrade (see _buildPlayer).
+    const offReady = root.userData.offReady;
+    root.userData.offReady = null;
+    if (typeof offReady === 'function') { try { offReady(); } catch (_) {} }
     const inst = root.userData.humanoid;
     if (inst) { try { inst.dispose(); } catch (_) {} root.userData.humanoid = null; }
     _disposeRig(root);
@@ -1288,6 +1422,10 @@ const Playground3D = (() => {
     return _frustum.intersectsSphere(_frustumSphere);
   }
 
+  const _animIn = {
+    now: 0, speed: 0, backward: false, maxSpeed: 0, airborne: false, velY: 0, falling: false, landAt: 0,
+    downUntil: 0, getupUntil: 0, hitUntil: 0, punchUntil: 0, emoteUntil: 0, pose: null
+  };
   function _animateActor(root, s, dt, now) {
     const inst = root && root.userData.humanoid;
     if (!inst) return false;
@@ -1303,22 +1441,24 @@ const Playground3D = (() => {
       dt = root.userData.animAcc;
       root.userData.animAcc = 0;
     }
-    const st = PG3DHumanoidLogic.selectAnimState({
-      now,
-      speed: s.speed || 0,
-      backward: !!s.backward,
-      maxSpeed: PHYSICS.SPEED,
-      airborne: !!s.airborne,
-      velY: s.velY || 0,
-      falling: !!s.falling,
-      landAt: s.landAt || 0,
-      downUntil: s.downUntil || 0,
-      getupUntil: s.getupUntil || 0,
-      hitUntil: s.hitUntil || 0,
-      punchUntil: s.punchUntil || 0,
-      emoteUntil: s.emoteUntil || 0,
-      pose: s.pose || null
-    });
+    // One reused input record (selectAnimState only reads it) instead of a
+    // fresh object per actor per frame; every field is rewritten each call.
+    const ai = _animIn;
+    ai.now = now;
+    ai.speed = s.speed || 0;
+    ai.backward = !!s.backward;
+    ai.maxSpeed = PHYSICS.SPEED;
+    ai.airborne = !!s.airborne;
+    ai.velY = s.velY || 0;
+    ai.falling = !!s.falling;
+    ai.landAt = s.landAt || 0;
+    ai.downUntil = s.downUntil || 0;
+    ai.getupUntil = s.getupUntil || 0;
+    ai.hitUntil = s.hitUntil || 0;
+    ai.punchUntil = s.punchUntil || 0;
+    ai.emoteUntil = s.emoteUntil || 0;
+    ai.pose = s.pose || null;
+    const st = PG3DHumanoidLogic.selectAnimState(ai);
     // Overlays are keyed by name + a caller-bumped sequence, so two hits in a
     // row (or a jab straight into a cross) restart the clip instead of
     // running on from the first one. Callers without a seq behave as before.
@@ -1341,7 +1481,10 @@ const Playground3D = (() => {
   // Builds a character: procedural immediately, upgraded to the rigged model
   // when (and if) the assets land. The contract is unchanged — a root Group
   // with its origin at the feet, facing −Z, scaled by the build.
-  function _buildPlayer(c) {
+  // opts.discard: the caller renders once and disposes straight away
+  // (thumbnails, the draw-call probe) — no in-place upgrade is wanted, so no
+  // model-ready listener is registered for it at all.
+  function _buildPlayer(c, opts) {
     // Box characters never load the rigged model — they keep the blocky body.
     if (_isBoxBody(c)) {
       const box = _buildBoxPlayer(c);
@@ -1353,12 +1496,17 @@ const Playground3D = (() => {
     // Already loaded → swap synchronously, so callers that render the very
     // next frame (thumbnails) get the real model.
     if (PG3DHumanoid.status() === 'ready') { _upgradeActor(root, c, true); return root; }
+    if (opts && opts.discard) return root;
     const gen = (root.userData.buildGen || 0) + 1;
     root.userData.buildGen = gen;
     PG3DHumanoid.whenReady().catch(() => {});   // make sure a load is running
     // onReady (not whenReady().then): a failed first load that succeeds on a
-    // retry still upgrades every stand-in in place.
-    PG3DHumanoid.onReady(() => {
+    // retry still upgrades every stand-in in place. The unsubscribe is kept
+    // on the root so _disposeActor can drop it: while the models are slow or
+    // failed, every discarded stand-in (NPC respawns, remote players leaving,
+    // preview rebuilds) would otherwise stay referenced by this listener.
+    root.userData.offReady = PG3DHumanoid.onReady(() => {
+      root.userData.offReady = null;
       if (root.userData.buildGen === gen && !root.userData.disposed) _upgradeActor(root, c);
     });
     return root;
@@ -1510,7 +1658,8 @@ const Playground3D = (() => {
 
   // Everyone who enters (or respawns / teleports) at an island or a home
   // shares the same anchor point, so landing exactly on it stacks players
-  // inside each other — and _collideActors then pins them together. Pick a
+  // inside each other — and the actor bump (PG3DPhysics.moveWithCollision)
+  // then pins them together. Pick a
   // random free spot on a small ring around the anchor instead: walkable, not
   // in a wall or prop, and clear of every remote player we know about.
   function _spreadSpawn(x, z) {
@@ -1522,22 +1671,12 @@ const Playground3D = (() => {
       return true;
     };
     const ok = (cx, cz) => (_mode !== 'world' || _isInWalkable(cx, cz)) && !_blockedAt(cx, cz, 0) && clearOfPeers(cx, cz);
-    const spots = [];
-    const a0 = Math.random() * Math.PI * 2;
-    for (const r of [1.3, 2.3]) {
-      for (let i = 0; i < 8; i++) {
-        const a = a0 + i * Math.PI / 4;
-        const cx = x + Math.cos(a) * r, cz = z + Math.sin(a) * r;
-        if (ok(cx, cz)) spots.push({ x: cx, z: cz });
-      }
-      if (spots.length) break;           // prefer the inner ring
-    }
     // Remember the anchor for a few seconds: the room's snapshot usually
     // lands just AFTER we spawn, and addRemotePlayer re-spreads us if a peer
     // it brings turns out to be standing on our spot.
     _spawnAnchor = { x, z, until: performance.now() + 4000 };
-    if (spots.length) return spots[Math.floor(Math.random() * spots.length)];
-    return { x, z };                     // nowhere free — the anchor itself
+    // Ring search (inner ring first; the anchor itself when nowhere is free).
+    return PG3DPhysics.spreadSpawn(x, z, ok, Math.random);
   }
   let _spawnAnchor = null;
 
@@ -1699,8 +1838,49 @@ const Playground3D = (() => {
     if (bones.head) bones.head.rotation.x *= d;
   }
 
+  // The render loop. The next frame is scheduled HERE, after the frame body,
+  // whether or not the body threw: it used to be the body's last line, so one
+  // exception anywhere (a bad remote payload, a half-disposed mesh) froze
+  // /world for good with nothing on screen. The first error is logged; a
+  // single bad frame just skips to the next one, and only TICK_FAIL_LIMIT
+  // failures in a row (~1 s) stop the loop and say so in the viewport.
+  // _tickFrame sets _lastTime before any work, so a frame that throws
+  // mid-way still advances the clock and the next dt stays one frame long.
+  const TICK_FAIL_LIMIT = 60;
+  let _tickFails = 0;
+  let _tickErrorLogged = false;
+  // Set once TICK_FAIL_LIMIT stops the loop. _running stays true (the scene
+  // is still mounted, under the error cover), so the visibility handler
+  // checks this too — otherwise hiding and re-showing the tab restarted rAF
+  // behind "The 3D view hit an error and stopped."
+  let _loopStopped = false;
   function _tick(now) {
     if (!_running) return;
+    try {
+      _tickFrame(now);
+      _tickFails = 0;
+    } catch (err) {
+      _lastTime = now;
+      _tickFails++;
+      if (!_tickErrorLogged) { _tickErrorLogged = true; console.error('[pg3d] frame failed', err); }
+      if (_tickFails >= TICK_FAIL_LIMIT) {
+        _rafId = null;
+        _loopStopped = true;
+        _showLoopStopped();
+        return;
+      }
+    }
+    if (!_running) return;   // the frame tore the scene down (destroy)
+    _rafId = requestAnimationFrame(_tick);
+  }
+
+  function _showLoopStopped() {
+    if (!_viewport) return;
+    _engineMessage(_viewport, 'The 3D view hit an error and stopped.', 'Reload', () => location.reload(), 'pg3d-cover');
+    if (typeof toast === 'function') toast('The 3D view stopped after an error — reload to continue.', 'error');
+  }
+
+  function _tickFrame(now) {
     // Clamped both ways: a rAF timestamp can come in just before _lastTime
     // (first frame after start / tab return) and a negative dt ends one-shot clips.
     const dt = Math.max(0, Math.min(0.05, (now - _lastTime) / 1000));
@@ -1716,10 +1896,11 @@ const Playground3D = (() => {
     // (the direction it's looking, away from itself) is (sin a, cos a),
     // and its right (right-handed basis with up=+Y) is (-cos a, sin a).
     // Joystick/W maps to forward; D maps to camera-right, A to camera-left.
-    const forward = { x:  Math.sin(_orbit.azimuth), z:  Math.cos(_orbit.azimuth) };
-    const right   = { x: -Math.cos(_orbit.azimuth), z:  Math.sin(_orbit.azimuth) };
-    const moveX = forward.x * (-ny) + right.x * nx;
-    const moveZ = forward.z * (-ny) + right.z * nx;
+    // (Scalars, not two {x, z} objects per frame.)
+    const fwdX =  Math.sin(_orbit.azimuth), fwdZ = Math.cos(_orbit.azimuth);
+    const rightX = -Math.cos(_orbit.azimuth), rightZ = Math.sin(_orbit.azimuth);
+    const moveX = fwdX * (-ny) + rightX * nx;
+    const moveZ = fwdZ * (-ny) + rightZ * nx;
 
     // Backpedal. ny > 0 is "pull back" (S / joystick down). Reversing used to
     // yaw the character 180° to face its movement direction, and the camera
@@ -1758,8 +1939,8 @@ const Playground3D = (() => {
     let moved = false;
     if (len > 0.05 && !_falling && !_down && !seated) {   // input is dead while falling, down or seated
       moved = true;
-      // Slight air-speed boost so a running jump clears the island gaps.
-      // Backing up is slower than going forward, the way it is on foot.
+      // Slight air-speed boost for a livelier hop (it no longer clears any
+      // island gap — see FALL). Backing up is slower than going forward, the way it is on foot.
       const step = PHYSICS.SPEED * (_airborne ? FALL.AIR_SPEED_MUL : 1)
                  * (backpedal ? PHYSICS.BACKPEDAL_MUL : 1) * len * dt;
       // Move on each axis separately so collision response can slide along walls.
@@ -1770,7 +1951,7 @@ const Playground3D = (() => {
       // character keeps facing where it was already looking.
       if (!backpedal) {
         const targetYaw = Math.atan2(moveX, moveZ);
-        _player.rotation.y = _lerpAngle(_player.rotation.y, targetYaw, Math.min(1, PHYSICS.TURN_RATE * dt));
+        _player.rotation.y = PG3DPhysics.turnToward(_player.rotation.y, targetYaw, dt, PHYSICS.TURN_RATE);
       }
     }
     _localWalking = moved;
@@ -1883,8 +2064,7 @@ const Playground3D = (() => {
     // isn't actively orbiting the camera, lerp the camera's azimuth toward
     // the character's yaw so the camera trails behind the back.
     if (moved && _input && !_input.isOrbiting()) {
-      _orbit.azimuth = _lerpAngle(_orbit.azimuth, _player.rotation.y,
-        Math.min(1, CAMERA.FOLLOW_RATE * dt));
+      _orbit.azimuth = PG3DPhysics.turnToward(_orbit.azimuth, _player.rotation.y, dt, CAMERA.FOLLOW_RATE);
     }
 
     // Animation — rigged characters run a clip state machine; everything
@@ -1985,92 +2165,43 @@ const Playground3D = (() => {
     // it, so every wall between the outside camera and them would fade away.
     if (!_showcase) _occlusion.tick(dt, now, _scene, _camera, _player);
     _renderer.render(_scene, _camera);
-    _rafId = requestAnimationFrame(_tick);
+    // (the next frame is scheduled by _tick, which wraps this body)
   }
 
   // ── See-through occluders ──
   // Implemented in playground3d-occlusion.js; one instance per engine.
   const _occlusion = PG3DOcclusion.create();
 
+  // One axis step of the local player — walls / props, then other actors
+  // (remote players + NPCs, so you slide round people instead of phasing
+  // through them), then the /world walkable region. The math is
+  // PG3DPhysics.moveWithCollision (unit-tested); this just gathers the
+  // inputs. The walkability check is skipped while airborne — a jump may
+  // leave the region; the landing branch in _tickFrame judges touchdown.
+  const _moveOut = { x: 0, z: 0 };
+  const _actorPool = [];           // reused {x, z, r} circles — no per-frame allocation
   function _moveWithCollision(dx, dz) {
-    const r = _playerR;
-    const startX = _player.position.x;
-    const startZ = _player.position.z;
-    let x = startX + dx;
-    let z = startZ + dz;
-    for (const w of _walls) {
-      // A standable prop stops blocking once the feet are near its top.
-      if (!PG3DPhysics.blocksAt(w, _player.position.y)) continue;
-      // Player AABB (approx capsule by box) overlaps wall AABB.
-      const minX = x - r, maxX = x + r;
-      const minZ = z - r, maxZ = z + r;
-      if (maxX <= w.minX || minX >= w.maxX || maxZ <= w.minZ || minZ >= w.maxZ) continue;
-      // Resolve along the axis we're moving on.
-      if (dx !== 0 && dz === 0) {
-        if (dx > 0) x = w.minX - r - 0.001;
-        else        x = w.maxX + r + 0.001;
-      } else if (dz !== 0 && dx === 0) {
-        if (dz > 0) z = w.minZ - r - 0.001;
-        else        z = w.maxZ + r + 0.001;
-      } else {
-        // Combined-axis fallback (shouldn't happen — we move per-axis).
-        // Push out along the smallest penetration.
-        const penX = dx > 0 ? (w.minX - r - x) : (w.maxX + r - x);
-        const penZ = dz > 0 ? (w.minZ - r - z) : (w.maxZ + r - z);
-        if (Math.abs(penX) < Math.abs(penZ)) x += penX; else z += penZ;
-      }
-    }
-    // Solid bump against other actors (remote players + NPCs): you can't walk
-    // through them. Resolved per-axis like walls, so you slide along instead of
-    // sticking. Runs before the walkability check so a bump can't shove you off
-    // a road/platform.
-    const a = _collideActors(x, z, dx, dz, r, startX, startZ);
-    x = a.x; z = a.z;
-    // World-mode walkability: must end up on a node or road. Stepping
-    // off into open ground is rejected for whichever axis caused it,
-    // giving natural slide-along-edge behavior because outer movement
-    // already comes in per-axis. Skipped while airborne — a jump may
-    // carry across a gap; the landing branch in _tick judges touchdown.
-    if (_mode === 'world' && !_airborne && !_isInWalkable(x, z)) {
-      if (dx !== 0 && dz === 0) x = startX;
-      else if (dz !== 0 && dx === 0) z = startZ;
-      else { x = startX; z = startZ; }
-    }
-    _player.position.x = x;
-    _player.position.z = z;
-  }
-
-  // Resolve a candidate (x,z) against every other actor (remote players + local
-  // NPCs), treating each as a circle of BUMP_RADIUS. Pushes the moving axis back
-  // to the contact edge — same per-axis pattern as the wall loop — so the player
-  // slides around people instead of phasing through them. The local player is in
-  // neither list, so there's no self-collision; collision is in the XZ plane
-  // regardless of jump height (avatars are taller than the jump apex anyway).
-  function _collideActors(x, z, dx, dz, r, x0, z0) {
     // Each actor carries its own build-scaled footprint (see _actorRadiusFor);
-    // BUMP_RADIUS is the fallback for anyone built before that was known.
-    // (x0, z0): where this axis step started.
-    const hit = (ox, oz, oR) => {
-      const sep = r + (oR || BUMP_RADIUS);
-      const sep2 = sep * sep;
-      const ddx = x - ox, ddz = z - oz;
-      if (ddx * ddx + ddz * ddz >= sep2) return;          // no overlap
-      // Already inside them before this step (a peer arrived on our spot, or
-      // walked into us): let us walk out freely — resolving to the contact
-      // edge here would teleport us to their far side, or pin us in place.
-      const sdx = x0 - ox, sdz = z0 - oz;
-      if (sdx * sdx + sdz * sdz < sep2) return;
-      if (dx !== 0 && dz === 0) {
-        const reach = Math.sqrt(Math.max(0, sep2 - ddz * ddz));
-        x = dx > 0 ? ox - reach - 0.001 : ox + reach + 0.001;
-      } else if (dz !== 0 && dx === 0) {
-        const reach = Math.sqrt(Math.max(0, sep2 - ddx * ddx));
-        z = dz > 0 ? oz - reach - 0.001 : oz + reach + 0.001;
-      }
-    };
-    for (const rp of _remotePlayers.values()) hit(rp.current.x, rp.current.z, rp.radius);
-    for (const npc of _npcs) hit(npc.x, npc.z, npc.radius || NPC_RADIUS);
-    return { x, z };
+    // BUMP_RADIUS / NPC_RADIUS are the fallbacks for anyone built before
+    // that was known. The local player is in neither list (no self-bump);
+    // collision is XZ-only regardless of jump height.
+    let n = 0;
+    for (const rp of _remotePlayers.values()) {
+      const a = _actorPool[n] || (_actorPool[n] = { x: 0, z: 0, r: 0 });
+      a.x = rp.current.x; a.z = rp.current.z; a.r = rp.radius || BUMP_RADIUS;
+      n++;
+    }
+    for (let i = 0; i < _npcs.length; i++) {
+      const npc = _npcs[i];
+      const a = _actorPool[n] || (_actorPool[n] = { x: 0, z: 0, r: 0 });
+      a.x = npc.x; a.z = npc.z; a.r = npc.radius || NPC_RADIUS;
+      n++;
+    }
+    const walk = (_mode === 'world' && !_airborne) ? _isInWalkable : null;
+    PG3DPhysics.moveWithCollision(_moveOut, _player.position.x, _player.position.z, _player.position.y,
+      dx, dz, _playerR, _walls, _actorPool, n, walk);
+    _player.position.x = _moveOut.x;
+    _player.position.z = _moveOut.z;
   }
 
   // ── Shared Infinity Stones (world mode) ──
@@ -2299,24 +2430,12 @@ const Playground3D = (() => {
 
   // Max feet-Y the player may reach at (x,z) before the head hits a building
   // ceiling, or null when not under any roof (open sky → unrestricted jump).
-  // The doorway lintel underside (H - 0.45) is the lowest indoor ceiling, so
-  // capping to it also clears the flat roof. Footprint is expanded by M so the
+  // Math in PG3DPhysics.ceilingCap; the footprint is grown by 0.5 so the
   // doorway threshold (right on the platform edge) is covered too.
   function _ceilingCap(x, z) {
     if (!_worldNodes.size) return null;
-    const halfP = WORLD.PLATFORM_W / 2;
-    const M = 0.5;
     const headTop = PLAYER_HEAD * ((_player && _player.scale && _player.scale.y) || 1);
-    let cap = null;
-    for (const node of _worldNodes.values()) {
-      if (!node.ceiling) continue;
-      if (Math.abs(x - node.mesh.position.x) > halfP + M) continue;
-      if (Math.abs(z - node.mesh.position.z) > halfP + M) continue;
-      const H = node.wallHeight || WORLD.WALL_HEIGHT;
-      const c = Math.max(0, (H - 0.45) - headTop);   // feet-Y so head stays below lintel
-      cap = (cap == null) ? c : Math.min(cap, c);
-    }
-    return cap;
+    return PG3DPhysics.ceilingCap(x, z, _worldNodes.values(), WORLD.PLATFORM_W / 2, 0.5, headTop, WORLD.WALL_HEIGHT);
   }
 
   // Minimum camera elevation — higher in /world so you can't tilt under the
@@ -2395,13 +2514,6 @@ const Playground3D = (() => {
     const cy = targetY + Math.sin(e) * d;
     _camera.position.set(cx, cy, cz);
     _camera.lookAt(targetX, targetY, targetZ);
-  }
-
-  // Shortest-arc angle lerp, result wrapped to (-π, π]. Modulo-based
-  // (PG3DPhysics.lerpAngle): the old while-loops never finished for a huge
-  // remote yaw (1e300), which froze every tab in /world.
-  function _lerpAngle(a, b, t) {
-    return PG3DPhysics.lerpAngle(a, b, t);
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -2607,7 +2719,8 @@ const Playground3D = (() => {
       // The 'anchor' is still used by the active-node prompt placement
       // tick — kept even though we no longer render a floating title.
       const anchor = new THREE.Vector3(x, WORLD.PLATFORM_RAISE + WORLD.PLATFORM_H / 2 + 1.6, z);
-      const node = { mesh, project: p, anchor, walls: [], ceiling, apron, wallHeight, decor: [], props: [], house: null, roofExtra: null, roofTopY: 0 };
+      // x / z: the centre, read by PG3DPhysics.isWalkable / ceilingCap.
+      const node = { mesh, x, z, project: p, anchor, walls: [], ceiling, apron, wallHeight, decor: [], props: [], house: null, roofExtra: null, roofTopY: 0 };
       // Keeper decorations, if this island already has some (colours are read
       // inside _buildNodeWalls, so neighbour-triggered rebuilds keep them).
       node.house = _houses.get(p.id) || null;
@@ -2670,9 +2783,15 @@ const Playground3D = (() => {
     if (node.walls && node.walls.length) {
       const aabbsToDrop = new Set();
       for (const w of node.walls) {
+        // A wall faded by see-through occlusion wears a clone; release() puts
+        // the real material back first so IT is what gets disposed (the
+        // occlusion tick would otherwise restore it onto the detached mesh,
+        // where nothing ever disposes it).
+        _occlusion.release(w.mesh);
         if (w.mesh.parent) w.mesh.parent.remove(w.mesh);
         if (w.mesh.geometry) w.mesh.geometry.dispose();
-        if (w.mesh.material) w.mesh.material.dispose();
+        // Shared panel materials (_sharedLambert) outlive any one house.
+        if (w.mesh.material && !_isSharedMat(w.mesh.material)) w.mesh.material.dispose();
         aabbsToDrop.add(w.aabb);
       }
       _walls = _walls.filter(a => !aabbsToDrop.has(a));
@@ -2729,9 +2848,9 @@ const Playground3D = (() => {
     const wallStyle = (house && house.wallStyle) || 'plaster';
     const windowStyle = (house && house.windowStyle) || 'cross';
     const houseWindows = (house && Array.isArray(house.windows)) ? house.windows : null;   // null = auto
-    // Wall finish texture — ONE per style, shared by the whole town. Each panel
-    // gets its own material (so the per-wall material.dispose() teardown is
-    // safe) but points at the shared map; material.dispose() never frees maps.
+    // Wall finish texture — ONE per style, shared by the whole town. Panels of
+    // one finish + colour share one material (_sharedLambert, flagged so the
+    // per-wall teardown skips it) pointing at the shared map.
     const glassWall = wallStyle === 'glass';           // see-through walls: no texture, no windows carved
     const wallTex = (typeof PG3DHouse !== 'undefined' && !glassWall) ? PG3DHouse.wallTexture(THREE, wallStyle) : null;
     const wallColor = _houseColor(node, 'wallColor', WORLD.WALL_COLOR);
@@ -2742,8 +2861,8 @@ const Playground3D = (() => {
     let signPlaced = false;
 
     // Decor (trim/stoop/lamp) helpers — non-colliding, tracked in node.decor.
-    const trimMat = () => new THREE.MeshLambertMaterial({ color: trimColor });
-    const stoopMat = () => new THREE.MeshLambertMaterial({ color: WORLD.APRON_COLOR });
+    const trimMat = () => _sharedLambert(trimColor);
+    const stoopMat = () => _sharedLambert(WORLD.APRON_COLOR);
     const addDecor = (mesh, x, y, z) => { mesh.position.set(x, y, z); mesh.castShadow = true; _scene.add(mesh); node.decor.push(mesh); };
     // The keeper's sign hangs on the first door lintel (or, for a doorless
     // island, centred on the south wall — see after buildSide below).
@@ -2835,10 +2954,10 @@ const Playground3D = (() => {
         // on a white base, so the per-panel `color` carries the wall colour
         // (engine default or the keeper's pick) at no extra texture cost.
         const mat = (plainColor != null)
-          ? new THREE.MeshLambertMaterial({ color: plainColor })
-          : (glassWall && typeof PG3DHouse !== 'undefined') ? PG3DHouse.glassWallMaterial(THREE, glassTint)
-          : (wallTex ? new THREE.MeshLambertMaterial({ map: wallTex, color: wallColor })
-                     : new THREE.MeshLambertMaterial({ color: wallColor }));
+          ? _sharedLambert(plainColor)
+          : (glassWall && typeof PG3DHouse !== 'undefined') ? _sharedGlassWall(glassTint)
+          : (wallTex ? _sharedLambert(wallColor, wallTex)
+                     : _sharedLambert(wallColor));
         const geom = new THREE.BoxGeometry(gx, wh, gz);
         // World-anchored UVs: every panel samples ONE continuous tile grid, so
         // brick courses run straight through the fillers / sill / header around
@@ -3131,6 +3250,8 @@ const Playground3D = (() => {
     ctx.fillRect(S / 2 - 2.5, by + 16, 5, 16);
 
     const tex = new THREE.CanvasTexture(canvas);
+    // Canvas pixels are sRGB colours; see _loadTexture for why the tag matters.
+    if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
     const mat = new THREE.MeshBasicMaterial({
       map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide
     });
@@ -3174,6 +3295,44 @@ const Playground3D = (() => {
   let _matPlatformSide = null;
   let _matApron = null;
   let _ceilMatByPhase = null;        // Map<colorInt, MeshLambertMaterial>
+  // Plain Lambert materials shared by wall panels, door trim, stoops, lamp
+  // posts and keeper props (PG3DProps.make's matCache), keyed by colour (a
+  // textured wall finish by 'map:' + texture uuid + colour, glass walls by
+  // 'glass:' + tint). A furnished town used to mint one material per box.
+  // Nothing recolours these in place — a keeper repaint rebuilds the walls
+  // and props against new keys — so sharing is invisible; the see-through
+  // fade already swaps a per-mesh clone in. Each is flagged
+  // userData.shared, which _teardownNodeWalls / _disposeDecor skip; destroy()'s
+  // _disposeRig sweep frees them and the ref is reset like the ones above.
+  let _sharedLamberts = null;        // Map<colorInt | string, MeshLambertMaterial>
+  function _sharedLambertMap() {
+    if (!_sharedLamberts) _sharedLamberts = new Map();
+    return _sharedLamberts;
+  }
+  function _sharedLambert(color, map) {
+    const THREE = window.THREE;
+    const cache = _sharedLambertMap();
+    const key = map ? 'map:' + map.uuid + ':' + color : color;
+    let m = cache.get(key);
+    if (!m) {
+      m = map ? new THREE.MeshLambertMaterial({ map, color }) : new THREE.MeshLambertMaterial({ color });
+      m.userData.shared = true;
+      cache.set(key, m);
+    }
+    return m;
+  }
+  function _sharedGlassWall(tint) {
+    const cache = _sharedLambertMap();
+    const key = 'glass:' + tint;
+    let m = cache.get(key);
+    if (!m) {
+      m = PG3DHouse.glassWallMaterial(window.THREE, tint);
+      m.userData.shared = true;
+      cache.set(key, m);
+    }
+    return m;
+  }
+  function _isSharedMat(m) { return !!(m && m.userData && m.userData.shared); }
 
   function _platformSideMat() {
     const THREE = window.THREE;
@@ -3218,6 +3377,9 @@ const Playground3D = (() => {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, S, S);
     _lampTex = new THREE.CanvasTexture(canvas);
+    // A colour map on the glow sprite: sRGB like every canvas texture here
+    // (alpha is never colour-converted, so the falloff shape is unchanged).
+    if (THREE.SRGBColorSpace) _lampTex.colorSpace = THREE.SRGBColorSpace;
     return _lampTex;
   }
 
@@ -3326,6 +3488,7 @@ const Playground3D = (() => {
     }
     ctx.fillText(text, W / 2, H / 2 + 2);
     const tex = new THREE.CanvasTexture(canvas);
+    if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;   // sRGB canvas colours
     const width = Math.min(3.2, Math.max(1.2, (maxW || 3.2) - 0.4));
     const mesh = new THREE.Mesh(
       new THREE.PlaneGeometry(width, width * (H / W)),
@@ -3392,6 +3555,7 @@ const Playground3D = (() => {
       const tile = layer === 'rug' && (jf.n || jf.s || jf.e || jf.w);
       const obj = PG3DProps.make(p.kind, {
         ...baseOpts,
+        matCache: _sharedLambertMap(),   // plain colours shared town-wide (see _sharedLambert)
         joinL: jf.l, joinR: jf.r, joinN: jf.n, joinS: jf.s, joinE: jf.e, joinW: jf.w,
         armL: jf.armL, armR: jf.armR
       });
@@ -3403,7 +3567,7 @@ const Playground3D = (() => {
         const mat = obj.userData.picture.material;
         mat.userData.keepMap = true;
         _loadTexture(portrait, (tex) => {
-          if (typeof THREE.SRGBColorSpace !== 'undefined') tex.colorSpace = THREE.SRGBColorSpace;
+          // (_loadTexture already tags the texture sRGB.)
           mat.map = tex;
           mat.needsUpdate = true;
         });
@@ -3578,7 +3742,7 @@ const Playground3D = (() => {
     const postH = 2.2;
     const post = new THREE.Mesh(
       new THREE.CylinderGeometry(0.06, 0.08, postH, 6),
-      new THREE.MeshLambertMaterial({ color: 0x3a342a })
+      _sharedLambert(0x3a342a)
     );
     post.position.set(x, postH / 2, z);
     post.castShadow = true;
@@ -3606,9 +3770,15 @@ const Playground3D = (() => {
   // down per-house decor (windows, frames, lamps) cleanly on wall rebuild.
   function _disposeDecor(obj) {
     obj.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
+      // Drop any see-through fade first, so the real material (not the
+      // occlusion clone) is the one disposed below — see _teardownNodeWalls.
+      if (o.isMesh) _occlusion.release(o);
+      // Shared geometry (PG3DProps' unit box) and shared materials
+      // (_sharedLambert, props' matCache) belong to the mount, not this decor.
+      if (o.geometry && !(o.geometry.userData && o.geometry.userData.shared)) o.geometry.dispose();
       const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
       for (const m of mats) {
+        if (_isSharedMat(m)) continue;
         const shared = m.map === _lampTex || (m.userData && m.userData.keepMap)
           || (typeof PG3DHouse !== 'undefined' && PG3DHouse.isShared(m.map));
         if (m.map && !shared) m.map.dispose();
@@ -3673,28 +3843,12 @@ const Playground3D = (() => {
   // Point-in-region test: world position (x, z) is walkable iff it's
   // inside ANY unlocked node's AABB OR ANY road's rotated rectangle.
   // The ground outside nodes/roads is not walkable in /world.
-  // Kept as a hand-rolled loop (no per-call allocation — runs twice per
-  // input frame); the same math lives in PG3DPhysics.isWalkable where the
-  // unit tests exercise it (js/playground3d-physics.js).
+  // The math is PG3DPhysics.isWalkable (unit-tested): nodes are read as
+  // {x, z} centres straight off the Map's values() — the same iterators the
+  // old hand-rolled copy of this loop walked, so nothing extra is allocated.
+  const _WALK_HALF_A = (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2;   // platform + stone apron
   function _isInWalkable(x, z) {
-    // Node platforms + their walkable stone apron (axis-aligned).
-    const halfA = (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2;
-    for (const node of _worldNodes.values()) {
-      const dx = x - node.mesh.position.x;
-      const dz = z - node.mesh.position.z;
-      if (Math.abs(dx) <= halfA && Math.abs(dz) <= halfA) return true;
-    }
-    // Roads (rotated rectangles). World→local rotation by -angle:
-    //   local_x =  dx * cosA - dz * sinA
-    //   local_z =  dx * sinA + dz * cosA
-    for (const r of _walkableRoads) {
-      const dx = x - r.cx;
-      const dz = z - r.cz;
-      const lx = dx * r.cosA - dz * r.sinA;
-      const lz = dx * r.sinA + dz * r.cosA;
-      if (Math.abs(lx) <= r.halfW && Math.abs(lz) <= r.halfL) return true;
-    }
-    return false;
+    return PG3DPhysics.isWalkable(x, z, _worldNodes.values(), _WALK_HALF_A, _walkableRoads);
   }
 
   // ── HUD projection (call each tick) ──
@@ -3922,10 +4076,7 @@ const Playground3D = (() => {
   function setWorldClockOffset(ms) {
     if (typeof ms === 'number' && isFinite(ms)) _worldClockSkew = ms;
   }
-  // Seconds since the epoch, on the shared clock.
-  function _sharedNow() {
-    return (Date.now() + _worldClockSkew) / 1000;
-  }
+  // (Shared-clock reads go through _sharedNowMs, in the NPC combat section.)
 
   // Public: declare which heroes should roam. Each spec is
   // { id, name, character, debut }. Stored so a hero can pop in the moment its
@@ -3960,13 +4111,13 @@ const Playground3D = (() => {
         radius: _actorRadiusFor(spec.character || defaultCharacter()),
         headY: 2.05 * (((rig.scale && rig.scale.y) || 1)) + 0.3,
         // Combat (server-authoritative — see the NPC combat section below).
-        hp: maxHp, maxHp, target: null, holdT: 0, pathOffsetMs: 0, koUntil: 0, koGetupUntil: 0, aggroUntil: 0,
+        hp: maxHp, maxHp, target: null, holdT: 0, stopAt: 0, pathOffsetMs: 0, koUntil: 0, koGetupUntil: 0, aggroUntil: 0,
         hitUntil: 0, hitSeq: 0, animSeq: 0, optimisticUntil: 0, punchUntil: 0, swingCount: 0,
         lastSwingAt: 0, hpEl: null, pipEls: [], dmgEls: []
       };
       // Place them on the path immediately so they never pop in at the node
       // centre for a frame.
-      const p0 = _npcPathPoint(npc, _sharedNow());
+      const p0 = _npcPathPoint(npc, _sharedNowMs());
       npc.x = p0.x; npc.z = p0.z; npc.yaw = p0.yaw;
 
       // Name tag with a row of health pips under it (one per hit point).
@@ -3994,7 +4145,7 @@ const Playground3D = (() => {
       const rec = _npcCombat.get(spec.id);
       if (rec) {
         _applyNpcRecord(npc, rec, performance.now());
-        const h = _npcPathPoint(npc, npc.holdT || _sharedNow());
+        const h = _npcPathPoint(npc, _sharedNowMs());   // stopAt (the hold point) wins inside npcPathTime
         npc.x = h.x; npc.z = h.z;
       }
       rig.position.set(npc.x, 0, npc.z);
@@ -4009,11 +4160,16 @@ const Playground3D = (() => {
   // time `t`. Both live in PG3DPhysics so they can be unit-tested without THREE
   // or a DOM — see test/physics.test.js.
   function _hash01(s) { return PG3DPhysics.hash01(s); }
-  // `t` is shared-clock seconds. Time a hero has spent held in fights
-  // (pathOffsetMs, from the server) is subtracted so its patrol resumes from
-  // where it stopped rather than jumping ahead.
-  function _npcPathPoint(npc, t) {
-    return PG3DPhysics.npcPathPoint(npc.patrol, npc.homeX, npc.homeZ, NPC_RING, t - (npc.pathOffsetMs || 0) / 1000);
+  // `sharedNowMs` is the shared clock in ms. WorldNpcLogic.npcPathTime (the
+  // formula the server agrees with, unit-tested in test/npc.test.js) freezes
+  // the clock at the server's stopAt while the hero is held, and subtracts
+  // the time it has spent held in fights (pathOffsetMs) so its patrol resumes
+  // from where it stopped rather than jumping ahead.
+  function _npcPathPoint(npc, sharedNowMs) {
+    const t = (typeof WorldNpcLogic !== 'undefined')
+      ? WorldNpcLogic.npcPathTime(npc, sharedNowMs)
+      : ((npc.stopAt || sharedNowMs) - (npc.pathOffsetMs || 0)) / 1000;
+    return PG3DPhysics.npcPathPoint(npc.patrol, npc.homeX, npc.homeZ, NPC_RING, t);
   }
 
   // Push an NPC's RENDERED position clear of the local player if they overlap.
@@ -4022,8 +4178,8 @@ const Playground3D = (() => {
   function _npcAvoidPlayer(npc) {
     if (!_player) return;
     // _playerR, not the base PLAYER_RADIUS: it must match the separation
-    // _collideActors enforces. With a broad build the old base radius parked
-    // the hero INSIDE the player's bump circle, which _collideActors treats
+    // PG3DPhysics.moveWithCollision enforces. With a broad build the old base
+    // radius parked the hero INSIDE the player's bump circle, which it treats
     // as "already overlapping, walk out freely" — so walking at a hero in a
     // fight shoved it backwards frame after frame.
     const sep = (npc.radius || NPC_RADIUS) + _playerR;
@@ -4041,7 +4197,8 @@ const Playground3D = (() => {
     if (!_npcs.length) return;
     // One shared-clock reading for the whole batch — every hero is evaluated
     // at the same instant, and that instant is the same on every client.
-    const t = _sharedNow();
+    const tMs = _sharedNowMs();
+    const t = tMs / 1000;
     for (const npc of _npcs) {
       const bones = npc.rig.userData.bones;
       // patrol / aggro / ko / getup — from the server's record, on this tab's
@@ -4078,7 +4235,7 @@ const Playground3D = (() => {
       // Canonical position for this instant — identical on every client.
       // While held, the patrol clock is frozen at stopAt, so this is the spot
       // the hero stopped on; afterwards it continues from that same spot.
-      const p = _npcPathPoint(npc, npc.holdT || t);
+      const p = _npcPathPoint(npc, tMs);
 
       if (held) {
         // Ease onto the hold point (absorbs the hitter's optimistic freeze,
@@ -4090,7 +4247,8 @@ const Playground3D = (() => {
         if (phase === 'aggro') {
           // Square up to the attacker; if that's us and we're in reach, swing.
           const tp = _npcTargetPos(npc);
-          if (tp) npc.yaw = _lerpAngle(npc.yaw, Math.atan2(tp.x - npc.x, tp.z - npc.z), Math.min(1, dt * 10));
+          // 10.9/s ≈ the old min(1, 10 * dt) lerp at 60 fps, frame-rate independent.
+          if (tp) npc.yaw = PG3DPhysics.turnToward(npc.yaw, Math.atan2(tp.x - npc.x, tp.z - npc.z), dt, 10.9);
           if (npc.target === _localId) _npcMaybeSwing(npc, now);
         }
         _npcAvoidPlayer(npc);
@@ -4107,7 +4265,7 @@ const Playground3D = (() => {
       // never fed back into it — the path stays the shared truth, this is just
       // what this one screen draws.
       _npcAvoidPlayer(npc);
-      npc.yaw = _lerpAngle(npc.yaw, p.yaw, Math.min(1, dt * 6));   // round the corners
+      npc.yaw = PG3DPhysics.turnToward(npc.yaw, p.yaw, dt, 6.3);   // round the corners (≈ old min(1, 6 * dt) at 60 fps)
       npc.walking = p.walking;
       npc.rig.position.set(npc.x, 0, npc.z);
       npc.rig.rotation.y = npc.yaw;
@@ -4151,10 +4309,19 @@ const Playground3D = (() => {
   }
 
   // patrol → aggro (holding, facing its target) → ko (lying) → getup.
+  // WorldNpcLogic.npcCombatPhase is the spec (the server's copy); the engine
+  // keeps its deadlines on this tab's clock and calls the get-up window
+  // koGetupUntil, so they're handed over in one reused record.
+  const _phaseIn = { koUntil: 0, getupUntil: 0, target: null, aggroUntil: 0 };
   function _npcPhase(npc, now) {
-    if ((npc.koUntil || 0) > now) return 'ko';
-    if ((npc.koGetupUntil || 0) > now) return 'getup';
-    if (npc.target && (npc.aggroUntil || 0) > now) return 'aggro';
+    _phaseIn.koUntil = npc.koUntil || 0;
+    _phaseIn.getupUntil = npc.koGetupUntil || 0;
+    _phaseIn.target = npc.target || null;
+    _phaseIn.aggroUntil = npc.aggroUntil || 0;
+    if (typeof WorldNpcLogic !== 'undefined') return WorldNpcLogic.npcCombatPhase(_phaseIn, now);
+    if (_phaseIn.koUntil > now) return 'ko';
+    if (_phaseIn.getupUntil > now) return 'getup';
+    if (_phaseIn.target && now < _phaseIn.aggroUntil) return 'aggro';
     return 'patrol';
   }
 
@@ -4167,7 +4334,8 @@ const Playground3D = (() => {
       npc.lastSwingAt = Math.max(npc.lastSwingAt || 0, now - NPCC.NPC_PUNCH_COOLDOWN_MS + NPCC.NPC_FIRST_SWING_MS);
     }
     npc.target = rec.target || null;
-    npc.holdT = rec.stopAt ? rec.stopAt / 1000 : 0;
+    npc.holdT = rec.stopAt ? rec.stopAt / 1000 : 0;   // > 0 = held (see _tickNpcs)
+    npc.stopAt = rec.stopAt || 0;                     // read by WorldNpcLogic.npcPathTime
     npc.pathOffsetMs = rec.pathOffsetMs || 0;
     const ko = _serverMsToPerf(rec.koUntil);
     // A NEW knock-out schedules its get-up; a cleared one (the server's
@@ -4423,11 +4591,12 @@ const Playground3D = (() => {
     el.style.opacity = String(rp.opacity == null ? 1 : rp.opacity);
     _hudLayer.appendChild(el);
     rp.bubbleEls.push(el);
+    const gen = _mountGen;
     setTimeout(() => {
-      if (!_sceneAlive || !el.parentNode) return;
+      if (gen !== _mountGen || !el.parentNode) return;
       el.classList.add('fading');
       setTimeout(() => {
-        if (!_sceneAlive) return;
+        if (gen !== _mountGen) return;
         if (el.parentNode) el.parentNode.removeChild(el);
         rp.bubbleEls = rp.bubbleEls.filter(b => b !== el);
       }, 600);
@@ -4459,11 +4628,12 @@ const Playground3D = (() => {
     el.textContent = text;
     _hudLayer.appendChild(el);
     _localBubbleEls.push(el);
+    const gen = _mountGen;
     setTimeout(() => {
-      if (!_sceneAlive || !el.parentNode) return;
+      if (gen !== _mountGen || !el.parentNode) return;
       el.classList.add('fading');
       setTimeout(() => {
-        if (!_sceneAlive) return;
+        if (gen !== _mountGen) return;
         if (el.parentNode) el.parentNode.removeChild(el);
         _localBubbleEls = _localBubbleEls.filter(b => b !== el);
       }, 600);
@@ -4515,7 +4685,9 @@ const Playground3D = (() => {
       rp.current.x += (rp.target.x - rp.current.x) * k;
       rp.current.z += (rp.target.z - rp.current.z) * k;
       rp.current.y = (rp.current.y || 0) + (((rp.target.y || 0)) - (rp.current.y || 0)) * k;
-      rp.current.yaw = _lerpAngle(rp.current.yaw, rp.target.yaw, k);
+      // Yaw eases exponentially (8.6/s ≈ this linear k at 60 fps) so a peer
+      // turns at the same speed whatever our frame rate.
+      rp.current.yaw = PG3DPhysics.turnToward(rp.current.yaw, rp.target.yaw, dt, 8.6);
       rp.rig.position.x = rp.current.x;
       rp.rig.position.y = rp.current.y;
       rp.rig.position.z = rp.current.z;
@@ -4741,6 +4913,8 @@ const Playground3D = (() => {
     let pinchDist = 0;
     let pending = character;
     let charGate = null;            // the realistic-body gate, while it's holding the rig back
+    let destroyed = false;          // destroy() ran — start() must never revive this preview
+    let threeWait = null;           // { cancel } while waiting on Three.js (see waitForThree)
 
     function _size() {
       const w = Math.max(1, container.clientWidth);
@@ -4749,6 +4923,7 @@ const Playground3D = (() => {
     }
 
     function start() {
+      if (destroyed || renderer) return;   // destroyed while Three loaded / double start
       const THREE = window.THREE;
       const { w, h } = _size();
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -4967,6 +5142,9 @@ const Playground3D = (() => {
 
     function destroy() {
       alive = false;
+      destroyed = true;
+      if (threeWait) { threeWait.cancel(); threeWait = null; }
+      _removeEngineMessage(container);   // not just reset: nothing else here would lift it
       if (charGate) { charGate.cancel(); charGate = null; }
       if (rafId) cancelAnimationFrame(rafId);
       rafId = null;
@@ -4985,17 +5163,24 @@ const Playground3D = (() => {
       renderer = scene = camera = rig = rotGroup = null;
     }
 
-    // Three.js may not be ready yet — gate the same way the engine does.
-    if (window.THREE) {
-      start();
-    } else {
-      const onReady = () => {
-        window.removeEventListener('three-ready', onReady);
+    // Three.js may not be ready yet — gate the same way the engine does,
+    // failure message + Retry included. The wait is kept in the closure so
+    // destroy() can drop it: a preview destroyed before Three arrived used to
+    // keep its 'three-ready' listener, and start() then brought it back to life
+    // (renderer, rAF loop) inside a host it no longer owned.
+    function waitForThree() {
+      if (threeWait) threeWait.cancel();
+      threeWait = _awaitThree(() => {
+        threeWait = null;
+        _removeEngineMessage(container);   // start() only lifts a cover its own gate made
         // Container may have been detached by the time THREE arrives.
         if (container.isConnected) start();
-      };
-      window.addEventListener('three-ready', onReady);
+      }, (error) => {
+        if (!destroyed && container.isConnected) _showThreeError(container, error, waitForThree);
+      });
     }
+    if (window.THREE) start();
+    else waitForThree();
 
     // `_debug` — measurement + camera readback for verification scripts.
     const _debug = () => ({
@@ -5069,7 +5254,7 @@ const Playground3D = (() => {
       if (st !== 'ready' && st !== 'failed') { PG3DHumanoid.whenReady().catch(() => {}); return null; }
     }
     if (!_ensureThumb(w, h)) return null;
-    const rig = _buildPlayer(character);
+    const rig = _buildPlayer(character, { discard: true });
     _thumbGroup.rotation.y = (opts.yaw != null) ? opts.yaw : 0.42;  // gentle 3/4 view
     _thumbGroup.add(rig);
     // A fixed clip frame (default: the first idle frame) so every tile shows
@@ -5451,7 +5636,7 @@ const Playground3D = (() => {
       clearSheet() { const el = document.getElementById('pg-qa-sheet'); if (el) el.remove(); },
       // Draw calls one character costs: visible meshes × materials.
       drawCalls(character) {
-        const rig = _buildPlayer(character);
+        const rig = _buildPlayer(character, { discard: true });
         let n = 0, tris = 0;
         rig.traverse((o) => {
           if (!o.isMesh || !o.visible) return;

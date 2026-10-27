@@ -1,26 +1,52 @@
 /************************************************
  * Unit tests for js/playground3d-physics.js — the pure math behind the
- * 3D engine's jump / gap-crossing / fall-respawn behavior.
+ * 3D engine's movement / collision / jump / fall-respawn behavior.
  *
  * Run: npm test  (node --test)
  *
- * Constants mirrored from playground3d.js — if those change there, the
- * expectations here document what the gameplay tuning guarantees:
- *   SPEED 4.0, JUMP { GRAVITY 22, INITIAL_V 7.5 },
- *   FALL { AIR_SPEED_MUL 1.25, RESPAWN_DEPTH -8, RESPAWN_DELAY_MS 1000 }
- *   World geometry: platform+apron half-extent 8u; orthogonal island gap
- *   2.0u; diagonal corner gap ≈2.8u; non-adjacent islands 20u apart.
+ * The tuning constants are IMPORTED (PG3DPhysics.MOVE / JUMP / FALL /
+ * WORLD_GRID) — the same objects js/playground3d.js builds its tables from
+ * (asserted below) — so a retune changes what these tests check instead of
+ * leaving them on a stale copy. World geometry at SCALE 24: island centres
+ * 24u apart, platform+apron half-extent 8u, so neighbouring aprons have an
+ * 8u gap (≈11.3u corner to corner on a diagonal) bridged only by roads.
  ************************************************/
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const P = require('../js/playground3d-physics.js');
 
-const SPEED = 4.0;
-const GRAVITY = 22;
-const INITIAL_V = 7.5;
-const AIR_SPEED_MUL = 1.25;
-const FALL_OPTS = { RESPAWN_DELAY_MS: 1000, RESPAWN_DEPTH: -8 };
-const HALF_A = 8; // (PLATFORM_W 12 + APRON_MARGIN 4) / 2
+const { SPEED } = P.MOVE;
+const { GRAVITY, INITIAL_V } = P.JUMP;
+const { AIR_SPEED_MUL } = P.FALL;
+const FALL_OPTS = P.FALL;
+const G = P.WORLD_GRID;
+const HALF_A = (G.PLATFORM_W + G.APRON_MARGIN) / 2;   // platform + apron half-extent
+const GAP = G.SCALE - 2 * HALF_A;                      // open ground between neighbouring aprons
+const DIAG_GAP = Math.SQRT2 * GAP;                     // apron corner to apron corner, diagonal neighbours
+// Horizontal distance of a full running jump (max stick, air boost on).
+const carry = (mul) => SPEED * mul * P.airtime(INITIAL_V, GRAVITY);
+
+test('the engine builds its tuning tables from PG3DPhysics (no local copies)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../js/playground3d.js'), 'utf8');
+  assert.match(src, /const JUMP = PG3DPhysics\.JUMP;/);
+  assert.match(src, /const FALL = PG3DPhysics\.FALL;/);
+  for (const key of ['SPEED', 'TURN_RATE', 'PLAYER_RADIUS', 'BACKPEDAL_MUL']) {
+    assert.match(src, new RegExp(`\\b${key}: PG3DPhysics\\.MOVE\\.${key}\\b`), `PHYSICS.${key}`);
+  }
+  for (const key of ['SCALE', 'PLATFORM_W', 'APRON_MARGIN']) {
+    assert.match(src, new RegExp(`\\b${key}: PG3DPhysics\\.WORLD_GRID\\.${key}\\b`), `WORLD.${key}`);
+  }
+});
+
+test('shared tuning keeps the values the engine shipped with', () => {
+  assert.deepEqual({ ...P.MOVE }, { SPEED: 4.0, TURN_RATE: 13.4, PLAYER_RADIUS: 0.45, BACKPEDAL_MUL: 0.6 });
+  assert.deepEqual({ ...P.JUMP }, { GRAVITY: 22, INITIAL_V: 7.5 });
+  assert.deepEqual({ ...P.FALL }, { AIR_SPEED_MUL: 1.25, RESPAWN_DEPTH: -8, RESPAWN_DELAY_MS: 1000, BROADCAST_Y_FLOOR: -2 });
+  assert.deepEqual({ ...G }, { SCALE: 24, PLATFORM_W: 12, APRON_MARGIN: 4 });
+  assert.ok(Object.isFrozen(P.MOVE) && Object.isFrozen(P.FALL), 'shared tables are read-only');
+});
 
 test('airtime ≈ 0.68s and apex ≈ 1.28u for the tuned jump', () => {
   const t = P.airtime(INITIAL_V, GRAVITY);
@@ -29,26 +55,35 @@ test('airtime ≈ 0.68s and apex ≈ 1.28u for the tuned jump', () => {
   assert.ok(Math.abs(apex - 1.278) < 0.01, `apex ${apex}`);
 });
 
-test('air carry clears orthogonal (2u) and diagonal (2.8u) gaps but not 20u', () => {
-  const carry = P.airCarry(SPEED, AIR_SPEED_MUL, INITIAL_V, GRAVITY);
-  assert.ok(carry > 2.0, `carry ${carry} must clear 2u orthogonal gap`);
-  assert.ok(carry > 2.8, `carry ${carry} must clear 2.8u diagonal gap`);
-  assert.ok(carry < 20, `carry ${carry} must NOT reach a non-adjacent island`);
-});
-
-test('without the air-speed boost the diagonal gap is NOT clearable (boost is load-bearing)', () => {
-  const carry = P.airCarry(SPEED, 1.0, INITIAL_V, GRAVITY);
-  assert.ok(carry < 2.8, `unboosted carry ${carry} — if this fails the boost can be removed`);
+// Gap-jumping between islands went away when SCALE went 18 → 24 (1cdaeae):
+// the 2u gaps became 8u. Islands are reached by road only; if a retune ever
+// makes this clearable again, the FALL comments in playground3d.js and
+// playground3d-physics.js need revisiting (and roads stop being the only way).
+test('a running jump does NOT clear the gap between neighbouring islands', () => {
+  assert.equal(GAP, 8);
+  const c = carry(AIR_SPEED_MUL);
+  assert.ok(Math.abs(c - 3.41) < 0.01, `carry ${c}`);
+  assert.ok(c < GAP, `carry ${c} must not clear the ${GAP}u orthogonal gap`);
+  assert.ok(c < DIAG_GAP, `carry ${c} must not clear the ${DIAG_GAP}u diagonal gap`);
+  // The air boost is feel only: it lengthens a hop (onto props) by ~0.7u.
+  assert.ok(c > carry(1.0));
 });
 
 test('isWalkable: inside platform, on apron edge, and outside', () => {
-  const nodes = [{ x: 0, z: 0 }, { x: 18, z: 0 }];
+  const nodes = [{ x: 0, z: 0 }, { x: G.SCALE, z: 0 }];
   assert.equal(P.isWalkable(0, 0, nodes, HALF_A, []), true);
-  assert.equal(P.isWalkable(8, 8, nodes, HALF_A, []), true);      // apron corner, inclusive
-  assert.equal(P.isWalkable(9, 0, nodes, HALF_A, []), false);     // mid-gap between the two aprons (8..10)
-  assert.equal(P.isWalkable(10.5, 0, nodes, HALF_A, []), true);   // inside second node's apron
-  assert.equal(P.isWalkable(0, 8.01, nodes, HALF_A, []), false);  // just off the apron
+  assert.equal(P.isWalkable(HALF_A, HALF_A, nodes, HALF_A, []), true);         // apron corner, inclusive
+  assert.equal(P.isWalkable(G.SCALE / 2, 0, nodes, HALF_A, []), false);      // mid-gap between the two aprons
+  assert.equal(P.isWalkable(HALF_A + 0.01, 0, nodes, HALF_A, []), false);    // just past the first apron
+  assert.equal(P.isWalkable(G.SCALE - HALF_A + 0.5, 0, nodes, HALF_A, []), true); // inside second node's apron
+  assert.equal(P.isWalkable(0, HALF_A + 0.01, nodes, HALF_A, []), false);    // just off the apron
   assert.equal(P.isWalkable(100, 100, nodes, HALF_A, []), false);
+});
+
+test('isWalkable: takes any iterable of nodes (the engine passes Map.values())', () => {
+  const m = new Map([['a', { x: 0, z: 0 }], ['b', { x: G.SCALE, z: 0 }]]);
+  assert.equal(P.isWalkable(G.SCALE, HALF_A, m.values(), HALF_A, []), true);
+  assert.equal(P.isWalkable(G.SCALE / 2, 0, m.values(), HALF_A, []), false);
 });
 
 test('isWalkable: rotated road rectangle', () => {
@@ -478,4 +513,143 @@ test('snapShadowCenter: lands on whole texels across the light, moves < a texel'
   // Straight-down sun and a bad texel don't blow up.
   assert.ok(Number.isFinite(P.snapShadowCenter(1, 0, 1, { x: 0, y: 1, z: 0 }, texel).x));
   assert.deepEqual(P.snapShadowCenter(1, 2, 3, dir, 0), { x: 1, y: 2, z: 3 });
+});
+
+// ── Movement / collision (moved out of playground3d.js) ──
+
+// The engine's _moveWithCollision + _collideActors as they were before the
+// move, verbatim apart from taking the state as arguments. Kept to show the
+// shared function changes nothing except the "already inside a box" case.
+function oldMove(x0, z0, feetY, dx, dz, r, walls, actors, isWalkable) {
+  let x = x0 + dx, z = z0 + dz;
+  for (const w of walls) {
+    if (!P.blocksAt(w, feetY)) continue;
+    if (x + r <= w.minX || x - r >= w.maxX || z + r <= w.minZ || z - r >= w.maxZ) continue;
+    if (dx !== 0 && dz === 0) x = dx > 0 ? w.minX - r - 0.001 : w.maxX + r + 0.001;
+    else if (dz !== 0 && dx === 0) z = dz > 0 ? w.minZ - r - 0.001 : w.maxZ + r + 0.001;
+  }
+  for (const a of actors) {
+    const sep2 = (r + a.r) ** 2;
+    const ddx = x - a.x, ddz = z - a.z;
+    if (ddx * ddx + ddz * ddz >= sep2) continue;
+    if ((x0 - a.x) ** 2 + (z0 - a.z) ** 2 < sep2) continue;
+    if (dx !== 0 && dz === 0) { const reach = Math.sqrt(Math.max(0, sep2 - ddz * ddz)); x = dx > 0 ? a.x - reach - 0.001 : a.x + reach + 0.001; }
+    else if (dz !== 0 && dx === 0) { const reach = Math.sqrt(Math.max(0, sep2 - ddx * ddx)); z = dz > 0 ? a.z - reach - 0.001 : a.z + reach + 0.001; }
+  }
+  if (isWalkable && !isWalkable(x, z)) { if (dx !== 0 && dz === 0) x = x0; else if (dz !== 0 && dx === 0) z = z0; }
+  return { x, z };
+}
+const R = P.MOVE.PLAYER_RADIUS;
+const move = (x0, z0, dx, dz, walls, actors, walk, feetY) =>
+  P.moveWithCollision({ x: 0, z: 0 }, x0, z0, feetY || 0, dx, dz, R, walls, actors || [], (actors || []).length, walk || null);
+const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg}: ${a} vs ${b}`);
+
+test('moveWithCollision: walking into a wall stops at its face, the other axis untouched', () => {
+  const wall = { minX: 2, maxX: 2.3, minZ: -5, maxZ: 5 };
+  const out = move(1.5, 0, 0.2, 0, [wall]);
+  near(out.x, 2 - R - 0.001, 'stopped at the face');
+  near(out.z, 0, 'z unchanged');
+  near(move(1.5, 0, -0.2, 0, [wall]).x, 1.3, 'walking away is free');
+});
+
+test('moveWithCollision: wall sliding — the Z step along a wall you are pressed into is free', () => {
+  const wall = { minX: 2, maxX: 2.3, minZ: -5, maxZ: 5 };
+  const x0 = 2 - R - 0.001;                    // flush with the face after the X step
+  const out = move(x0, 0, 0, 0.3, [wall]);
+  near(out.x, x0, 'x stays flush');
+  near(out.z, 0.3, 'slides along');
+});
+
+test('moveWithCollision: a box you are already inside does not snap you through it ([3D-08])', () => {
+  // A keeper drops a 2×2 crate (no top: blocks at any height) onto a visitor.
+  const crate = { minX: -1, maxX: 1, minZ: -1, maxZ: 1 };
+  near(move(0.2, 0, 0.1, 0, [crate]).x, 0.3, 'walks on, out of the box');
+  // The old code resolved a +x step to the box's -x face: backwards through
+  // whatever stood behind it (a house wall).
+  near(oldMove(0.2, 0, 0, 0.1, 0, R, [crate], [], null).x, -1 - R - 0.001, 'old snap');
+  // Walls you are NOT inside still stop you on the way out.
+  const wall = { minX: 1.2, maxX: 1.5, minZ: -5, maxZ: 5 };
+  near(move(0.2, 0, 0.6, 0, [crate, wall]).x, 1.2 - R - 0.001, 'other wall still stops');
+});
+
+test('moveWithCollision: props stop blocking near their top; actors bump; walkability refuses per axis', () => {
+  const crate = { minX: 2, maxX: 3, minZ: -1, maxZ: 1, top: 0.8 };
+  near(move(1.5, 0, 0.2, 0, [crate], null, null, 0).x, 2 - R - 0.001, 'blocks from the floor');
+  near(move(1.5, 0, 0.2, 0, [crate], null, null, 0.7).x, 1.7, 'feet near the top: passes over');
+  const peer = { x: 2, z: 0, r: 0.4 };
+  near(move(1, 0, 0.3, 0, [], [peer]).x, 2 - (R + 0.4) - 0.001, 'bumps the peer');
+  near(move(2.1, 0, 0.1, 0, [], [peer]).x, 2.2, 'already overlapping a peer: walks out');
+  const walk = (x) => x <= 5;
+  const o = move(4.9, 1, 0.2, 0, [], [], walk);
+  near(o.x, 4.9, 'x step off the edge refused');
+  near(move(4.9, 1, 0, 0.2, [], [], walk).z, 1.2, 'z step along the edge allowed');
+});
+
+test('moveWithCollision: matches the old engine code whenever the start is clear', () => {
+  const walls = [
+    { minX: 2, maxX: 2.3, minZ: -5, maxZ: 5 },
+    { minX: -3, maxX: 3, minZ: 3, maxZ: 3.3 },
+    { minX: -1, maxX: 0, minZ: -2, maxZ: -1.5, top: 0.6 }
+  ];
+  const actors = [{ x: -2, z: 0, r: 0.4 }, { x: 0, z: 2, r: 0.55 }];
+  const walk = (x, z) => Math.abs(x) <= 6 && Math.abs(z) <= 6;
+  let checked = 0;
+  for (let x0 = -2.5; x0 <= 1.5; x0 += 0.37) {
+    for (let z0 = -2.5; z0 <= 2.5; z0 += 0.41) {
+      if (walls.some((w) => x0 + R > w.minX && x0 - R < w.maxX && z0 + R > w.minZ && z0 - R < w.maxZ)) continue;
+      for (const [dx, dz] of [[0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3], [1.2, 0], [0, 1.2]]) {
+        const a = move(x0, z0, dx, dz, walls, actors, walk);
+        const b = oldMove(x0, z0, 0, dx, dz, R, walls, actors, walk);
+        near(a.x, b.x, `x from (${x0},${z0}) by (${dx},${dz})`);
+        near(a.z, b.z, `z from (${x0},${z0}) by (${dx},${dz})`);
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked > 100, `${checked} cases`);
+});
+
+test('moveWithCollision: writes into the caller scratch object, uses only actorCount actors', () => {
+  const out = { x: 0, z: 0 };
+  const pool = [{ x: 1, z: 0, r: 0.4 }, { x: 99, z: 99, r: 0.4 }];
+  assert.equal(P.moveWithCollision(out, 0, 0, 0, 0.5, 0, R, [], pool, 0, null), out);
+  near(out.x, 0.5, 'actor beyond actorCount ignored');
+  P.moveWithCollision(out, 0, 0, 0, 0.5, 0, R, [], pool, 1, null);
+  near(out.x, 1 - (R + 0.4) - 0.001, 'first actor counted');
+});
+
+test('ceilingCap: under a lintel, on the threshold, and under open sky', () => {
+  const nodes = [{ x: 0, z: 0, ceiling: true, wallHeight: 4.5 }, { x: G.SCALE, z: 0, ceiling: null }];
+  const half = G.PLATFORM_W / 2;
+  // Head 2.1 tall: lintel underside 4.5 - 0.45 = 4.05 → feet may reach 1.95.
+  near(P.ceilingCap(0, 0, nodes, half, 0.5, 2.1, 4.5), 4.5 - P.LINTEL_DROP - 2.1, 'indoors');
+  near(P.ceilingCap(half + 0.4, 0, nodes, half, 0.5, 2.1, 4.5), 1.95, 'doorway threshold counts');
+  assert.equal(P.ceilingCap(half + 0.6, 0, nodes, half, 0.5, 2.1, 4.5), null, 'outside');
+  assert.equal(P.ceilingCap(G.SCALE, 0, nodes, half, 0.5, 2.1, 4.5), null, 'roofless island');
+  // Taller than the lintel clamps to 0; a node without wallHeight uses the default.
+  assert.equal(P.ceilingCap(0, 0, nodes, half, 0.5, 5, 4.5), 0);
+  near(P.ceilingCap(0, 0, [{ x: 0, z: 0, ceiling: true }], half, 0.5, 2.1, 3.0), 3.0 - 0.45 - 2.1, 'default wall height');
+  // The lower of two overlapping roofs wins.
+  near(P.ceilingCap(0, 0, [nodes[0], { x: 0.5, z: 0, ceiling: true, wallHeight: 4 }], half, 0.5, 2.1, 4.5), 4 - 0.45 - 2.1, 'min');
+});
+
+test('spreadSpawn: inner ring first, outer ring when the inner is taken, anchor when nothing is free', () => {
+  const rand = () => 0;                                  // a0 = 0, pick the first spot
+  const d = (p) => Math.hypot(p.x - 10, p.z - 5);
+  near(d(P.spreadSpawn(10, 5, () => true, rand)), P.SPAWN_RINGS[0], 'inner ring');
+  const outerOnly = (x, z) => Math.hypot(x - 10, z - 5) > 2;
+  near(d(P.spreadSpawn(10, 5, outerOnly, rand)), P.SPAWN_RINGS[1], 'outer ring');
+  // Only the +z point of the outer ring is free → that's the one returned.
+  const one = (x, z) => Math.abs(x - 10) < 1e-6 && z > 7;
+  const p = P.spreadSpawn(10, 5, one, () => 0);
+  assert.ok(Math.abs(p.x - 10) < 1e-6 && Math.abs(p.z - (5 + P.SPAWN_RINGS[1])) < 1e-6, JSON.stringify(p));
+  assert.deepEqual(P.spreadSpawn(10, 5, () => false, rand), { x: 10, z: 5 });
+});
+
+test('turn rates: the exponential rates match the old linear lerps at 60 fps', () => {
+  // Old per-frame fraction min(1, rate * dt) at dt = 1/60 vs new 1 - e^(-k dt).
+  const frac = (k) => 1 - Math.exp(-k / 60);
+  for (const [k, old] of [[P.MOVE.TURN_RATE, 12], [4.14, 4], [10.9, 10], [6.3, 6], [8.6, 8]]) {
+    assert.ok(Math.abs(frac(k) - old / 60) < 0.002, `${k}/s vs linear ${old}/s: ${frac(k)} vs ${old / 60}`);
+  }
 });

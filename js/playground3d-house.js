@@ -135,6 +135,9 @@
     ctx.fillRect(0, 0, TEX_W, TEX_H);
     WALL_PAINTERS[key](ctx, seeded(0x1234567 + key.length * 977));
     tex = new THREE.CanvasTexture(canvas);
+    // The wall finish is a colour map. Untagged, Three r160 reads it as linear
+    // and sRGB-encodes it again on output, so brick/stone joints came out pale.
+    if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
     _wallTex.set(key, tex);
@@ -175,6 +178,7 @@
       else ctx.fillRect(0, S * at - 3, S, 6);
     }
     tex = new THREE.CanvasTexture(canvas);
+    if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;   // colour map, as above
     tex.wrapS = THREE.RepeatWrapping;               // a wide pane repeats the pattern per cell
     _glassTex.set(key, tex);
     _shared.add(tex);

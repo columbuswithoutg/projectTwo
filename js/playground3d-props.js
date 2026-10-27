@@ -110,11 +110,38 @@ const PG3DProps = (() => {
   }
 
   // ── tiny mesh helpers (materials are shared per make() call) ──
+  // When the caller passes opts.matCache (a Map the engine owns per mount),
+  // the plain Lambert colours are shared across EVERY piece instead — a
+  // furnished town reuses a few dozen materials rather than minting one per
+  // colour per prop. Those are flagged userData.shared so per-prop teardown
+  // (_disposeDecor) leaves them for the engine's destroy() sweep. Nothing
+  // ever recolours a lam() material (the TV screen, burners and bulbs that
+  // change colour have their own), so sharing them is invisible.
   let MC = new Map();
+  let MC_SHARED = false;
   function lam(THREE, color) {
     let m = MC.get(color);
-    if (!m) { m = new THREE.MeshLambertMaterial({ color }); MC.set(color, m); }
+    if (!m) {
+      m = new THREE.MeshLambertMaterial({ color });
+      if (MC_SHARED) m.userData.shared = true;
+      MC.set(color, m);
+    }
     return m;
+  }
+  // One unit cube for every box() part, sized by mesh.scale — the exact
+  // same vertices, normals and UVs as a BoxGeometry(w, h, d) once
+  // transformed (BoxGeometry UVs are 0..1 per face whatever its size, and
+  // three renders normals through the normal matrix, which undoes the
+  // scale). Nothing reads a prop part's geometry dimensions and no box()
+  // result is rescaled afterwards; bounds (occlusion's Box3.setFromObject,
+  // frustum culling) go through matrixWorld, so they see the scaled size.
+  // Flagged userData.shared so no teardown disposes it. A zero-sized side
+  // would make the normal matrix singular, so that (never used today) keeps
+  // its own geometry.
+  let UNIT_BOX = null;
+  function unitBox(THREE) {
+    if (!UNIT_BOX) { UNIT_BOX = new THREE.BoxGeometry(1, 1, 1); UNIT_BOX.userData.shared = true; }
+    return UNIT_BOX;
   }
   function place(m, x, y, z, shadow) {
     m.position.set(x, y, z);
@@ -123,7 +150,10 @@ const PG3DProps = (() => {
     return m;
   }
   function box(THREE, w, h, d, color, x, y, z) {
-    return place(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lam(THREE, color)), x, y, z);
+    if (!(w > 0 && h > 0 && d > 0)) return place(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lam(THREE, color)), x, y, z);
+    const m = new THREE.Mesh(unitBox(THREE), lam(THREE, color));
+    m.scale.set(w, h, d);
+    return place(m, x, y, z);
   }
   function cyl(THREE, rTop, rBot, h, color, x, y, z, segs) {
     const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, h, segs || 8), lam(THREE, color));
@@ -932,7 +962,8 @@ const PG3DProps = (() => {
 
   // Build one prop. `opts`: { THREE, lampTex, lampColor, trimColor, roofColor,
   // hasPortrait, ceilingY, joinL, joinR, joinN, joinS, joinE, joinW, armL,
-  // armR } — house colours tint the accent parts so props match the room.
+  // armR, matCache } — house colours tint the accent parts so props match the
+  // room. matCache: see lam() above.
   function make(kind, opts) {
     const THREE = (opts && opts.THREE) || window.THREE;
     const build = BUILDERS[kind];
@@ -949,9 +980,12 @@ const PG3DProps = (() => {
       joinL: !!x.joinL, joinR: !!x.joinR, joinN: !!x.joinN, joinS: !!x.joinS, joinE: !!x.joinE, joinW: !!x.joinW,
       armL: x.armL !== false, armR: x.armR !== false
     };
-    MC = new Map();   // one shared material per colour within this piece
-    const g = build(THREE, o);
-    MC = new Map();
+    // One shared material per colour within this piece (or, with matCache,
+    // across every piece built against that cache).
+    MC_SHARED = x.matCache instanceof Map;
+    MC = MC_SHARED ? x.matCache : new Map();
+    let g;
+    try { g = build(THREE, o); } finally { MC = new Map(); MC_SHARED = false; }
     g.userData.propKind = kind;
     return g;
   }

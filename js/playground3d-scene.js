@@ -18,7 +18,8 @@
  *   makeCrown(THREE)               the champion's crown (shared geometry)
  *   makeConfetti(THREE, x, y, z)   a one-shot burst — update(dt) → alive
  *   makeSpotlight(THREE)           the champion's arrival beam
- * Attaches window.PG3DScene. Load BEFORE js/playground3d.js.
+ * Attaches window.PG3DScene (module.exports under Node, for the placement
+ * tests). Load BEFORE js/playground3d.js.
  ************************************************/
 (function (root) {
   const SCREEN = { BOTTOM: 1.9, TOP_GAP: 0.3, SIDE_GAP: 0.3, ASPECT: 1.6, OFF_WALL: 0.06, MIN_W: 1.2 };
@@ -495,5 +496,10 @@
     return { group, update };
   }
 
-  root.PG3DScene = { SCREEN, CW, CH, roadRoutes, roadView, roadPorts, openingsFromPorts, allOpenings, screenSpot, makeScreen, drawScreen, makeCrown, makeConfetti, makeSpotlight, dispose };
-})(typeof self !== 'undefined' ? self : this);
+  const api = { SCREEN, CW, CH, roadRoutes, roadView, roadPorts, openingsFromPorts, allOpenings, screenSpot, makeScreen, drawScreen, makeCrown, makeConfetti, makeSpotlight, dispose };
+  // Node (test/scene-geometry.test.js) gets the same object; the placement
+  // maths is pure and the THREE / canvas builders are never called there.
+  // RoadRouter is read as a global, so a test sets globalThis.RoadRouter.
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.PG3DScene = api;
+})(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this);

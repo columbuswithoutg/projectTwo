@@ -16,20 +16,44 @@
 // addon fetch can never delay or break the engine (characters just stay
 // procedural). window.__threeAddons records that outcome for anyone who
 // starts listening after the event has already fired.
-import * as THREE from 'three';
-// RoundedBoxGeometry lives in examples/jsm; its internal `import 'three'`
-// resolves through the importmap. Attached onto the THREE namespace copy we
-// expose so the classic-script engine can use it like core geometry.
-import { RoundedBoxGeometry } from 'https://unpkg.com/three@0.160.0/examples/jsm/geometries/RoundedBoxGeometry.js';
+//
+// The ONE place the Three.js version lives in JS. spa.html's importmap must
+// repeat it as a literal (an importmap is static JSON, read before any module
+// runs); test/three-version.test.js fails if the two ever disagree.
+export const THREE_VERSION = '0.160.0';
+const UNPKG = 'https://unpkg.com/three@' + THREE_VERSION + '/';
 
-const ns = { ...THREE, RoundedBoxGeometry };
-window.THREE = ns;
-window.dispatchEvent(new Event('three-ready'));
+// Dynamic imports, not static ones: a failed static `import` rejects this
+// whole module before a line of it runs, so nothing could report it and the
+// 3D views sat on their spinner forever. Here a failure is caught and
+// announced as 'three-failed' (detail.error), which Playground3D turns into a
+// Retry message; window.__threeCore records the outcome for late listeners.
+// (The chunk loader also dispatches 'three-failed' when THIS file can't be
+// fetched.) RoundedBoxGeometry lives in examples/jsm; its internal
+// `import 'three'` resolves through the importmap. It is attached onto the
+// THREE namespace copy we expose so the classic-script engine can use it like
+// core geometry.
+const ns = {};
+window.__threeCore = 'loading';
+Promise.all([
+  import('three'),
+  import(UNPKG + 'examples/jsm/geometries/RoundedBoxGeometry.js')
+]).then(([THREE, rbg]) => {
+  Object.assign(ns, THREE, { RoundedBoxGeometry: rbg.RoundedBoxGeometry });
+  window.THREE = ns;
+  window.__threeCore = 'ready';
+  window.dispatchEvent(new Event('three-ready'));
+  loadAddons();
+}).catch((error) => {
+  console.error('[three] Three.js failed to load', error);
+  window.__threeCore = 'failed';
+  window.dispatchEvent(new CustomEvent('three-failed', { detail: { error } }));
+});
 
 // Browsers cache a FAILED module fetch per URL, so a retry must use a new URL:
 // attempt n > 0 imports the absolute unpkg path with ?r=n. (Their internal
 // `import 'three'` still resolves through the importmap.)
-const ADDON_BASE = 'https://unpkg.com/three@0.160.0/examples/jsm/';
+const ADDON_BASE = UNPKG + 'examples/jsm/';
 let _addonTry = 0;
 function loadAddons() {
   const n = _addonTry;
@@ -55,4 +79,3 @@ window.__retryThreeAddons = () => {
   _addonTry += 1;
   return loadAddons();
 };
-loadAddons();

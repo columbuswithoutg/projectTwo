@@ -35,8 +35,24 @@
     let _boxes = new WeakMap();     // mesh → { box, x, y, z }  (world position when measured)
 
     // Per-frame scratch (the tick used to allocate 3 vectors, a ray and a hit
-    // point every frame).
-    let _targets = null, _ray = null, _hitPt = null;
+    // point every frame, plus a fresh Set of blockers).
+    let _targets = null, _ray = null, _hitPt = null, _sight = null;
+    const _blocking = new Map();    // mesh → its occluder box, this frame only
+
+    // Sight-line candidates. A fully unlocked town gathers thousands of boxes
+    // (every wall panel, jamb, lamp and prop part), and ray-testing all of
+    // them three times a frame was the cost. Only a box that overlaps the
+    // camera→player sight lines can ever block, so the tick ray-tests just
+    // the occluders whose box overlaps the AABB of {camera, feet, head},
+    // padded by NEAR.PAD. The list is recomputed on every occluder rebuild
+    // and whenever the camera or the player has moved more than NEAR.MOVE
+    // (or the player's scale changed) since it was taken. Because every
+    // point of the new sight lines is then within NEAR.MOVE (< NEAR.PAD) of
+    // the old ones, every box a ray can hit is still in the list — the
+    // blocking set, and so the fade, is exactly what the full scan gave.
+    const NEAR = { PAD: 1.0, MOVE: 0.5 };
+    let _near = [];                 // subset of _occluders
+    const _nearAt = { valid: false, cx: 0, cy: 0, cz: 0, px: 0, py: 0, pz: 0, s: 1 };
 
     function _isActor(o) {
       for (let p = o; p; p = p.parent) {
@@ -58,6 +74,7 @@
 
     function _rebuildOccluders(_scene, force) {
       _occluders = [];
+      _nearAt.valid = false;        // boxes changed: re-pick the candidates
       _scene.updateMatrixWorld();
       _scene.traverse((o) => {
         if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh) return;
@@ -99,9 +116,32 @@
     function _resetOcclusion() {
       for (const [mesh, state] of _faded) _restoreFaded(mesh, state);
       _occluders = [];
+      _near = [];
+      _nearAt.valid = false;
+      _blocking.clear();
       _occluderBuiltAt = -Infinity;
       _fullRefreshAt = -Infinity;
       _boxes = new WeakMap();
+    }
+
+    function _pickNear(cam, s, px, py, pz) {
+      _sight.makeEmpty();
+      _sight.expandByPoint(cam).expandByPoint(_targets[0]).expandByPoint(_targets[2]);
+      _sight.expandByScalar(NEAR.PAD);
+      _near = [];
+      for (const oc of _occluders) if (oc.box.intersectsBox(_sight)) _near.push(oc);
+      _nearAt.valid = true;
+      _nearAt.cx = cam.x; _nearAt.cy = cam.y; _nearAt.cz = cam.z;
+      _nearAt.px = px; _nearAt.py = py; _nearAt.pz = pz; _nearAt.s = s;
+    }
+
+    function _nearStale(cam, s, px, py, pz) {
+      if (!_nearAt.valid || _nearAt.s !== s) return true;
+      const M2 = NEAR.MOVE * NEAR.MOVE;
+      let dx = cam.x - _nearAt.cx, dy = cam.y - _nearAt.cy, dz = cam.z - _nearAt.cz;
+      if (dx * dx + dy * dy + dz * dz > M2) return true;
+      dx = px - _nearAt.px; dy = py - _nearAt.py; dz = pz - _nearAt.pz;
+      return dx * dx + dy * dy + dz * dz > M2;
     }
 
     function _tickOcclusion(dt, now, _scene, _camera, _player) {
@@ -117,6 +157,7 @@
         _targets = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
         _ray = new THREE.Ray();
         _hitPt = new THREE.Vector3();
+        _sight = new THREE.Box3();
       }
       const s = _player.scale.y || 1;
       const px = _player.position.x, py = _player.position.y, pz = _player.position.z;
@@ -124,23 +165,25 @@
       _targets[0].set(px, py + 0.25 * s, pz);
       _targets[1].set(px, py + 1.15 * s, pz);
       _targets[2].set(px, py + 1.9 * s, pz);
-      const blocking = new Set();
+      if (_nearStale(cam, s, px, py, pz)) _pickNear(cam, s, px, py, pz);
+      const blocking = _blocking;
+      blocking.clear();
       for (const t of _targets) {
         const len = cam.distanceTo(t);
         _ray.origin.copy(cam);
         _ray.direction.copy(t).sub(cam).normalize();
-        for (const oc of _occluders) {
+        for (const oc of _near) {
           const mesh = oc.mesh;
           if (!mesh.visible || !mesh.parent || blocking.has(mesh)) continue;
           // Boxes that hold the player (sky dome, the floor under them) never
           // count — only things between the camera and the character.
           if (oc.box.containsPoint(t)) continue;
           if (!_ray.intersectBox(oc.box, _hitPt)) continue;
-          if (cam.distanceTo(_hitPt) < len - OCCLUDE.PAD) blocking.add(mesh);
+          if (cam.distanceTo(_hitPt) < len - OCCLUDE.PAD) blocking.set(mesh, oc.box);
         }
       }
       const k = 1 - Math.exp(-dt * OCCLUDE.RATE);
-      for (const mesh of blocking) {
+      for (const [mesh, box] of blocking) {
         if (_faded.has(mesh)) continue;
         const orig = mesh.material;
         const list = Array.isArray(orig) ? orig : [orig];
@@ -151,7 +194,8 @@
           c.opacity = m.opacity == null ? 1 : m.opacity;
           return c;
         });
-        const box = (_occluders.find((o) => o.mesh === mesh) || {}).box;
+        // The box comes with the hit (it used to be a linear find over
+        // every occluder per newly faded mesh).
         _faded.set(mesh, { orig, clones, alpha: 1, box });
         mesh.material = Array.isArray(orig) ? clones : clones[0];
       }

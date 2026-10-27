@@ -141,9 +141,6 @@
     // Always create the joystick element. CSS gates visibility via a
     // (pointer: coarse) / narrow-viewport media query so it shows on
     // mobile and stays out of the way on desktop.
-    const hasTouch = ('ontouchstart' in window) ||
-      (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0);
-    try { console.log('[Playground3D] touch=' + hasTouch); } catch (_) {}
     joyEl = document.createElement('div');
     joyEl.className = 'pg-joy';
     stickEl = document.createElement('div');
@@ -367,7 +364,6 @@
       const rect = joyEl.getBoundingClientRect();
       joyCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
       joyRadius = rect.width / 2;
-      try { console.log('[Playground3D] joyStart id=' + t.identifier + ' rect=' + rect.width + 'x' + rect.height + ' center=' + joyCenter.x.toFixed(0) + ',' + joyCenter.y.toFixed(0)); } catch (_) {}
       joyMove(t);
     }
     function joyMove(t) {
@@ -383,16 +379,9 @@
       joyActive = false;
       joyAxis = { x: 0, y: 0 };
       if (stickEl) stickEl.style.transform = 'translate(0,0)';
-      try { console.log('[Playground3D] joyEnd'); } catch (_) {}
     }
 
     function onTouchStart(e) {
-      try {
-        const t0 = e.changedTouches[0];
-        const tag = t0 && t0.target && (t0.target.className || t0.target.tagName);
-        const hit = joyEl && t0 && joyEl.contains(t0.target);
-        console.log('[Playground3D] touchstart n=' + e.changedTouches.length + ' target=' + tag + ' joyHit=' + hit);
-      } catch (_) {}
       // The pointerdown path may have just activated the joystick — don't
       // also engage the touch-based joystick branch or the camera-orbit
       // drag, otherwise both would race the same finger.
