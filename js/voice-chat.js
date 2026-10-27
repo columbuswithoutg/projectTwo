@@ -136,13 +136,22 @@ const VoiceManager = (() => {
     async function acquireMic() {
       if (localStream) return localStream;
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({
+        const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true
           }
         });
+        // Voice was turned off (or the view left) while the permission prompt
+        // was open: stop() found no stream to release, so release this one
+        // now — otherwise the mic and the browser's recording light stay on
+        // until the tab is reloaded.
+        if (stopped) {
+          stream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+          return null;
+        }
+        localStream = stream;
         micState = 'ok';
         const trackInfo = localStream.getTracks()
           .map(t => t.label || t.kind).join(', ') || 'unnamed';
@@ -162,6 +171,7 @@ const VoiceManager = (() => {
         }
         return localStream;
       } catch (e) {
+        if (stopped) return null;   // nobody is listening for the "listen-only" notice any more
         // No mic (or permission denied) is NOT fatal — continue in
         // listen-only mode. createPeer() guards `if (localStream)`, so
         // connections simply carry no outgoing track and the SDP
