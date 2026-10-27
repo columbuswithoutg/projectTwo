@@ -1,8 +1,8 @@
 /************************************************
  * BUTTONS — one system for the whole app
  *
- *   .btn + .btn--primary | .btn--secondary | .btn--ghost | .btn--danger
- *        + .btn--sm | .btn--lg | .btn--icon
+ *   .btn + .btn--primary (the 3D engine's Retry/Reload button uses it).
+ *   Secondary looks come from the selector lists below.
  *
  * The older one-off button classes adopt the same looks by selector list
  * below, so every primary action reads the same in both themes before the
@@ -76,11 +76,6 @@
   user-select: none;
 }
 [data-theme="comic"] .btn { font-size: 19px; }
-.btn--sm { min-height: 36px; padding: 0 12px; font-size: 13px; }
-[data-theme="comic"] .btn--sm { font-size: 16px; }
-.btn--lg { min-height: 52px; padding: 0 26px; font-size: 17px; }
-[data-theme="comic"] .btn--lg { font-size: 22px; }
-.btn--icon { padding: 0; width: var(--touch-target-min); }
 
 /* ── Primary ── */
 .btn--primary,
@@ -110,7 +105,6 @@
 }
 
 /* ── Secondary ── */
-.btn--secondary,
 :is(.popup-action.secondary, .friend-reject-btn, .friend-remove-btn, .profile-support-btn:not(.primary),
     .confirm-btn:not(.confirm-ok), .wc-btn:not(.wc-primary)) {
   background: var(--btn2-bg);
@@ -118,35 +112,16 @@
   border: var(--btn2-border);
   box-shadow: var(--btn2-shadow);
 }
-.btn--secondary:hover,
 :is(.popup-action.secondary, .friend-reject-btn, .friend-remove-btn, .profile-support-btn:not(.primary),
     .confirm-btn:not(.confirm-ok), .wc-btn:not(.wc-primary)):not(:disabled):hover {
   background: var(--btn2-bg-hover);
   color: var(--btn2-fg);
   transform: var(--btn-lift);
 }
-.btn--secondary:active,
 :is(.popup-action.secondary, .friend-reject-btn, .friend-remove-btn, .profile-support-btn:not(.primary),
     .confirm-btn:not(.confirm-ok), .wc-btn:not(.wc-primary)):not(:disabled):active {
   transform: var(--btn-press);
 }
-
-/* ── Ghost + danger ── */
-.btn--ghost {
-  background: transparent;
-  color: var(--text-2);
-  border: 1px solid transparent;
-  box-shadow: none;
-}
-.btn--ghost:hover { background: rgba(var(--ink), 0.06); color: var(--text-1); }
-.btn--danger {
-  background: transparent;
-  color: var(--accent-text);
-  border: var(--btn2-border);
-  border-color: currentColor;
-  box-shadow: none;
-}
-.btn--danger:hover { background: rgba(var(--primary-rgb), 0.1); }
 
 /* Disabled: dimmed, never lifts. */
 .btn:disabled,

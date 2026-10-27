@@ -38,8 +38,7 @@ body {
 
 /* Titles take the theme's display face: tall condensed caps (Cinematic) or
    hand-lettered comic caps (Comic). Opt in with .display anywhere else. */
-.display,
-.page-title {
+.display {
   font-family: var(--font-display);
   font-weight: var(--display-weight);
   letter-spacing: var(--display-tracking);

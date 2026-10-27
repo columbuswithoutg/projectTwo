@@ -20,5 +20,4 @@
   mask: url('/assets/avengers-logo.svg') center / contain no-repeat;
   filter: var(--brand-shadow);
 }
-.brand-mark--sm { width: 28px; height: 28px; filter: none; }
 .brand-mark--lg { width: 88px; height: 88px; }

@@ -86,14 +86,6 @@
   box-shadow: 0 6px 18px rgba(226, 54, 54, 0.55);
 }
 
-.popup-action.watch-again {
-  box-shadow: 0 4px 14px var(--gold-04);
-}
-
-.popup-action.watch-again:hover {
-  box-shadow: 0 6px 18px rgba(237, 29, 36, 0.55);
-}
-
 .popup-action.secondary {
   box-shadow: none;
   text-transform: none;

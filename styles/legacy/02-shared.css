@@ -70,7 +70,6 @@
 /* ======================
    SHARED: GOLD BUTTONS
 ====================== */
-.popup-action.watch-again,
 .memory-view-btn {
   background: var(--gold-gradient);
   color: var(--text-on-accent);

@@ -45,11 +45,9 @@
   box-shadow: var(--card-shadow);
   border-radius: var(--radius-card);
 }
-.card--interactive,
 :is(.stat-card, .character-card) {
   transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base), border-color var(--dur-base);
 }
-.card--interactive:hover,
 :is(.stat-card, .character-card):hover {
   border: var(--card-hover-border);
   box-shadow: var(--card-hover-shadow);
@@ -155,20 +153,6 @@
   font: 700 11px/1 var(--font-ui);
 }
 [data-theme="comic"] .badge { border: 2px solid #111111; }
-
-/* Keyboard key hint, e.g. <kbd class="kbd">E</kbd>. */
-.kbd {
-  display: inline-block;
-  min-width: 1.6em;
-  padding: 1px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--border-3);
-  border-bottom-width: 2px;
-  background: rgba(var(--ink), 0.06);
-  font: 700 0.85em/1.4 var(--font-ui);
-  text-align: center;
-}
-[data-theme="comic"] .kbd { border: 2px solid #111111; border-bottom-width: 3px; background: #ffffff; color: #111111; }
 
 /* Skeleton shimmer for loading placeholders. */
 .skeleton {

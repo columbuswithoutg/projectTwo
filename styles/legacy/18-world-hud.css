@@ -80,6 +80,14 @@
   transition: opacity 0.3s ease;
 }
 .world-loading.pg3d-cover--done { opacity: 0; }
+/* Engine failure message (js/playground3d.js _engineMessage): the cover
+   reuses .world-loading with the spinner hidden and a Retry/Reload
+   .btn.btn--primary appended. Without .pg3d-cover the host shows through,
+   so give it a dark scrim; the cover stays click-through, the button not. */
+.world-loading.pg3d-error { padding: 0 16px; text-align: center; }
+.world-loading.pg3d-error:not(.pg3d-cover) { background: rgba(7, 8, 15, 0.82); z-index: 20; }
+.world-loading.pg3d-error .world-loading-text { color: rgba(255, 255, 255, 0.88); font-size: 15px; }
+.pg3d-error-btn { pointer-events: auto; }
 @media (prefers-reduced-motion: reduce) {
   .world-loading-spinner { animation-duration: 2.4s; }
 }
@@ -319,7 +327,6 @@
 @media (orientation: landscape) and (max-height: 520px) {
   .pg-sit { right: calc(24px + 76px + 76px); bottom: 24px; }
 }
-body.nav-open .pg-sit { display: none; }
 .pg3d-nodelabel {
   font-family: var(--font-ui);
   font-size: 11px;
@@ -507,10 +514,6 @@ body.nav-open .pg-sit { display: none; }
   white-space: nowrap;
 }
 .world-lb-score { font-weight: 700; }
-.world-lb-streak {
-  font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.7);
-}
 
 /* Spawn/respawn island picker — shown when the world is split into more than
    one disconnected island. Same scene-styled glass + dismissal as the other
@@ -908,6 +911,24 @@ body.nav-open .pg-sit { display: none; }
   background: linear-gradient(135deg, #b8860b, #7a1fa2);
 }
 .world-house-save:disabled { opacity: 0.5; cursor: wait; }
+/* Saving (js/house-editor.js setSaving → .saving + aria-busy): the editable
+   part of the panel dims and stops taking clicks; the actions row stays
+   live-looking and the "Saving…" button pulses as the busy signal. */
+.world-house.saving { cursor: progress; }
+.world-house.saving .world-house-panel > :not(.world-house-actions) {
+  opacity: 0.6;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.world-house.saving .world-house-save:disabled {
+  opacity: 1;
+  cursor: progress;
+  animation: world-house-saving 1.2s ease-in-out infinite;
+}
+@keyframes world-house-saving { 50% { opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) {
+  .world-house.saving .world-house-save:disabled { animation: none; opacity: 0.8; }
+}
 
 .world-chat-row {
   position: fixed;
@@ -1592,20 +1613,6 @@ body:has(#nav-drawer.open) .world-chat-row {
   transform: scale(2.5);
   transform-origin: center;
 }
-.pg-modal-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-/* Builder modal is wider so the two-column control grid has room. */
-.pg-builder-modal {
-  width: min(820px, 100%);
-}
-.pg-modal-controls.two-col {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px 18px;
-}
 .pg-builder-col {
   display: flex;
   flex-direction: column;
@@ -1651,25 +1658,6 @@ body:has(#nav-drawer.open) .world-chat-row {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(237, 29, 36,0.3);
 }
-.pg-styles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.pg-style {
-  background: var(--color-node-bg);
-  border: 1px solid var(--border-2);
-  color: var(--color-text-warm);
-  padding: 6px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-}
-.pg-style.active {
-  border-color: var(--color-primary);
-  background: rgba(237, 29, 36,0.15);
-  color: var(--accent-text);
-}
 /* Avengers preset chips — full-width strip spanning the builder grid. */
 .pg-presets {
   grid-column: 1 / -1;
@@ -1702,13 +1690,6 @@ body:has(#nav-drawer.open) .world-chat-row {
   border-color: var(--color-primary);
   background: rgba(237, 29, 36,0.12);
   color: var(--accent-text);
-}
-.pg-modal-foot {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  padding: 12px 18px;
-  border-top: 1px solid var(--border-1);
 }
 .pg-btn {
   background: var(--color-node-bg);

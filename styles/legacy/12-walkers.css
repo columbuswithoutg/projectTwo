@@ -160,35 +160,6 @@
   -webkit-box-orient: vertical;
 }
 
-.walker-stage-row {
-  display: flex;
-  gap: 4px;
-  justify-content: center;
-  margin-top: 4px;
-}
-
-.walker-stage-dot {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 1.5px solid var(--border-2);
-  cursor: pointer;
-  opacity: 0.5;
-  transition: all 0.2s;
-}
-
-.walker-stage-dot:hover {
-  opacity: 0.85;
-  border-color: var(--gold-03);
-}
-
-.walker-stage-dot.active {
-  opacity: 1;
-  border-color: var(--gold);
-  box-shadow: 0 0 6px rgba(237, 29, 36, 0.4);
-}
-
 .map-walker {
   will-change: left, top, transform;
 }

@@ -104,19 +104,6 @@
   transition: border-color 0.2s, background 0.2s;
 }
 
-.stat-card.stat-primary {
-  background: var(--gold-008);
-  border-color: var(--gold-025);
-}
-
-.stat-card.stat-primary .stat-value {
-  font-size: 2.4rem;
-  background: var(--gold-gradient);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
-}
 
 .stat-value {
   font-family: var(--font-ui);
@@ -232,6 +219,21 @@
 .avatar-option.selected {
   border-color: var(--color-primary);
   box-shadow: 0 0 16px rgba(237, 29, 36, 0.5);
+}
+
+/* Portrait that failed to load (js/views/profile.js disables the button and
+   adds "(picture unavailable)" to its title): dimmed, muted, no hover lift. */
+.avatar-option.avatar-option-missing {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: grayscale(1);
+  color: #a8a8a8;
+}
+
+.avatar-option.avatar-option-missing:hover {
+  border-color: rgba(255, 255, 255, 0.08);
+  transform: none;
+  box-shadow: none;
 }
 
 #avatar-picker-empty {

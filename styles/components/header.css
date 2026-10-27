@@ -76,14 +76,14 @@
 }
 
 /* ── Icon buttons in the bar (menu, back, profile, edit) ── */
-:is(#header, .pg-header, .world-header) :is(#nav-toggle, #back-btn, #cz-back, #world-back, #pg-customize-btn, #friends-toggle, .pg-header-back) {
+:is(#header, .pg-header, .world-header) :is(#nav-toggle, #back-btn, #cz-back, #world-back, #pg-customize-btn, #friends-toggle) {
   color: var(--hdr-fg);
   background: transparent;
   border: none;
   border-radius: 10px;
   transition: background-color var(--dur-fast), transform var(--dur-fast);
 }
-:is(#header, .pg-header, .world-header) :is(#nav-toggle, #back-btn, #cz-back, #world-back, #pg-customize-btn, #friends-toggle, .pg-header-back):hover {
+:is(#header, .pg-header, .world-header) :is(#nav-toggle, #back-btn, #cz-back, #world-back, #pg-customize-btn, #friends-toggle):hover {
   background: var(--hdr-btn-hover);
   color: var(--hdr-fg);
 }

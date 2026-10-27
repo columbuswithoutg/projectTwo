@@ -626,9 +626,6 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-.admin-cms-multi {
-  min-height: 120px;
-}
 .admin-cms-error {
   font-size: 11px;
   color: var(--color-red-light);

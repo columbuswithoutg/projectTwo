@@ -143,13 +143,6 @@
   overflow-y: auto;
 }
 
-.goals-empty {
-  color: var(--text-3);
-  font-size: 0.9rem;
-  text-align: center;
-  padding: 12px 0;
-}
-
 .goal-card {
   background: rgba(var(--ink), 0.04);
   border: 1px solid var(--border-1);
@@ -263,7 +256,6 @@
   color: var(--color-health-good);
 }
 
-.goal-rec-label,
 .popup-recommended-label {
   margin: 8px 0 4px;
   font-size: 0.75rem;

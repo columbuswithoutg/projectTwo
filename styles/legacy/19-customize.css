@@ -80,30 +80,6 @@
   flex-wrap: wrap;
 }
 .cz-tools .pg-btn { padding: 6px 14px; font-size: 13px; }
-.cz-sections {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 14px;
-  align-items: start;
-}
-.cz-section {
-  background: var(--surface-1);
-  border: 1px solid var(--border-1);
-  border-radius: 10px;
-  padding: 12px 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.cz-section-title {
-  margin: 0;
-  font-family: var(--font-ui);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--accent-text);
-  opacity: 0.9;
-}
 #cz-back {
   width: 40px;
   height: 40px;
@@ -118,8 +94,7 @@
 #cz-save { padding: 8px 18px; }
 #cz-error { padding: 10px 2px 0; }
 
-/* Slots fully hidden by another choice — greyed + non-interactive + a hint. */
-.cz-hidden { opacity: 0.4; pointer-events: none; }
+/* The hint on a slot hidden by another choice. */
 .cz-hint {
   font-size: 9px;
   letter-spacing: 0.02em;
@@ -275,6 +250,5 @@ img.cz-tile-av:not([src]) {
     border-right: 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
-  .cz-sections { grid-template-columns: 1fr; }
   .cz-tiles { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); }
 }
