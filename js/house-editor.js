@@ -644,6 +644,9 @@ const HouseEditor = (() => {
         btn.disabled = false;
       }
     });
+    // For the views' router hooks (isDirty / canLeave): browser Back, a link
+    // or a reload must ask too, not only ✕ / Cancel / Escape.
+    close.isDirty = isDirty;
     return close;
   }
 

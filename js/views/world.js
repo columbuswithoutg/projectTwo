@@ -996,5 +996,15 @@ const WorldView = (() => {
     _stage = null;
   }
 
-  return { mount, unmount, title: 'World — MCU Tracker' };
+  // Router hooks: browser Back, a link or a reload with an unsaved house
+  // design asks first (unmount closes the editor, which puts the saved
+  // house back).
+  function isDirty() {
+    return !!(_houseEditorClose && _houseEditorClose.isDirty && _houseEditorClose.isDirty());
+  }
+  function canLeave() {
+    return !isDirty() || Router.confirmLeave('Your house design hasn’t been saved.');
+  }
+
+  return { mount, unmount, isDirty, canLeave, title: 'World — MCU Tracker' };
 })();

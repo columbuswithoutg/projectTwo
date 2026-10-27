@@ -379,6 +379,17 @@ const HomeView = {
     });
   },
 
+  // Router hooks: browser Back, a link or a reload with an unsaved room
+  // design asks first (unmount closes the editor, which puts the saved room
+  // back).
+  isDirty() {
+    const close = HomeView._roomEditorClose;
+    return !!(close && close.isDirty && close.isDirty());
+  },
+  canLeave() {
+    return !HomeView.isDirty() || Router.confirmLeave('Your room design hasn’t been saved.');
+  },
+
   unmount() {
     HomeView._loadSeq = (HomeView._loadSeq || 0) + 1;   // cancel an in-flight _loadAndStart
     HomeView._closeEditMenu();
