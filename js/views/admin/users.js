@@ -1,10 +1,27 @@
 /************************************************
  * ADMIN — USERS TAB
+ *
+ * A sortable table. Every column header but the actions one sorts the
+ * WHOLE list on the server (GET /users?sort=&dir=; the allowlist and the
+ * order live in js/admin-users-logic.js), so paging and the search box keep
+ * working under a sort. Sort, search text and page survive a tab switch in
+ * _state and are written back into the controls on remount.
  ************************************************/
 (function () {
   const esc = AdminView._escapeHtml;
 
   const ONLINE_WINDOW_MS = 5 * 60 * 1000;
+  const PAGE_SIZE = 25;
+
+  // The sortable columns, in order; the actions column has no key.
+  // `num` right-aligns the header and the cells.
+  const COLUMNS = [
+    { key: 'username',   label: 'Username' },
+    { key: 'lastActive', label: 'Last active' },
+    { key: 'watched',    label: 'Watched',  num: true },
+    { key: 'memories',   label: 'Memories', num: true },
+    { key: 'joined',     label: 'Joined' }
+  ];
 
   function isOnline(lastActiveAt) {
     if (!lastActiveAt) return false;
@@ -14,34 +31,66 @@
 
   // Compact relative-time formatter: "just now" / "3m ago" / "2h ago" /
   // "yesterday" / fallback to absolute. Avoids pulling in a date lib.
-  function relativeTime(lastActiveAt) {
-    if (!lastActiveAt) return 'never active';
+  // The detail panel gets the "active … / last seen …" wording; `bare`
+  // drops the prefixes for a table cell ("6h ago", "8/30/2026", "never").
+  function relativeTime(lastActiveAt, bare) {
+    const p = bare ? '' : 'active ';
+    if (!lastActiveAt) return bare ? 'never' : 'never active';
     const t = new Date(lastActiveAt).getTime();
-    if (!Number.isFinite(t)) return 'never active';
+    if (!Number.isFinite(t)) return bare ? 'never' : 'never active';
     const diff = Date.now() - t;
-    if (diff < 60 * 1000) return 'active just now';
-    if (diff < 60 * 60 * 1000) return 'active ' + Math.floor(diff / 60000) + 'm ago';
-    if (diff < 24 * 60 * 60 * 1000) return 'active ' + Math.floor(diff / 3600000) + 'h ago';
-    if (diff < 48 * 60 * 60 * 1000) return 'active yesterday';
-    if (diff < 30 * 24 * 60 * 60 * 1000) return 'active ' + Math.floor(diff / 86400000) + 'd ago';
-    return 'last seen ' + AdminView.formatDate(lastActiveAt);
+    if (diff < 60 * 1000) return p + 'just now';
+    if (diff < 60 * 60 * 1000) return p + Math.floor(diff / 60000) + 'm ago';
+    if (diff < 24 * 60 * 60 * 1000) return p + Math.floor(diff / 3600000) + 'h ago';
+    if (diff < 48 * 60 * 60 * 1000) return p + 'yesterday';
+    if (diff < 30 * 24 * 60 * 60 * 1000) return p + Math.floor(diff / 86400000) + 'd ago';
+    return bare ? shortDate(lastActiveAt) : 'last seen ' + AdminView.formatDate(lastActiveAt);
+  }
+
+  // Date only, for a table cell; the full timestamp goes in the cell's title.
+  function shortDate(d) {
+    if (!d) return '—';
+    const date = new Date(d);
+    return isNaN(date) ? '—' : date.toLocaleDateString();
   }
 
   const Users = {
-    _state: { page: 1, q: '', total: 0, items: [] },
+    _state: {
+      page: 1, q: '',
+      sort: AdminUsersLogic.DEFAULT_SORT, dir: AdminUsersLogic.DEFAULT_DIR,
+      total: 0, items: []
+    },
     _searchTimer: null,
+    _fetchSeq: 0,
 
     mount(container) {
-      // _state survives a tab switch (search text and page are kept on
-      // purpose), so the markup below writes q back into the box — a filter
-      // the admin can't see would quietly hide users.
+      // _state survives a tab switch (search text, sort and page are kept on
+      // purpose), so the markup below writes q back into the box and
+      // syncHeaders() puts the arrow on the sorted column — a filter or an
+      // order the admin can't see would quietly hide users.
       container.innerHTML = `
         <div class="admin-users">
           <div class="admin-toolbar">
             <input id="admin-users-search" type="text" placeholder="Search username..." class="admin-input" value="${esc(Users._state.q)}" />
             <span id="admin-users-count" class="admin-count">—</span>
           </div>
-          <div id="admin-users-list" class="admin-list">Loading…</div>
+          <div class="admin-table-wrap">
+            <table class="admin-table admin-users-table">
+              <thead>
+                <tr>
+                  ${COLUMNS.map(c => `
+                  <th scope="col" class="admin-th${c.num ? ' admin-th-num' : ''}" data-sort="${c.key}">
+                    <button type="button" class="admin-sort-btn" data-sort="${c.key}">
+                      <span class="admin-sort-label">${esc(c.label)}</span>
+                      <span class="admin-sort-arrow" aria-hidden="true"></span>
+                    </button>
+                  </th>`).join('')}
+                  <th scope="col" class="admin-th admin-th-actions"><span class="visually-hidden">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody id="admin-users-list"></tbody>
+            </table>
+          </div>
           <div class="admin-pager">
             <button id="admin-users-prev" class="admin-btn">‹ Prev</button>
             <span id="admin-users-page">Page 1</span>
@@ -61,32 +110,80 @@
         }, 250);
       });
 
+      container.querySelectorAll('.admin-sort-btn').forEach(btn => {
+        btn.addEventListener('click', () => Users.setSort(btn.dataset.sort));
+      });
+
       document.getElementById('admin-users-prev').addEventListener('click', () => {
         if (Users._state.page > 1) { Users._state.page--; Users.fetch(); }
       });
       document.getElementById('admin-users-next').addEventListener('click', () => {
-        const last = Math.max(1, Math.ceil(Users._state.total / 25));
-        if (Users._state.page < last) { Users._state.page++; Users.fetch(); }
+        if (Users._state.page < Users.lastPage()) { Users._state.page++; Users.fetch(); }
       });
 
+      Users.syncHeaders();
       Users.fetch();
     },
 
-    async fetch() {
+    lastPage() {
+      return Math.max(1, Math.ceil(Users._state.total / PAGE_SIZE));
+    },
+
+    // A header click: a new column sorts ascending, the same column flips.
+    // Back to page 1, since the whole order changes.
+    setSort(key) {
+      const next = AdminUsersLogic.nextSort(Users._state, key);
+      Users._state.sort = next.sort;
+      Users._state.dir = next.dir;
+      Users._state.page = 1;
+      Users.syncHeaders();
+      Users.fetch();
+    },
+
+    // Arrow + aria-sort on the sorted column only (aria-sort belongs on at
+    // most one header); the others get a faint ↕ so they read as clickable.
+    syncHeaders() {
+      const { sort, dir } = Users._state;
+      const desc = dir === 'desc';
+      document.querySelectorAll('.admin-users-table th[data-sort]').forEach(th => {
+        const active = th.dataset.sort === sort;
+        th.classList.toggle('admin-th-sorted', active);
+        if (active) th.setAttribute('aria-sort', desc ? 'descending' : 'ascending');
+        else th.removeAttribute('aria-sort');
+        th.querySelector('.admin-sort-arrow').textContent = active ? (desc ? '▼' : '▲') : '↕';
+        th.querySelector('.admin-sort-btn').title = active
+          ? `Sorted ${desc ? 'descending' : 'ascending'} — click to flip`
+          : 'Sort by this column';
+      });
+    },
+
+    // One full-width row in the table body: loading / empty / error.
+    setStatus(html) {
       const list = document.getElementById('admin-users-list');
-      list.innerHTML = 'Loading…';
+      if (list) list.innerHTML = `<tr class="admin-table-status"><td colspan="${COLUMNS.length + 1}">${html}</td></tr>`;
+    },
+
+    async fetch() {
+      // A slow earlier request must not paint over a newer one (two quick
+      // header clicks, or typing while a page loads).
+      const seq = ++Users._fetchSeq;
+      Users.setStatus('Loading…');
       try {
         const params = new URLSearchParams({
           page: String(Users._state.page),
-          limit: '25'
+          limit: String(PAGE_SIZE),
+          sort: Users._state.sort,
+          dir: Users._state.dir
         });
         if (Users._state.q) params.set('q', Users._state.q);
         const data = await AdminView.api('/users?' + params.toString());
+        if (seq !== Users._fetchSeq) return;
         Users._state.items = data.items;
         Users._state.total = data.total;
         Users.render();
       } catch (e) {
-        list.innerHTML = `<div class="admin-error">${esc(e.message)}</div>`;
+        if (seq !== Users._fetchSeq) return;
+        Users.setStatus(`<div class="admin-error">${esc(e.message)}</div>`);
       }
     },
 
@@ -95,28 +192,29 @@
       const count = document.getElementById('admin-users-count');
       const pageLabel = document.getElementById('admin-users-page');
       count.textContent = `${Users._state.total} user${Users._state.total === 1 ? '' : 's'}`;
-      pageLabel.textContent = `Page ${Users._state.page} / ${Math.max(1, Math.ceil(Users._state.total / 25))}`;
+      pageLabel.textContent = `Page ${Users._state.page} / ${Users.lastPage()}`;
 
       if (!Users._state.items.length) {
-        list.innerHTML = `<div class="admin-empty">No users match.</div>`;
+        Users.setStatus('<div class="admin-empty">No users match.</div>');
         return;
       }
 
       list.innerHTML = Users._state.items.map(u => `
-        <div class="admin-row" data-id="${u._id}">
-          <div class="admin-row-main">
+        <tr data-id="${esc(u._id)}">
+          <td class="admin-td-user">
             <span class="admin-username">
               ${isOnline(u.lastActiveAt) ? '<span class="admin-online-dot" title="online"></span>' : ''}
               ${esc(u.username)}
               ${u.isAdmin ? '<span class="admin-pill admin-pill-admin">admin</span>' : ''}
               ${u.banned ? '<span class="admin-pill admin-pill-banned">banned</span>' : ''}
             </span>
-            <span class="admin-row-meta">
-              ${esc(relativeTime(u.lastActiveAt))} · ${u.watchedCount} watched · ${u.memoryCount} memories · joined ${AdminView.formatDate(u.createdAt)}
-            </span>
-          </div>
-          <button class="admin-btn admin-btn-view" data-id="${u._id}">View</button>
-        </div>
+          </td>
+          <td class="admin-td-time" title="${esc(u.lastActiveAt ? AdminView.formatDate(u.lastActiveAt) : 'never active')}">${esc(relativeTime(u.lastActiveAt, true))}</td>
+          <td class="admin-td-num">${Number(u.watchedCount) || 0}</td>
+          <td class="admin-td-num">${Number(u.memoryCount) || 0}</td>
+          <td class="admin-td-time" title="${esc(AdminView.formatDate(u.createdAt))}">${esc(shortDate(u.createdAt))}</td>
+          <td class="admin-td-actions"><button class="admin-btn admin-btn-view" data-id="${esc(u._id)}">View</button></td>
+        </tr>
       `).join('');
 
       list.querySelectorAll('.admin-btn-view').forEach(btn => {

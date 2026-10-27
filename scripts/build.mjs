@@ -91,7 +91,8 @@ export const CHUNKS = {
     'js/views/customize.js', 'js/views/home.js', 'js/views/world.js', 'js/views/friend-home.js'
   ],
   admin: [
-    'js/views/admin/index.js', 'js/views/admin/users.js', 'js/views/admin/moderation.js',
+    // admin-users-logic: the Users table's sort rules (also required by routes/admin.js)
+    'js/views/admin/index.js', 'js/admin-users-logic.js', 'js/views/admin/users.js', 'js/views/admin/moderation.js',
     'js/views/admin/config.js', 'js/views/admin/cms.js',
     // project-logic: prerequisite loops + free cells (also required by routes/admin.js)
     'js/project-logic.js', 'js/views/admin/prereq-picker.js', 'js/views/admin/cms-projects.js',
@@ -117,7 +118,7 @@ export const EXPECT_GLOBALS = {
 // files) rather than declared — checked for a `root.Name =` assignment instead.
 export const EXPECT_ATTACHED = {
   core: ['MessagingLogic', 'HumanoidPrefetch', 'SceneGuessLogic', 'PanZoomLogic', 'UxLogic'],
-  admin: ['ProjectLogic'],
+  admin: ['ProjectLogic', 'AdminUsersLogic'],
   world: ['PG3DPhysics', 'WorldNetLogic', 'PG3DInputLogic', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid', 'PG3DGearLogic',
           'PG3DAvatar', 'PG3DGear', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation', 'PG3DScene']
 };

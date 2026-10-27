@@ -13,6 +13,7 @@ const watchRules = require('../server/watchRules');
 const AdminWatch = require('../server/admin-watch');
 const contentLoader = require('../server/contentLoader');
 const ProjectLogic = require('../js/project-logic');      // prerequisite loops + free board cells
+const AdminUsersLogic = require('../js/admin-users-logic'); // Users table: sort allowlist + $sort spec
 const { fillDailyBuckets } = require('../server/analytics');
 const { friendFilter } = require('../server/friendship');
 const Character = require('../models/Character');
@@ -66,22 +67,56 @@ function clampPage(req) {
 // USERS
 // -----------------------------------------------------------------------
 
+// ?page= ?limit= ?q= plus ?sort= (username | lastActive | watched | memories
+// | joined) and ?dir= (asc | desc), allowlisted in js/admin-users-logic.js;
+// anything else is today's order, newest account first.
 router.get('/users', async (req, res) => {
   const { page, limit, skip } = clampPage(req);
   const q = (req.query.q || '').toString().trim();
   const filter = q ? { username: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } } : {};
+  const { sort, dir } = AdminUsersLogic.parseSort(req.query.sort, req.query.dir);
+
+  // One aggregation, so Mongo sorts the WHOLE result set and then takes the
+  // page — a sort applied in JS after the query could only ever order the
+  // 25 rows it got. The watched / memory counts are $size'd in the
+  // pipeline (they used to be counted in JS from watchedProjects, which
+  // never leaves the DB now), the username is lower-cased for a
+  // case-insensitive sort, and _na puts never-active users last whichever
+  // way "Last active" goes. The spec comes from AdminUsersLogic.sortStage,
+  // which test/admin-users-sort.test.js keeps in step with the client's
+  // compareUsers.
+  const pipeline = [
+    { $match: filter },
+    {
+      $project: {
+        username: 1, isAdmin: 1, banned: 1, bannedAt: 1, banReason: 1,
+        createdAt: 1, lastActiveAt: 1, profilePicture: 1,
+        watchedCount: { $size: { $ifNull: ['$watchedProjects', []] } },
+        memoryCount: {
+          $sum: {
+            $map: {
+              input: { $ifNull: ['$watchedProjects', []] },
+              as: 'e',
+              in: { $size: { $ifNull: ['$$e.memories', []] } }
+            }
+          }
+        },
+        _un: { $toLower: { $ifNull: ['$username', ''] } },
+        _na: { $cond: [{ $eq: [{ $type: '$lastActiveAt' }, 'date'] }, 0, 1] }
+      }
+    },
+    { $sort: AdminUsersLogic.sortStage(sort, dir) },
+    { $skip: skip },
+    { $limit: limit }
+  ];
 
   const [items, total] = await Promise.all([
-    User.find(filter)
-      .select('username isAdmin banned bannedAt banReason createdAt lastActiveAt watchedProjects profilePicture')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean(),
+    User.aggregate(pipeline),
     User.countDocuments(filter)
   ]);
 
-  // Strip large nested arrays from list view — admin only needs counts
+  // The list view only needs the counts (never the nested arrays), and the
+  // sort helper fields stay in the DB.
   const lite = items.map(u => ({
     _id: u._id,
     username: u.username,
@@ -92,13 +127,11 @@ router.get('/users', async (req, res) => {
     createdAt: u.createdAt,
     lastActiveAt: u.lastActiveAt || null,
     profilePicture: u.profilePicture || '',
-    watchedCount: Array.isArray(u.watchedProjects) ? u.watchedProjects.length : 0,
-    memoryCount: Array.isArray(u.watchedProjects)
-      ? u.watchedProjects.reduce((sum, e) => sum + (Array.isArray(e.memories) ? e.memories.length : 0), 0)
-      : 0
+    watchedCount: u.watchedCount || 0,
+    memoryCount: u.memoryCount || 0
   }));
 
-  res.json({ items: lite, total, page, limit });
+  res.json({ items: lite, total, page, limit, sort, dir });
 });
 
 router.get('/users/:id', async (req, res) => {

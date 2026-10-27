@@ -226,7 +226,7 @@ Promote a user to admin by setting `isAdmin: true` on their Mongo document — t
 
 | Tab         | What it does                                                                 |
 |-------------|------------------------------------------------------------------------------|
-| Users       | List, search, view details. Ban / unban / reset password / delete. Mark projects watched for a user (skips the watch timer; no feed post; they get an inbox note). Green dot for users active in last 5 min, relative-time "active 3m ago". |
+| Users       | Sortable table — click a column header (Username, Last active, Watched, Memories, Joined) to sort the whole list on the server, across pages and with the search applied; never-active users sort last. View details. Ban / unban / reset password / delete. Mark projects watched for a user (skips the watch timer; no feed post; they get an inbox note). Green dot for users active in last 5 min, relative-time "active 3m ago". |
 | Moderation  | Sub-tabs: Memories grid (delete uploads — also wipes from Cloudinary), Pending friend requests. |
 | CMS         | Sub-tabs: Projects, Characters, Locations, Dialogues. Per-field forms. Audit-logged. |
 | Config      | Live sliders for walker speed, pause min/max, encounter dist/cooldown, fight spawn chance, plus default Fights/Dialogues toggles for new users. |
