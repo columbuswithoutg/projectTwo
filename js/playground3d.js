@@ -493,6 +493,8 @@ const Playground3D = (() => {
     _homeRoofMat = null;
     _walkableRoads = [];
     _remotePlayers.clear();
+    _pendingRemotes.clear();
+    _pendingStones = null;
     _hudLayer = null;
     _localEmoteUntil = 0;
     _localBubbleEls = [];
@@ -673,6 +675,10 @@ const Playground3D = (() => {
     _resizeRenderer();
     _resizeObs = new ResizeObserver(_resizeRenderer);
     _resizeObs.observe(_viewport);
+
+    // Everyone the server reported while the scene was loading, and the stone
+    // holders — before the shader warm-up so their rigs are compiled too.
+    _flushPendingRemote();
 
     // Compile every shader the scene needs before the first frame (the
     // realistic bodies' tinted materials are heavy) behind a cover, so
@@ -2176,6 +2182,10 @@ const Playground3D = (() => {
   // Authoritative full state from the server: { stoneId: holderSocketId|null }.
   function setWorldStones(stateMap) {
     if (_mode !== 'world') return;
+    if (!_scene) {   // replayed by _initInternal (see _pendingRemotes)
+      if (_container) _pendingStones = { ...(stateMap || {}) };
+      return;
+    }
     _buildStoneMeshes();
     for (const [id, s] of _stones) {
       s.holder = (stateMap && Object.prototype.hasOwnProperty.call(stateMap, id)) ? (stateMap[id] || null) : null;
@@ -2187,7 +2197,10 @@ const Playground3D = (() => {
   // Single-stone ownership change (grab / steal / drop).
   function setStoneHeld(stone, holder) {
     const s = _stones.get(stone);
-    if (!s) return;
+    if (!s) {
+      if (!_scene && _pendingStones) _pendingStones[stone] = holder || null;
+      return;
+    }
     s.holder = holder || null;
     _grabbing.delete(stone);
     _recomputeHeld();
@@ -4273,8 +4286,30 @@ const Playground3D = (() => {
 
   // ── remote player API ──
 
+  // Players and stone holders the server reported while the scene was still
+  // loading (THREE from the CDN, or the character gate): the join snapshot
+  // usually beats the gate on a first visit, and dropping it left everyone
+  // already in the room invisible until they rejoined. Kept only while an
+  // init is under way (_container set); _initInternal replays them.
+  const _pendingRemotes = new Map();   // id → { character, username, x, z, yaw, y, pose }
+  let _pendingStones = null;           // last { stoneId: holder } before the scene existed
+
+  function _flushPendingRemote() {
+    const peers = [..._pendingRemotes];
+    _pendingRemotes.clear();
+    for (const [id, p] of peers) addRemotePlayer(id, p.character, p.username, p.x, p.z, p.yaw, p.y, p.pose);
+    if (_pendingStones) {
+      const stones = _pendingStones;
+      _pendingStones = null;
+      setWorldStones(stones);
+    }
+  }
+
   function addRemotePlayer(id, character, username, x, z, yaw, y, pose) {
-    if (!_scene || !window.THREE) return;
+    if (!_scene || !window.THREE) {
+      if (_container) _pendingRemotes.set(id, { character, username, x, z, yaw, y, pose });
+      return;
+    }
     if (_remotePlayers.has(id)) return;
     const rig = _buildPlayer(character || defaultCharacter());
     rig.position.set(x || 0, y || 0, z || 0);
@@ -4327,7 +4362,13 @@ const Playground3D = (() => {
 
   function updateRemotePlayer(id, x, z, yaw, walking, y, backward, pose) {
     const rp = _remotePlayers.get(id);
-    if (!rp) return;
+    if (!rp) {
+      // Still waiting for the scene: keep the latest position so they appear
+      // where they are, not where the snapshot had them.
+      const p = _pendingRemotes.get(id);
+      if (p && Number.isFinite(x) && Number.isFinite(z)) Object.assign(p, { x, z, yaw, y, pose });
+      return;
+    }
     // Defence in depth — the server sanitises positions too. A NaN would
     // stick in the lerp forever; a huge yaw used to hang the angle math.
     if (typeof x !== 'number' || typeof z !== 'number' || !Number.isFinite(x) || !Number.isFinite(z)) return;
@@ -4350,6 +4391,7 @@ const Playground3D = (() => {
   const REMOTE_TAG_DIST = 45;   // world units; farther players show no name tag
 
   function removeRemotePlayer(id) {
+    _pendingRemotes.delete(id);
     const rp = _remotePlayers.get(id);
     if (!rp) return;
     if (rp.rig.parent) rp.rig.parent.remove(rp.rig);
@@ -4368,6 +4410,7 @@ const Playground3D = (() => {
   // early-returns on the now-stale ids and peers freeze at their drop-time
   // position. Iterating over a copy of the keys since removeRemotePlayer mutates.
   function clearRemotePlayers() {
+    _pendingRemotes.clear();
     for (const id of [..._remotePlayers.keys()]) removeRemotePlayer(id);
   }
 
