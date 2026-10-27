@@ -61,6 +61,11 @@
     forgetForm() {
       Editor._form = null;
     },
+    // CMS sub-tab / admin tab switch. Only the form counts here: unsaved
+    // board moves live in module state and are still there on remount
+    // (AdminView.isDirty covers them for leaving /admin).
+    isDirty() { return Editor.isFormDirty(); },
+    discard() { Editor.forgetForm(); },
 
     _modeBar() {
       const bar = document.createElement('div');
@@ -120,12 +125,7 @@
     },
 
     // "53, 55, 51" → [53, 55, 51]; null if any entry isn't a positive number.
-    _parseEpisodes(text) {
-      const parts = String(text || '').split(/[\s,;]+/).filter(Boolean);
-      const nums = parts.map(Number);
-      if (nums.some(n => !Number.isFinite(n) || n <= 0 || n > 600)) return null;
-      return nums.map(Math.round);
-    },
+    _parseEpisodes(text) { return ProjectLogic.parseEpisodesInput(text); },
 
     // Movie runtime / series episode runtimes. Drives the Start watching →
     // Mark as watched timer (server/watchRules.js), so it's worth a
@@ -185,12 +185,20 @@
             if (!parsed || !parsed.length) return { error: 'Enter at least one episode runtime (positive minutes).' };
             return { runtime: 0, episodes: parsed };
           }
-          const raw = String(runtimeField.get()).trim();
-          const n = raw === '' ? 0 : Number(raw);
-          if (!Number.isFinite(n) || n < 0 || n > 600) return { error: 'Runtime must be between 1 and 600 minutes.' };
-          return { runtime: Math.round(n), episodes: [] };
+          // An empty box reads null (_cmsField 'number') = no runtime.
+          const rt = ProjectLogic.parseRuntimeInput(runtimeField.get());
+          return rt.error ? rt : { runtime: rt.runtime, episodes: [] };
         }
       };
+    },
+
+    // What "+ Add new" must not land on: the saved cells (the server's
+    // occupancy check) plus the board's unsaved moves (its save would then
+    // clash). Board positions ride along as extra pseudo-items.
+    _occupancyItems() {
+      const board = AdminView._projectsBoard;
+      const working = board && board.getWorkingPositions ? board.getWorkingPositions() : {};
+      return Editor._items.concat(Object.keys(working).map(id => ({ id: id + '\u0000board', gridX: working[id].gridX, gridY: working[id].gridY })));
     },
 
     // coords: optional { gridX, gridY } — set when opened from the board (an
@@ -205,7 +213,8 @@
       const idField = AdminView._cmsField('ID (slug)', 'text', item.id || '', {
         placeholder: 'e.g. ironman1',
         disabled: !isNew,
-        required: true
+        required: true,
+        hint: isNew ? AdminView._cmsIdHint : ''
       });
       const titleField = AdminView._cmsField('Title', 'text', item.title || '', { required: true });
       const releaseField = AdminView._cmsField('Release date', 'text', item.release || '', { placeholder: 'YYYY-MM-DD' });
@@ -219,7 +228,7 @@
       let cell = coords
         ? { gx: coords.gridX, gy: coords.gridY }
         : isNew
-          ? ProjectLogic.defaultNewCell(Editor._items)
+          ? ProjectLogic.defaultNewCell(Editor._occupancyItems())
           : { gx: item.gridX != null ? item.gridX : 0, gy: item.gridY != null ? item.gridY : 0 };
       const posField = AdminView._cmsField('Board position', 'text', `${cell.gx}, ${cell.gy}`, { disabled: true });
       const posHint = document.createElement('p');
@@ -229,11 +238,21 @@
         : 'The first free cell below the board — drag it into place on the Board tab.';
       posField.wrap.appendChild(posHint);
 
-      // Locations dropdown — fetch from the existing window.LOCATIONS or
-      // fall back to a free-text input if locations haven't loaded yet.
+      // Locations dropdown — the current list from the server (one just made
+      // in the Locations sub-tab is pickable without a reload), falling back
+      // to window.LOCATIONS. A <select> with no matching option reads back
+      // '', so an id missing from the list gets its own option and survives
+      // a save instead of being wiped.
+      let locs = Array.isArray(window.LOCATIONS) ? window.LOCATIONS : [];
+      try {
+        const res = await AdminView.api('/content/locations');
+        if (Array.isArray(res && res.items)) locs = res.items;
+      } catch {}
+      if (!Editor._container) return;   // the tab was left while that loaded
       const locOptions = [{ value: '', label: '—' }];
-      if (Array.isArray(window.LOCATIONS)) {
-        for (const l of window.LOCATIONS) locOptions.push({ value: l.id, label: `${l.label} (${l.id})` });
+      for (const l of locs) locOptions.push({ value: l.id, label: `${l.label} (${l.id})` });
+      if (item.location && !locs.some(l => l.id === item.location)) {
+        locOptions.push({ value: item.location, label: `(unknown: ${item.location})` });
       }
       const locationField = AdminView._cmsField('Location', 'select', item.location || '', { options: locOptions });
       locationField.set(item.location || '');
@@ -306,6 +325,9 @@
 
       saveBtn.addEventListener('click', async () => {
         const payload = collect();
+        const byName = { id: idField, title: titleField };
+        AdminView._cmsApplyFieldErrors(byName, null);   // clear the last attempt's
+        if (isNew && !AdminView._cmsCheckId(idField)) return;
         if (payload.rtError) { AdminView.toast(payload.rtError, 'error'); return; }
         delete payload.rtError;
         // Only a brand-new project carries an explicit position. Editing an
@@ -344,6 +366,7 @@
             posHint.textContent = 'That cell was taken — moved to the nearest free one. Press Create again.';
           }
           if (e.body) prereqs.showProblem(e.body);
+          AdminView._cmsApplyFieldErrors(byName, e);
           AdminView.toast(e.message, 'error');
           saveBtn.disabled = false;
         }

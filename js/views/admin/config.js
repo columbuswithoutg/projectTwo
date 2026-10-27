@@ -18,12 +18,20 @@
     { path: 'world.sceneRoundSec', label: 'Scene Guess seconds per round', min: 15, max: 60,  step: 1,    default: 30, section: 'world' }
   ];
 
-  // Mirror of Playground.BODY_TYPES (index = stored value).
-  const NPC_BODY_TYPES = ['Realistic', 'Box'];
+  // Mirror of Playground.BODY_TYPES (index = stored value). Replaced by the
+  // server's copy once GET /api/config/npcs answers.
+  let NPC_BODY_TYPES = ['Realistic', 'Box'];
+  // { npcs: [{ id, name }], bodyTypes } from GET /api/config/npcs — the
+  // server builds it from the same sources, so /admin no longer has to load
+  // the world chunk for them (js/boot.js).
+  let npcMeta = null;
 
   // The /world heroes: ids from WorldNpcLogic.NPC_IDS ('npc_' + preset id),
   // display names from the matching Playground.CHARACTER_PRESETS entry.
+  // Served list first; the globals are the fallback when that fetch failed
+  // but the world chunk happens to be loaded (an earlier /world visit).
   function npcList() {
+    if (npcMeta && Array.isArray(npcMeta.npcs)) return npcMeta.npcs;
     const ids = (typeof WorldNpcLogic !== 'undefined' && WorldNpcLogic.NPC_IDS) || [];
     const presets = (typeof Playground !== 'undefined' && Playground.CHARACTER_PRESETS) || [];
     return ids.map(id => {
@@ -68,8 +76,19 @@
 
     async fetch() {
       const body = document.getElementById('admin-config-body');
+      // NPC names in parallel with the config; a failure just leaves the
+      // fallback in npcList().
+      const meta = npcMeta ? null : fetch(`${API}/config/npcs`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(m => {
+          if (!m || !Array.isArray(m.npcs)) return;
+          npcMeta = m;
+          if (Array.isArray(m.bodyTypes) && m.bodyTypes.length) NPC_BODY_TYPES = m.bodyTypes;
+        })
+        .catch(() => {});
       try {
         const cfg = await AdminView.api('/config');
+        await meta;
         Config._state.current = JSON.parse(JSON.stringify(cfg));
         Config._state.original = JSON.parse(JSON.stringify(cfg));
         Config._state.dirty = false;
@@ -199,6 +218,19 @@
       document.getElementById('admin-config-reset').addEventListener('click', Config.reset);
     },
 
+    // Guards (index.js): a control moved away from the loaded/saved value.
+    // Compared, not just flagged, so a slider dragged back reads as clean.
+    isDirty() {
+      const s = Config._state;
+      return !!(s.dirty && s.current && s.original &&
+                JSON.stringify(s.current) !== JSON.stringify(s.original));
+    },
+    discard() {
+      const s = Config._state;
+      if (s.original) s.current = JSON.parse(JSON.stringify(s.original));
+      s.dirty = false;
+    },
+
     _markDirty() {
       Config._state.dirty = true;
       const btn = document.getElementById('admin-config-save');
@@ -231,9 +263,25 @@
         Config.render();
         AdminView.toast('Saved. Refresh /map to see walker changes.', 'success');
       } catch (e) {
-        // Server-side validation errors come back as {error, fields}
-        AdminView.toast(e.message, 'error');
+        // Server-side validation errors come back as
+        // { error: 'Validation failed', fields: { 'walker.speed': 'must be …' } }
+        // (PUT /config in routes/admin.js) — name each control, not just
+        // "Validation failed".
+        AdminView.toast(Config._errorText(e), 'error');
       }
+    },
+
+    _errorText(e) {
+      const fields = e && e.body && e.body.fields;
+      if (!fields || typeof fields !== 'object') return e.message;
+      const labelOf = (path) => {
+        const s = SLIDERS.find(x => x.path === path);
+        if (s) return s.label;
+        const npc = npcList().find(n => path === 'world.npcBodyTypes.' + n.id);
+        return npc ? npc.name + ' body type' : path;
+      };
+      const parts = Object.entries(fields).map(([path, msg]) => `${labelOf(path)}: ${msg}`);
+      return parts.length ? `${e.message} — ${parts.join('; ')}` : e.message;
     },
 
     async reset() {

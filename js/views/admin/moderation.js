@@ -9,11 +9,14 @@
     _state: { sub: 'memories', page: 1, total: 0, items: [] },
 
     mount(container) {
+      // _state.sub survives a tab switch, so the highlighted sub-tab is
+      // derived from it rather than hard-coded to Memories.
+      const on = (sub) => Moderation._state.sub === sub ? ' active' : '';
       container.innerHTML = `
         <div class="admin-mod">
           <div class="admin-subtabs">
-            <button class="admin-subtab active" data-sub="memories">Memories</button>
-            <button class="admin-subtab" data-sub="friends">Pending Friend Requests</button>
+            <button class="admin-subtab${on('memories')}" data-sub="memories">Memories</button>
+            <button class="admin-subtab${on('friends')}" data-sub="friends">Pending Friend Requests</button>
           </div>
           <div id="admin-mod-host"></div>
         </div>

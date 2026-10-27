@@ -63,6 +63,7 @@
     _board: [],
     _pending: [],       // [{ key, file, url, time, episode, state: 'ready'|'uploading'|'error', error, progress }]
     _uploading: false,
+    _batch: null,       // token of the running "Upload all"; _clearPending() drops it to stop the loop
 
     async mount(container) {
       Editor._container = container;
@@ -84,9 +85,30 @@
       Editor._detail = null;
     },
 
+    // Guards (cms.js, index.js): dropped stills not uploaded yet (their typed
+    // times live only here), or a batch still uploading.
+    isDirty() {
+      return Editor._pending.length > 0 || Editor._uploading;
+    },
+    // What the discard prompt says (index.js _confirmDiscard / canLeave). A
+    // running batch can't recall the still already on the wire, so say so.
+    dirtyNote() {
+      return Editor._uploading
+        ? 'An upload is still running. Leaving stops it after the still being sent now; the stills not sent yet are dropped.'
+        : null;
+    },
+    discard() {
+      Editor._clearPending();
+    },
+
+    // Also cancels a running uploadAll(): it checks its token before every
+    // file and every render, so it never touches a page (or a null _detail)
+    // that's gone.
     _clearPending() {
       for (const p of Editor._pending) { try { URL.revokeObjectURL(p.url); } catch {} }
       Editor._pending = [];
+      Editor._batch = null;
+      Editor._uploading = false;
     },
 
     renderList() {
@@ -363,8 +385,14 @@
         return;
       }
       Editor._uploading = true;
+      const batch = Editor._batch = {};
+      const live = () => Editor._batch === batch && Editor._detail === d;
       let done = 0;
       for (const p of Editor._pending.slice()) {
+        if (!live()) return;   // discarded / left: stop, render nothing
+        // Removed (✕) while earlier stills were uploading — the snapshot
+        // above still lists it, but it must not be sent.
+        if (!Editor._pending.includes(p)) continue;
         p.state = 'uploading';
         p.progress = 0;
         Editor.renderPending();
@@ -376,6 +404,7 @@
             if (bar) bar.style.width = Math.round(f * 100) + '%';
           });
           URL.revokeObjectURL(p.url);
+          if (!live()) return;
           Editor._pending = Editor._pending.filter(x => x !== p);
           d.stills.push(saved);
           d.stills.sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
@@ -383,8 +412,20 @@
         } catch (e) {
           p.state = 'error';
           p.uploadError = e.message;
+          // Same as AdminView.api: a dead session signs out and comes back
+          // here after sign-in; a lost admin role goes home. Either way the
+          // rest of the batch would fail too, so stop it.
+          if (e.status === 401 || e.status === 403) {
+            Editor._batch = null;
+            Editor._uploading = false;
+            if (e.status === 401) Auth.endSession();
+            else { Editor.renderPending(); AdminView.toast('Forbidden', 'error'); Router.go('/'); }
+            return;
+          }
         }
       }
+      if (!live()) return;
+      Editor._batch = null;
       Editor._uploading = false;
       Editor._refreshCounts();
       Editor.renderPending();

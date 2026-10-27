@@ -14,12 +14,14 @@
     _state: { page: 1, total: 0, items: [], action: '' },
 
     mount(container) {
+      // _state.action survives a tab switch, so the select must show it —
+      // otherwise "All actions" is displayed over a filtered list.
       container.innerHTML = `
         <div class="admin-audit">
           <div class="admin-toolbar">
             <select id="admin-audit-action" class="admin-input">
               <option value="">All actions</option>
-              ${ACTIONS.map(a => `<option value="${a}">${a}</option>`).join('')}
+              ${ACTIONS.map(a => `<option value="${a}"${Audit._state.action === a ? ' selected' : ''}>${a}</option>`).join('')}
             </select>
             <span id="admin-audit-count" class="admin-count">—</span>
           </div>

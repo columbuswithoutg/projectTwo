@@ -32,10 +32,13 @@
     _searchTimer: null,
 
     mount(container) {
+      // _state survives a tab switch (search text and page are kept on
+      // purpose), so the markup below writes q back into the box — a filter
+      // the admin can't see would quietly hide users.
       container.innerHTML = `
         <div class="admin-users">
           <div class="admin-toolbar">
-            <input id="admin-users-search" type="text" placeholder="Search username..." class="admin-input" />
+            <input id="admin-users-search" type="text" placeholder="Search username..." class="admin-input" value="${esc(Users._state.q)}" />
             <span id="admin-users-count" class="admin-count">—</span>
           </div>
           <div id="admin-users-list" class="admin-list">Loading…</div>
@@ -324,7 +327,7 @@
     async deletePrompt(user) {
       const ok = await confirmDialog({
         title: `Permanently delete "${user.username}"?`,
-        message: 'This removes the user, all watch progress, all memory metadata, and all friend records. The Cloudinary uploads themselves remain (delete them via the Moderation tab first). This cannot be undone.',
+        message: 'This removes the user, their watch progress, posts, messages, uploads (the files too, unless another post still shows them) and friend records, and takes their name off friends’ “watched with” lists. Their bug reports are kept. This cannot be undone.',
         confirmLabel: 'Delete forever',
         danger: true
       });

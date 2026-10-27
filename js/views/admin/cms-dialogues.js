@@ -13,12 +13,35 @@
 (function () {
   const esc = AdminView._escapeHtml;
 
+  // Same values as DIALOG_LINES_MAX / DIALOG_LINE_MAX in
+  // server/admin-sanitize.js, which refuses anything longer — so it is
+  // blocked here before sending.
+  const LINES_MAX = 12;
+  const LINE_MAX = 600;
+  // Lines of one exchange / one villain → the problem in words, or ''.
+  function linesProblem(lines) {
+    if (lines.length > LINES_MAX) return `${lines.length} lines — at most ${LINES_MAX}.`;
+    const i = lines.findIndex(l => l.length > LINE_MAX);
+    return i >= 0 ? `Line ${i + 1} is ${lines[i].length} characters — at most ${LINE_MAX}.` : '';
+  }
+  const linesOf = (text) => text.split('\n').map(l => l.trim()).filter(l => l);
+  // Live "n/12 lines" under a textarea, plus the problem if there is one.
+  function showLineCount(countEl, errEl, lines) {
+    countEl.textContent = `${lines.length}/${LINES_MAX} lines`;
+    errEl.textContent = linesProblem(lines);
+  }
+
   const Editor = {
     _data: { pairs: {}, villainDefeatLines: {}, villainVictoryLines: {} },
     _projects: [],
     _characters: [],
     _container: null,
     _section: 'pairs',
+    // JSON of _data as last loaded/saved. Apply on a pair only edits _data
+    // locally ("Save all" persists), so an applied-but-unsaved pair is real
+    // unsaved work and must hold the sub-tab / tab / router guards.
+    _saved: null,
+    _pairForm: null,   // { isDirty() } while a pair form is open
 
     async mount(container) {
       Editor._container = container;
@@ -34,6 +57,7 @@
           villainDefeatLines: d.villainDefeatLines || {},
           villainVictoryLines: d.villainVictoryLines || {}
         };
+        Editor._saved = JSON.stringify(Editor._data);
         Editor._projects = p.items || [];
         Editor._characters = c.items || [];
         Editor.renderShell();
@@ -71,7 +95,20 @@
       document.getElementById('admin-dialog-save').addEventListener('click', Editor.save);
     },
 
+    // Guards (cms.js, index.js): edits applied to _data but not saved, or an
+    // open pair form with unapplied changes.
+    isDirty() {
+      return !!((Editor._saved !== null && JSON.stringify(Editor._data) !== Editor._saved) ||
+                (Editor._pairForm && Editor._pairForm.isDirty()));
+    },
+    discard() {
+      // The next mount() reloads from the server; just stop reporting.
+      Editor._saved = null;
+      Editor._pairForm = null;
+    },
+
     renderPairs() {
+      Editor._pairForm = null;
       const host = document.getElementById('admin-cms-dialog-host');
       const keys = Object.keys(Editor._data.pairs).sort();
       host.innerHTML = `
@@ -160,8 +197,31 @@
 
       const projOptions = [{ value: '', label: '—' }, ...Editor._projects.map(p => ({ value: p.id, label: `${p.id} — ${p.title}` }))];
 
+      // "Starts with" offers the pair's two characters — refilled when
+      // Character A / B change, so a new pair can pick one before Apply.
+      let startSels = [];
+      function fillStarts(startsSel, ex) {
+        const a = charAField.get(), b = charBField.get();
+        if (ex.startsWith && ex.startsWith !== a && ex.startsWith !== b) delete ex.startsWith;
+        startsSel.innerHTML = '';
+        const startOpts = [{ value: '', label: 'auto (alphabetical)' }];
+        if (a) startOpts.push({ value: a, label: a });
+        if (b && b !== a) startOpts.push({ value: b, label: b });
+        startOpts.forEach(o => {
+          const opt = document.createElement('option');
+          opt.value = o.value;
+          opt.textContent = 'Starts with: ' + o.label;
+          if (o.value === (ex.startsWith || '')) opt.selected = true;
+          startsSel.appendChild(opt);
+        });
+      }
+      const refillStarts = () => startSels.forEach(s => fillStarts(s.sel, exchanges[s.idx]));
+      charAField.input.addEventListener('change', refillStarts);
+      charBField.input.addEventListener('change', refillStarts);
+
       function renderExchanges() {
         exList.innerHTML = '';
+        startSels = [];
         exchanges.forEach((ex, idx) => {
           const row = document.createElement('div');
           row.className = 'admin-cms-exchange';
@@ -179,16 +239,8 @@
 
           const startsSel = document.createElement('select');
           startsSel.className = 'admin-cms-input';
-          const startOpts = [{ value: '', label: 'auto (alphabetical)' }];
-          if (charAField.get()) startOpts.push({ value: charAField.get(), label: charAField.get() });
-          if (charBField.get()) startOpts.push({ value: charBField.get(), label: charBField.get() });
-          startOpts.forEach(o => {
-            const opt = document.createElement('option');
-            opt.value = o.value;
-            opt.textContent = 'Starts with: ' + o.label;
-            if (o.value === (ex.startsWith || '')) opt.selected = true;
-            startsSel.appendChild(opt);
-          });
+          fillStarts(startsSel, ex);
+          startSels.push({ sel: startsSel, idx });
           startsSel.addEventListener('change', () => {
             if (startsSel.value) exchanges[idx].startsWith = startsSel.value;
             else delete exchanges[idx].startsWith;
@@ -199,8 +251,14 @@
           linesArea.rows = Math.max(3, (ex.lines || []).length);
           linesArea.placeholder = 'One line per row, alternating speakers';
           linesArea.value = (ex.lines || []).join('\n');
+          const countEl = document.createElement('p');
+          countEl.className = 'admin-cms-hint';
+          const errEl = document.createElement('span');
+          errEl.className = 'admin-cms-error';
+          showLineCount(countEl, errEl, ex.lines || []);
           linesArea.addEventListener('input', () => {
-            exchanges[idx].lines = linesArea.value.split('\n').map(l => l.trim()).filter(l => l);
+            exchanges[idx].lines = linesOf(linesArea.value);
+            showLineCount(countEl, errEl, exchanges[idx].lines);
           });
 
           const removeBtn = document.createElement('button');
@@ -211,7 +269,7 @@
             renderExchanges();
           });
 
-          row.append(reqSel, startsSel, linesArea, removeBtn);
+          row.append(reqSel, startsSel, linesArea, countEl, errEl, removeBtn);
           exList.appendChild(row);
         });
         const addBtn = document.createElement('button');
@@ -224,6 +282,10 @@
         exList.appendChild(addBtn);
       }
       renderExchanges();
+
+      const collect = () => JSON.stringify({ a: charAField.get(), b: charBField.get(), exchanges });
+      const snapshot = collect();
+      Editor._pairForm = { isDirty: () => collect() !== snapshot };
 
       const actions = document.createElement('div');
       actions.className = 'admin-cms-actions';
@@ -249,6 +311,13 @@
           AdminView.toast('That pair already exists — edit it instead', 'error');
           return;
         }
+        // Too long is refused, not cut short by the server (the message
+        // is already under the exchange's textarea).
+        const tooLong = exchanges.findIndex(e => linesProblem(e.lines || []));
+        if (tooLong >= 0) {
+          AdminView.toast(`Exchange ${tooLong + 1}: ${linesProblem(exchanges[tooLong].lines)}`, 'error');
+          return;
+        }
         const cleaned = exchanges.filter(e => e.requires && Array.isArray(e.lines) && e.lines.length >= 2);
         if (!cleaned.length) {
           AdminView.toast('At least one exchange with a project + 2+ lines is required', 'error');
@@ -266,6 +335,7 @@
     },
 
     renderVillainLines(field) {
+      Editor._pairForm = null;
       const host = document.getElementById('admin-cms-dialog-host');
       const data = Editor._data[field];
       const villainIds = Object.keys(data).sort();
@@ -285,14 +355,20 @@
               <b>${esc(id)}</b>
               <button class="admin-btn admin-btn-danger admin-villain-del" data-id="${esc(id)}">Delete</button>
             </div>
-            <textarea class="admin-cms-input admin-villain-lines" data-id="${esc(id)}" rows="${Math.max(3, data[id].length)}" placeholder="One line per row">${esc(data[id].join('\n'))}</textarea>
+            <textarea class="admin-cms-input admin-villain-lines" data-id="${esc(id)}" rows="${Math.max(3, data[id].length)}" placeholder="No lines yet — type one line per row (a villain with none is not saved)">${esc(data[id].join('\n'))}</textarea>
+            <p class="admin-cms-hint"></p>
+            <span class="admin-cms-error"></span>
           </div>
         `).join('') || '<div class="admin-empty">No villain lines yet.</div>';
 
         list.querySelectorAll('.admin-villain-lines').forEach(area => {
+          const countEl = area.parentElement.querySelector('.admin-cms-hint');
+          const errEl = area.parentElement.querySelector('.admin-cms-error');
+          showLineCount(countEl, errEl, linesOf(area.value));
           area.addEventListener('input', () => {
             const id = area.dataset.id;
-            data[id] = area.value.split('\n').map(l => l.trim()).filter(l => l);
+            data[id] = linesOf(area.value);
+            showLineCount(countEl, errEl, data[id]);
           });
         });
         list.querySelectorAll('.admin-villain-del').forEach(btn => {
@@ -323,7 +399,7 @@
           AdminView.toast('That villain id already exists', 'error');
           return;
         }
-        data[id] = [''];
+        data[id] = [];   // not [''] — an untouched villain would save one blank line
         villainIds.push(id);
         villainIds.sort();
         idInput.value = '';
@@ -333,17 +409,34 @@
 
     save: async function () {
       const btn = document.getElementById('admin-dialog-save');
+      // Blank villain lines play as empty bubbles in-game (the server keeps
+      // them), and too many / too long ones would be cut — drop the former,
+      // refuse the latter.
+      const payload = { pairs: Editor._data.pairs };
+      for (const [field, name] of [['villainDefeatLines', 'Defeat'], ['villainVictoryLines', 'Victory']]) {
+        payload[field] = {};
+        for (const [id, lines] of Object.entries(Editor._data[field])) {
+          const kept = (Array.isArray(lines) ? lines : []).map(l => String(l).trim()).filter(l => l);
+          const problem = linesProblem(kept);
+          if (problem) {
+            AdminView.toast(`${name} lines for "${id}": ${problem}`, 'error');
+            return;
+          }
+          payload[field][id] = kept;
+        }
+      }
       btn.disabled = true;
       try {
         const updated = await AdminView.api('/content/dialogues', {
           method: 'PUT',
-          body: JSON.stringify(Editor._data)
+          body: JSON.stringify(payload)
         });
         Editor._data = {
           pairs: updated.pairs || {},
           villainDefeatLines: updated.villainDefeatLines || {},
           villainVictoryLines: updated.villainVictoryLines || {}
         };
+        Editor._saved = JSON.stringify(Editor._data);
         AdminView.toast('Dialogues saved. Refresh /map to see changes.', 'success');
         Editor.renderShell();
       } catch (e) {
@@ -353,6 +446,7 @@
     },
 
     unmount() {
+      Editor._pairForm = null;
       Editor._container = null;
     }
   };

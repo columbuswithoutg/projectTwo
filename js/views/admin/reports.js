@@ -11,7 +11,12 @@
   };
 
   const AdminReports = {
-    _state: { page: 1, total: 0, items: [], kind: '', status: 'open', q: '', openId: null },
+    // drafts: report id → unsent reply text. Every action re-renders the
+    // whole list (textarea included), so the typed reply lives here, not in
+    // the DOM — opening another report or "Set status" used to wipe it.
+    // busy: report id → a reply / status request is in flight (its buttons
+    // stay disabled even if the list re-renders meanwhile).
+    _state: { page: 1, total: 0, items: [], kind: '', status: 'open', q: '', openId: null, drafts: {}, busy: {} },
 
     mount(container) {
       const s = AdminReports._state;
@@ -112,6 +117,12 @@
         });
         if (s.openId !== id) return;
         const r = s.items.find(x => String(x._id) === id);
+        const ta = row.querySelector('.admin-report-text');
+        ta.value = s.drafts[id] || '';
+        ta.addEventListener('input', () => {
+          if (ta.value) s.drafts[id] = ta.value; else delete s.drafts[id];
+        });
+        AdminReports._setBusy(row, !!s.busy[id]);
         row.querySelector('.admin-report-reply').addEventListener('click', () => AdminReports.reply(r, row));
         row.querySelector('.admin-report-setstatus').addEventListener('click', () => AdminReports.setStatus(r, row));
         row.querySelector('.admin-report-delete').addEventListener('click', () => AdminReports.remove(r));
@@ -146,32 +157,66 @@
         </div>`;
     },
 
+    // Reply + Set status are off while either request is in flight, so a
+    // double click can't send the same reply twice.
+    _setBusy(row, busy) {
+      row.querySelectorAll('.admin-report-reply, .admin-report-setstatus').forEach(b => { b.disabled = busy; });
+    },
+
+    // The row the list currently shows for a report (a re-render replaces
+    // the one a click came from).
+    _rowFor(id) {
+      const list = document.getElementById('admin-reports-list');
+      return list ? list.querySelector(`.admin-report-row[data-id="${CSS.escape(id)}"]`) : null;
+    },
+
     async reply(r, row) {
+      const s = AdminReports._state;
+      const id = String(r._id);
+      if (s.busy[id]) return;
       const ta = row.querySelector('.admin-report-text');
       const v = L.validateReply({ text: ta.value });
       if (!v.ok) { AdminView.toast(L.errorText(v.error), 'error'); return; }
       const status = row.querySelector('.admin-report-status').value;
+      s.busy[id] = true;
+      AdminReports._setBusy(row, true);
       try {
         await AdminView.api(`/reports/${r._id}/replies`, {
           method: 'POST',
           body: JSON.stringify({ text: v.text, status: status !== r.status ? status : undefined })
         });
+        delete s.drafts[id];
         AdminView.toast('Reply sent to ' + r.username, 'success');
-        AdminReports.fetch();
+        // Awaited: the buttons stay off until the refreshed list (with the
+        // draft gone) replaces this row, so the sent text can't go twice.
+        await AdminReports.fetch();
       } catch (e) {
         AdminView.toast(e.message, 'error');
+      } finally {
+        delete s.busy[id];
+        const cur = AdminReports._rowFor(id);
+        if (cur) AdminReports._setBusy(cur, false);
       }
     },
 
     async setStatus(r, row) {
+      const s = AdminReports._state;
+      const id = String(r._id);
+      if (s.busy[id]) return;
       const status = row.querySelector('.admin-report-status').value;
       if (status === r.status) { AdminView.toast('Status unchanged', 'info'); return; }
+      s.busy[id] = true;
+      AdminReports._setBusy(row, true);
       try {
         await AdminView.api(`/reports/${r._id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
         AdminView.toast(`Marked ${STATUS_LABEL[status] || status}`, 'success');
-        AdminReports.fetch();
+        await AdminReports.fetch();
       } catch (e) {
         AdminView.toast(e.message, 'error');
+      } finally {
+        delete s.busy[id];
+        const cur = AdminReports._rowFor(id);
+        if (cur) AdminReports._setBusy(cur, false);
       }
     },
 

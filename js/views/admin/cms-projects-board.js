@@ -97,6 +97,15 @@
     _syncPendingDot();
   }
 
+  // { id → { gridX, gridY } }: saved positions with unsaved moves applied
+  // (empty before the board's first mount). The form's "+ Add new" uses it
+  // so a new project doesn't land on a cell a pending move took.
+  function getWorkingPositions() {
+    const out = {};
+    for (const [id, p] of _pos) out[id] = { gridX: p.gx, gridY: p.gy };
+    return out;
+  }
+
   function isDirty() {
     return _dirtyList().length > 0;
   }
@@ -748,5 +757,5 @@
     return s.length <= n ? s : s.slice(0, n - 1) + '…';
   }
 
-  AdminView._projectsBoard = { mount, unmount, reseed, isDirty, discardAll };
+  AdminView._projectsBoard = { mount, unmount, reseed, isDirty, discardAll, getWorkingPositions };
 })();

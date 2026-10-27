@@ -8,6 +8,7 @@
     _items: [],
     _projects: [],
     _container: null,
+    _form: null,     // { isDirty() } while a character form is open
 
     async mount(container) {
       Editor._container = container;
@@ -26,6 +27,7 @@
     },
 
     renderList() {
+      Editor._form = null;
       Editor._container.innerHTML = '';
       const list = AdminView._cmsListView({
         items: Editor._items,
@@ -41,6 +43,15 @@
       Editor._container.appendChild(list);
     },
 
+    // CMS sub-tab / admin tab / router leave guards (cms.js, index.js): an
+    // open form whose fields differ from what it opened with.
+    isDirty() {
+      return !!(Editor._form && Editor._form.isDirty());
+    },
+    discard() {
+      Editor._form = null;
+    },
+
     projectOptions() {
       return [{ value: '', label: '—' }, ...Editor._projects.map(p => ({ value: p.id, label: `${p.id} — ${p.title}` }))];
     },
@@ -49,7 +60,7 @@
       const wrap = document.createElement('div');
       wrap.className = 'admin-cms-form';
 
-      const idField = AdminView._cmsField('ID (slug)', 'text', item.id || '', { disabled: !isNew, required: true, placeholder: 'e.g. ironman' });
+      const idField = AdminView._cmsField('ID (slug)', 'text', item.id || '', { disabled: !isNew, required: true, placeholder: 'e.g. ironman', hint: isNew ? AdminView._cmsIdHint : '' });
       const nameField = AdminView._cmsField('Name', 'text', item.name || '', { required: true });
       const debutField = AdminView._cmsField('Debut project', 'select', item.debut || '', { options: Editor.projectOptions() });
       debutField.set(item.debut || '');
@@ -139,6 +150,15 @@
       }
       wrap.appendChild(actions);
 
+      // Snapshot of every field (stage rows included, empty ones too) — the
+      // basis of the leave guard.
+      const collect = () => JSON.stringify({
+        id: idField.get(), name: nameField.get(), debut: debutField.get(),
+        image: imageField.get(), stages: stagesData
+      });
+      const snapshot = collect();
+      Editor._form = { isDirty: () => collect() !== snapshot };
+
       saveBtn.addEventListener('click', async () => {
         const payload = {
           id: idField.get().trim(),
@@ -147,6 +167,9 @@
           image: imageField.get().trim(),
           stages: stagesData.filter(s => s.after) // drop empty stage rows
         };
+        const byName = { id: idField, name: nameField };
+        AdminView._cmsApplyFieldErrors(byName, null);   // clear the last attempt's
+        if (isNew && !AdminView._cmsCheckId(idField)) return;
         saveBtn.disabled = true;
         try {
           if (isNew) {
@@ -158,6 +181,7 @@
           }
           await Editor.refresh();
         } catch (e) {
+          AdminView._cmsApplyFieldErrors(byName, e);
           AdminView.toast(e.message, 'error');
           saveBtn.disabled = false;
         }
@@ -192,6 +216,7 @@
     },
 
     unmount() {
+      Editor._form = null;
       Editor._container = null;
     }
   };

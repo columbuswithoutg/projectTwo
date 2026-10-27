@@ -7,6 +7,7 @@
   const Editor = {
     _items: [],
     _container: null,
+    _form: null,     // { isDirty() } while a location form is open
 
     async mount(container) {
       Editor._container = container;
@@ -21,6 +22,7 @@
     },
 
     renderList() {
+      Editor._form = null;
       Editor._container.innerHTML = '';
       const list = AdminView._cmsListView({
         items: Editor._items,
@@ -36,11 +38,20 @@
       Editor._container.appendChild(list);
     },
 
+    // CMS sub-tab / admin tab / router leave guards (cms.js, index.js): an
+    // open form whose fields differ from what it opened with.
+    isDirty() {
+      return !!(Editor._form && Editor._form.isDirty());
+    },
+    discard() {
+      Editor._form = null;
+    },
+
     openForm(item, isNew) {
       const wrap = document.createElement('div');
       wrap.className = 'admin-cms-form';
 
-      const idField = AdminView._cmsField('ID (slug)', 'text', item.id || '', { disabled: !isNew, required: true, placeholder: 'e.g. nyc' });
+      const idField = AdminView._cmsField('ID (slug)', 'text', item.id || '', { disabled: !isNew, required: true, placeholder: 'e.g. nyc', hint: isNew ? AdminView._cmsIdHint : '' });
       const labelField = AdminView._cmsField('Label', 'text', item.label || '', { required: true });
       const worldXField = AdminView._cmsField('World X', 'number', item.worldX != null ? item.worldX : 0);
       const worldYField = AdminView._cmsField('World Y', 'number', item.worldY != null ? item.worldY : 0);
@@ -74,6 +85,12 @@
       }
       wrap.appendChild(actions);
 
+      // Raw field values — the basis of the leave guard.
+      const fields = [idField, labelField, worldXField, worldYField, widthField, heightField, clusterField, regionField];
+      const collect = () => JSON.stringify(fields.map(fl => fl.input.value));
+      const snapshot = collect();
+      Editor._form = { isDirty: () => collect() !== snapshot };
+
       saveBtn.addEventListener('click', async () => {
         const payload = {
           id: idField.get().trim(),
@@ -85,6 +102,19 @@
           clusterRadius: clusterField.get(),
           region: regionField.get().trim()
         };
+        const byName = { id: idField, label: labelField };
+        AdminView._cmsApplyFieldErrors(byName, null);   // clear the last attempt's
+        if (isNew && !AdminView._cmsCheckId(idField)) return;
+        // An empty number box reads null, which the server quietly turns
+        // into 0 (or a default) — ask for a value instead.
+        const numFields = { worldX: worldXField, worldY: worldYField, width: widthField, height: heightField, clusterRadius: clusterField };
+        const empty = Object.keys(numFields).filter(k => !Number.isFinite(payload[k]));
+        empty.forEach(k => numFields[k].setError('Required.'));
+        if (empty.length) {
+          numFields[empty[0]].input.focus();
+          AdminView.toast('Fill in every number field', 'error');
+          return;
+        }
         saveBtn.disabled = true;
         try {
           if (isNew) {
@@ -96,6 +126,7 @@
           }
           await Editor.refresh();
         } catch (e) {
+          AdminView._cmsApplyFieldErrors(byName, e);
           AdminView.toast(e.message, 'error');
           saveBtn.disabled = false;
         }
@@ -130,6 +161,7 @@
     },
 
     unmount() {
+      Editor._form = null;
       Editor._container = null;
     }
   };
