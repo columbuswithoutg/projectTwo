@@ -192,5 +192,5 @@ module.exports = {
   PHASE_UNLOCKERS, CLOCK_SLACK_MS,
   parsePhase, episodesOf, stepMinutes, creditsMinutes, requiredMinutes, stepCount, isAvailable, lockedReason, remainingMs,
   sanitizeRuntime, sanitizeEpisodes,
-  getProject, invalidate, backfillRuntimes
+  allProjects, getProject, invalidate, backfillRuntimes
 };

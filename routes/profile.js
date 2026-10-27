@@ -165,7 +165,7 @@ router.get('/home-layout', auth, async (req, res) => {
     const user = await User.findById(req.user.id).select('homeLayout watchedProjects homeHouses homeRoof').lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
     const watchedIds = (user.watchedProjects || []).map(e => e.projectId);
-    // Within today's cap (Clear Progress can leave a stored layout over it).
+    // Within today's cap (the old Clear Progress could leave a stored layout over it).
     const homeLayout = House.effectiveLayout(user.homeLayout, watchedIds);
     res.json({
       homeLayout,

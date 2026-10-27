@@ -44,8 +44,8 @@ const { sanitizeMemory } = require('../server/memory');
 //
 // It can only REMOVE things from entries the server already has: drop a
 // watched-with tag or a memory. It never deletes a whole entry (a stale tab
-// whose list predates a just-finished watch would otherwise erase it — use
-// POST /clear to wipe progress) and never adds tags (those come only from
+// whose list predates a just-finished watch would otherwise erase it; there
+// is no way to un-watch a title) and never adds tags (those come only from
 // accepted co-watch requests), so it can't forge "watched with <anyone>".
 // Writes go per-entry through arrayFilters, so a concurrent /complete $inc
 // on the count is never overwritten.
@@ -86,21 +86,6 @@ router.post('/save', auth, async (req, res) => {
   // The feed diffs what changed (e.g. a removed co-watcher). It runs after
   // the response and never blocks or fails the save.
   if (arrayFilters.length) feed.diffSave(req.user.id, stored.watchedProjects, after);
-});
-
-// Clear Progress: wipe every watch and in-progress session. The only way to
-// remove watches wholesale — /save deliberately can't. The /home layout goes
-// too (its rooms are unlocked by watches, so none are allowed any more);
-// homeHouses is kept, so re-adding a room brings its decorations back.
-router.post('/clear', auth, async (req, res) => {
-  const before = await User.findByIdAndUpdate(
-    req.user.id,
-    { $set: { watchedProjects: [], watchSessions: [], 'homeLayout.rooms': [] } },
-    { projection: { watchedProjects: 1 } }
-  ).lean();
-  if (!before) return res.status(404).json({ error: 'User not found' });
-  res.json({ watchedProjects: [], watchSessions: [], serverNow: Date.now() });
-  feed.diffSave(req.user.id, before.watchedProjects, []);
 });
 
 const MAX_SESSIONS = 50;
@@ -189,11 +174,14 @@ router.post('/start', auth, async (req, res) => {
 
 // The post composer's payload (js/post-composer.js): an optional caption,
 // photos/videos (Cloudinary URLs from /api/upload) and friends to tag.
-// Returns { post: { caption, memories, tagIds } } or { error }.
+// `skipPost: true` is its "Don't post" button: the step still counts, but no
+// feed post is made and nothing else in the body is used.
+// Returns { post: { caption, memories, tagIds } }, { post: null } or { error }.
 const MAX_POST_MEMORIES = 10;
 const POST_CAPTION_MAX = 500; // same as FeedPost.caption / PUT /api/feed/:id
 function readPostPayload(body, userId) {
   const b = body || {};
+  if (b.skipPost === true) return { post: null };
   if (b.caption != null && typeof b.caption !== 'string') return { error: 'Invalid caption' };
   const caption = (b.caption || '').trim();
   if (caption.length > POST_CAPTION_MAX) return { error: `Caption is too long (max ${POST_CAPTION_MAX} characters)` };
@@ -228,7 +216,8 @@ async function publishWatchPost({ userId, project, count, episode, post }) {
 // A movie (or a series' last episode) moves to Done and counts as a watch;
 // an earlier episode advances the series to the next one. Every finished
 // step — each episode included — becomes a feed post with whatever the user
-// wrote in the composer (an empty composer posts it as-is).
+// wrote in the composer (an empty composer posts it as-is), unless they
+// pressed "Don't post".
 router.post('/complete', auth, async (req, res) => {
   const { projectId } = req.body || {};
   if (!validProjectId(projectId)) return res.status(400).json({ error: 'Invalid projectId' });
@@ -269,17 +258,17 @@ router.post('/complete', auth, async (req, res) => {
       const now = await User.findById(req.user.id, SESSION_PROJECTION).lean();
       return res.status(409).json({ error: 'Already marked', ...sessionPayload(now || {}), finished: false });
     }
-    const post = await publishWatchPost({
+    const post = payload.post ? await publishWatchPost({
       userId: req.user.id, project, episode: episodeNo,
       count: session.rewatch ? priorCount + 1 : 1, post: payload.post
-    });
+    }) : null;
     return res.json({ ...sessionPayload(updated), finished: false, post });
   }
 
   // Finished: count the watch and keep the composer's photos/videos on the
   // project too (they show in the project popup's Memories).
   const finishedAt = new Date();
-  const mems = payload.post.memories.map(m => ({ ...m, uploadedAt: finishedAt }));
+  const mems = (payload.post ? payload.post.memories : []).map(m => ({ ...m, uploadedAt: finishedAt }));
   const pull = { $pull: { watchSessions: { projectId } } };
   let updated = await User.findOneAndUpdate(
     { _id: req.user.id, watchSessions: sessionMatch, 'watchedProjects.projectId': projectId },
@@ -308,20 +297,18 @@ router.post('/complete', auth, async (req, res) => {
     return res.status(409).json({ error: 'Already completed', ...sessionPayload(now || {}) });
   }
   const e = updated.watchedProjects.find(w => w.projectId === projectId);
-  const post = await publishWatchPost({
+  const post = payload.post ? await publishWatchPost({
     userId: req.user.id, project, episode: episodeNo, count: e ? e.count : 1, post: payload.post
-  });
+  }) : null;
   res.json({ ...sessionPayload(updated), finished: true, post });
 });
 
 // Cancel: In progress → back where it came from (Not started, or Done for a
-// rewatch). Resets the timer and any episode progress. `all: true` clears
-// every session (used by Clear Progress).
+// rewatch). Resets the timer and any episode progress.
 router.post('/cancel', auth, async (req, res) => {
-  const { projectId, all } = req.body || {};
-  if (all !== true && !validProjectId(projectId)) return res.status(400).json({ error: 'Invalid projectId' });
-  const update = all === true ? { $set: { watchSessions: [] } } : { $pull: { watchSessions: { projectId } } };
-  const updated = await User.findByIdAndUpdate(req.user.id, update,
+  const { projectId } = req.body || {};
+  if (!validProjectId(projectId)) return res.status(400).json({ error: 'Invalid projectId' });
+  const updated = await User.findByIdAndUpdate(req.user.id, { $pull: { watchSessions: { projectId } } },
     { new: true, projection: SESSION_PROJECTION }).lean();
   if (!updated) return res.status(404).json({ error: 'User not found' });
   res.json(sessionPayload(updated));
@@ -386,3 +373,4 @@ router.post('/walkers', auth, async (req, res) => {
 // snap-count leaderboard is served by GET /api/friends/stones.
 
 module.exports = router;
+module.exports.readPostPayload = readPostPayload;   // test/progress-payload.test.js

@@ -4,7 +4,8 @@
  * Marking a movie (or any series episode) as watched opens this instead of
  * finishing instantly: an optional caption, photos/videos and friends to tag,
  * with a live preview of the exact feed card. "Post" always works — an empty
- * composer posts it as-is. The same composer edits a published post from the
+ * composer posts it as-is. "Don't post" marks it watched with no feed post
+ * (asking first if anything was added, which is then dropped). The same composer edits a published post from the
  * feed (✎ Edit post).
  *
  * Desktop (≥ 900px): form on the left, live preview on the right.
@@ -88,6 +89,7 @@ const PostComposer = (() => {
     let friends = null;                                    // [{ id, username }] once loaded
     let showTagPanel = newTags.length > 0;
     let busy = false;
+    let skipping = false;   // busy with "Don't post", not Post
     let pic = _profilePic || '';
     let keySeq = 0;
     const originalCaption = caption;
@@ -147,7 +149,10 @@ const PostComposer = (() => {
           </div>
           <footer class="pc-foot">
             <p class="pc-hint"></p>
-            <button type="button" class="pc-post pc-post-bottom">${actionLabel}</button>
+            <div class="pc-foot-actions">
+              ${mode === 'complete' ? `<button type="button" class="pc-skip">Don't post</button>` : ''}
+              <button type="button" class="pc-post pc-post-bottom">${actionLabel}</button>
+            </div>
           </footer>
         </section>
         <aside class="pc-preview" aria-label="Preview">
@@ -163,6 +168,7 @@ const PostComposer = (() => {
     const fileInput = $('.pc-file');
     const drop = $('.pc-drop');
     const postBtns = overlay.querySelectorAll('.pc-post');
+    const skipBtn = $('.pc-skip');
     const hint = $('.pc-hint');
     ta.value = caption;
 
@@ -260,8 +266,12 @@ const PostComposer = (() => {
       const up = uploading();
       postBtns.forEach(b => {
         b.disabled = busy || up;
-        b.textContent = busy ? (mode === 'edit' ? 'Saving…' : 'Posting…') : up ? 'Uploading…' : actionLabel;
+        b.textContent = busy && !skipping ? (mode === 'edit' ? 'Saving…' : 'Posting…') : up ? 'Uploading…' : actionLabel;
       });
+      if (skipBtn) {
+        skipBtn.disabled = busy || up;
+        skipBtn.textContent = skipping ? 'Saving…' : "Don't post";
+      }
       const pending = newTags.length;
       hint.textContent = mode === 'complete'
         ? (ep ? `Marks ${ep.label.toLowerCase().startsWith('season') ? 'the season' : `episode ${episode}`} as watched and posts it to your friends.` : 'Marks it as watched and posts it to your friends.')
@@ -409,6 +419,29 @@ const PostComposer = (() => {
       if (overlay.isConnected) syncButtons();
     }
     postBtns.forEach(b => b.addEventListener('click', submit));
+
+    // "Don't post": the watch still counts, but nothing goes to the feed.
+    // Whatever is already in the composer would be dropped, so that asks.
+    async function skipPost() {
+      if (busy || uploading()) return;
+      if (ta.value.trim() || media.some(m => m.status === 'done') || newTags.length) {
+        const ok = await confirmDialog({
+          title: 'Mark as watched without posting?',
+          message: "Your caption, photos and tags won't be posted or saved.",
+          confirmLabel: "Don't post",
+          cancelLabel: 'Keep editing'
+        });
+        if (!ok || !overlay.isConnected) return;
+      }
+      busy = skipping = true;
+      syncButtons();
+      const result = await state.completeWatching(project.id, { skipPost: true });
+      if (result) drafts.delete(draftKey);
+      busy = skipping = false;
+      if (result) { close(result, { saved: true }); return; }
+      if (overlay.isConnected) syncButtons();
+    }
+    skipBtn?.addEventListener('click', skipPost);
 
     // ---- Open / close ----
     // On the shared modal stack (wireModalDismiss): Escape closes only the

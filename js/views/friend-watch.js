@@ -3,7 +3,7 @@
  *
  * Renders the friend's flowchart watch order. Stripped-down counterpart
  * to WatchOrderView — only the friend header is shown above the canvas;
- * no drawer / view tabs / friends panel / clear-progress / logout, since
+ * no drawer / view tabs / friends panel / logout, since
  * those would mutate the viewer's own account.
  ************************************************/
 const FriendWatchView = {

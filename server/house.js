@@ -74,8 +74,8 @@ function homeRoofFor(user, rooms) {
 
 // The /home layout as it may be SHOWN right now: rooms whose project the user
 // still has watched, capped at floor(watched / 2) — the same rule the layout
-// PUT enforces — and connected. Clear Progress (or anything that shrinks the
-// watch list) can leave a stored layout over its cap; serving it as-is showed
+// PUT enforces — and connected. Anything that shrank the watch list (the
+// old Clear Progress button) can have left a stored layout over its cap; serving it as-is showed
 // rooms the owner could no longer save. Kept rooms are the connected set
 // grown from the first kept room (breadth-first, so the entrance room stays
 // first), in their original order. The stored layout is never rewritten here.

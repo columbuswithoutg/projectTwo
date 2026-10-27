@@ -100,18 +100,6 @@ const AppView = {
       });
     });
 
-    $("#clear-progress")?.addEventListener("click", async () => {
-      const ok = await confirmDialog({
-        title: 'Clear all progress?',
-        message: "This unmarks every project you've watched. This can't be undone.",
-        confirmLabel: 'Clear progress',
-        danger: true
-      });
-      if (!ok) return;
-      state.clear();
-      renderer.setCenterTarget(CONFIG.START_NODE_ID);
-    });
-
     // One logout path for the whole app (js/auth.js): flushes the pending
     // progress save, signs out everywhere, clears every per-user cache.
     $("#logout-btn")?.addEventListener("click", () => Auth.logout());

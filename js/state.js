@@ -275,34 +275,9 @@ class WatchState {
     return this.isWatched(id);
   }
 
-  clear() {
-    // Respect readonly — "Clear Progress" while viewing a friend's map must
-    // not wipe our own account's server-side progress.
-    if (this.readonly) return;
-    if (Auth.isLoggedIn() && this.loadFailed) return;
-    this.data.clear();
-    this.sessions.clear();
-    if (Auth.isLoggedIn()) {
-      // Dedicated endpoint: /save can no longer delete watches (a stale tab
-      // would silently erase finished ones), so wiping goes through /clear.
-      fetch(`${API}/progress/clear`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${Auth.getToken()}` }
-      }).then(res => {
-        if (!res.ok) toast("Couldn't clear your progress. Please reload and try again.", 'error');
-      }).catch(e => {
-        console.warn("Failed to clear progress:", e);
-        toast("Couldn't clear your progress. Check your connection.", 'error');
-      });
-    } else {
-      localStorage.removeItem(CONFIG.STORAGE_KEY);
-    }
-    this.listeners.forEach(fn => fn(this.data));
-  }
-
   // Local-only reset: used on logout and before loading a different user.
-  // Unlike clear(), this never posts to the server (which would wipe the
-  // previous user's saved progress). Fires listeners so subscribed caches
+  // It never posts to the server, so the previous user's saved progress is
+  // untouched. Fires listeners so subscribed caches
   // — layout cache, renderer, walkers — rebuild for the new user.
   resetLocal() {
     this.data.clear();

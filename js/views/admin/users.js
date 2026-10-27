@@ -152,8 +152,10 @@
               ? `<button class="admin-btn" id="admin-act-unban">Unban</button>`
               : `<button class="admin-btn" id="admin-act-ban">Ban…</button>`}
             <button class="admin-btn" id="admin-act-pwd">Reset password…</button>
+            <button class="admin-btn" id="admin-act-watched" aria-expanded="false" aria-controls="admin-mw">Mark watched…</button>
             <button class="admin-btn admin-btn-danger" id="admin-act-del">Delete user…</button>
           </div>
+          <div id="admin-mw" class="admin-mw" hidden></div>
         `;
         document.getElementById('admin-detail-close').addEventListener('click', () => {
           detail.hidden = true;
@@ -164,6 +166,7 @@
         const unbanBtn = document.getElementById('admin-act-unban');
         if (unbanBtn) unbanBtn.addEventListener('click', () => Users.unban(user));
         document.getElementById('admin-act-pwd').addEventListener('click', () => Users.resetPwdPrompt(user));
+        document.getElementById('admin-act-watched').addEventListener('click', () => Users.toggleMarkWatched(user));
         document.getElementById('admin-act-del').addEventListener('click', () => Users.deletePrompt(user));
       } catch (e) {
         detail.innerHTML = `<div class="admin-error">${esc(e.message)}</div>`;
@@ -228,6 +231,91 @@
           body: JSON.stringify({ password: pwd })
         });
         AdminView.toast('Password updated; user logged out everywhere', 'success');
+      } catch (e) {
+        AdminView.toast(e.message, 'error');
+      }
+    },
+
+    // "Mark watched…": a searchable tick-list of every project. Titles the
+    // user already has are shown ticked and locked. Marking skips the watch
+    // timer — server/admin-watch.js has the rules.
+    async toggleMarkWatched(user) {
+      const panel = document.getElementById('admin-mw');
+      const btn = document.getElementById('admin-act-watched');
+      if (!panel.hidden) {
+        panel.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+        return;
+      }
+      panel.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      panel.innerHTML = 'Loading projects…';
+      let items;
+      try {
+        ({ items } = await AdminView.api('/content/projects'));
+      } catch (e) {
+        panel.innerHTML = `<div class="admin-error">${esc(e.message)}</div>`;
+        return;
+      }
+      const watched = new Set((user.watchedProjects || []).map(e => e.projectId));
+      const picked = new Set();
+      panel.innerHTML = `
+        <p class="admin-mw-note">Counts as a finished watch, so characters, rooms and phases unlock as usual. Nothing is posted to the feed; ${esc(user.username)} gets a note in their inbox.</p>
+        <input type="search" class="admin-input admin-mw-search" placeholder="Search projects…" aria-label="Search projects" />
+        <div class="admin-mw-list" role="group" aria-label="Projects">
+          ${items.map(p => `
+            <label class="admin-mw-row" data-search="${esc(`${p.title || ''} ${p.id} ${String(p.release || '').slice(0, 4)}`.toLowerCase())}">
+              <input type="checkbox" value="${esc(p.id)}" ${watched.has(p.id) ? 'checked disabled' : ''} />
+              <span class="admin-mw-title">${esc(p.title || p.id)}</span>
+              <span class="admin-mw-year">${esc(String(p.release || '').slice(0, 4))}</span>
+              ${watched.has(p.id) ? '<span class="admin-pill">watched</span>' : ''}
+            </label>`).join('')}
+        </div>
+        <div class="admin-mw-foot">
+          <span class="admin-count admin-mw-count" aria-live="polite">0 selected</span>
+          <button class="admin-btn admin-mw-go" disabled>Mark watched</button>
+        </div>
+      `;
+      const count = panel.querySelector('.admin-mw-count');
+      const go = panel.querySelector('.admin-mw-go');
+      const sync = () => {
+        count.textContent = `${picked.size} selected`;
+        go.disabled = picked.size === 0;
+        go.textContent = picked.size ? `Mark ${picked.size} watched` : 'Mark watched';
+      };
+      panel.querySelector('.admin-mw-list').addEventListener('change', (e) => {
+        const box = e.target.closest('input[type=checkbox]');
+        if (!box) return;
+        if (box.checked) picked.add(box.value); else picked.delete(box.value);
+        sync();
+      });
+      panel.querySelector('.admin-mw-search').addEventListener('input', (e) => {
+        const q = e.target.value.trim().toLowerCase();
+        panel.querySelectorAll('.admin-mw-row').forEach(row => {
+          row.hidden = !!q && !row.dataset.search.includes(q);
+        });
+      });
+      go.addEventListener('click', () => Users.markWatched(user, [...picked], items));
+    },
+
+    async markWatched(user, ids, items) {
+      if (!ids.length) return;
+      const titleOf = (id) => (items.find(p => p.id === id) || {}).title || id;
+      const names = ids.slice(0, 5).map(titleOf).join(', ') + (ids.length > 5 ? ` and ${ids.length - 5} more` : '');
+      const ok = await confirmDialog({
+        title: `Mark ${ids.length} project${ids.length === 1 ? '' : 's'} watched for "${user.username}"?`,
+        message: `${names}. This skips the watch timer. Marked projects can't be un-marked.`,
+        confirmLabel: 'Mark watched'
+      });
+      if (!ok) return;
+      try {
+        const { added } = await AdminView.api(`/users/${user._id}/watched`, {
+          method: 'POST',
+          body: JSON.stringify({ projectIds: ids })
+        });
+        AdminView.toast(`Marked ${added.length} project${added.length === 1 ? '' : 's'} watched`, 'success');
+        Users.fetch();
+        Users.openDetail(user._id);
       } catch (e) {
         AdminView.toast(e.message, 'error');
       }

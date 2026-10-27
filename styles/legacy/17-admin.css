@@ -143,6 +143,7 @@
 .admin-pill-deleteMemory,
 .admin-pill-deleteFriendRequest { background: rgba(226,54,54,0.25); color: var(--color-red-light); }
 .admin-pill-unban,
+.admin-pill-markWatched,
 .admin-pill-resetPassword { background: rgba(74,222,128,0.2); color: var(--color-health-good); }
 
 .admin-btn {
@@ -218,6 +219,42 @@
   gap: 8px;
   flex-wrap: wrap;
 }
+
+/* Users → View → Mark watched… */
+.admin-mw {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.admin-mw-note { margin: 0; font-size: 13px; opacity: 0.75; }
+.admin-mw-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border-1);
+  border-radius: 6px;
+}
+.admin-mw-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.admin-mw-row[hidden] { display: none; }
+.admin-mw-row + .admin-mw-row { border-top: 1px solid var(--border-1); }
+.admin-mw-row:hover { background: rgba(var(--ink), 0.04); }
+.admin-mw-row:has(input:disabled) { cursor: default; opacity: 0.6; }
+.admin-mw-title { flex: 1; min-width: 0; }
+.admin-mw-year { font-size: 12px; opacity: 0.6; }
+.admin-mw-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.admin-mw-go:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .admin-mem-grid {
   display: grid;

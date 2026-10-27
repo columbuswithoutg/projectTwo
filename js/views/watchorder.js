@@ -85,18 +85,6 @@ const WatchOrderView = {
       });
     });
 
-    $("#clear-progress")?.addEventListener("click", async () => {
-      const ok = await confirmDialog({
-        title: 'Clear all progress?',
-        message: "This unmarks every project you've watched. This can't be undone.",
-        confirmLabel: 'Clear progress',
-        danger: true
-      });
-      if (!ok) return;
-      state.clear();
-      orderRenderer.centerOnLastWatched();
-    });
-
     // One logout path for the whole app (js/auth.js): server-side sign-out
     // everywhere + every per-user cache cleared.
     $("#logout-btn")?.addEventListener("click", () => Auth.logout());

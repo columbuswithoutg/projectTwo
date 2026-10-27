@@ -10,6 +10,7 @@ const AdminConfig = require('../models/AdminConfig');
 const WorldNpcLogic = require('../js/world-npc-logic');   // NPC_IDS for world.npcBodyTypes
 const Project = require('../models/Project');
 const watchRules = require('../server/watchRules');
+const AdminWatch = require('../server/admin-watch');
 const contentLoader = require('../server/contentLoader');
 const ProjectLogic = require('../js/project-logic');      // prerequisite loops + free board cells
 const { fillDailyBuckets } = require('../server/analytics');
@@ -204,6 +205,46 @@ router.post('/users/:id/unban', async (req, res) => {
   auth.invalidateUser(req.params.id);
   logAudit(req, 'unban', req.params.id, { username: user.username });
   res.json({ message: 'User unbanned' });
+});
+
+// Mark projects watched for a user, skipping the watch timer (and the
+// "watch X first" locks) — rules in server/admin-watch.js. Each new title
+// counts as one finished watch dated now, so every unlock (characters, /home
+// rooms, phases) follows from the list as usual. No feed post is made; any
+// timer running on those titles is dropped, and the user gets an inbox note.
+router.post('/users/:id/watched', async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
+  const user = await User.findById(req.params.id).select('username watchedProjects.projectId').lean();
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const projects = await watchRules.allProjects();
+  const watched = new Set((user.watchedProjects || []).map(e => e.projectId));
+  const plan = AdminWatch.planMarkWatched(req.body && req.body.projectIds, watched, projects);
+  if (plan.error) return res.status(400).json({ error: plan.error, unknown: plan.unknown });
+  if (!plan.add.length) return res.json({ added: [], skipped: plan.skip });
+
+  // The filter makes it all-or-nothing: if the user finished one of these
+  // titles since the read above, nothing is written (no duplicate entry).
+  const updated = await User.findOneAndUpdate(
+    { _id: user._id, 'watchedProjects.projectId': { $nin: plan.add } },
+    {
+      $push: { watchedProjects: { $each: AdminWatch.newEntries(plan.add) } },
+      $pull: { watchSessions: { projectId: { $in: plan.add } } }
+    },
+    { new: true, projection: { _id: 1 } }
+  ).lean();
+  if (!updated) {
+    return res.status(409).json({ error: 'Their progress just changed. Reopen the user and try again.' });
+  }
+
+  const titles = plan.add.map(id => String((projects.get(id) || {}).title || id));
+  Messages.sendSystem({ recipientId: user._id, kind: 'admin-notice', text: AdminWatch.inboxText(titles) })
+    .catch(err => console.error('Mark watched → inbox failed:', err && err.message));
+  logAudit(req, 'markWatched', req.params.id, {
+    username: user.username, projectIds: plan.add, ...(plan.skip.length ? { skipped: plan.skip } : {})
+  });
+  res.json({ added: plan.add, skipped: plan.skip });
 });
 
 // -----------------------------------------------------------------------

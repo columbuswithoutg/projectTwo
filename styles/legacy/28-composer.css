@@ -279,6 +279,23 @@ body.pc-open { overflow: hidden; }
 .pc-post:hover:not(:disabled) { background: var(--red-gradient-hover); }
 .pc-post:disabled { opacity: 0.55; cursor: progress; box-shadow: none; }
 .pc-post-top { display: none; min-height: 38px; padding: 0 var(--space-4); font-size: var(--font-size-sm); }
+.pc-foot-actions { display: flex; gap: var(--space-2); }
+.pc-foot-actions .pc-post { flex: 1; }
+/* "Don't post" — mark watched with no feed post */
+.pc-skip {
+  min-height: 46px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.pc-skip:hover:not(:disabled) { border-color: var(--gold-04); background: var(--gold-008); }
+.pc-skip:disabled { opacity: 0.55; cursor: progress; }
 
 /* Preview */
 .pc-preview {
@@ -327,6 +344,10 @@ body.pc-open { overflow: hidden; }
   .pc-head h2 { font-size: var(--font-size-lg); }
   .pc-post-top { display: inline-flex; align-items: center; }
   .pc-foot { display: none; }
+  /* Post is in the header on phones; the footer stays for "Don't post". */
+  .pc-foot:has(.pc-skip) { display: flex; }
+  .pc-post-bottom { display: none; }
+  .pc-skip { flex: 1; }
   .pc-preview { display: none; }
   .pc-preview-mobile {
     display: block;

@@ -21,7 +21,7 @@
  * Open = on the shared modal stack (wireModalDismiss): Escape closes it, Tab
  * stays inside, focus returns to ☰, and a route change closes it like any
  * other dialog. Buttons keep their old ids, so views that wire their own
- * handlers (#friends-btn, #clear-progress, the toggles…) keep working.
+ * handlers (#friends-btn, the toggles…) keep working.
  ************************************************/
 const NavDrawer = (() => {
   const BADGE = '<span class="nav-badge" data-unread-badge hidden></span>';
@@ -79,11 +79,10 @@ const NavDrawer = (() => {
                 <button type="button" id="dialogues-toggle-btn" aria-pressed="true">Dialogues: On</button>
               </div>`;
 
-  function data(variant) {
+  function data() {
     return `
               <div class="nav-section">
                 <div class="nav-section-title">Data</div>
-                ${variant === 'full' ? '<button type="button" id="clear-progress">Clear progress</button>' : ''}
                 <button type="button" id="logout-btn">Log out</button>
               </div>`;
   }
@@ -98,7 +97,7 @@ const NavDrawer = (() => {
           <div id="nav-drawer-overlay"></div>
           <div id="nav-drawer-content" role="dialog" aria-modal="true" aria-label="Menu">
             <button id="close-drawer" type="button" aria-label="Close menu">✕</button>
-            <nav aria-label="Main">${navigate(variant)}${you(variant)}${variant === 'full' ? WALKERS : ''}${data(variant)}
+            <nav aria-label="Main">${navigate(variant)}${you(variant)}${variant === 'full' ? WALKERS : ''}${data()}
             </nav>
           </div>
         </div>`;
