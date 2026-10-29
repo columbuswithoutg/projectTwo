@@ -571,6 +571,7 @@ const Playground3D = (() => {
     if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
     if (_input) { _input.detach(); _input = null; }
     _inputSuspended = false;
+    _suspendOwners.clear();
     document.body.classList.remove('pg-input-suspended');
     if (_orient) { _orient.detach(); _orient = null; }   // exits fullscreen + unlocks if we locked
     if (_worldStateUnsub) { try { _worldStateUnsub(); } catch (_) {} _worldStateUnsub = null; }
@@ -1932,7 +1933,7 @@ const Playground3D = (() => {
       if (_seat) _standUp();
       else if (_seatCandidate && !_falling && !_down && _player.position.y <= g0 + 0.01) _sitOn(_seatCandidate);
       else if (_useCandidate && !_down) _useProp(_useCandidate);
-      else if (_sg.candidate && _sg.onInteract && !_down) _sg.onInteract(_sg.candidate.projectId);
+      else if (_gs.candidate && !_down) _sgInteract(_gs.candidate);
     }
     const seated = !!_seat;
 
@@ -3101,9 +3102,9 @@ const Playground3D = (() => {
       const axisStart = (s === 'N' || s === 'S') ? cx - HALF : cz - HALF;
       out[s] = world[s].map(([a, b]) => [a - axisStart, b - axisStart]);
     }
-    // A live island's Scene Guess screen, same units: the editor keeps
-    // windows and frames off that stretch of wall.
-    const sg = _sg.islands.has(projectId) ? _sgSpot(node) : null;
+    // A live island's game screen, same units: the editor keeps windows and
+    // frames off that stretch of wall.
+    const sg = _gs.islands.has(projectId) ? _sgSpot(node) : null;
     if (sg) {
       const start = (sg.side === 'N' || sg.side === 'S') ? cx - HALF : cz - HALF;
       out.screen = { side: sg.side, from: sg.from - start, to: sg.to - start };
@@ -3706,7 +3707,7 @@ const Playground3D = (() => {
     if (!el) {
       el = document.createElement('div');
       el.className = 'pg3d-nametag pg3d-keeper-tag';
-      el.innerHTML = '<span class="pg3d-keeper-line1"></span><span class="pg3d-keeper-line2"></span><span class="pg3d-keeper-sg"></span>';
+      el.innerHTML = '<span class="pg3d-keeper-line1"></span><span class="pg3d-keeper-line2"></span>';
       el.style.display = 'none';
       _hudLayer.appendChild(el);
       node.keeperEl = el;
@@ -3717,16 +3718,40 @@ const Playground3D = (() => {
     const l2 = el.querySelector('.pg3d-keeper-line2');
     if (l1) { l1.textContent = tag.line1 || ''; l1.style.display = tag.line1 ? '' : 'none'; }
     if (l2) { l2.textContent = tag.line2 || ''; l2.style.display = tag.line2 ? '' : 'none'; }
-    // Scene Guess: the island record, or "● LIVE" while a game is on.
-    const l3 = el.querySelector('.pg3d-keeper-sg');
-    if (l3) { l3.textContent = tag.sg || ''; l3.style.display = tag.sg ? '' : 'none'; l3.classList.toggle('live', !!tag.live); }
+    // Island games, a line each: the record, or "● LIVE" while a game is on.
+    // (Each keeps the .pg3d-keeper-sg look — styles/hud/scene-guess.css.)
+    const games = _keeperGames(tag);
+    const spans = [...el.querySelectorAll('.pg3d-keeper-game')];
+    while (spans.length < games.length) {
+      const sp = document.createElement('span');
+      sp.className = 'pg3d-keeper-sg pg3d-keeper-game';
+      el.appendChild(sp);
+      spans.push(sp);
+    }
+    spans.forEach((sp, i) => {
+      const g = games[i];
+      if (!g) { sp.remove(); return; }
+      if (sp.textContent !== g.text) sp.textContent = g.text;
+      sp.classList.toggle('live', !!g.live);
+      sp.dataset.kind = g.kind || '';
+    });
   }
 
-  // Replace every keeper tag at once: { projectId: { line1, line2, mine, unclaimed } }.
+  // A tag's game lines: tag.games [{ text, live, kind }], or the older single
+  // Scene Guess line (tag.sg, tag.live).
+  function _keeperGames(tag) {
+    if (Array.isArray(tag.games) && tag.games.length) {
+      return tag.games.filter(g => g && g.text).map(g => ({ text: String(g.text), live: !!g.live, kind: g.kind || '' }));
+    }
+    return tag.sg ? [{ text: String(tag.sg), live: !!tag.live, kind: 'scene' }] : [];
+  }
+
+  // Replace every keeper tag at once: { projectId: { line1, line2, mine,
+  // unclaimed, games: [{ text, live, kind }] (or sg + live) } }.
   // Text is set via textContent, so usernames never reach innerHTML.
   function setHouseKeepers(tags) {
     _keeperTags = new Map();
-    for (const [id, t] of Object.entries(tags || {})) if (t && (t.line1 || t.sg)) _keeperTags.set(id, t);
+    for (const [id, t] of Object.entries(tags || {})) if (t && (t.line1 || t.sg || _keeperGames(t).length)) _keeperTags.set(id, t);
     for (const node of _worldNodes.values()) _syncKeeperTag(node);
   }
 
@@ -4016,11 +4041,11 @@ const Playground3D = (() => {
       const node = _worldNodes.get(use.nodeId);
       label = use.act.label(!!(node && node.propState && node.propState.get(use.key)));
       target = use;
-    } else if (!_seat && _sg.candidate) {
-      // The island's Scene Guess screen — the prompt sits under it.
-      const sp = _sg.candidate.spot;
-      label = 'Scene Guess';
-      target = { x: sp.x, z: sp.z, sgY: sp.y - sp.h / 2 - 0.05 };
+    } else if (!_seat && _gs.candidate) {
+      // The island's game screen — the prompt sits under it.
+      const sp = _gs.candidate.spot;
+      label = _gs.candidate.label;
+      target = { x: sp.x, z: sp.z, sgY: sp.y - sp.h / 2 - 0.05, glyph: _gs.candidate.glyph };
     }
     if (target && _hudLayer) {
       if (!_seatPromptEl) {
@@ -4039,7 +4064,7 @@ const Playground3D = (() => {
       _seatPromptEl.style.display = 'none';
     }
     if (_input && _input.setInteractLabel) {
-      _input.setInteractLabel(_seat ? 'Stand up' : (label || null), (!_seat && target && target.sgY != null) ? '🎬' : null);
+      _input.setInteractLabel(_seat ? 'Stand up' : (label || null), (!_seat && target && target.sgY != null) ? (target.glyph || '🎬') : null);
     }
   }
 
@@ -5278,35 +5303,58 @@ const Playground3D = (() => {
     return url;
   }
 
-  // Scene Guess (js/scene-guess.js): turn the 3D controls off while its
-  // full-screen panels are open, and back on after — see setSuspended in
-  // js/playground3d-input.js. Remembered so a re-init keeps the state.
+  // Island games (js/scene-guess.js, …): turn the 3D controls off while a
+  // game's full-screen panels are open, and back on after — see setSuspended
+  // in js/playground3d-input.js. Owner-counted: each HUD holds its own claim,
+  // so one closing can't wake the controls under another's overlay.
+  // Remembered so a re-init keeps the state.
   let _inputSuspended = false;
-  function setInputSuspended(on) {
-    _inputSuspended = !!on;
+  const _suspendOwners = new Set();
+  function setInputSuspended(on, owner = 'default') {
+    const who = String(owner == null ? 'default' : owner);
+    if (on) _suspendOwners.add(who); else _suspendOwners.delete(who);
+    _inputSuspended = _suspendOwners.size > 0;
     if (_input && _input.setSuspended) _input.setSuspended(_inputSuspended);
   }
 
-  // ── Scene Guess in the world (driven by js/scene-guess.js) ──
-  // The cinema-wall screen inside every live island's house, the champion's
-  // crown, record confetti and the arrival spotlight. Builders + the screen
+  // ── Island games in the world (Scene Guess: js/scene-guess.js) ──
+  // Every live island's house has one cinema-wall screen, shared by the
+  // games ("kinds") live there: a game that's on owns it, otherwise the idle
+  // ones take turns (PG3DScene.pickScreenKind). Plus each champion's crown,
+  // record confetti and the arrival spotlight. Builders + the Scene Guess
   // painter are in js/playground3d-scene.js (PG3DScene). Screens live in
   // their own map — never node.decor, which the 30 s house poll rebuilds —
   // and are only built / painted for islands near the player.
-  const _sg = {
-    islands: new Set(),     // live islands (they get a screen)
-    screens: new Map(),     // projectId → PG3DScene.makeScreen() + { key, dirty }
-    views: new Map(),       // projectId → what to show (from SceneGuess)
+  const _gs = {
+    // kind → { islands, views, champions, me, handler, painter: { draw, keyOf },
+    // crown: { make, y, yStacked } } in registration order, which breaks
+    // ties (whose card shows first, how crowns stack).
+    kinds: new Map(),
+    islands: new Set(),     // union of the painted kinds' islands (they get a screen)
+    screens: new Map(),     // projectId → PG3DScene.makeScreen() + { key, dirty, kind }
     imgs: new Map(),        // url → Image
-    champions: new Map(),   // projectId → username
-    me: '',
-    crowns: new Map(),      // rig → crown group
+    crowns: new Map(),      // rig → Map(kind → { group, y })
     fx: [],                 // { update(dt) → alive, dispose() }
-    onInteract: null,
-    candidate: null,        // { projectId, spot } — the screen you stand in front of
+    beams: new Map(),       // spotlight target → when its last beam started (ms)
+    router: null,           // see setScreenRouter
+    candidate: null,        // { projectId, spot, kinds, live, label, glyph } — the screen you stand in front of
     lastPaint: 0,
     lastCrowns: 0
   };
+
+  function _gsKind(kind) {
+    if (typeof kind !== 'string' || !kind) return null;
+    let k = _gs.kinds.get(kind);
+    if (!k) {
+      k = { islands: new Set(), views: new Map(), champions: new Map(), me: '', handler: null, painter: null, crown: null };
+      _gs.kinds.set(kind, k);
+    }
+    return k;
+  }
+  function _gsDirty(id) {
+    const s = _gs.screens.get(id);
+    if (s) s.dirty = true;
+  }
 
   // Where an island's screen hangs (cached on the node; the same for everyone).
   function _sgSpot(node) {
@@ -5317,7 +5365,7 @@ const Playground3D = (() => {
   // Does the screen cover [c − w/2, c + w/2] along wall `side`? Windows and
   // wall-hung props there are left out (_buildNodeWalls / _buildProps).
   function _sgCovers(node, side, c, w) {
-    if (!node || !_sg.islands.has(node.project.id)) return false;
+    if (!node || !_gs.islands.has(node.project.id)) return false;
     const s = _sgSpot(node);
     return !!s && s.side === side && c + w / 2 > s.from - 0.15 && c - w / 2 < s.to + 0.15;
   }
@@ -5335,14 +5383,16 @@ const Playground3D = (() => {
     }
   }
 
-  // Which islands are live. A change rebuilds those houses' walls so the
-  // window behind a new screen goes (and comes back when it's switched off).
-  function setSceneScreens(list) {
-    const next = new Set(Array.isArray(list) ? list : []);
+  // Every island with a screen: the union of the painted kinds' islands. Only
+  // a change to it rebuilds houses' walls, so the window behind a new screen
+  // goes (and comes back once no game there is live).
+  function _gsSyncIslands() {
+    const next = new Set();
+    for (const k of _gs.kinds.values()) if (k.painter) for (const id of k.islands) next.add(id);
     const changed = [];
-    for (const id of _sg.islands) if (!next.has(id)) changed.push(id);
-    for (const id of next) if (!_sg.islands.has(id)) changed.push(id);
-    _sg.islands = next;
+    for (const id of _gs.islands) if (!next.has(id)) changed.push(id);
+    for (const id of next) if (!_gs.islands.has(id)) changed.push(id);
+    _gs.islands = next;
     for (const id of changed) {
       if (!next.has(id)) _sgDropScreen(id);
       const node = _worldNodes.get(id);
@@ -5350,134 +5400,286 @@ const Playground3D = (() => {
     }
   }
 
-  // What an island's screen shows: { mode, title, record, pickUrl, liveHost,
-  // state, deadline } — see PG3DScene.drawScreen.
+  // A game that can show on the screen. spec: { painter: { draw(ctx, view,
+  // imgOf), keyOf(view, imgOf) → string (repaint when it changes; none =
+  // every paint tick) }, crown: { make(THREE), y, yStacked } | null } — the
+  // crown at y × the wearer's height, or at yStacked when they hold another
+  // game's title too (PG3DScene.crownLayout). Registering again replaces the
+  // spec and keeps the game's state.
+  function registerScreenKind(kind, spec) {
+    const k = _gsKind(kind);
+    if (!k) return false;
+    const s = spec || {};
+    const p = s.painter && typeof s.painter.draw === 'function' ? s.painter : null;
+    k.painter = p ? { draw: p.draw, keyOf: typeof p.keyOf === 'function' ? p.keyOf : null } : null;
+    k.crown = s.crown && typeof s.crown.make === 'function' ? { make: s.crown.make, y: s.crown.y, yStacked: s.crown.yStacked } : null;
+    _gsSyncIslands();
+    for (const sc of _gs.screens.values()) sc.dirty = true;
+    _gs.lastCrowns = 0;
+    return true;
+  }
+
+  // Which islands a game is live on (they get the screen).
+  function setScreenIslands(kind, list) {
+    const k = _gsKind(kind);
+    if (!k) return;
+    const next = new Set(Array.isArray(list) ? list : []);
+    for (const id of k.islands) if (!next.has(id)) _gsDirty(id);
+    for (const id of next) if (!k.islands.has(id)) _gsDirty(id);
+    k.islands = next;
+    _gsSyncIslands();
+  }
+
+  // What a game shows on an island's screen — its painter's view (Scene
+  // Guess: { mode, title, record, pickUrl, liveHost, state, deadline }, see
+  // PG3DScene.drawScreen). null = idle.
+  function setScreenState(kind, projectId, view) {
+    const k = _gsKind(kind);
+    if (!k) return;
+    if (view) k.views.set(projectId, view); else k.views.delete(projectId);
+    _gsDirty(projectId);
+  }
+
+  // A game's champions { projectId: username } and the local username.
+  function setScreenChampions(kind, map, me) {
+    const k = _gsKind(kind);
+    if (!k) return;
+    k.champions = new Map(Object.entries(map || {}));
+    k.me = me || '';
+    _gs.lastCrowns = 0;
+  }
+
+  // E (or the touch button) at a screen where this game is live → fn(projectId).
+  function setScreenInteract(kind, fn) {
+    const k = _gsKind(kind);
+    if (k) k.handler = typeof fn === 'function' ? fn : null;
+  }
+
+  // How E and its prompt choose between an island's games
+  // (js/island-games.js): { interact(pid, { kinds, live }, call),
+  // prompt(pid, { kinds, live }) → { label, glyph } | null }. kinds = the
+  // games there with a handler, in order; live = the one that's on, or null;
+  // call(kind) runs that game's handler. A null prompt = no prompt and no E.
+  // Without a router E goes to the live game, else the first, under
+  // 'Scene Guess' / 🎬.
+  function setScreenRouter(router) {
+    const r = router || null;
+    _gs.router = r && (typeof r.interact === 'function' || typeof r.prompt === 'function') ? r : null;
+  }
+
+  // ── Scene Guess's names for the above (kind 'scene') ──
+
+  function setSceneScreens(list) { setScreenIslands('scene', list); }
+
   function setSceneScreenState(projectId, view) {
-    if (view) _sg.views.set(projectId, view); else _sg.views.delete(projectId);
     // Start loading every still of the game now (they arrive at "get ready"),
     // so each round's picture is already there when it's shown.
     if (view && view.state && Array.isArray(view.state.stills)) view.state.stills.forEach(_sgImg);
-    const s = _sg.screens.get(projectId);
-    if (s) s.dirty = true;
+    setScreenState('scene', projectId, view);
   }
 
-  function setChampions(map, me) {
-    _sg.champions = new Map(Object.entries(map || {}));
-    _sg.me = me || '';
-    _sg.lastCrowns = 0;
+  function setChampions(map, me) { setScreenChampions('scene', map, me); }
+
+  function setSceneInteractHandler(fn) { setScreenInteract('scene', fn); }
+
+  // Scene Guess's repaint key: what its screen shows, down to the countdown
+  // second and which pictures have loaded.
+  function _sceneScreenKey(view, imgOf) {
+    const st = view.state || null;
+    const secs = view.deadline ? Math.max(0, Math.ceil((view.deadline - Date.now()) / 1000)) : 0;
+    const urls = [];
+    if (st && st.stills && (view.mode === 'round' || view.mode === 'reveal')) urls.push(st.stills[st.round]);
+    if (view.mode === 'idle' && view.pickUrl) urls.push(view.pickUrl);
+    return JSON.stringify([
+      view.mode, view.title, view.liveHost, view.pickUrl, view.record,
+      st && [st.phase, st.round, st.players, st.ranking, st.record, (st.history || []).length],
+      secs, urls.map(u => !!imgOf(u))
+    ]);
   }
 
-  function setSceneInteractHandler(fn) { _sg.onInteract = typeof fn === 'function' ? fn : null; }
+  registerScreenKind('scene', {
+    painter: { draw: (ctx, view, imgOf) => PG3DScene.drawScreen(ctx, view, imgOf), keyOf: _sceneScreenKey },
+    // Just above the hair (the name tag's 2.05 is the top of its box, not the head).
+    crown: { make: (THREE) => PG3DScene.makeCrown(THREE), y: 1.86 }
+  });
 
   function _sgImg(url) {
     if (!url) return null;
-    let img = _sg.imgs.get(url);
+    let img = _gs.imgs.get(url);
     if (!img) {
       // crossOrigin first: a still without CORS headers then fails to load
       // instead of tainting the canvas (which would stop the WebGL upload).
       img = new Image();
       img.crossOrigin = 'anonymous';
-      img.onload = () => { for (const s of _sg.screens.values()) s.dirty = true; };
+      img.onload = () => { for (const s of _gs.screens.values()) s.dirty = true; };
       img.src = url;
-      _sg.imgs.set(url, img);
-      if (_sg.imgs.size > 30) {
-        const oldest = _sg.imgs.keys().next().value;
-        if (oldest !== url) _sg.imgs.delete(oldest);
+      _gs.imgs.set(url, img);
+      if (_gs.imgs.size > 30) {
+        const oldest = _gs.imgs.keys().next().value;
+        if (oldest !== url) _gs.imgs.delete(oldest);
       }
     }
     return img.complete && img.naturalWidth ? img : null;
   }
 
   function _sgDropScreen(id) {
-    const s = _sg.screens.get(id);
+    const s = _gs.screens.get(id);
     if (!s) return;
-    _sg.screens.delete(id);
+    _gs.screens.delete(id);
     s.group.traverse(o => { if (o.isMesh) _occlusion.release(o); });
     PG3DScene.dispose(s.group);
   }
 
-  // Repaint a screen only when what it shows has changed (4×/s at most).
+  // The games on an island, in order: [{ kind, view }] (idle when a game has
+  // sent no view). `has(k)` filters (a painter, a handler).
+  function _gsEntries(id, has) {
+    const out = [];
+    let title = null;
+    for (const [kind, k] of _gs.kinds) {
+      if (!k.islands.has(id) || !has(k)) continue;
+      let view = k.views.get(id);
+      if (!view) {
+        if (title === null) { const n = _worldNodes.get(id); title = n && n.project ? n.project.title : ''; }
+        view = { mode: 'idle', title };
+      }
+      out.push({ kind, view });
+    }
+    return out;
+  }
+
+  // Repaint a screen only when what it shows has changed (4×/s at most):
+  // whose screen it is, the idle turn, and that game's own key.
   function _sgPaint(id, s) {
-    const view = _sg.views.get(id) || { mode: 'idle', title: (_worldNodes.get(id) || {}).project ? _worldNodes.get(id).project.title : '' };
-    const st = view.state || null;
-    const secs = view.deadline ? Math.max(0, Math.ceil((view.deadline - Date.now()) / 1000)) : 0;
-    const urls = [];
-    if (st && st.stills && (view.mode === 'round' || view.mode === 'reveal')) urls.push(st.stills[st.round]);
-    if (view.mode === 'idle' && view.pickUrl) urls.push(view.pickUrl);
-    const key = JSON.stringify([
-      view.mode, view.title, view.liveHost, view.pickUrl, view.record,
-      st && [st.phase, st.round, st.players, st.ranking, st.record, (st.history || []).length],
-      secs, urls.map(u => !!_sgImg(u))
-    ]);
-    if (key === s.key && !s.dirty) return;
+    const entries = _gsEntries(id, k => !!k.painter);
+    if (!entries.length) return;
+    const now = Date.now();
+    const kind = PG3DScene.pickScreenKind(entries, now, PG3DScene.SWAP_MS);
+    const { view } = entries.find(e => e.kind === kind);
+    const painter = _gs.kinds.get(kind).painter;
+    const slot = entries.length > 1 ? Math.floor(now / PG3DScene.SWAP_MS) : 0;
+    const key = painter.keyOf ? JSON.stringify([kind, slot, painter.keyOf(view, _sgImg)]) : null;
+    if (key !== null && key === s.key && !s.dirty) return;
     s.key = key;
+    s.kind = kind;
     s.dirty = false;
-    PG3DScene.drawScreen(s.ctx, view, _sgImg);
+    painter.draw(s.ctx, view, _sgImg);
     s.tex.needsUpdate = true;
   }
 
-  // Champions standing on the island they hold wear the crown.
+  function _gsHasChampions() {
+    for (const k of _gs.kinds.values()) if (k.champions.size) return true;
+    return false;
+  }
+
+  // Champions standing on the island they hold wear that game's crown; one
+  // who holds several titles wears them stacked (PG3DScene.crownLayout).
   function _sgTickCrowns(now) {
     const THREE = window.THREE;
-    if (now - _sg.lastCrowns >= 250) {
-      _sg.lastCrowns = now;
-      const want = new Set();
-      const consider = (rig, username, lying) => {
-        if (!rig || !username || lying) return;
-        const id = _nodeAt(rig.position.x, rig.position.z, (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2);
-        if (id && _sg.islands.has(id) && _sg.champions.get(id) === username) want.add(rig);
+    if (now - _gs.lastCrowns >= 250) {
+      _gs.lastCrowns = now;
+      const want = new Map();   // rig → [kind], in registration order
+      const consider = (rig, nameOf, lying) => {
+        if (!rig || lying) return;
+        let id;
+        for (const [kind, k] of _gs.kinds) {
+          const username = nameOf(k);
+          if (!k.crown || !username || !k.champions.size) continue;
+          if (id === undefined) id = _nodeAt(rig.position.x, rig.position.z, (WORLD.PLATFORM_W + WORLD.APRON_MARGIN) / 2);
+          if (!id || !k.islands.has(id) || k.champions.get(id) !== username) continue;
+          if (!want.has(rig)) want.set(rig, []);
+          want.get(rig).push(kind);
+        }
       };
-      if (_player) consider(_player, _sg.me, !!(_seat && _seat.kind === 'bed'));
+      if (_player) consider(_player, k => k.me, !!(_seat && _seat.kind === 'bed'));
       for (const rp of _remotePlayers.values()) {
-        consider(rp.rig, rp.username, !!(rp.target && rp.target.pose === 'lie') || (rp.opacity != null && rp.opacity < 0.5));
+        consider(rp.rig, () => rp.username, !!(rp.target && rp.target.pose === 'lie') || (rp.opacity != null && rp.opacity < 0.5));
       }
-      for (const [rig, crown] of [..._sg.crowns]) {
-        if (want.has(rig)) continue;
-        PG3DScene.dispose(crown);
-        _sg.crowns.delete(rig);
+      for (const [rig, worn] of [..._gs.crowns]) {
+        const keep = want.get(rig) || [];
+        for (const [kind, c] of [...worn]) {
+          if (keep.includes(kind)) continue;
+          PG3DScene.dispose(c.group);
+          worn.delete(kind);
+        }
+        if (!worn.size) _gs.crowns.delete(rig);
       }
-      for (const rig of want) {
-        if (_sg.crowns.has(rig)) continue;
-        const crown = PG3DScene.makeCrown(THREE);
-        _scene.add(crown);
-        _sg.crowns.set(rig, crown);
+      for (const [rig, kinds] of want) {
+        let worn = _gs.crowns.get(rig);
+        if (!worn) { worn = new Map(); _gs.crowns.set(rig, worn); }
+        for (const kind of kinds) {
+          if (worn.has(kind)) continue;
+          const group = _gs.kinds.get(kind).crown.make(THREE);
+          if (!group) continue;
+          _scene.add(group);
+          worn.set(kind, { group, y: 0 });
+        }
+        for (const l of PG3DScene.crownLayout(kinds.map(kind => ({ kind, ..._gs.kinds.get(kind).crown })))) {
+          const c = worn.get(l.kind);
+          if (c) c.y = l.y;
+        }
+        if (!worn.size) _gs.crowns.delete(rig);
       }
     }
-    for (const [rig, crown] of _sg.crowns) {
+    const bob = Math.sin(now / 650) * 0.02;
+    for (const [rig, worn] of _gs.crowns) {
       const sc = rig.scale.y || 1;
-      // Just above the hair (the name tag's 2.05 is the top of its box, not the head).
-      crown.position.set(rig.position.x, (rig.position.y || 0) + 1.86 * sc + Math.sin(now / 650) * 0.02, rig.position.z);
-      crown.rotation.y = rig.rotation.y;
-      crown.scale.setScalar(sc);
+      for (const c of worn.values()) {
+        c.group.position.set(rig.position.x, (rig.position.y || 0) + c.y * sc + bob, rig.position.z);
+        c.group.rotation.y = rig.rotation.y;
+        c.group.scale.setScalar(sc);
+      }
     }
   }
 
   // The screen you're standing in front of (inside its house, within its
-  // width and ~4 m of the wall) — "Scene Guess (E)".
+  // width and ~4 m of the wall) with a game there that takes E — "Scene
+  // Guess (E)", or what the router's prompt says.
   function _sgScanScreen() {
-    _sg.candidate = null;
-    if (!_player || !_sg.onInteract || !_sg.islands.size) return;
+    _gs.candidate = null;
+    if (!_player || !_gs.islands.size) return;
     const px = _player.position.x, pz = _player.position.z;
     const id = _nodeAt(px, pz, WORLD.PLATFORM_W / 2);
-    if (!id || !_sg.islands.has(id)) return;
+    if (!id || !_gs.islands.has(id)) return;
     const s = _sgSpot(_worldNodes.get(id));
     if (!s) return;
     const along = (s.side === 'N' || s.side === 'S') ? px : pz;
     const depth = s.side === 'N' ? pz - s.z : s.side === 'S' ? s.z - pz : s.side === 'W' ? px - s.x : s.x - px;
     if (along < s.from - 0.6 || along > s.to + 0.6 || depth < 0 || depth > 4.2) return;
-    _sg.candidate = { projectId: id, spot: s };
+    const entries = _gsEntries(id, k => !!k.handler);
+    if (!entries.length) return;
+    const kinds = entries.map(e => e.kind);
+    const live = PG3DScene.liveScreenKind(entries);
+    let label = 'Scene Guess', glyph = '🎬';
+    if (_gs.router && _gs.router.prompt) {
+      let p;
+      try { p = _gs.router.prompt(id, { kinds: kinds.slice(), live }); } catch (_) { p = undefined; }
+      if (p === null) return;
+      if (p && p.label) { label = String(p.label); glyph = p.glyph || glyph; }
+    }
+    _gs.candidate = { projectId: id, spot: s, kinds, live, label, glyph };
+  }
+
+  // E at a screen: the router picks the game; without one, the live game,
+  // else the first.
+  function _sgInteract(c) {
+    const call = (kind) => {
+      const k = _gs.kinds.get(kind);
+      if (k && k.handler && k.islands.has(c.projectId)) k.handler(c.projectId);
+    };
+    if (_gs.router && _gs.router.interact) _gs.router.interact(c.projectId, { kinds: c.kinds.slice(), live: c.live }, call);
+    else call(c.live || c.kinds[0]);
   }
 
   function _tickSceneGuess(dt, now) {
     if (typeof PG3DScene === 'undefined' || !_scene || !window.THREE) return;
-    if (_sg.islands.size && now - _sg.lastPaint >= 250) {
-      _sg.lastPaint = now;
+    if (_gs.islands.size && now - _gs.lastPaint >= 250) {
+      _gs.lastPaint = now;
       const vic = _player ? _computeVicinity(_player.position.x, _player.position.z) : null;
-      for (const id of _sg.islands) {
+      for (const id of _gs.islands) {
         const node = _worldNodes.get(id);
         if (!node) continue;
         const near = !!vic && (vic.inside === id || vic.near.has(id));
-        let s = _sg.screens.get(id);
+        let s = _gs.screens.get(id);
         if (!s && near) {
           const spot = _sgSpot(node);
           if (!spot) continue;
@@ -5485,18 +5687,18 @@ const Playground3D = (() => {
           s.key = '';
           s.dirty = true;
           _scene.add(s.group);
-          _sg.screens.set(id, s);
+          _gs.screens.set(id, s);
         }
         if (!s) continue;
         s.group.visible = near;
         if (near) _sgPaint(id, s);
       }
     }
-    if (_sg.crowns.size || _sg.champions.size) _sgTickCrowns(now);
-    for (let i = _sg.fx.length - 1; i >= 0; i--) {
-      if (_sg.fx[i].update(dt)) continue;
-      _sg.fx[i].dispose();
-      _sg.fx.splice(i, 1);
+    if (_gs.crowns.size || _gsHasChampions()) _sgTickCrowns(now);
+    for (let i = _gs.fx.length - 1; i >= 0; i--) {
+      if (_gs.fx[i].update(dt)) continue;
+      _gs.fx[i].dispose();
+      _gs.fx.splice(i, 1);
     }
     _sgScanScreen();
   }
@@ -5511,38 +5713,53 @@ const Playground3D = (() => {
     const z = s ? s.z + n[1] * 1.2 : node.mesh.position.z;
     const fx = PG3DScene.makeConfetti(window.THREE, x, s ? s.y - s.h / 2 : 2.2, z);
     _scene.add(fx.mesh);
-    _sg.fx.push({ update: fx.update, dispose: () => { PG3DScene.dispose(fx.mesh); if (fx.mesh.dispose) fx.mesh.dispose(); } });
+    _gs.fx.push({ update: fx.update, dispose: () => { PG3DScene.dispose(fx.mesh); if (fx.mesh.dispose) fx.mesh.dispose(); } });
   }
 
-  // The champion is back on their island: a beam of light follows them.
+  // The champion is back on their island: a beam of light follows them. One
+  // beam per target per 3 s, so a double champion's two arrivals make one.
+  // → whether a beam started.
   function spotlight(target, ms) {
-    if (!_scene || typeof PG3DScene === 'undefined' || !window.THREE) return;
+    if (!_scene || typeof PG3DScene === 'undefined' || !window.THREE) return false;
     const rig = target === 'local' ? _player : ((_remotePlayers.get(target) || {}).rig || null);
-    if (!rig) return;
+    if (!rig) return false;
+    const t = Date.now();
+    for (const [who, at] of [..._gs.beams]) if (t - at >= 3000) _gs.beams.delete(who);
+    if (_gs.beams.has(target)) return false;
+    _gs.beams.set(target, t);
     const s = PG3DScene.makeSpotlight(window.THREE);
     _scene.add(s.group);
     const life = (ms || 6000) / 1000;
-    _sg.fx.push({
+    _gs.fx.push({
       update: (dt) => { s.group.position.set(rig.position.x, rig.position.y || 0, rig.position.z); return s.update(dt, life); },
       dispose: () => PG3DScene.dispose(s.group)
     });
+    return true;
   }
 
+  // Leaving /world: every game forgets its islands, views, champions and
+  // handler (painters and crowns stay registered), and the router goes.
   function _sgReset() {
     if (typeof PG3DScene !== 'undefined') {
-      for (const id of [..._sg.screens.keys()]) _sgDropScreen(id);
-      for (const crown of _sg.crowns.values()) PG3DScene.dispose(crown);
+      for (const id of [..._gs.screens.keys()]) _sgDropScreen(id);
+      for (const worn of _gs.crowns.values()) for (const c of worn.values()) PG3DScene.dispose(c.group);
     }
-    _sg.screens.clear();
-    _sg.crowns.clear();
-    for (const f of _sg.fx) { try { f.dispose(); } catch (_) {} }
-    _sg.fx = [];
-    _sg.islands = new Set();
-    _sg.views.clear();
-    _sg.imgs.clear();
-    _sg.champions = new Map();
-    _sg.candidate = null;
-    _sg.onInteract = null;
+    _gs.screens.clear();
+    _gs.crowns.clear();
+    for (const f of _gs.fx) { try { f.dispose(); } catch (_) {} }
+    _gs.fx = [];
+    _gs.islands = new Set();
+    for (const k of _gs.kinds.values()) {
+      k.islands = new Set();
+      k.views.clear();
+      k.champions = new Map();
+      k.me = '';
+      k.handler = null;
+    }
+    _gs.imgs.clear();
+    _gs.beams.clear();
+    _gs.router = null;
+    _gs.candidate = null;
   }
 
   // Release the shared thumbnail context (call when leaving /customize).
@@ -5582,7 +5799,11 @@ const Playground3D = (() => {
     setHouses, applyHouse, getHouse, getHouseLayout, setHouseKeepers, roomAtPlayer,
     setHomeRoof, getHomeRoof, unstackFromPeers,
     setHouseShowcase, clearHouseShowcase,
-    // Scene Guess minigame (js/scene-guess.js).
+    // Island games on the in-house screen: any kind, and the router that
+    // picks between them (js/island-games.js).
+    registerScreenKind, setScreenIslands, setScreenState, setScreenChampions,
+    setScreenInteract, setScreenRouter,
+    // Scene Guess minigame (js/scene-guess.js) — kind 'scene'.
     setInputSuspended, setSceneScreens, setSceneScreenState, setChampions,
     setSceneInteractHandler, playConfetti, spotlight,
     // Debugging aids for the browser preview (same idea as PG3DHumanoid._debug):
@@ -5651,11 +5872,24 @@ const Playground3D = (() => {
       // Where the sun's shadow box is centred right now.
       sun() { return _sunRig ? { x: _sunRig.light.target.position.x, z: _sunRig.light.target.position.z, radius: _sunRig.radius, map: _sunRig.mapSize } : null; },
       stoneCenter() { return { ..._stoneCenter }; },
-      // Scene Guess: live islands, built screens (+ where they hang), crowns, the E target.
+      // Island games: islands with a screen (every kind's), built screens
+      // (+ where they hang, whose game each last showed), crowned rigs, the
+      // E target and its prompt, and per kind its islands / champions / crowns.
       sceneGuess() {
-        const spots = {};
-        for (const id of _sg.islands) { const n = _worldNodes.get(id); if (n) spots[id] = _sgSpot(n); }
-        return { islands: [..._sg.islands], screens: [..._sg.screens.keys()], spots, crowns: _sg.crowns.size, fx: _sg.fx.length, candidate: _sg.candidate && _sg.candidate.projectId };
+        const spots = {}, showing = {}, kinds = {};
+        for (const id of _gs.islands) { const n = _worldNodes.get(id); if (n) spots[id] = _sgSpot(n); }
+        for (const [id, s] of _gs.screens) showing[id] = s.kind || null;
+        for (const [kind, k] of _gs.kinds) {
+          let crowns = 0;
+          for (const worn of _gs.crowns.values()) if (worn.has(kind)) crowns++;
+          kinds[kind] = { islands: [...k.islands], champions: Object.fromEntries(k.champions), me: k.me, handler: !!k.handler, painter: !!k.painter, crown: !!k.crown, crowns };
+        }
+        const c = _gs.candidate;
+        return {
+          islands: [..._gs.islands], screens: [..._gs.screens.keys()], spots, showing, crowns: _gs.crowns.size, fx: _gs.fx.length,
+          candidate: c && c.projectId, prompt: c ? { label: c.label, glyph: c.glyph, kinds: c.kinds, live: c.live } : null,
+          router: !!_gs.router, suspended: [..._suspendOwners], kinds
+        };
       },
       // Advance one frame by hand when the tab is throttled (rAF frozen).
       // Cancels the queued frame first so the loop never doubles up.

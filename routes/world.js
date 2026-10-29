@@ -234,4 +234,7 @@ router.get('/scene/:projectId/picks', auth, async (req, res) => {
   });
 });
 
+// Quote Guess player endpoints (routes/world-quotes.js).
+router.use(require('./world-quotes'));
+
 module.exports = router;

@@ -238,18 +238,33 @@ const WorldView = (() => {
       });
     }
 
-    // Scene Guess minigame HUD (js/scene-guess.js) — stays dark unless the
-    // admin has it switched on, globally and for the island you stand on.
+    // The island minigames — Scene Guess (js/scene-guess.js) and Quote Guess
+    // (js/quote-guess.js). Each stays dark unless the admin has it switched
+    // on, globally and for the island you stand on. They share each island's
+    // screen and the header chip through js/island-games.js.
     if (typeof SceneGuess !== 'undefined' && _mp && _mp.getSocket && _mp.getSocket()) {
-      SceneGuess.start({
+      const arbiter = typeof IslandGames !== 'undefined' && typeof QuoteGuess !== 'undefined';
+      const chipHost = document.getElementById('world-sg-slot');
+      const gameOpts = {
         socket: _mp.getSocket(),
         engine: Playground3D,
         username: Auth.getUsername ? Auth.getUsername() : '',
         postSystem: (text) => { if (_mp && _mp.postSystem) _mp.postSystem(text); },
-        chipHost: document.getElementById('world-sg-slot'),
         onTags: _pushKeeperTags
-      });
-      if (_zone) SceneGuess.onZone(_zone);
+      };
+      SceneGuess.start(Object.assign({}, gameOpts, { chipHost: arbiter ? null : chipHost }));
+      if (arbiter) {
+        QuoteGuess.start(gameOpts);
+        IslandGames.start({
+          engine: Playground3D,
+          chipHost,
+          games: [
+            { kind: 'scene', name: 'Scene Guess', icon: '🎬', blurb: 'When in the film is this screenshot?', hud: SceneGuess },
+            { kind: 'quote', name: 'Quote Guess', icon: '💬', blurb: "Who said it — and what's the reply?", hud: QuoteGuess }
+          ]
+        });
+      }
+      if (_zone) _gamesOnZone(_zone);
     }
 
     _wireVoiceToggle('world');
@@ -532,12 +547,14 @@ const WorldView = (() => {
         : { line1: `🔑 ${k.username} · ${_fmtStay(k.ms)}`,
             line2: (here || mineMs) ? `you ${_fmtStay(mineMs)}` : '' };
     }
-    // Scene Guess adds the island record (or "● LIVE") as one more line — on
-    // live islands only, keeper or not.
-    if (typeof SceneGuess !== 'undefined' && SceneGuess.tagFor) {
+    // The island games add their record (or "● LIVE") lines — on live
+    // islands only, keeper or not (js/island-games.js merges both games).
+    const games = typeof IslandGames !== 'undefined' && typeof QuoteGuess !== 'undefined' ? IslandGames
+      : typeof SceneGuess !== 'undefined' && SceneGuess.tagFor ? SceneGuess : null;
+    if (games) {
       for (const p of projects) {
-        const sg = p && p.id ? SceneGuess.tagFor(p.id) : null;
-        if (sg) tags[p.id] = Object.assign(tags[p.id] || {}, sg);
+        const t = p && p.id ? games.tagFor(p.id) : null;
+        if (t) tags[p.id] = Object.assign(tags[p.id] || {}, t);
       }
     }
     Playground3D.setHouseKeepers(tags);
@@ -601,7 +618,22 @@ const WorldView = (() => {
     if (_zone && Date.now() - _housesAt > 30000) _loadHouses(_mountSeq);
     _refreshHouseHud();
     if (_voice) _voiceVisual(_voiceState, _voiceMsg);
-    if (typeof SceneGuess !== 'undefined') SceneGuess.onZone(_zone);
+    _gamesOnZone(_zone);
+  }
+
+  // Every island minigame (and their arbiter) learns the island you're on.
+  function _gamesOnZone(zone) {
+    if (typeof SceneGuess !== 'undefined') SceneGuess.onZone(zone);
+    if (typeof QuoteGuess !== 'undefined') QuoteGuess.onZone(zone);
+    if (typeof IslandGames !== 'undefined') IslandGames.onZone(zone);
+  }
+
+  // Leaving /world (or kicked): the games first — they quit a game in
+  // progress over the socket — then their arbiter.
+  function _stopGames() {
+    if (typeof SceneGuess !== 'undefined') { try { SceneGuess.stop(); } catch (_) {} }
+    if (typeof QuoteGuess !== 'undefined') { try { QuoteGuess.stop(); } catch (_) {} }
+    if (typeof IslandGames !== 'undefined') { try { IslandGames.stop(); } catch (_) {} }
   }
 
   function _onHouse(p) {
@@ -1023,8 +1055,8 @@ const WorldView = (() => {
     // Settle a still-open spawn picker so its awaited promise doesn't dangle.
     if (_spawnPickerResolve) { _spawnPickerResolve(); _spawnPickerResolve = null; }
     _dismissOverlays('.world-spawn');
-    // Scene Guess before multiplayer: it quits a game in progress over the socket.
-    if (typeof SceneGuess !== 'undefined') { try { SceneGuess.stop(); } catch (_) {} }
+    // The island games before multiplayer: they quit a game in progress over the socket.
+    _stopGames();
     if (_mp) { try { _mp.stop(); } catch (_) {} _mp = null; }
     Playground3D.destroy();
     _stage = null;
@@ -1047,9 +1079,9 @@ const WorldView = (() => {
   // HTTP, so it keeps working), and let the user leave when they're done.
   function _onKicked({ dest }) {
     if (!isDirty()) { Router.go(dest); return; }
-    // Same order as unmount(): voice, then Scene Guess, then the socket.
+    // Same order as unmount(): voice, then the island games, then the socket.
     if (_voice) { try { _voice.stop(); } catch (_) {} _voice = null; _voiceVisual('off'); }
-    if (typeof SceneGuess !== 'undefined') { try { SceneGuess.stop(); } catch (_) {} }
+    _stopGames();
     if (_mp) { try { _mp.stop(); } catch (_) {} _mp = null; }
     if (Playground3D.clearRemotePlayers) Playground3D.clearRemotePlayers();
     if (_kickNotice) { try { _kickNotice(); } catch (_) {} }

@@ -141,7 +141,11 @@
     sgStart:   Object.freeze({ cap: 2, perSec: 0.05 }),
     sgJoin:    Object.freeze({ cap: 4, perSec: 0.5 }),
     sgGuess:   Object.freeze({ cap: 4, perSec: 1 }),
-    sgMisc:    Object.freeze({ cap: 6, perSec: 0.5 })
+    sgMisc:    Object.freeze({ cap: 6, perSec: 0.5 }),
+    qgStart:   Object.freeze({ cap: 2, perSec: 0.05 }),
+    qgJoin:    Object.freeze({ cap: 4, perSec: 0.5 }),
+    qgAnswer:  Object.freeze({ cap: 4, perSec: 1 }),
+    qgMisc:    Object.freeze({ cap: 6, perSec: 0.5 })
   });
 
   function bucket(cap, perSec, now) {

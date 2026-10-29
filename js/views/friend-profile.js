@@ -55,7 +55,7 @@ const FriendProfileView = {
       </div>
     `;
     FriendView.wireHeader(container);
-    // Scene Guess island records they hold (js/views/profile.js).
+    // Island-game records they hold + their Quote Guess lines (js/views/profile.js).
     if (typeof ProfileView !== 'undefined' && ProfileView.championBadges) {
       ProfileView.championBadges(container.querySelector('.profile-champion'), friend.username);
     }

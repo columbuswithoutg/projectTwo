@@ -27,6 +27,8 @@ const SceneGuess = (() => {
     'not-here': 'Step onto the island to play.',
     'not-live': "Scene Guess isn't available on this island.",
     'busy': "You're already in a game.",
+    // Another island game (Quote Guess) is running on this island.
+    'island-busy': 'Another game is running on this island — watch it, or play after.',
     'full': 'That lobby is full.',
     'started': 'That game already started — watch it instead.',
     'off': 'Scene Guess is switched off.',
@@ -394,12 +396,30 @@ const SceneGuess = (() => {
     syncEngine();
   }
 
-  // The header chip — only on a live island (or while I'm in a game).
-  function renderChip() {
+  // The header chip's model — only on a live island (or while I'm in a
+  // game): { text, cls, title, rank } (rank 3 my game, 2 a lobby / live game
+  // here, 1 idle), or null. js/island-games.js draws ONE chip for every
+  // island game from these.
+  function chipModel() {
+    if (!_started) return null;
     const mine = myGame();
     const here = _zone ? _states.get(_zone) : null;
-    const show = !!mine || liveIsland(_zone);
-    if (!show || !_slot) {
+    if (!mine && !liveIsland(_zone)) return null;
+    const title = 'Scene Guess — when in the film is this screenshot?';
+    if (mine && mine.phase === 'lobby') return { text: `🎬 Lobby · ${secsLeft(mine.deadline)}s`, cls: 'is-lobby', title, rank: 3 };
+    if (mine) return { text: '🎬 Back to your game', cls: 'is-live', title, rank: 3 };
+    if (here && here.phase === 'lobby') return { text: `● Lobby open · Join · ${secsLeft(here.deadline)}s`, cls: 'is-lobby', title, rank: 2 };
+    if (here) return { text: `● LIVE · ${here.host || '…'} · ${Math.min(here.of, here.round + 1)}/${here.of} · Watch`, cls: 'is-live', title, rank: 2 };
+    if (_cfg.live[_zone] != null) return { text: `● LIVE · ${_cfg.live[_zone] || '…'} · Watch`, cls: 'is-live', title, rank: 2 };
+    const rec = _cfg.records[_zone];
+    return { text: rec ? `🎬 Scene Guess · 🏆 ${fmt(rec.score)}` : '🎬 Scene Guess', cls: '', title, rank: 1 };
+  }
+
+  // The chip itself — drawn here only when js/views/world.js passed a
+  // chipHost (no island-games arbiter).
+  function renderChip() {
+    const m = chipModel();
+    if (!m || !_slot) {
       if (_chip) { _chip.remove(); _chip = null; }
       return;
     }
@@ -410,19 +430,9 @@ const SceneGuess = (() => {
       _chip.addEventListener('click', onChip);
       _slot.appendChild(_chip);
     }
-    let text, cls = '';
-    if (mine && mine.phase === 'lobby') { text = `🎬 Lobby · ${secsLeft(mine.deadline)}s`; cls = 'is-lobby'; }
-    else if (mine) { text = '🎬 Back to your game'; cls = 'is-live'; }
-    else if (here && here.phase === 'lobby') { text = `● Lobby open · Join · ${secsLeft(here.deadline)}s`; cls = 'is-lobby'; }
-    else if (here) { text = `● LIVE · ${here.host || '…'} · ${Math.min(here.of, here.round + 1)}/${here.of} · Watch`; cls = 'is-live'; }
-    else if (_cfg.live[_zone] != null) { text = `● LIVE · ${_cfg.live[_zone] || '…'} · Watch`; cls = 'is-live'; }
-    else {
-      const rec = _cfg.records[_zone];
-      text = rec ? `🎬 Scene Guess · 🏆 ${fmt(rec.score)}` : '🎬 Scene Guess';
-    }
-    if (_chip.textContent !== text) _chip.textContent = text;
-    _chip.className = 'world-sg-chip ' + cls;
-    _chip.title = 'Scene Guess — when in the film is this screenshot?';
+    if (_chip.textContent !== m.text) _chip.textContent = m.text;
+    _chip.className = 'world-sg-chip ' + m.cls;
+    _chip.title = m.title;
   }
 
   async function onChip() {
@@ -1043,6 +1053,8 @@ const SceneGuess = (() => {
 
   return {
     start, stop, onZone, tagFor,
+    // For js/island-games.js (the shared chip and the game picker).
+    chip: chipModel, chipClick: onChip, record: (pid) => _cfg.records[pid] || null,
     // For the browser preview / QA (tests drive the HUD without a mouse).
     _debug: {
       cfg: () => _cfg,

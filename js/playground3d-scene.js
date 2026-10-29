@@ -14,7 +14,10 @@
  *       open a doorway under it. Bottom 1.9 (over 1.8-tall bookshelves),
  *       0.3 below the wall top and from each end; 16:10 = picture + marquee.
  *   makeScreen(THREE, spot)        the screen: a canvas texture + slim bezel
- *   drawScreen(ctx, view, imgOf)   paints one frame of it
+ *   drawScreen(ctx, view, imgOf)   paints one Scene Guess frame of it
+ *   paint                          the painting helpers, for other games' painters
+ *   pickScreenKind(entries, now)   which island game the shared screen shows
+ *   crownLayout(kinds)             how a multiple champion's crowns stack
  *   makeCrown(THREE)               the champion's crown (shared geometry)
  *   makeConfetti(THREE, x, y, z)   a one-shot burst — update(dt) → alive
  *   makeSpotlight(THREE)           the champion's arrival beam
@@ -383,6 +386,46 @@
     ctx.fillText(`It was at ${h.label}`, CW / 2, y - 38);
   }
 
+  // The helpers above, for another game's painter on the same screen (same
+  // canvas: CW × CH, the picture's bottom at PIC, then the marquee).
+  const paint = { backdrop, marquee, headline, pill, roundRect, fit, initials, contain, COLORS, fmt, PIC, DISPLAY, UI };
+
+  // ── one screen, several games ──
+
+  // Idle games take turns on the screen, this long each.
+  const SWAP_MS = 8000;
+  // entries: [{ kind, view }] — the games on one island, in registration
+  // order. A game that's on (any view but idle, or one naming a liveHost)
+  // owns the screen; the first such wins. → that kind, or null.
+  function liveScreenKind(entries) {
+    for (const e of entries || []) {
+      const v = e && e.kind ? e.view : null;
+      if (v && ((v.mode && v.mode !== 'idle') || v.liveHost != null)) return e.kind;
+    }
+    return null;
+  }
+  // Which game the screen shows at `now` (ms): the live one, else the idle
+  // ones in turn, swapMs each — wall-clock slots, so everyone sees the same.
+  function pickScreenKind(entries, now, swapMs = SWAP_MS) {
+    const list = (entries || []).filter(e => e && e.kind);
+    if (!list.length) return null;
+    const live = liveScreenKind(list);
+    if (live) return live;
+    const ms = swapMs > 0 ? swapMs : SWAP_MS;
+    const slot = Math.floor((Number(now) || 0) / ms);
+    return list[((slot % list.length) + list.length) % list.length].kind;
+  }
+
+  // Where each crown a champion wears sits, × their height. kinds:
+  // [{ kind, y, yStacked }] — the titles one player holds, in order. Alone, a
+  // crown sits at its y; with another it moves to its yStacked if it has one
+  // (a laurel rings the gold crown's band). → [{ kind, y }].
+  function crownLayout(kinds) {
+    const list = (kinds || []).filter(k => k && k.kind);
+    const stacked = list.length > 1;
+    return list.map(k => ({ kind: k.kind, y: stacked && k.yStacked != null ? k.yStacked : (k.y != null ? k.y : 1.86) }));
+  }
+
   // ── champion's crown ──
 
   let _crownParts = null;
@@ -496,7 +539,10 @@
     return { group, update };
   }
 
-  const api = { SCREEN, CW, CH, roadRoutes, roadView, roadPorts, openingsFromPorts, allOpenings, screenSpot, makeScreen, drawScreen, makeCrown, makeConfetti, makeSpotlight, dispose };
+  const api = {
+    SCREEN, CW, CH, SWAP_MS, roadRoutes, roadView, roadPorts, openingsFromPorts, allOpenings, screenSpot,
+    makeScreen, drawScreen, paint, liveScreenKind, pickScreenKind, crownLayout, makeCrown, makeConfetti, makeSpotlight, dispose
+  };
   // Node (test/scene-geometry.test.js) gets the same object; the placement
   // maths is pure and the THREE / canvas builders are never called there.
   // RoadRouter is read as a global, so a test sets globalThis.RoadRouter.

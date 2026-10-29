@@ -51,7 +51,7 @@
 /* Was hard-coded white: invisible on the Comic paper. */
 #cowatcher-name { color: var(--text-1); }
 
-/* Scene Guess island records this user holds (/profile and friend profiles). */
+/* Island-game records this user holds + their Quote Guess lines (/profile and friend profiles). */
 .profile-champion { margin: 18px 0 6px; }
 .profile-champion[hidden] { display: none; }
 .profile-champion-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 10px; }
@@ -69,3 +69,5 @@
 .profile-champion-badge b { color: var(--highlight); font-variant-numeric: tabular-nums; }
 [data-theme="comic"] .profile-champion-badge { border: 2.5px solid #111111; background: #fff6cc; color: #111111; box-shadow: 2px 2px 0 #111111; }
 [data-theme="comic"] .profile-champion-badge b { color: #111111; }
+.profile-champion-badge.is-lines { border-color: rgba(96, 165, 250, 0.55); background: rgba(96, 165, 250, 0.12); }
+[data-theme="comic"] .profile-champion-badge.is-lines { background: #e3efff; }

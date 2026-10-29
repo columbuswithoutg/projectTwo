@@ -371,9 +371,9 @@ function shutdown(why, exitCode = 0) {
   }, SHUTDOWN_TIMEOUT_MS).unref();
   (async () => {
     try {
-      const ended = require('./server/scene-guess').instance().endAll('restart');
-      console.log(`[shutdown] ended ${ended} live Scene Guess game(s)`);
-    } catch (err) { console.error('[shutdown] Scene Guess:', err); }
+      const ended = require('./server/island-games').endAll('restart');
+      console.log(`[shutdown] ended ${ended} live island game(s)`);
+    } catch (err) { console.error('[shutdown] island games:', err); }
     const httpClosed = io.close();
     console.log('[shutdown] sockets disconnected; no new connections');
     try {

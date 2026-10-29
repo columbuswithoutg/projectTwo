@@ -69,11 +69,12 @@ const HouseEditor = (() => {
     const doorCells = {};
     for (const side of L.SIDES) doorCells[side] = layout ? L.openingsToCells(layout[side]) : [];
     const isDoorCell = (side, pos) => doorCells[side].some(([a, b]) => pos >= a && pos <= b);
-    // A live island's Scene Guess screen hangs on one stretch of wall (the
-    // engine's layout.screen, same units): no window or frame goes there.
+    // A live island's game screen (Scene Guess / Quote Guess share it) hangs
+    // on one stretch of wall (the engine's layout.screen, same units): no
+    // window or frame goes there.
     const sgScreen = layout && layout.screen ? layout.screen : null;
     const onSgScreen = (side, lo, hi) => !!sgScreen && sgScreen.side === side && hi > sgScreen.from && lo < sgScreen.to;
-    const SG_SCREEN_TOAST = 'The Scene Guess screen hangs on this stretch of wall — pick another spot.';
+    const SG_SCREEN_TOAST = 'The island game screen hangs on this stretch of wall — pick another spot.';
     // Wall-ring cell → which wall and how far along it (top row is north).
     const ringCell = (gx, gy) => {
       if (gy === 0 && gx >= 1 && gx <= N) return { side: 'N', pos: gx };
@@ -261,7 +262,7 @@ const HouseEditor = (() => {
             </g>`);
           } else if (onSgScreen(rc.side, rc.pos, rc.pos + 1)) {
             cells.push(`<g class="world-house-wall sg-screen" data-side="${rc.side}" data-pos="${rc.pos}">
-              <title>Scene Guess screen</title>
+              <title>Island game screen</title>
               <rect x="${x}" y="${y}" width="${CELL}" height="${CELL}" />
               <text x="${x + CELL / 2}" y="${y + CELL / 2 + 1}" text-anchor="middle" dominant-baseline="middle" font-size="15">🎬</text>
             </g>`);

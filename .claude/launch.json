@@ -18,6 +18,15 @@
         "set PORT=3001&& node server.js"
       ],
       "port": 3001
+    },
+    {
+      "name": "server-3004",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set PORT=3004&& node server.js"
+      ],
+      "port": 3004
     }
   ]
 }

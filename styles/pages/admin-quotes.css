@@ -1,0 +1,327 @@
+/************************************************
+ * ADMIN — CMS → Quotes (js/views/admin/cms-quotes*.js)
+ * Shares the Scene stills page's head / banner / switch / drop-zone /
+ * board classes (admin-scenes.css); this file is the quote-specific parts.
+ * Tokens only, so the admin follows the theme.
+ ************************************************/
+
+.qte { display: flex; flex-direction: column; gap: 12px; }
+
+/* ── view switch: Islands · Suggestions (n) · Import / export ── */
+.qte-views {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(var(--ink), 0.08);
+  align-self: flex-start;
+  flex-wrap: wrap;
+}
+.qte-view {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-warm);
+  font: 600 13px/1 var(--font-ui);
+  padding: 9px 16px;
+  min-height: 36px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.qte-view:hover { background: rgba(var(--ink), 0.06); }
+.qte-view.active {
+  background: var(--color-surface);
+  color: var(--accent-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+.qte-pending {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 11px;
+  text-align: center;
+}
+.qte-pending[hidden] { display: none; }
+
+.admin-cms-row.qte-row-pending .admin-cms-col:nth-child(4) { color: var(--accent-text); font-weight: 600; }
+
+.qte-btn-primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  font-weight: 600;
+}
+.qte-btn-primary:hover { background: var(--color-primary); filter: brightness(1.1); }
+.qte-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
+
+/* ── faces (portrait or initials) ── */
+.qte-face {
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: top;
+  background: rgba(var(--ink), 0.12);
+  box-shadow: 0 0 0 1px var(--border-2);
+}
+.qte-face-ini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 11px/1 var(--font-ui);
+  color: var(--color-text-warm);
+}
+
+/* ── island page ── */
+.qte-switches {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+.qte-checks {
+  list-style: none;
+  margin: 0;
+  padding: 10px 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  border-radius: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--border-1);
+  font-size: 13px;
+}
+.qte-checks li span { display: inline-block; width: 1.1em; font-weight: 700; }
+.qte-checks li.is-ok span { color: var(--color-health-good); }
+.qte-checks li.is-todo { opacity: 0.85; }
+.qte-checks li.is-todo span { color: var(--accent-text); }
+.qte-checks i { opacity: 0.6; font-style: normal; }
+
+.qte-add { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.qte-add-host { align-self: stretch; }
+
+.qte-lines-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.qte-lines-head .admin-h3 { margin: 0; }
+.qte-lines-count { font-weight: 400; opacity: 0.6; font-size: 0.85em; }
+.qte-filters { display: flex; gap: 8px; flex-wrap: wrap; }
+.qte-filters .qte-q { min-width: 220px; }
+
+.qte-lines { display: flex; flex-direction: column; gap: 8px; }
+.qte-line {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--border-1);
+}
+.qte-line.is-off { opacity: 0.62; }
+.qte-line.is-editing { display: block; opacity: 1; }
+.qte-line-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.qte-line-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+.qte-say { display: flex; gap: 10px; align-items: flex-start; }
+.qte-say-reply { margin-left: 22px; padding-left: 12px; border-left: 2px solid rgba(var(--ink), 0.14); }
+.qte-say-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qte-who {
+  font: 700 11px/1.2 var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.75;
+}
+.qte-text { font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+.qte-text::before { content: '“'; }
+.qte-text::after { content: '”'; }
+.qte-say-reply .qte-text { font-size: 14px; }
+
+.qte-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.qte-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(var(--ink), 0.1);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.qte-badge-sug { background: rgba(96, 165, 250, 0.18); color: var(--color-text-warm); }
+.qte-badge-pend { background: rgba(255, 196, 0, 0.22); }
+.qte-badge-rej { background: rgba(226, 54, 54, 0.18); color: var(--color-red-light); }
+.qte-badge-off { background: rgba(var(--ink), 0.16); }
+.qte-badge-time { font-variant-numeric: tabular-nums; }
+.qte-note { opacity: 0.75; font-style: italic; margin: 0; }
+.qte-src { opacity: 0.7; color: inherit; }
+
+/* ── the line form ── */
+.qte-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(237, 29, 36, 0.08);
+}
+.qte-form.is-compact { padding: 12px; box-shadow: none; }
+.qte-form-pair {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 2.4fr);
+  gap: 12px;
+}
+.qte-form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+.qte-f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.qte-f-grow { flex: 1; min-width: 220px; }
+.qte-f-time { width: 130px; }
+.qte-fl {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  opacity: 0.75;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.qte-count { font-style: normal; font-weight: 400; opacity: 0.7; text-transform: none; letter-spacing: 0; }
+.qte-count.is-near { color: var(--accent-text); opacity: 1; }
+.qte-who-input { display: flex; align-items: center; gap: 8px; }
+.qte-who-input .admin-cms-input { flex: 1; min-width: 0; }
+.qte-face-slot { display: inline-flex; width: 30px; height: 30px; flex: none; }
+.qte-face-slot:empty { border-radius: 50%; border: 1px dashed var(--border-2); }
+.qte-form textarea.admin-cms-input { resize: vertical; min-height: 44px; line-height: 1.4; }
+.qte-form .admin-cms-input.is-bad { border-color: var(--color-red-light); }
+.qte-form .admin-cms-error:empty { display: none; }
+.qte-form .admin-cms-hint { font-size: 11px; opacity: 0.65; margin: 0; }
+.qte-more { border-top: 1px dashed var(--border-1); padding-top: 8px; }
+.qte-more > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
+.qte-more-sub { font-weight: 400; opacity: 0.6; margin-left: 6px; }
+/* <details> ignores flex for its content in Chrome — stack with margins. */
+.qte-more > .qte-f { margin-top: 10px; }
+.qte-form-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.qte-form-actions .admin-btn { min-height: 36px; padding: 6px 16px; }
+.qte-form-msg { font-size: 12px; opacity: 0.8; }
+
+/* ── the suggestion queue ── */
+.qte-queue { display: flex; flex-direction: column; gap: 12px; }
+.qte-queue-head { display: flex; gap: 16px; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; }
+.qte-queue-head .admin-config-help { flex: 1; min-width: 260px; margin: 0; }
+.qte-queue-filter { display: flex; flex-direction: column; gap: 4px; }
+.qte-queue-list { display: flex; flex-direction: column; gap: 10px; }
+.qte-queue-empty { padding: 32px; font-size: 15px; }
+.qte-sug {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--border-1);
+  border-left: 4px solid rgba(96, 165, 250, 0.7);
+  transition: opacity 0.25s, transform 0.25s;
+}
+.qte-sug.is-done { opacity: 0; transform: translateX(16px); }
+.qte-sug-head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.qte-sug-island { font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+.qte-sug-by { opacity: 0.7; }
+.qte-sug-body { display: flex; gap: 14px; align-items: flex-start; }
+.qte-sug-when {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 96px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(var(--ink), 0.07);
+  text-align: center;
+}
+.qte-sug-when-l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.65; }
+.qte-sug-when b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.qte-sug-line { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.qte-sug-alike {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 196, 0, 0.1);
+  font-size: 12px;
+}
+.qte-sug-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.qte-sug-actions .admin-btn { min-height: 36px; }
+.qte-sug-reject { display: inline-flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.qte-sug-reject .qte-reason { min-width: 180px; }
+
+/* ── import / export ── */
+.qte-io { display: flex; flex-direction: column; gap: 16px; }
+.qte-io-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--border-1);
+}
+.qte-io-card .admin-h3 { margin: 0; }
+.qte-io-card > .admin-btn { align-self: flex-start; min-height: 36px; padding: 6px 18px; }
+.qte-io-card code { font-size: 12px; }
+.qte-paste > summary { cursor: pointer; font-size: 13px; }
+.qte-paste textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 8px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.qte-io-sources { display: flex; flex-direction: column; gap: 4px; }
+.qte-io-src {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(var(--ink), 0.06);
+  font-size: 13px;
+}
+.qte-io-src.is-bad { background: rgba(226, 54, 54, 0.12); color: var(--color-red-light); }
+.qte-io-src .admin-btn { padding: 2px 8px; }
+.qte-io-sum { display: flex; gap: 8px; flex-wrap: wrap; }
+.qte-io-stat { padding: 6px 12px; border-radius: 999px; font-size: 13px; background: rgba(var(--ink), 0.08); }
+.qte-io-stat.is-ok { background: rgba(74, 222, 128, 0.16); }
+.qte-io-stat.is-dupe { background: rgba(255, 196, 0, 0.16); }
+.qte-io-stat.is-bad { background: rgba(226, 54, 54, 0.14); }
+.qte-io-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.qte-io-table th, .qte-io-table td { padding: 6px 8px; border-bottom: 1px solid var(--border-1); text-align: left; }
+.qte-io-table td:not(:first-child), .qte-io-table th:not(:first-child) { text-align: right; width: 110px; font-variant-numeric: tabular-nums; }
+.qte-io-table td.is-bad { color: var(--color-red-light); font-weight: 700; }
+.qte-io-errs { font-size: 12px; }
+.qte-io-errs summary { cursor: pointer; font-weight: 600; color: var(--color-red-light); }
+.qte-io-errs ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; max-height: 280px; overflow: auto; }
+.qte-io-go { display: flex; gap: 10px 16px; align-items: center; flex-wrap: wrap; }
+.qte-io-mode { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+.qte-io-progress { flex-basis: 100%; height: 6px; border-radius: 3px; background: rgba(var(--ink), 0.1); overflow: hidden; }
+.qte-io-progress[hidden] { display: none; }
+.qte-io-progress span { display: block; height: 100%; width: 0; background: var(--color-primary); transition: width 0.3s; }
+.qte-io-tools { display: flex; gap: 8px; }
+
+@media (max-width: 720px) {
+  .qte-form-pair { grid-template-columns: 1fr; }
+  .qte-line { flex-direction: column; }
+  .qte-line-actions { justify-content: flex-start; }
+  .qte-sug-body { flex-direction: column; }
+  .qte-sug-when { flex-direction: row; gap: 8px; }
+  .qte-sug-reject { margin-left: 0; }
+}

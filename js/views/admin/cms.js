@@ -24,6 +24,7 @@
             <button class="admin-subtab${on('locations')}" data-cms="locations">Locations</button>
             <button class="admin-subtab${on('dialogues')}" data-cms="dialogues">Dialogues</button>
             <button class="admin-subtab${on('scenes')}" data-cms="scenes">Scene stills</button>
+            <button class="admin-subtab${on('quotes')}" data-cms="quotes">Quotes</button>
           </div>
           <div id="admin-cms-host"></div>
         </div>

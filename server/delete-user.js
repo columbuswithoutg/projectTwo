@@ -121,6 +121,16 @@ function planUserDeletion({ userId, username } = {}) {
   // Scene Guess bests — same reason: a deleted user's record (and crown)
   // would otherwise sit on the island forever.
   steps.push({ name: 'scene-scores', model: 'SceneScore', op: 'deleteMany', filter: { userId: id } });
+  // Quote Guess: the same for their bests; their suggestions still waiting
+  // (or turned down) go; lines of theirs already in the game stay, without
+  // the credit ("Suggested by @…").
+  steps.push({ name: 'quote-scores', model: 'QuoteScore', op: 'deleteMany', filter: { userId: id } });
+  steps.push({ name: 'quote-suggestions', model: 'QuoteLine', op: 'deleteMany', filter: { suggestedBy: id, status: { $ne: 'approved' } } });
+  steps.push({
+    name: 'quote-credits', model: 'QuoteLine', op: 'updateMany',
+    filter: { suggestedBy: id },
+    update: { $set: { suggestedBy: null, suggestedByName: '' } }
+  });
 
   steps.push({ name: 'destroy-assets', model: 'Upload', op: 'destroyAssets', filter: { userId: id } });
   steps.push({ name: 'uploads', model: 'Upload', op: 'deleteMany', filter: { userId: id } });

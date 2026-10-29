@@ -234,7 +234,8 @@ test('Scene Guess emit: an ack before stop() still resolves normally', async () 
 });
 
 test('Scene Guess: every error the server can reply with has its own message', () => {
-  const server = read('server/scene-guess.js') + read('js/scene-guess-logic.js');
+  // The flow's codes live in the shared engine (server/island-game.js).
+  const server = read('server/scene-guess.js') + read('server/island-game.js') + read('js/scene-guess-logic.js');
   const codes = new Set();
   // Short kebab-case codes only (the logic's CMS validation messages are prose).
   for (const m of server.matchAll(/error: '([a-z][a-z-]*)'/g)) codes.add(m[1]);

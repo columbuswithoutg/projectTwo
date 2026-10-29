@@ -25,7 +25,8 @@ router.get('/public', async (req, res) => {
             npcBodyTypes: { ...defaults.world.npcBodyTypes, ...((doc.world && doc.world.npcBodyTypes) || {}) },
             maxProps: (doc.world && Number.isFinite(doc.world.maxProps)) ? doc.world.maxProps : defaults.world.maxProps,
             homeMaxProps: (doc.world && Number.isFinite(doc.world.homeMaxProps)) ? doc.world.homeMaxProps : defaults.world.homeMaxProps,
-            sceneRoundSec: (doc.world && Number.isFinite(doc.world.sceneRoundSec)) ? doc.world.sceneRoundSec : defaults.world.sceneRoundSec
+            sceneRoundSec: (doc.world && Number.isFinite(doc.world.sceneRoundSec)) ? doc.world.sceneRoundSec : defaults.world.sceneRoundSec,
+            quoteRoundSec: (doc.world && Number.isFinite(doc.world.quoteRoundSec)) ? doc.world.quoteRoundSec : defaults.world.quoteRoundSec
           },
           version:   doc.version || 1
         }

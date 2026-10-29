@@ -23,6 +23,7 @@ test('plan: ordered steps, assets collected first and destroyed after the user i
   assert.deepEqual(names, [
     'collect-assets', 'feedposts-own', 'feedposts-others', 'messages', 'reports-snapshot',
     'watched-with', 'world-houses', 'user', 'friends', 'project-stays', 'scene-scores',
+    'quote-scores', 'quote-suggestions', 'quote-credits',
     'destroy-assets', 'uploads'
   ]);
   assert.ok(names.indexOf('destroy-assets') > names.indexOf('user'));
@@ -105,7 +106,7 @@ function stubModels({ fail = {}, uploads = [], user = null } = {}) {
     }
   });
   const models = {};
-  for (const m of ['User', 'Friend', 'ProjectStay', 'SceneScore', 'FeedPost', 'Message', 'Report', 'Upload', 'WorldHouse']) {
+  for (const m of ['User', 'Friend', 'ProjectStay', 'SceneScore', 'QuoteScore', 'QuoteLine', 'FeedPost', 'Message', 'Report', 'Upload', 'WorldHouse']) {
     models[m] = make(m);
   }
   return { models, calls };
@@ -131,6 +132,11 @@ test('deleteUser: runs every step in plan order and reports counts', async () =>
   assert.deepEqual(r.user, { deleted: 1 });
   assert.deepEqual(r['watched-with'], { modified: 2 });
   assert.deepEqual(destroyed, [['p/a', 'image']]);
+  // Quote Guess: pending / rejected suggestions go, approved lines lose the credit.
+  const q = calls.filter(c => c.model === 'QuoteLine');
+  assert.deepEqual(q.map(c => c.op), ['deleteMany', 'updateMany']);
+  assert.deepEqual(q[0].filter, { suggestedBy: ID, status: { $ne: 'approved' } });
+  assert.deepEqual(q[1].update, { $set: { suggestedBy: null, suggestedByName: '' } });
   // The User doc is deleted before any Cloudinary destroy.
   const writes = calls.filter(c => c.op !== 'find' && c.op !== 'findById').map(c => `${c.model}.${c.op}`);
   assert.equal(writes[writes.length - 1], 'Upload.deleteMany');

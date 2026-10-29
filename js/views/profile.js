@@ -4,23 +4,34 @@
 const ProfileView = {
   title: 'Profile',
 
-  // Scene Guess: "👑 Iron Man 1,773" for every island this user holds the
-  // record on (empty — and hidden — while the game is switched off). Shared
-  // with the friend profile (js/views/friend-profile.js).
+  // The island games: "🎬 Iron Man 1,773" for every island where this user
+  // holds the Scene Guess record, "💬 Iron Man 9,100" for Quote Guess, and
+  // how many of their suggested quotes made it into Quote Guess. Empty — and
+  // hidden — while the games are switched off. Shared with the friend
+  // profile (js/views/friend-profile.js).
   async championBadges(el, username) {
     if (!el || !username) return;
-    try {
-      const res = await Auth.fetch(`${API}/world/scene/champions?user=${encodeURIComponent(username)}`);
-      const data = res.ok ? await res.json() : null;
-      const items = (data && Array.isArray(data.items)) ? data.items : [];
-      if (!items.length || !el.isConnected) return;
-      el.innerHTML = `
-        <p class="profile-section-label">👑 Island champion</p>
-        <div class="profile-champion-list">${items.map(i => `
-          <span class="profile-champion-badge" title="Scene Guess island record">👑 ${esc(i.title)} <b>${Number(i.score).toLocaleString()}</b></span>`).join('')}
-        </div>`;
-      el.hidden = false;
-    } catch (_) { /* no badges is fine */ }
+    const get = async (game) => {
+      try {
+        const res = await Auth.fetch(`${API}/world/${game}/champions?user=${encodeURIComponent(username)}`);
+        return res.ok ? await res.json() : null;
+      } catch (_) { return null; }
+    };
+    const [scene, quote] = await Promise.all([get('scene'), get('quote')]);
+    const badge = (i, icon, game) => `
+      <span class="profile-champion-badge" title="${game} island record">${icon} ${esc(i.title)} <b>${Number(i.score).toLocaleString()}</b></span>`;
+    const items = [].concat(
+      ((scene && scene.items) || []).map(i => badge(i, '🎬', 'Scene Guess')),
+      ((quote && quote.items) || []).map(i => badge(i, '💬', 'Quote Guess')));
+    const lines = (quote && Number(quote.linesAdded)) || 0;
+    if ((!items.length && !lines) || !el.isConnected) return;
+    el.innerHTML = `
+      <p class="profile-section-label">${items.length ? '👑 Island champion' : '💬 Quote Guess'}</p>
+      <div class="profile-champion-list">
+        ${items.join('')}
+        ${lines ? `<span class="profile-champion-badge is-lines" title="Quotes they suggested that are now in Quote Guess">💬 Lines added <b>${lines.toLocaleString()}</b></span>` : ''}
+      </div>`;
+    el.hidden = false;
   },
 
   mount(container) {

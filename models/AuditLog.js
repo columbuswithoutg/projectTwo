@@ -15,7 +15,9 @@ const AuditLogSchema = new mongoose.Schema({
       'resetPassword', 'configChange', 'contentEdit',
       'deleteFriendRequest',
       'reportStatus', 'reportReply', 'deleteReport',
-      'scoreReset',  // Scene Guess: one score removed / an island board reset
+      'scoreReset',  // Scene Guess / Quote Guess: one score removed / an island board reset
+      'quoteModerate', // Quote Guess: a player's suggested line approved / rejected
+      'quoteImport',   // Quote Guess: a bulk import of lines committed / undone
       'markWatched'  // projects marked watched for a user (timer skipped)
     ]
   },

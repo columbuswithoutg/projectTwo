@@ -33,7 +33,8 @@ const NetLogic = require('../js/world-net-logic');
 const contentLoader = require('../server/contentLoader');
 // Scene Guess minigame — the live games; hooked in below (attach, register,
 // zone changes, retired / reconnecting sockets, punch + snap immunity).
-const SceneGuess = require('../server/scene-guess').instance();
+// Every island minigame (Scene Guess, Quote Guess) behind one interface.
+const IslandGames = require('../server/island-games');
 // The client sends its character on join and the server re-broadcasts it to
 // every other joiner, so it is reduced to the known slots, each an in-range
 // integer (server/character.js — the same ranges the profile PUT enforces).
@@ -577,10 +578,10 @@ module.exports = (io) => {
     return island && allowed ? island : null;
   }
 
-  SceneGuess.attach(io, { players: worldPlayers, rateOk, touchStay, zoneOf });
+  IslandGames.attach(io, { players: worldPlayers, rateOk, touchStay, zoneOf });
 
   io.on('connection', (socket) => {
-    SceneGuess.register(socket);
+    IslandGames.register(socket);
 
     // Client must emit 'world:join' before broadcasting anything else.
     socket.on('world:join', guard('world.join', (raw) => {
@@ -635,7 +636,7 @@ module.exports = (io) => {
             const old = io.sockets.sockets.get(sid);
             if (old && old.data) old.data.voiceScope = null;
           }
-          SceneGuess.retire(sid);   // its game seat waits for this new socket (resume below)
+          IslandGames.retire(sid);   // its game seat waits for this new socket (resume below)
           worldPlayers.delete(sid);
           // …and out of the room, or the retired tab keeps receiving
           // everyone's positions and chat.
@@ -668,7 +669,7 @@ module.exports = (io) => {
       // Tell everyone else about the new arrival.
       socket.to('world').emit('world:joined', NetLogic.publicPlayer(player));
       // Back on a new socket mid-game (reload / reconnect / new tab)? Retake the seat.
-      SceneGuess.resume(socket);
+      IslandGames.resume(socket);
     }));
 
     socket.on('world:pos', guard('world.pos', (raw) => {
@@ -712,7 +713,7 @@ module.exports = (io) => {
       p.projectId = zone;
       socket.emit('world:zone', { projectId: zone });
       // After the zone so the client knows its island before the game shows.
-      SceneGuess.onZone(socket, p, prevZone, zone);
+      IslandGames.onZone(socket, p, prevZone, zone);
       if (inVoice) {
         for (const id of oldPeers) {
           io.to(id).emit('voice:peer-left', { id: socket.id });
@@ -834,7 +835,7 @@ module.exports = (io) => {
         const victim = worldPlayers.get(target);
         // Mid Scene Guess the player can't move or dodge — a knockdown (or a
         // shove off the island, which would drop them from the game) is griefing.
-        if (SceneGuess.isPlaying(target)) {
+        if (IslandGames.isPlaying(target)) {
           socket.to('world').emit('world:punch', { id: socket.id, target: null });
           return reply({ ok: false, reason: 'busy' });
         }
@@ -877,7 +878,7 @@ module.exports = (io) => {
       if (!me) return;
       const npc = raw && raw.npc;
       if (typeof npc !== 'string' || !NPC_IDS.has(npc)) return;
-      if (SceneGuess.isPlaying(socket.id)) return;   // heroes leave Scene Guess players alone too
+      if (IslandGames.isPlaying(socket.id)) return;   // heroes leave island-game players alone too
       const now = Date.now();
       // Still down / getting up from the last hit — the hero waits its turn
       // (same immunity as player punches, so heroes can't chain-stun either).
@@ -931,7 +932,7 @@ module.exports = (io) => {
 
       // Scene Guess players are never dusted: the respawn teleports them off
       // their island, which would drop them from the game.
-      const others = [...worldPlayers.keys()].filter(id => id !== socket.id && !SceneGuess.isPlaying(id));
+      const others = [...worldPlayers.keys()].filter(id => id !== socket.id && !IslandGames.isPlaying(id));
       // Unbiased random half via a partial Fisher–Yates shuffle.
       for (let i = others.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -1233,7 +1234,7 @@ module.exports = (io) => {
         freeStonesOf(socket.id);   // drop any stones this player was carrying
         releaseNpcTarget(socket.id);
       }
-      SceneGuess.socketGone(socket.id);   // their game seat waits RECONNECT_GRACE_MS
+      IslandGames.socketGone(socket.id);   // their game seat waits RECONNECT_GRACE_MS
       const home = homePlayers.get(socket.id);
       if (home) {
         homePlayers.delete(socket.id);

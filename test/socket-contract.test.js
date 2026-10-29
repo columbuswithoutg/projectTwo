@@ -7,7 +7,7 @@
  *
  *   client: js/home-socket.js (WORLD_EVENTS / HOME_EVENTS maps, read off the
  *           real module via vm, + which keys go through socket.emit / .on),
- *           js/voice-chat.js and js/scene-guess.js (string literals).
+ *           js/voice-chat.js, js/scene-guess.js and js/quote-guess.js (string literals).
  *   server: every .js under routes/ and server/ — a literal right after
  *           `on(` is a listener (covers socket.on and scene-guess's `on`
  *           helper); any other literal is something the server sends
@@ -92,7 +92,7 @@ for (const map of [WORLD_EVENTS, HOME_EVENTS]) {
     if (mapOnKeys.has(k)) client.on.add(v);
   }
 }
-for (const rel of ['js/voice-chat.js', 'js/scene-guess.js']) {
+for (const rel of ['js/voice-chat.js', 'js/scene-guess.js', 'js/quote-guess.js']) {
   const s = scanLiterals(read(rel));
   s.on.forEach(e => client.on.add(e));
   s.emit.forEach(e => client.emit.add(e));
@@ -104,8 +104,8 @@ test('the scan found the expected surface (guards against a regex gone blind)', 
   assert.ok(server.emit.size >= 25, 'server emits: ' + server.emit.size);
   assert.ok(client.on.size >= 25, 'client listeners: ' + client.on.size);
   assert.ok(client.emit.size >= 20, 'client emits: ' + client.emit.size);
-  for (const e of ['world:join', 'home:join', 'voice:announce', 'world:sg-start']) assert.ok(server.on.has(e), e);
-  for (const e of ['world:snapshot', 'home:house', 'voice:peers', 'world:sg-state']) assert.ok(client.on.has(e), e);
+  for (const e of ['world:join', 'home:join', 'voice:announce', 'world:sg-start', 'world:qg-start', 'world:qg-answer']) assert.ok(server.on.has(e), e);
+  for (const e of ['world:snapshot', 'home:house', 'voice:peers', 'world:sg-state', 'world:qg-state']) assert.ok(client.on.has(e), e);
 });
 
 test('every event the client emits has a server listener', () => {

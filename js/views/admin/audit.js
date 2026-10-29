@@ -7,7 +7,7 @@
   const ACTIONS = [
     'ban', 'unban', 'deleteUser', 'deleteMemory',
     'resetPassword', 'configChange', 'contentEdit', 'deleteFriendRequest',
-    'reportStatus', 'reportReply', 'deleteReport', 'scoreReset', 'markWatched'
+    'reportStatus', 'reportReply', 'deleteReport', 'scoreReset', 'quoteModerate', 'quoteImport', 'markWatched'
   ];
 
   const Audit = {

@@ -26,6 +26,7 @@ const SceneStill = require('../models/SceneStill');
 const SceneIsland = require('../models/SceneIsland');
 const FeedPost = require('../models/FeedPost');
 const SceneData = require('../server/scene-guess-data');
+const QuoteData = require('../server/quote-guess-data');
 const Messages = require('../server/messages');
 const Upload = require('../models/Upload');
 const UploadPolicy = require('../server/upload-policy');
@@ -197,10 +198,14 @@ router.delete('/users/:id', async (req, res) => {
   // step is independent and the summary says which, if any, failed.
   const summary = await deleteUserCascade({
     User, Friend, ProjectStay, SceneScore, FeedPost, Report, Upload,
+    QuoteScore: require('../models/QuoteScore'),
+    QuoteLine: require('../models/QuoteLine'),
     Message: require('../models/Message'),
     WorldHouse: require('../models/WorldHouse')
   }, cloudinary, { userId: req.params.id, username: user.username });
   SceneData.invalidate('board', null);
+  QuoteData.invalidate('board', null);
+  QuoteData.invalidate('pool', null);
   // Live sockets drop last. Their disconnect handlers drain any stay into
   // pendingCredits; dropCreditsFor marked the user, so that credit is
   // discarded — the second call just sweeps anything queued meanwhile.
@@ -601,7 +606,8 @@ const CONFIG_RULES = {
   'fight.spawnChance': { min: 0, max: 1 },
   'world.maxProps':    { min: 1, max: 60, integer: true },
   'world.homeMaxProps':{ min: 1, max: 60, integer: true },
-  'world.sceneRoundSec':{ min: 15, max: 60, integer: true }
+  'world.sceneRoundSec':{ min: 15, max: 60, integer: true },
+  'world.quoteRoundSec':{ min: 10, max: 30, integer: true }
 };
 
 // Per-NPC body type (world.npcBodyTypes): keys must be real NPC ids, values a
@@ -657,6 +663,8 @@ router.put('/config', async (req, res) => {
     if ('dialoguesEnabled' in body.flags) update['flags.dialoguesEnabled'] = !!body.flags.dialoguesEnabled;
     if ('worldEventStonesEnabled' in body.flags) update['flags.worldEventStonesEnabled'] = !!body.flags.worldEventStonesEnabled;
     if ('sceneGuessEnabled' in body.flags) update['flags.sceneGuessEnabled'] = !!body.flags.sceneGuessEnabled;
+    if ('quoteGuessEnabled' in body.flags) update['flags.quoteGuessEnabled'] = !!body.flags.quoteGuessEnabled;
+    if ('quoteSuggestEnabled' in body.flags) update['flags.quoteSuggestEnabled'] = !!body.flags.quoteSuggestEnabled;
   }
 
   // pauseMin must be < pauseMax — silently swap if both updated and inverted
@@ -686,6 +694,7 @@ router.put('/config', async (req, res) => {
 
   logAudit(req, 'configChange', null, { diff: diffConfig(before || AdminConfig.defaults(), after) });
   SceneData.invalidate('settings');   // Scene Guess on/off + round length apply at once
+  QuoteData.invalidate('settings');   // …and Quote Guess's
   res.json(after);
 });
 
@@ -702,6 +711,7 @@ router.post('/config/reset', async (req, res) => {
   ).lean();
   logAudit(req, 'configChange', null, { reset: true, diff: diffConfig(before || defaults, after) });
   SceneData.invalidate('settings');
+  QuoteData.invalidate('settings');
   res.json(after);
 });
 
@@ -798,6 +808,7 @@ async function ensureDialoguesSeeded() {
 function projectsChanged(id) {
   watchRules.invalidate();
   SceneData.invalidate('projects', id || null);
+  QuoteData.invalidate('projects', id || null);
   let WorldSocket = null;
   try { WorldSocket = require('./world-socket'); } catch (_) {}
   if (WorldSocket && WorldSocket.invalidateProjectGrid) WorldSocket.invalidateProjectGrid();
@@ -925,7 +936,8 @@ router.delete('/content/projects/:id', async (req, res) => {
   // RT-06: its Scene Guess island goes too — the switch, the stills (rows +
   // Cloudinary images, as the still delete does) and the scoreboard.
   const scenes = await deleteProjectScenes(id);
-  logAudit(req, 'contentEdit', { type: 'project', id }, { action: 'delete', unlinked: linked.map(p => p.id), scenes });
+  const quotes = await require('./admin-quotes').deleteProjectQuotes(id);
+  logAudit(req, 'contentEdit', { type: 'project', id }, { action: 'delete', unlinked: linked.map(p => p.id), scenes, quotes });
   res.json({ message: 'Deleted', unlinked: linked.map(p => p.id) });
 });
 
@@ -1137,5 +1149,7 @@ router.put('/content/dialogues', async (req, res) => {
 // writer and the Cloudinary URL parser stay private to this file and are
 // handed over rather than moved.
 router.use('/scenes', require('./admin-scenes')({ logAudit, parseCloudinary }));
+// Quote Guess quote bank, suggestion queue + boards (routes/admin-quotes.js).
+router.use('/quotes', require('./admin-quotes')({ logAudit }));
 
 module.exports = router;

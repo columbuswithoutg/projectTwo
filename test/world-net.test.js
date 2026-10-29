@@ -118,7 +118,7 @@ test('allow: per-key buckets from RATES; unknown keys are unlimited', () => {
 });
 
 test('Scene Guess events each have a bucket (an unknown key would be unlimited)', () => {
-  for (const key of ['sgStart', 'sgJoin', 'sgGuess', 'sgMisc']) {
+  for (const key of ['sgStart', 'sgJoin', 'sgGuess', 'sgMisc', 'qgStart', 'qgJoin', 'qgAnswer', 'qgMisc']) {
     assert.ok(N.RATES[key], key);
     const store = {};
     let n = 0;
@@ -126,6 +126,7 @@ test('Scene Guess events each have a bucket (an unknown key would be unlimited)'
     assert.equal(n, N.RATES[key].cap, `${key}: burst only`);
   }
   assert.ok(N.RATES.sgStart.perSec <= 0.1, 'starting a lobby is the tightest');
+  assert.ok(N.RATES.qgStart.perSec <= 0.1, 'for either game');
 });
 
 test('join buckets: roomy enough for reloads / reconnects, refillMs says when to retry', () => {

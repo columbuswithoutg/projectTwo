@@ -61,8 +61,9 @@ export const CHUNKS = {
     // boot.js can reassign window.projects etc. after the live fetch)
     'js/world-config.js', 'projects.js', 'characters.js', 'locations.js',
     'js/config.js', 'js/theme.js', 'js/auth.js', 'js/state.js', 'js/layout.js',
-    // scene-guess-logic: Scene Guess rules, used by the /world HUD and the admin stills tab
-    'js/utils.js', 'js/pan-zoom-logic.js', 'js/ux-logic.js', 'js/pan-zoom.js', 'js/messaging-logic.js', 'js/scene-guess-logic.js', 'js/poster-art.js', 'js/nodeFactory.js', 'js/renderer.js',
+    // scene-guess-logic: Scene Guess rules, used by the /world HUD and the admin stills tab;
+    // quote-guess-logic (after it — it reuses its time parsing): Quote Guess rules, /world HUD + admin quotes tab
+    'js/utils.js', 'js/pan-zoom-logic.js', 'js/ux-logic.js', 'js/pan-zoom.js', 'js/messaging-logic.js', 'js/scene-guess-logic.js', 'js/quote-guess-logic.js', 'js/poster-art.js', 'js/nodeFactory.js', 'js/renderer.js',
     // road-router: rook-style roads shared by the chart, walkers, the admin board and /world
     'js/road-router.js', 'js/orderRenderer.js',
     'js/watch-controls.js', 'js/post-composer.js', 'js/popup.js', 'js/goals.js', 'js/friend-view.js', 'js/friends.js',
@@ -86,8 +87,12 @@ export const CHUNKS = {
     'js/playground3d-humanoid-logic.js', 'js/playground3d-gear-logic.js', 'js/playground3d-humanoid.js',
     'js/playground3d-avatar.js', 'js/playground3d-gear.js', 'js/playground3d-input-logic.js', 'js/playground3d-input.js', 'js/playground3d-occlusion.js',
     'js/playground3d-props.js', 'js/playground3d-house.js', 'js/pg-orientation.js', 'js/playground3d-scene.js',
+    // playground3d-quote: Quote Guess's screen painter + laurel (needs PG3DScene's paint helpers)
+    'js/playground3d-quote.js',
     'js/playground3d.js',
-    'js/home-socket.js', 'js/scene-guess.js', 'js/voice-chat.js', 'js/house-editor.js',
+    // island-game-hud: the shared island-game HUD shell (Quote Guess); island-games: the
+    // arbiter that shares each island's screen + the header chip between the games
+    'js/home-socket.js', 'js/scene-guess.js', 'js/island-game-hud.js', 'js/quote-guess.js', 'js/island-games.js', 'js/voice-chat.js', 'js/house-editor.js',
     'js/views/customize.js', 'js/views/home.js', 'js/views/world.js', 'js/views/friend-home.js'
   ],
   admin: [
@@ -98,6 +103,7 @@ export const CHUNKS = {
     'js/project-logic.js', 'js/views/admin/prereq-picker.js', 'js/views/admin/cms-projects.js',
     'js/views/admin/cms-projects-board.js', 'js/views/admin/cms-characters.js',
     'js/views/admin/cms-locations.js', 'js/views/admin/cms-dialogues.js', 'js/views/admin/cms-scenes.js',
+    'js/views/admin/cms-quotes.js', 'js/views/admin/cms-quotes-queue.js', 'js/views/admin/cms-quotes-io.js',
     'js/views/admin/reports.js', 'js/views/admin/audit.js', 'js/views/admin/overview.js'
   ]
 };
@@ -111,16 +117,17 @@ export const EXPECT_GLOBALS = {
          'FriendView', 'WatchOrderView', 'AppView', 'LoginView', 'HomeEditView', 'esc', 'toast',
          'MessagesView', 'ReportsView', 'Messages', 'MessagesBadge', 'Reports', 'showReportDialog', 'PanZoom', 'PosterArt', 'NavDrawer'],
   world: ['Playground', 'Playground3D', 'Multiplayer', 'VoiceManager', 'PG3DProps', 'HouseEditor', 'SceneGuess',
+          'IslandGameHud', 'QuoteGuess', 'IslandGames',
           'HomeView', 'CustomizeView', 'WorldView', 'FriendHomeView'],
   admin: ['AdminView']
 };
 // Globals attached as properties (`root.PG3DPhysics = api` in the UMD-style
 // files) rather than declared — checked for a `root.Name =` assignment instead.
 export const EXPECT_ATTACHED = {
-  core: ['MessagingLogic', 'HumanoidPrefetch', 'SceneGuessLogic', 'PanZoomLogic', 'UxLogic'],
+  core: ['MessagingLogic', 'HumanoidPrefetch', 'SceneGuessLogic', 'QuoteGuessLogic', 'PanZoomLogic', 'UxLogic'],
   admin: ['ProjectLogic', 'AdminUsersLogic'],
   world: ['PG3DPhysics', 'WorldNetLogic', 'PG3DInputLogic', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid', 'PG3DGearLogic',
-          'PG3DAvatar', 'PG3DGear', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation', 'PG3DScene']
+          'PG3DAvatar', 'PG3DGear', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation', 'PG3DScene', 'PG3DQuote']
 };
 // Must stay `var` (window properties): js/boot.js does window[key] = items.
 export const VAR_GLOBALS = ['projects', 'characters', 'LOCATIONS'];

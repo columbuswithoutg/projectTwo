@@ -6,6 +6,9 @@
  * (< DOORWAY_MERGE_GAP) are ONE door; a doorway never runs past the wall's
  * ends; and a screen never hangs over a doorway — checked for every bundled
  * project against every road it will ever have.
+ * Also the shared screen's arbitration (pickScreenKind: a game that's on
+ * owns it, idle games take 8 s turns) and crownLayout (how a double
+ * champion's crowns stack).
  *
  * Run: npm test  (node --test)
  ************************************************/
@@ -151,4 +154,117 @@ test('screenSpot: KNOWN_NO_ROOM lists only islands that really have no room', ()
 test('screenSpot: no grid position → null', () => {
   assert.equal(S.screenSpot({ id: 'x' }, projects, W), null);
   assert.equal(S.screenSpot(null, projects, W), null);
+});
+
+// ── one screen, several games ──
+
+const idle = (extra) => Object.assign({ mode: 'idle', title: 'Iron Man', liveHost: null }, extra);
+const scene = (view) => ({ kind: 'scene', view });
+const quote = (view) => ({ kind: 'quote', view });
+
+test('pickScreenKind: one game always has the screen, idle or not', () => {
+  for (const now of [0, 7999, 8000, 123456789]) {
+    assert.equal(S.pickScreenKind([scene(idle())], now), 'scene');
+    assert.equal(S.pickScreenKind([quote(idle())], now), 'quote');
+  }
+  assert.equal(S.pickScreenKind([scene({ mode: 'round' })], 5), 'scene');
+});
+
+test('pickScreenKind: nothing on the island → null', () => {
+  assert.equal(S.pickScreenKind([], 0), null);
+  assert.equal(S.pickScreenKind(null, 0), null);
+  assert.equal(S.pickScreenKind([null, { view: idle() }], 0), null);
+});
+
+test('pickScreenKind: idle games take turns, SWAP_MS (8 s) each, on wall-clock slots', () => {
+  assert.equal(S.SWAP_MS, 8000);
+  const both = [scene(idle()), quote(idle())];
+  assert.equal(S.pickScreenKind(both, 0), 'scene');
+  assert.equal(S.pickScreenKind(both, 7999), 'scene');
+  assert.equal(S.pickScreenKind(both, 8000), 'quote');
+  assert.equal(S.pickScreenKind(both, 15999), 'quote');
+  assert.equal(S.pickScreenKind(both, 16000), 'scene');
+  // Same answer for everyone at the same moment, whatever the clock's size.
+  const t = 1761700000000;
+  assert.equal(S.pickScreenKind(both, t), Math.floor(t / 8000) % 2 ? 'quote' : 'scene');
+  // A missing view counts as idle.
+  assert.equal(S.pickScreenKind([{ kind: 'scene' }, { kind: 'quote' }], 8000), 'quote');
+});
+
+test('pickScreenKind: a custom swap, and a bad one falls back to 8 s', () => {
+  const both = [scene(idle()), quote(idle())];
+  assert.equal(S.pickScreenKind(both, 2500, 2000), 'quote');
+  assert.equal(S.pickScreenKind(both, 4500, 2000), 'scene');
+  for (const bad of [0, -5, NaN]) assert.equal(S.pickScreenKind(both, 9000, bad), 'quote');
+  // A clock before the epoch (or junk) still lands on a real game.
+  assert.ok(['scene', 'quote'].includes(S.pickScreenKind(both, -8000)));
+  assert.equal(S.pickScreenKind(both, 'soon'), 'scene');
+});
+
+test('pickScreenKind: a game that is on owns the screen in every slot', () => {
+  for (const mode of ['lobby', 'ready', 'round', 'reveal', 'results']) {
+    for (const now of [0, 8000, 16000, 24000]) {
+      assert.equal(S.pickScreenKind([scene(idle()), quote({ mode })], now), 'quote', mode + ' @' + now);
+      assert.equal(S.pickScreenKind([scene({ mode }), quote(idle())], now), 'scene', mode + ' @' + now);
+    }
+  }
+});
+
+test('pickScreenKind: an idle view naming a liveHost is on (someone else\'s game, state not here yet)', () => {
+  for (const now of [0, 8000]) {
+    assert.equal(S.pickScreenKind([scene(idle()), quote(idle({ liveHost: 'sam' }))], now), 'quote');
+    assert.equal(S.pickScreenKind([scene(idle({ liveHost: '' })), quote(idle())], now), 'scene', 'an unknown host still counts');
+  }
+  assert.equal(S.liveScreenKind([scene(idle()), quote(idle({ liveHost: undefined }))]), null);
+});
+
+test('pickScreenKind: two games on at once (should not happen) → the first registered wins', () => {
+  for (const now of [0, 8000]) assert.equal(S.pickScreenKind([scene({ mode: 'round' }), quote({ mode: 'lobby' })], now), 'scene');
+  assert.equal(S.liveScreenKind([scene({ mode: 'round' }), quote({ mode: 'lobby' })]), 'scene');
+});
+
+test('pickScreenKind / liveScreenKind: inputs are not mutated', () => {
+  const entries = [scene(idle()), quote(idle({ liveHost: 'sam' }))];
+  const copy = JSON.parse(JSON.stringify(entries));
+  S.pickScreenKind(entries, 8000);
+  S.liveScreenKind(entries);
+  assert.deepEqual(entries, copy);
+});
+
+const CROWN = { kind: 'scene', y: 1.86 };
+const LAUREL = { kind: 'quote', y: 1.86, yStacked: 1.84 };
+
+test('crownLayout: one title → that crown at its own y', () => {
+  assert.deepEqual(S.crownLayout([CROWN]), [{ kind: 'scene', y: 1.86 }]);
+  assert.deepEqual(S.crownLayout([LAUREL]), [{ kind: 'quote', y: 1.86 }], 'a lone laurel ignores yStacked');
+  assert.deepEqual(S.crownLayout([{ kind: 'quote', y: 1.9, yStacked: 1.84 }]), [{ kind: 'quote', y: 1.9 }]);
+});
+
+test('crownLayout: both titles → the gold crown stays at 1.86, the laurel rings its band at 1.84', () => {
+  assert.deepEqual(S.crownLayout([CROWN, LAUREL]), [{ kind: 'scene', y: 1.86 }, { kind: 'quote', y: 1.84 }]);
+  // Order in, order out — and the crown stays put whichever comes first.
+  assert.deepEqual(S.crownLayout([LAUREL, CROWN]), [{ kind: 'quote', y: 1.84 }, { kind: 'scene', y: 1.86 }]);
+});
+
+test('crownLayout: no titles, junk entries, a missing y', () => {
+  assert.deepEqual(S.crownLayout([]), []);
+  assert.deepEqual(S.crownLayout(null), []);
+  assert.deepEqual(S.crownLayout([null, { y: 2 }, CROWN]), [{ kind: 'scene', y: 1.86 }]);
+  assert.deepEqual(S.crownLayout([{ kind: 'x' }]), [{ kind: 'x', y: 1.86 }], 'no y → just above the hair');
+  const input = [CROWN, LAUREL];
+  const copy = JSON.parse(JSON.stringify(input));
+  S.crownLayout(input);
+  assert.deepEqual(input, copy, 'inputs are not mutated');
+});
+
+test('paint: the screen helpers are exported for other games\' painters', () => {
+  for (const fn of ['backdrop', 'marquee', 'headline', 'pill', 'roundRect', 'fit', 'initials', 'contain']) {
+    assert.equal(typeof S.paint[fn], 'function', fn);
+  }
+  assert.ok(Array.isArray(S.paint.COLORS) && S.paint.COLORS.length >= 6);
+  assert.equal(S.paint.initials('claude_qa_sam'), 'SA');
+  // fit() trims to the width with an ellipsis (a fake ctx: 10 px per char).
+  const ctx = { measureText: (s) => ({ width: s.length * 10 }) };
+  assert.equal(S.paint.fit(ctx, 'short', 100), 'short');
+  assert.ok(S.paint.fit(ctx, 'a much longer line of text', 100).endsWith('…'));
 });
