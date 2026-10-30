@@ -75,6 +75,7 @@ const Auth = {
   // over the redirect. (state.resetLocal drops its in-flight load promise so
   // the next sign-in doesn't wait on this one.)
   endSession() {
+    if (Auth._onPublicPage()) { Auth._dropQuietly(); return new Promise(() => {}); }
     if (!Auth._sessionEnding) {
       Auth._sessionEnding = true;
       const here = location.pathname + location.search;
@@ -85,6 +86,21 @@ const Auth = {
     return new Promise(() => {});
   },
 
+  // A public page other than /login (a /s/<token> share link) needs no
+  // account: a dead session there — an expired token, or a valid one the
+  // server revoked (401) — is dropped quietly instead of replacing the page
+  // with /login. /login itself keeps the full logout above.
+  _onPublicPage() {
+    try {
+      return location.pathname !== '/login' && typeof Router !== 'undefined' &&
+        !!Router._debug && !!Router._debug.isPublic(location.pathname);
+    } catch (_) { return false; }
+  },
+  _dropQuietly() {
+    Auth.clearToken();
+    if (typeof MessagesBadge !== 'undefined' && MessagesBadge.apply) { try { MessagesBadge.apply(0); } catch (_) {} }
+  },
+
   // fetch() for every SIGNED-IN API call: adds `Authorization: Bearer <token>`
   // from a fresh getToken() (never "Bearer null"), and routes a missing /
   // expired token or a 401 answer through endSession(). Every other status
@@ -93,7 +109,9 @@ const Auth = {
   // keeps using plain fetch).
   fetch(url, opts) {
     const token = Auth.getToken();
-    if (!token) return Auth.endSession();
+    // On a public page the caller gets a plain failure instead of a
+    // redirect (and a promise that settles, so the page can still render).
+    if (!token) return Auth._onPublicPage() ? Promise.reject(new Error('Not signed in')) : Auth.endSession();
     const o = Object.assign({}, opts);
     o.headers = Object.assign({}, o.headers, { Authorization: 'Bearer ' + token });
     return fetch(url, o).then(res => {
@@ -103,6 +121,7 @@ const Auth = {
       // plain failed response.
       const now = localStorage.getItem("mcu_token");
       if (now && now !== token) return res;
+      if (Auth._onPublicPage()) { Auth._dropQuietly(); return res; }
       return Auth.endSession();
     });
   },

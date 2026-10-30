@@ -11,11 +11,11 @@
  *      sticker. Friends who tap it land on /s/<token> (js/views/shared.js).
  * Without file sharing (desktop) the card downloads and the link is copied.
  *
- *   ShareProgress.open()        the share dialog (turns the link on first)
+ *   ShareProgress.open(opts)    the share dialog (turns the link on first);
+ *                               opts.onChange(info) after it turns the link on / off
  *   ShareProgress.link()        GET /api/share/me → { enabled, token, joins }
  *   ShareProgress.turnOff()     DELETE /api/share/me (asks first)
- *   ShareProgress.urlFor(token) the public link
- *   ShareProgress.drawCard(d)   → canvas (exposed for the preview tests)
+ *   ShareProgress.drawCard(d)   → canvas (exposed for test/share-client.test.js)
  *
  * Rules shared with the server (the list, tokens, countdown) are in
  * js/share-logic.js.
@@ -113,6 +113,34 @@ const ShareProgress = (() => {
     }
     if (line) lines.push(line);
     return lines.slice(0, maxLines);
+  }
+
+  // Poster grid box: from under the countdown pill to above the footer
+  // text (baseline 1580), so the bottom of the frame stays free for the
+  // Link sticker. The rows / columns split that gives the biggest posters
+  // wins (14 titles → 7 × 2 at 128 px, 16 → 8 × 2, 20 → 7 × 3); posters
+  // never grow past 128 × 192.
+  const GRID = { top: 1110, bottom: 1530, width: 980, gap: 12, maxW: 128 };
+  function posterGrid(n) {
+    const { top, bottom, width, gap, maxW } = GRID;
+    let best = { cols: 1, rows: 1, pw: 0 };
+    for (let rows = 1; rows <= Math.max(1, n); rows++) {
+      const cols = Math.max(1, Math.ceil(n / rows));
+      const byW = (width - (cols - 1) * gap) / cols;
+      const byH = ((bottom - top) - (rows - 1) * gap) / rows / 1.5;
+      const pw = Math.floor(Math.min(maxW, byW, byH));
+      if (pw > best.pw) best = { cols, rows, pw };
+    }
+    const { cols, rows, pw } = best;
+    const ph = Math.round(pw * 1.5);
+    const rowW = (k) => k * pw + (k - 1) * gap;
+    // Item i's top-left; a short last row is centred.
+    const at = (i) => {
+      const row = Math.floor(i / cols);
+      const inRow = Math.min(cols, n - row * cols);
+      return { x: (W - rowW(inRow)) / 2 + (i % cols) * (pw + gap), y: top + row * (ph + gap) };
+    };
+    return { cols, rows, pw, ph, gap, at };
   }
 
   // d: { username, avatar (img|null), items: [{ project, watched, img }], met, total,
@@ -214,11 +242,12 @@ const ShareProgress = (() => {
       spaced(ctx, 0);
     }
 
-    // Poster grid: 7 × 2, watched ones in full colour with a check, the rest dimmed.
-    const cols = 7, pw = 128, ph = 192, gap = 12;
-    const gx = (W - (cols * pw + (cols - 1) * gap)) / 2, gy = 1110;
+    // Poster grid (posterGrid sizes it to the count), watched ones in full
+    // colour with a check, the rest dimmed.
+    const grid = posterGrid(d.items.length);
+    const { pw, ph } = grid, k = pw / 128;
     d.items.forEach((it, i) => {
-      const x = gx + (i % cols) * (pw + gap), y = gy + Math.floor(i / cols) * (ph + gap);
+      const { x, y } = grid.at(i);
       ctx.save();
       roundRect(ctx, x, y, pw, ph, 10);
       ctx.clip();
@@ -230,9 +259,9 @@ const ShareProgress = (() => {
         ctx.fillStyle = PHASE[PosterArt.phaseOf(it.project) - 1] || PHASE[0];
         ctx.fillRect(x, y, pw, ph);
         ctx.fillStyle = '#ffffff';
-        ctx.font = '400 26px "Bebas Neue", "Arial Narrow", sans-serif';
+        ctx.font = `400 ${Math.round(26 * k)}px "Bebas Neue", "Arial Narrow", sans-serif`;
         wrapLines(ctx, (it.project && it.project.title) || '', pw - 16, 4)
-          .forEach((l, n) => ctx.fillText(l, x + pw / 2, y + 60 + n * 28));
+          .forEach((l, n) => ctx.fillText(l, x + pw / 2, y + Math.round(60 * k) + n * Math.round(28 * k)));
       }
       ctx.restore();
       ctx.lineWidth = 2;
@@ -308,9 +337,18 @@ const ShareProgress = (() => {
     return Promise.resolve(false);
   }
 
-  async function open() {
+  // Readonly means someone else's data is swapped in — except on your own
+  // /s/<token> page, where the swapped-in list is your own watched ids.
+  function ownSharePage() {
+    const a = typeof FriendView !== 'undefined' && FriendView.getActive ? FriendView.getActive() : null;
+    if (!a || !a.shareToken || !Auth.isLoggedIn()) return false;
+    return (Auth.getUsername() || '').toLowerCase() === String(a.username || '').toLowerCase();
+  }
+
+  async function open(opts = {}) {
     $('.share-panel')?.remove();
-    if (state.readonly) return;   // never share a friend's board as your own
+    if (state.readonly && !ownSharePage()) return;   // never share a friend's board as your own
+    const changed = (info) => { if (info && typeof opts.onChange === 'function') { try { opts.onChange(info); } catch (_) {} } };
     try { await state.ensureLoaded(); } catch (_) {}
 
     const panel = document.createElement('div');
@@ -367,6 +405,7 @@ const ShareProgress = (() => {
       close();
       return;
     }
+    changed(linkInfo);
     if (!panel.isConnected) return;
     const url = urlFor(linkInfo.token);
     input.value = url;
@@ -444,6 +483,7 @@ const ShareProgress = (() => {
     btn('off').addEventListener('click', async () => {
       try {
         const res = await turnOff();
+        changed(res);
         if (res) close();
       } catch (_) {
         toast('Couldn’t turn the link off — try again.', 'error');
@@ -451,5 +491,5 @@ const ShareProgress = (() => {
     });
   }
 
-  return { open, link, turnOff, urlFor, drawCard };
+  return { open, link, turnOff, drawCard, _debug: { posterGrid, GRID, ownSharePage } };
 })();

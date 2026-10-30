@@ -48,12 +48,20 @@ const FriendView = (() => {
   // A Doomsday share page (/s/<token>): the same read-only swap, fed by the
   // public share data — { username, profilePicture, watched: [ids] }. Keyed
   // by token, so it never matches a /friend/ visit of the same person.
+  // Returns null only when the server says the link is gone (404); a network
+  // error, 5xx or 429 returns { error: 'unavailable' } so the page can offer
+  // a retry instead of "isn't shared anymore".
   async function enterShared(token) {
     if (_active && _active.shareToken === token) return _active;
-    return _enterWith(async () => {
-      const res = await fetch(`${API}/share/public/${encodeURIComponent(token)}`);
+    let unavailable = false;
+    const data = await _enterWith(async () => {
+      let res;
+      try {
+        res = await fetch(`${API}/share/public/${encodeURIComponent(token)}`);
+      } catch (_) { unavailable = true; return null; }
       const d = await res.json().catch(() => null);
-      if (!res.ok || !d || d.error) return null;
+      if (res.status === 404) return null;
+      if (!res.ok || !d || d.error) { unavailable = true; return null; }
       return {
         ...d,
         shareToken: token,
@@ -61,6 +69,7 @@ const FriendView = (() => {
         walkers: []
       };
     });
+    return data || (unavailable ? { error: 'unavailable' } : null);
   }
 
   async function _enterWith(load) {
@@ -85,7 +94,12 @@ const FriendView = (() => {
     // blanking our progress until reload. ensureLoaded shares that in-flight
     // request. (If a load somehow lands after the swap anyway,
     // state._applyServer routes it into replaceSaved() below.)
-    try { await state.ensureLoaded(); } catch (_) {}
+    // Signed out (a public /s/<token> visit — maybe with an expired token
+    // left in storage) there is nothing of ours to load, and loading would
+    // send the visitor to /login.
+    if (typeof Auth === 'undefined' || Auth.isLoggedIn()) {
+      try { await state.ensureLoaded(); } catch (_) {}
+    }
     if (seq !== _enterSeq) return null;
 
     // Snapshot current state so exit() can restore.

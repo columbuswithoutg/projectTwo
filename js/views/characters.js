@@ -3,8 +3,13 @@
  ************************************************/
 const CharactersView = {
   title: 'MCU Characters',
+  // Bumped by every mount/unmount: boot can remount /characters while the
+  // first mount's progress load is still in flight, and that late load
+  // must not wire its listeners onto the new grid (two sheets per tap).
+  _seq: 0,
 
   mount(container) {
+    const seq = ++this._seq;
     if (!Auth.isLoggedIn()) {
       Router.go('/login');
       return;
@@ -27,24 +32,25 @@ const CharactersView = {
       </div>
     `;
 
-    document.getElementById('back-btn').addEventListener('click', () => Router.back('/'));
+    container.querySelector('#back-btn').addEventListener('click', () => Router.back('/'));
 
-    this._load();
+    this._load(container, seq);
   },
 
-  async _load() {
+  async _load(container, seq) {
     const watchedIds = await this._getWatchedIds();
+    if (seq !== this._seq) return;   // unmounted or remounted meanwhile
     // Shared bodies (Hulk / Bruce Banner) are separate cards on this page.
     const entries = characterPageEntries(characters);
     const unlocked = entries.filter(c => isCharUnlocked(c, watchedIds));
     const byId = new Map(unlocked.map(c => [c.id, c]));
     const totalText = `${unlocked.length} of ${entries.length} unlocked`;
 
-    const countEl = document.getElementById('unlocked-count');
+    const countEl = container.querySelector('#unlocked-count');
     if (countEl) countEl.textContent = totalText;
 
     const renderGrid = (filter = '') => {
-      const grid = document.getElementById('characters-grid');
+      const grid = container.querySelector('#characters-grid');
       if (!grid) return [];
 
       const filtered = characterSearch(unlocked, filter);
@@ -66,7 +72,7 @@ const CharactersView = {
 
     renderGrid();
 
-    const grid = document.getElementById('characters-grid');
+    const grid = container.querySelector('#characters-grid');
     if (grid) {
       grid.addEventListener('click', (e) => {
         const card = e.target.closest('.character-card');
@@ -75,11 +81,11 @@ const CharactersView = {
       });
     }
 
-    const searchInput = document.getElementById('search-input');
+    const searchInput = container.querySelector('#search-input');
     if (searchInput) {
       searchInput.addEventListener('input', (e) => {
         const visible = renderGrid(e.target.value).length;
-        const el = document.getElementById('unlocked-count');
+        const el = container.querySelector('#unlocked-count');
         if (el) {
           el.textContent = e.target.value.trim()
             ? `${visible} result${visible !== 1 ? 's' : ''}`
@@ -193,5 +199,5 @@ const CharactersView = {
     return new Set();
   },
 
-  unmount() {}
+  unmount() { this._seq++; }
 };

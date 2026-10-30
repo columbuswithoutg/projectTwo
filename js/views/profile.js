@@ -4,6 +4,13 @@
 const ProfileView = {
   title: 'Profile',
 
+  // "Characters Unlocked": counted over the same entries /characters shows
+  // ("N of M unlocked"), where shared bodies (Hulk / Bruce Banner, …) are
+  // separate cards, so both pages give the same number.
+  charactersUnlocked(watchedIds) {
+    return characterPageEntries(characters).filter(c => isCharUnlocked(c, watchedIds)).length;
+  },
+
   // The island games: "🎬 Iron Man 1,773" for every island where this user
   // holds the Scene Guess record, "💬 Iron Man 9,100" for Quote Guess, and
   // how many of their suggested quotes made it into Quote Guess. Empty — and
@@ -149,7 +156,8 @@ const ProfileView = {
       shareStatus.hidden = false;
     };
     ShareProgress.link().then(paintShare).catch(() => {});
-    document.getElementById('profile-share-btn').addEventListener('click', () => ShareProgress.open());
+    // The dialog turns the link on (and can turn it off): keep this status in step.
+    document.getElementById('profile-share-btn').addEventListener('click', () => ShareProgress.open({ onChange: paintShare }));
     shareOff.addEventListener('click', async () => {
       try {
         const info = await ShareProgress.turnOff();
@@ -322,7 +330,7 @@ const ProfileView = {
         const watchedIds = new Set(
           (prog.watchedProjects || []).filter(e => e.count > 0).map(e => e.projectId)
         );
-        statChars.textContent = characters.filter(c => isCharUnlocked(c, watchedIds)).length;
+        statChars.textContent = ProfileView.charactersUnlocked(watchedIds);
         buildAvatarPicker(watchedIds, data.profilePicture);
       } catch {
         statChars.textContent = '?';

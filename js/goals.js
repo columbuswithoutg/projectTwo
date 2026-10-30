@@ -12,24 +12,24 @@
  ************************************************/
 
 const DOOMSDAY_ID = ShareLogic.DOOMSDAY_ID;
-const DOOMSDAY_WATCHLIST = ShareLogic.DOOMSDAY_WATCHLIST;
 
 // → { target, items: [{ id, title, watched, ready }], met, total }
 // ready = unlocked and not watched yet (something you can watch now).
+// The ticking-off is ShareLogic.doomsdayProgress, the same rule the
+// server's link preview uses ("3 of 16"), so page, card and preview agree;
+// a title the live content doesn't have is left off.
 function computeDoomsdayGoal() {
   const byId = state.byId;
-  const items = [];
-  for (const id of DOOMSDAY_WATCHLIST) {
-    const p = byId?.get(id);
-    if (!p) continue;            // a title the live content doesn't have
-    const watched = state.isWatched(id);
-    items.push({ id, title: p.title || id, watched, ready: !watched && isUnlocked(p) });
-  }
+  const prog = ShareLogic.doomsdayProgress(state.data.keys(), id => !!byId?.has(id));
+  const items = prog.items.map(({ id, watched }) => {
+    const p = byId.get(id);
+    return { id, title: p.title || id, watched, ready: !watched && isUnlocked(p) };
+  });
   return {
     target: byId?.get(DOOMSDAY_ID) || null,
     items,
-    met: items.filter(i => i.watched).length,
-    total: items.length
+    met: prog.met,
+    total: prog.total
   };
 }
 

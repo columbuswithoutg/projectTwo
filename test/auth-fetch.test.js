@@ -24,7 +24,7 @@ const FRESH = () => jwt(Math.floor(Date.now() / 1000) + 3600);
 const EXPIRED = () => jwt(Math.floor(Date.now() / 1000) - 3600);
 
 // Fresh sandbox per test: auth.js + stubbed localStorage / fetch / Router.
-function load({ token = null, status = 200, path: here = '/board', search = '?x=1' } = {}) {
+function load({ token = null, status = 200, path: here = '/board', search = '?x=1', withPublic = false } = {}) {
   const store = new Map();
   if (token) store.set('mcu_token', token);
   const calls = [], routes = [];
@@ -45,9 +45,13 @@ function load({ token = null, status = 200, path: here = '/board', search = '?x=
     },
     Router: { go: (to) => routes.push(to) }
   };
+  // The real router's public-route rule (js/router.js isPublic).
+  if (withPublic) ctx.Router._debug = { isPublic: (p) => p === '/login' || p.startsWith('/s/') };
+  const badge = [];
+  ctx.MessagesBadge = { apply: (n) => badge.push(n) };
   vm.createContext(ctx);
   vm.runInContext(SRC + '\nthis.Auth = Auth;', ctx);
-  return { Auth: ctx.Auth, calls, routes, store };
+  return { Auth: ctx.Auth, calls, routes, store, badge };
 }
 // Settled within a few ticks, or 'pending'.
 const settle = (p) => Promise.race([p.then(v => ({ v }), e => ({ e })), new Promise(r => setTimeout(() => r('pending'), 20))]);
@@ -128,4 +132,41 @@ test('on /login itself the redirect carries no next', async () => {
   const { Auth, routes } = load({ token: FRESH(), status: 401, path: '/login', search: '' });
   await settle(Auth.fetch('/api/x'));
   assert.deepEqual(routes, ['/login']);
+});
+
+// CLI2-03b: a token that is still valid but revoked server-side answers 401.
+// On a public /s/<token> page that must not replace the page with /login.
+test('a 401 on a public /s/ page drops the token quietly, stays put, and hands back the response', async () => {
+  const { Auth, routes, store, calls, badge } = load({ token: FRESH(), status: 401, path: '/s/abcDEF123_-x', search: '', withPublic: true });
+  const out = await settle(Auth.fetch('/api/progress/load'));
+  assert.notEqual(out, 'pending');
+  assert.equal(out.v.status, 401);
+  assert.deepEqual(routes, []);
+  assert.equal(store.has('mcu_token'), false);
+  assert.equal(Auth.isLoggedIn(), false);
+  assert.equal(Auth.sessionExpired(), false);   // signed out, not "expired → /login"
+  assert.deepEqual(badge, [0]);
+  assert.equal(calls.filter(c => c.url.endsWith('/auth/logout')).length, 0);
+  // A direct endSession() there (memory.js XHR, the badge) is quiet too.
+  store.set('mcu_token', FRESH());
+  Auth.endSession();
+  assert.deepEqual(routes, []);
+  assert.equal(store.has('mcu_token'), false);
+});
+
+test('no token on a public /s/ page: Auth.fetch rejects (settles) instead of redirecting', async () => {
+  const { Auth, routes, calls } = load({ token: EXPIRED(), path: '/s/abc', search: '', withPublic: true });
+  const out = await settle(Auth.fetch('/api/x'));
+  assert.match(String(out.e && out.e.message), /Not signed in/);
+  assert.deepEqual(routes, []);
+  assert.equal(apiCalls(calls).length, 0);
+});
+
+test('signed-in pages and /login keep the full logout when the router knows public routes', async () => {
+  const a = load({ token: FRESH(), status: 401, withPublic: true });
+  assert.equal(await settle(a.Auth.fetch('/api/x')), 'pending');
+  assert.deepEqual(a.routes, ['/login?next=' + encodeURIComponent('/board?x=1')]);
+  const b = load({ token: FRESH(), status: 401, path: '/login', search: '', withPublic: true });
+  await settle(b.Auth.fetch('/api/x'));
+  assert.deepEqual(b.routes, ['/login']);
 });

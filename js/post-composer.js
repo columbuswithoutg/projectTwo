@@ -38,7 +38,7 @@ const PostComposer = (() => {
 
   function profilePicture() {
     if (_profilePic !== null) return Promise.resolve(_profilePic);
-    return fetch(`${API}/profile`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } })
+    return Auth.fetch(`${API}/profile`)
       .then(r => (r.ok ? r.json() : {}))
       .then(d => { _profilePic = (d && d.profilePicture) || ''; return _profilePic; })
       .catch(() => '');
@@ -411,9 +411,10 @@ const PostComposer = (() => {
         if (result) drafts.delete(draftKey);
       } else {
         try {
-          const res = await fetch(`${API}/feed/${opts.post.id}`, {
+          // Auth.fetch: a revoked session is one logout + /login?next=, not a toast.
+          const res = await Auth.fetch(`${API}/feed/${opts.post.id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${Auth.getToken()}` },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ caption: ta.value.trim(), memories, watchedWith: keptTags, tagFriendIds })
           });
           const data = await res.json().catch(() => ({}));

@@ -107,5 +107,5 @@ const Chunks = (() => {
     return p;
   }
 
-  return { load, retryModules, isLoaded: (name) => done.has(name) };
+  return { load, retryModules };
 })();

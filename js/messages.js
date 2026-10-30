@@ -47,14 +47,22 @@ const MessagesBadge = (() => {
     });
   }
 
+  function onPublicPage() {
+    try {
+      return typeof Router !== 'undefined' && !!Router._debug && Router._debug.isPublic(location.pathname);
+    } catch (_) { return false; }
+  }
+
   async function refresh() {
     if (typeof Auth === 'undefined') { apply(0); return; }
     if (!Auth.isLoggedIn()) {
       // The poll is the one call every page makes, so it's where a tab left
       // open past the token's expiry finds out: a session that ran out here
       // (not a deliberate logout) goes to /login instead of silently
-      // showing 0 while every other action toasts "No token".
-      if (Auth.sessionExpired()) Auth.endSession();
+      // showing 0 while every other action toasts "No token". Not on a
+      // public page (a /s/<token> link opened with an old token still in
+      // storage): that page needs no account, so it stays put.
+      if (Auth.sessionExpired() && !onPublicPage()) Auth.endSession();
       else apply(0);
       return;
     }

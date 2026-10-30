@@ -77,6 +77,10 @@ class WatchState {
     } catch (e) {
       console.warn("Progress load failed:", e);
     }
+    // Signed out while it ran: on a public page (/s/<token>) Auth.fetch drops
+    // a revoked token quietly and hands back the 401 (or rejects with no
+    // token). Nothing of ours to protect there, so no banner, no retry prompt.
+    if (!Auth.isLoggedIn()) return;
     // Block board changes (start / complete / cancel) until a successful load.
     this.loadFailed = true;
     toast("Couldn't load your progress. Changes won't be saved until you reload.", { type: 'error', duration: 6000 });
