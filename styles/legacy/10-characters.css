@@ -182,6 +182,12 @@ button.character-card:focus-visible {
   line-height: 1.2;
 }
 
+.char-detail-aka {
+  margin: 0 0 4px;
+  color: var(--text-2);
+  font-size: 0.86rem;
+}
+
 .char-detail-debut {
   margin: 0;
   color: var(--text-3);

@@ -89,8 +89,9 @@ const CharactersView = {
     }
   },
 
-  // Detail sheet: summary, the looks unlocked so far (oldest first, the
-  // newest is the one on the card) and links to anyone sharing the body.
+  // Detail sheet: other names, summary, the looks unlocked so far (oldest
+  // first, the newest is the one on the card) and links to anyone sharing
+  // the body, the same person's other card and other holders of a title.
   _openDetail(c, byId, watchedIds) {
     const overlay = document.createElement('div');
     overlay.className = 'char-detail-overlay';
@@ -111,7 +112,11 @@ const CharactersView = {
       const lockedCount = (ch.stages || []).length + 1 - looks.length;
       const summary = characterSummary(ch);
       const debut = projectLabel(ch.debut);
-      const mates = (ch.body || []).map(id => byId.get(id)).filter(Boolean);
+      // Only unlocked cards are in byId, so a link never names a locked character.
+      const groups = (ch.links || [])
+        .map(g => ({ label: g.label, mates: g.ids.map(id => byId.get(id)).filter(Boolean) }))
+        .filter(g => g.mates.length);
+      const aka = (ch.aliases || []).filter(a => !ch.name.toLowerCase().includes(a.toLowerCase()));
 
       overlay.innerHTML = `
         <div class="char-detail">
@@ -120,21 +125,22 @@ const CharactersView = {
             <span class="character-avatar char-detail-avatar">${PosterArt.charHtml(ch, getCharImage(ch, watchedIds), { alt: '', lazy: false })}</span>
             <div>
               <h2 id="char-detail-name">${esc(ch.name)}</h2>
+              ${aka.length ? `<p class="char-detail-aka">Also known as ${aka.map(esc).join(' · ')}</p>` : ''}
               ${debut ? `<p class="char-detail-debut">First seen in ${debut}</p>` : ''}
             </div>
           </div>
           ${summary ? `<p class="char-detail-summary">${esc(summary)}</p>` : ''}
-          ${mates.length ? `
+          ${groups.map(g => `
             <section class="char-detail-section">
-              <h3>Shares a body with</h3>
+              <h3>${esc(g.label)}</h3>
               <div class="char-detail-mates">
-                ${mates.map(m => `
+                ${g.mates.map(m => `
                   <button type="button" class="char-detail-mate" data-id="${esc(m.id)}">
                     <span class="character-avatar">${PosterArt.charHtml(m, getCharImage(m, watchedIds), { alt: '' })}</span>
                     <span>${esc(m.name)}</span>
                   </button>`).join('')}
               </div>
-            </section>` : ''}
+            </section>`).join('')}
           <section class="char-detail-section">
             <h3>Versions</h3>
             <ol class="char-detail-looks">

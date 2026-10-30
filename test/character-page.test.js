@@ -15,7 +15,7 @@ const ctx = {};
 for (const f of ['projects.js', 'characters.js']) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'), ctx);
 }
-vm.runInNewContext('this.SUMMARIES = CHARACTER_SUMMARIES; this.SHARED = SHARED_BODIES', ctx);
+vm.runInNewContext('this.SUMMARIES = CHARACTER_SUMMARIES; this.SHARED = SHARED_BODIES; this.MANTLES = MANTLES; this.ALIASES = CHARACTER_ALIASES', ctx);
 const { characters, projects, isCharUnlocked, characterPageEntries, characterSearch, characterSummary } = ctx;
 const entries = characterPageEntries(characters);
 const entry = (id) => entries.find(e => e.id === id);
@@ -94,6 +94,55 @@ test('every page-only entity portrait exists', () => {
     }
   }
   assert.deepEqual(missing, []);
+});
+
+test('mantle holders are real characters, and split cards take real looks', () => {
+  const charIds = new Set(characters.map(c => c.id));
+  for (const { title, holders } of ctx.MANTLES) {
+    for (const h of holders) {
+      if (h.char) { assert.ok(charIds.has(h.char), `${title}: ${h.char}`); continue; }
+      assert.ok(!charIds.has(h.id), `${h.id} does not clash with a character id`);
+      const from = characters.find(c => c.id === h.from);
+      for (const after of h.looks) assert.ok(from.stages.some(s => s.after === after), `${h.id}: ${h.from} has a ${after} look`);
+    }
+  }
+  assert.deepEqual(Object.keys(ctx.ALIASES).filter(id => !charIds.has(id)), []);
+});
+
+test("Sam Wilson's Captain America and Shuri's Black Panther are their own cards", () => {
+  const sam = entry('sam_captainamerica');
+  assert.equal(sam.image, 'falcon_cap.jpg');
+  assert.equal(sam.debut, 'falconws');
+  assert.deepEqual(Array.from(sam.stages, s => s.after), ['cap4']);
+  assert.deepEqual(Array.from(entry('falcon').stages), []);   // the Falcon card keeps only the Falcon
+  assert.equal(entry('shuri_blackpanther').image, 'shuri_bp.jpg');
+  assert.ok(!entry('shuri').stages.some(s => s.after === 'blackpanther2'));
+  assert.equal(entry('jane_mightythor').image, 'mightythor.jpg');
+  // Each card sits right after the person's own card
+  assert.equal(ids(entries).indexOf('sam_captainamerica'), ids(entries).indexOf('falcon') + 1);
+});
+
+test('mantles are searchable by name and by title', () => {
+  const find = (q) => ids(characterSearch(entries, q)).sort();
+  assert.deepEqual(find('captain america'), ['cap', 'johnwalker', 'sam_captainamerica']);
+  assert.deepEqual(find('sam wilson'), ['falcon', 'sam_captainamerica']);
+  assert.deepEqual(find('black panther'), ['blackpanther', 'shuri_blackpanther']);
+  assert.deepEqual(find('shuri'), ['shuri', 'shuri_blackpanther']);
+  assert.deepEqual(find('black widow'), ['blackwidow', 'yelena']);
+  assert.deepEqual(find('hawkeye'), ['hawkeye', 'kate']);
+  assert.deepEqual(find('steve rogers'), ['cap']);
+  assert.deepEqual(find('all-father'), ['odin']);
+});
+
+test('mantle cards link the same person and the other title holders', () => {
+  const links = (id) => Object.fromEntries(Array.from(entry(id).links, l => [l.label, Array.from(l.ids)]));
+  assert.deepEqual(links('sam_captainamerica'), {
+    'Same person as': ['falcon'],
+    'Also held the title Captain America': ['cap', 'johnwalker']
+  });
+  assert.deepEqual(links('falcon'), { 'Same person as': ['sam_captainamerica'] });
+  assert.deepEqual(links('blackpanther')['Also held the title Black Panther'], ['shuri_blackpanther']);
+  assert.deepEqual(links('hulk'), { 'Shares a body with': ['banner'] });
 });
 
 test('Jean Grey no longer lists the Phoenix as one of her looks', () => {

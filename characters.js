@@ -64,6 +64,10 @@ var characters = [
       { after: "hawkeye", image: "hawkeye_series.jpg", look: "Mentor to Kate, Hawkeye series" }
     ] },
   { id: "heimdall",       name: "Heimdall",                   debut: "thor1",         image: "heimdall.jpg" },
+  { id: "odin",           name: "Odin",                       debut: "thor1",         image: "odin.jpg",
+    stages: [
+      { after: "thor3", image: "odin_ragnarok.jpg", look: "Exile on Earth, Ragnarok" }
+    ] },
   { id: "cap",            name: "Captain America",            debut: "cap1",          image: "cap.jpg",
     stages: [
       { after: "avengers1", image: "cap_avengers.jpg", look: "Modern" },
@@ -376,6 +380,7 @@ const CHARACTER_SUMMARIES = {
   janefoster: "Jane Foster, an astrophysicist studying strange atmospheric phenomena in the New Mexico desert.",
   hawkeye: "Clint Barton, a S.H.I.E.L.D. agent and master archer who never misses.",
   heimdall: "Heimdall, the all-seeing guardian of the Bifrost, the bridge between Asgard and the other realms.",
+  odin: "Odin, the All-Father, king of Asgard and Thor's father, who has kept the Nine Realms at peace for centuries.",
   cap: "Steve Rogers, a frail but determined young man transformed by the Super Soldier serum into Captain America.",
   peggy: "Peggy Carter, a British agent of the Strategic Scientific Reserve who can hold her own in any fight.",
   bucky: "James \"Bucky\" Barnes, Steve Rogers' best friend since childhood and a sergeant in the 107th Infantry.",
@@ -486,6 +491,9 @@ const CHARACTER_SUMMARIES = {
   magneto: "Erik Lehnsherr, a mutant who controls magnetism and believes mutants should rule.",
   jeangrey: "Jean Grey, a telepathic and telekinetic mutant and member of the X-Men.",
   phoenix: "The Phoenix, a vast, uncontrollable power that surfaces inside Jean Grey.",
+  sam_captainamerica: "Sam Wilson as Captain America, carrying the shield with wings, a vibranium suit and his own way of doing the job.",
+  shuri_blackpanther: "Shuri as the Black Panther, Wakanda's protector in a suit she built herself.",
+  jane_mightythor: "Jane Foster as the Mighty Thor, wielding a reforged Mjolnir.",
   cyclops: "Scott Summers, the X-Men's field leader, who fires powerful beams from his eyes.",
   storm: "Ororo Munroe, an X-Man who can control the weather.",
   mystique: "Mystique, a shape-shifting mutant and Magneto's right hand.",
@@ -537,12 +545,70 @@ const SHARED_BODIES = [
   ]
 ];
 
+/************************************************
+ * MANTLES
+ * Titles passed from one person to another. Each holder is an existing
+ * character (`char`) or a page-only card split off a character (`id`,
+ * `name`, `from`, `looks`): the `from` character's stages whose `after` is
+ * in `looks` become that card (first one is its first look) and leave the
+ * original card, so Sam Wilson's Falcon card and his Captain America card
+ * are separate. Every holder is searchable by the title and links to the
+ * other holders on the /characters page.
+ ************************************************/
+const MANTLES = [
+  { title: "Captain America", holders: [
+    { char: "cap" },
+    { id: "sam_captainamerica", name: "Captain America (Sam Wilson)", from: "falcon", looks: ["falconws", "cap4"] },
+    { char: "johnwalker" }
+  ] },
+  { title: "Black Panther", holders: [
+    { char: "blackpanther" },
+    { id: "shuri_blackpanther", name: "Black Panther (Shuri)", from: "shuri", looks: ["blackpanther2"] }
+  ] },
+  { title: "Thor", holders: [
+    { char: "thor" },
+    { id: "jane_mightythor", name: "Mighty Thor (Jane Foster)", from: "janefoster", looks: ["thor4"] }
+  ] },
+  { title: "Black Widow", holders: [{ char: "blackwidow" }, { char: "yelena" }] },
+  { title: "Hawkeye", holders: [{ char: "hawkeye" }, { char: "kate" }] },
+  { title: "Ant-Man", holders: [{ char: "hankpym" }, { char: "antman" }] },
+  { title: "Sorcerer Supreme", holders: [{ char: "drstrange" }, { char: "wong" }] }
+];
+
+// Real names and famous titles the /characters search also matches (a card
+// shows one name; "Tony Stark" should still find Iron Man).
+const CHARACTER_ALIASES = {
+  ironman: ["Tony Stark"], pepper: ["Virginia Potts", "Rescue"], happy: ["Harold Hogan"],
+  rhodey: ["Rhodey", "War Machine", "Iron Patriot"], coulson: ["Phil Coulson"],
+  blackwidow: ["Natasha Romanoff"], bettyross: ["Elizabeth Ross"], abomination: ["Emil Blonsky"],
+  thor: ["Thor Odinson", "God of Thunder"], loki: ["God of Mischief"], odin: ["All-Father"],
+  hawkeye: ["Clint Barton", "Ronin"], cap: ["Steve Rogers"], peggy: ["Agent Carter"],
+  bucky: ["Winter Soldier", "White Wolf"], redskull: ["Johann Schmidt"], obadiah: ["Iron Monger"],
+  falcon: ["Falcon"], starlord: ["Peter Quill"], drax: ["Drax the Destroyer"],
+  wanda_wv: ["Scarlet Witch"], quicksilver: ["Pietro Maximoff"], antman: ["Scott Lang"],
+  wasp_hope: ["The Wasp"], spiderman: ["Peter Parker"], blackpanther: ["T'Challa"],
+  zemo: ["Helmut Zemo"], drstrange: ["Stephen Strange"], captainmarvel: ["Carol Danvers"],
+  ghost: ["Ava Starr"], mysterio: ["Quentin Beck"], vulture: ["Adrian Toomes"], monica: ["Photon"],
+  redguardian: ["Alexei Shostakov"], wenwu: ["The Mandarin"], kate: ["Kate Bishop"],
+  echo: ["Maya Lopez"], msmarvel: ["Kamala Khan"],
+  shehulk: ["Jennifer Walters"], ironheart: ["Riri Williams"], cassie: ["Stature"],
+  killmonger: ["Erik Stevens", "N'Jadaka"], johnwalker: ["U.S. Agent"], sentry: ["Robert Reynolds"],
+  mrcfantastic: ["Reed Richards"], invisiblewoman: ["Sue Storm"], humantorch: ["Johnny Storm"],
+  thething: ["Ben Grimm"], daredevil: ["Matt Murdock"], fisk: ["Kingpin"], punisher: ["Frank Castle"],
+  lukecage: ["Power Man"], ironfist: ["Danny Rand"], wolverine: ["Logan", "James Howlett"],
+  profx: ["Charles Xavier"], magneto: ["Erik Lehnsherr"], cyclops: ["Scott Summers"],
+  storm: ["Ororo Munroe"], nightcrawler: ["Kurt Wagner"], beast: ["Hank McCoy"],
+  sabretooth: ["Victor Creed"], gambit: ["Remy LeBeau"], laura: ["Laura Kinney"],
+  deadpool: ["Wade Wilson"], cable: ["Nathan Summers"]
+};
+
 // The /characters page's list: copies of every character plus the page-only
-// SHARED_BODIES entities (each placed right after its group's first
-// character). Every entry gets `body` (the other ids sharing its body, [] for
-// most) and `aliases` (its catalogue name when the page renames it).
+// SHARED_BODIES and MANTLES cards (each placed right after the character it
+// belongs to). Every entry gets `body` (the other ids sharing its body, [] for
+// most), `links` ([{ label, ids }] shown in its detail sheet) and `aliases`
+// (real names, titles and its catalogue name when the page renames it).
 function characterPageEntries(chars) {
-  const entries = chars.map(c => ({ ...c, body: [], aliases: [] }));
+  const entries = chars.map(c => ({ ...c, body: [], links: [], aliases: [...(CHARACTER_ALIASES[c.id] || [])] }));
   const byId = new Map(entries.map(e => [e.id, e]));
   const extrasAfter = new Map();
   SHARED_BODIES.forEach(group => {
@@ -556,7 +622,7 @@ function characterPageEntries(chars) {
         if (m.hideLooks) e.stages = (e.stages || []).filter(s => !m.hideLooks.includes(s.after));
         members.push(e);
       } else if (!byId.has(m.id)) {
-        const e = { ...m, stages: m.stages || [], body: [], aliases: [] };
+        const e = { ...m, stages: m.stages || [], body: [], links: [], aliases: [] };
         byId.set(e.id, e);
         members.push(e);
         const key = anchor ? anchor.char : null;
@@ -564,7 +630,39 @@ function characterPageEntries(chars) {
         extrasAfter.get(key).push(e);
       }
     });
-    members.forEach(e => { e.body = members.filter(o => o !== e).map(o => o.id); });
+    members.forEach(e => {
+      e.body = members.filter(o => o !== e).map(o => o.id);
+      e.links.push({ label: 'Shares a body with', ids: e.body });
+    });
+  });
+  MANTLES.forEach(({ title, holders }) => {
+    const members = [];
+    holders.forEach(h => {
+      if (h.char) {
+        const e = byId.get(h.char);
+        if (e) members.push(e);
+        return;
+      }
+      const from = byId.get(h.from);
+      if (!from || byId.has(h.id)) return;
+      const looks = (from.stages || []).filter(s => h.looks.includes(s.after));
+      if (!looks.length) return;
+      from.stages = from.stages.filter(s => !h.looks.includes(s.after));
+      const [first, ...rest] = looks;
+      const e = { id: h.id, name: h.name, debut: first.after, image: first.image,
+        stages: rest.map(s => ({ ...s })), body: [], links: [], aliases: [from.name, ...from.aliases] };
+      byId.set(e.id, e);
+      members.push(e);
+      // The same person's other card, both ways.
+      e.links.push({ label: 'Same person as', ids: [from.id] });
+      from.links.push({ label: 'Same person as', ids: [e.id] });
+      if (!extrasAfter.has(from.id)) extrasAfter.set(from.id, []);
+      extrasAfter.get(from.id).push(e);
+    });
+    members.forEach(e => {
+      if (!e.aliases.includes(title)) e.aliases.push(title);
+      e.links.push({ label: `Also held the title ${title}`, ids: members.filter(o => o !== e).map(o => o.id) });
+    });
   });
   const out = [];
   entries.forEach(e => { out.push(e); out.push(...(extrasAfter.get(e.id) || [])); });
