@@ -103,7 +103,10 @@
         else if (sec === 'defeat') Editor.renderVillainLines('villainDefeatLines');
         else if (sec === 'victory') Editor.renderVillainLines('villainVictoryLines');
       };
-      subtabs.forEach(b => b.addEventListener('click', () => setActive(b.dataset.sec)));
+      subtabs.forEach(b => b.addEventListener('click', async () => {
+        if (!(await Editor._settlePairForm()) || !b.isConnected) return;
+        setActive(b.dataset.sec);
+      }));
       setActive(Editor._section || 'pairs');
 
       document.getElementById('admin-dialog-save').addEventListener('click', Editor.save);
@@ -119,6 +122,28 @@
       // The next mount() reloads from the server; just stop reporting.
       Editor._saved = null;
       Editor._pairForm = null;
+    },
+
+    // ADM2-10: a section switch re-renders the host, which would drop an
+    // open pair form. Its edits are applied first (as Save all does); if
+    // Apply refuses them (a toast says why), ask before throwing them away.
+    // → true when the switch may go ahead.
+    async _settlePairForm() {
+      const form = Editor._pairForm;
+      if (!form || !form.isDirty()) return true;
+      if (form.apply) {
+        form.apply();
+        if (!(Editor._pairForm && Editor._pairForm.isDirty())) return true;
+      }
+      const ok = await confirmDialog({
+        title: 'Discard this pair’s changes?',
+        message: 'The open pair form can’t be applied as it is (the message says why). Your other dialogue edits are kept.',
+        confirmLabel: 'Discard',
+        cancelLabel: 'Keep editing',
+        danger: true
+      });
+      if (ok) Editor._pairForm = null;
+      return !!ok;
     },
 
     renderPairs() {

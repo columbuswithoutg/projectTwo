@@ -128,6 +128,19 @@ test('sanitizeCharacter: field codes, stages need `after`', () => {
   assert.deepEqual(out.stages, [{ after: 'avengers1', image: '', look: '' }]);
 });
 
+// ADM2-06: a summary over DIALOG_LINE_MAX is rejected, never cut.
+test('sanitizeCharacter: over-long summary is a field error, not a silent cut', () => {
+  const base = { id: 'ironman', name: 'Iron Man' };
+  const max = S.DIALOG_LINE_MAX;
+  const long = S.sanitizeCharacter({ ...base, summary: 'x'.repeat(max + 150) }, true);
+  assert.deepEqual(long.errors, { summary: `over ${max} characters` });
+  const atMax = S.sanitizeCharacter({ ...base, summary: '  ' + 'y'.repeat(max) + '\n' }, true);
+  assert.deepEqual(atMax.errors, {});
+  assert.equal(atMax.out.summary, 'y'.repeat(max));   // trimmed, not cut
+  assert.equal(S.sanitizeCharacter({ ...base, summary: 42 }, false).out.summary, '');
+  assert.deepEqual(S.sanitizeCharacter({ ...base }, false).errors, {});
+});
+
 const LOC = { id: 'nyc', label: 'Manhattan', worldX: 2700, worldY: 1000, width: 380, height: 220, clusterRadius: 130, region: 'nyc' };
 
 test('sanitizeLocation: invalid id / required label', () => {

@@ -141,36 +141,6 @@
   z-index: 51;
 }
 .pg-rotate-hint.show { opacity: 1; transform: translate(-50%, 0); }
-.pg-viewport {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  touch-action: none;
-}
-.pg-room {
-  position: absolute;
-  top: 0;
-  left: 0;
-  will-change: transform;
-}
-.pg-backdrop {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-.pg-props {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-.pg-sprite {
-  position: absolute;
-  pointer-events: none;
-  transform-origin: 50% 50%;
-  transition: none;
-  filter: drop-shadow(0 4px 6px rgba(0,0,0,0.4));
-}
 .pg-char {
   display: block;
   pointer-events: none;
@@ -1595,50 +1565,10 @@ body:has(#nav-drawer.open) .world-chat-row {
      scroll behind the modal on mobile. */
   overscroll-behavior: contain;
 }
-.pg-modal-preview {
-  display: flex;
-  align-items: stretch;     /* let the 3D canvas fill the cross-axis */
-  justify-content: stretch;
-  background: rgba(0,0,0,0.3);
-  border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.05);
-  padding: 0;
-  min-height: 240px;
-  position: relative;
-  overflow: hidden;
-}
-.pg-modal-preview canvas { display: block; }
 .pg-preview-canvas { width: 100%; height: 100%; }
 .pg-builder-sprite {
   transform: scale(2.5);
   transform-origin: center;
-}
-.pg-builder-col {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.pg-builder-coltitle {
-  margin: 0 0 2px 0;
-  font-family: var(--font-ui);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--accent-text);
-  opacity: 0.9;
-}
-.pg-builder-group {
-  border: 0;
-  padding: 0;
-  margin: 0;
-}
-.pg-builder-group legend {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.7;
-  margin-bottom: 6px;
-  padding: 0;
 }
 .pg-swatches {
   display: flex;
@@ -1658,16 +1588,6 @@ body:has(#nav-drawer.open) .world-chat-row {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(237, 29, 36,0.3);
 }
-/* Avengers preset chips — full-width strip spanning the builder grid. */
-.pg-presets {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border-1);
-}
 .pg-presets-label {
   font-family: var(--font-ui);
   font-size: 11px;
@@ -1675,20 +1595,6 @@ body:has(#nav-drawer.open) .world-chat-row {
   letter-spacing: 0.08em;
   opacity: 0.8;
   margin-right: 4px;
-  color: var(--accent-text);
-}
-.pg-preset {
-  background: var(--color-node-bg);
-  border: 1px solid var(--border-2);
-  color: var(--color-text-warm);
-  padding: 6px 12px;
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: 12px;
-}
-.pg-preset:hover {
-  border-color: var(--color-primary);
-  background: rgba(237, 29, 36,0.12);
   color: var(--accent-text);
 }
 .pg-btn {

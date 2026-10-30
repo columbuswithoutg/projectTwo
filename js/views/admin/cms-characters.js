@@ -3,6 +3,8 @@
  ************************************************/
 (function () {
   const esc = AdminView._escapeHtml;
+  // Same value as DIALOG_LINE_MAX in server/admin-sanitize.js (sanitizeCharacter).
+  const SUMMARY_MAX = 600;
 
   const Editor = {
     _items: [],
@@ -90,6 +92,19 @@
         placeholder: (typeof CHARACTER_SUMMARIES !== 'undefined' && CHARACTER_SUMMARIES[item.id]) || '',
         hint: 'Shown when the character is opened on the Characters page. Keep it spoiler-free (who they are at their debut). Empty uses the built-in text.'
       });
+      // ADM2-06: the server rejects a summary over SUMMARY_MAX (it no longer
+      // cuts it), so cap the field and show a live n/max count.
+      summaryField.input.maxLength = SUMMARY_MAX;
+      const summaryCount = document.createElement('i');
+      summaryCount.className = 'admin-cms-count';
+      summaryField.wrap.querySelector('.admin-cms-flabel').appendChild(summaryCount);
+      const countSummary = () => {
+        const n = summaryField.get().trim().length;
+        summaryCount.textContent = `${n}/${SUMMARY_MAX}`;
+        summaryCount.classList.toggle('is-near', n > SUMMARY_MAX * 0.9);
+      };
+      summaryField.input.addEventListener('input', countSummary);
+      countSummary();
 
       // Stages: dynamic list of {after, image, look} sub-forms.
       const stagesWrap = document.createElement('div');
@@ -194,7 +209,7 @@
           summary: summaryField.get().trim(),
           stages: stagesData.filter(s => s.after) // drop empty stage rows
         };
-        const byName = { id: idField, name: nameField };
+        const byName = { id: idField, name: nameField, summary: summaryField };
         AdminView._cmsApplyFieldErrors(byName, null);   // clear the last attempt's
         if (isNew && !AdminView._cmsCheckId(idField)) return;
         saveBtn.disabled = true;

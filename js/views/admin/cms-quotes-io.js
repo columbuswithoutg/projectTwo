@@ -53,10 +53,37 @@
     _plan: null,
     _busy: false,
     _run: 0,            // token of the running commit; cancel() bumps it
+    _done: false,       // the staged sources went in (replan() clears it)
 
     isBusy() { return IO._busy; },
+    // Unsaved: a running import, or files / pasted text staged and not
+    // imported yet (leaving would drop them).
+    _pasted() {
+      const ta = IO._host && IO._host.querySelector('.qte-paste-text');
+      return !!(ta && String(ta.value || '').trim());
+    },
+    isDirty() {
+      if (IO._busy) return true;
+      return !!IO._host && ((IO._sources.length > 0 && !IO._done) || IO._pasted());
+    },
+    dirtyNote() {
+      if (IO._busy) return 'An import is still running. Leaving stops it after the chunk being sent now; lines already saved stay saved.';
+      if (!IO._host) return null;
+      if (IO._sources.length && !IO._done) return 'Files staged for import have not been imported. Leaving drops them.';
+      if (IO._pasted()) return 'Pasted text has not been added or imported. Leaving drops it.';
+      return null;
+    },
     cancel() { IO._run++; IO._busy = false; },
-    unmount() { IO.cancel(); IO._host = null; },
+    discard() {
+      IO.cancel();
+      IO._sources = [];
+      IO._rows = [];
+      IO._plan = null;
+      IO._done = false;
+      const ta = IO._host && IO._host.querySelector('.qte-paste-text');
+      if (ta) ta.value = '';
+    },
+    unmount() { IO.discard(); IO._host = null; },
 
     mount(host, ctx) {
       IO._host = host;
@@ -146,6 +173,7 @@
     async replan() {
       const host = IO._host;
       if (!host) return;
+      IO._done = false;
       IO._rows = IO._sources.flatMap(s => s.rows);
       const srcEl = host.querySelector('.qte-io-sources');
       srcEl.innerHTML = IO._sources.map((s, i) => `
@@ -243,30 +271,52 @@
       bar.hidden = false;
       // Rows with problems never leave the page; the server may find more.
       const total = { inserted: 0, updated: 0, skipped: 0, failed: plan.counts.error };
+      let failed = false;
       try {
         for (let i = 0; i < chunks.length; i++) {
-          if (!isLive()) return;
+          if (!isLive()) {
+            // Left mid-import: the id is the only handle on what went in.
+            if (total.inserted || total.updated) AdminView.toast(`Import stopped: ${total.inserted} added, ${total.updated} updated (import id ${importId})`, 'info');
+            return;
+          }
           msg.textContent = `Sending ${i + 1} of ${chunks.length}…`;
           const r = await commitChunk({ rows: chunks[i], mode, importId, origin: 'admin' }, isLive);
           total.inserted += r.inserted; total.updated += r.updated; total.skipped += r.skipped; total.failed += (r.failed || []).length;
           bar.firstElementChild.style.width = `${Math.round(100 * (i + 1) / chunks.length)}%`;
+          // Lines are live from the first chunk on: show the import id now,
+          // not only at the end (leaving or a failure would lose it).
+          if (i === 0 && chunks.length > 1) AdminView.toast(`Import ${importId} started`, 'info');
+          if (i < chunks.length - 1 && isLive()) IO.showResult(importId, total, null, true);
         }
         msg.textContent = '';
+        if (isLive()) IO._done = true;
         IO.showResult(importId, total);
         AdminView.toast(`Imported ${total.inserted} new line${total.inserted === 1 ? '' : 's'}`, 'success');
       } catch (e) {
+        failed = true;
         msg.textContent = e.message;
         IO.showResult(importId, total, e.message);
       } finally {
+        // After a failed chunk the admin can try again (lines already in are
+        // skipped as duplicates, or updated again in Update mode).
+        if (failed && isLive()) btn.disabled = false;
         if (isLive()) IO._busy = false;
         if (IO._ctx.onChange) IO._ctx.onChange();
       }
     },
 
-    showResult(importId, t, error) {
+    // running: the import is still sending — show the id, but no Undo yet.
+    showResult(importId, t, error, running) {
       const host = IO._host;
       if (!host) return;
       const el = host.querySelector('.qte-io-result');
+      if (running) {
+        el.innerHTML = `
+        <div class="scn-banner">
+          <b>Importing…</b> ${t.inserted} added · ${t.updated} updated so far. Import id <code>${esc(importId)}</code>
+        </div>`;
+        return;
+      }
       el.innerHTML = `
         <div class="scn-banner ${error ? '' : 'is-on'}">
           ${error ? `<b>Stopped:</b> ${esc(error)}<br>` : '<b>Done.</b> '}

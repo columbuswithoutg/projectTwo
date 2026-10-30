@@ -54,10 +54,6 @@
   border-radius: 6px;
   cursor: pointer;
 }
-.admin-header .admin-user {
-  font-size: 13px;
-  opacity: 0.7;
-}
 
 .admin-subtab {
   background: transparent;
@@ -968,7 +964,7 @@
 }
 .admin-th-num .admin-sort-btn { justify-content: flex-end; }
 .admin-sort-btn:hover { background: rgba(var(--ink), 0.06); }
-.admin-sort-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+.admin-sort-btn:focus-visible { --focus-ring: var(--color-primary); --focus-offset: -2px; }
 .admin-sort-label { opacity: 0.75; }
 .admin-sort-arrow {
   width: 1em;
@@ -1063,7 +1059,7 @@
   line-height: 1.2;
 }
 .admin-nav-item:hover { background: rgba(var(--ink), 0.06); }
-.admin-nav-item:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+.admin-nav-item:focus-visible { --focus-ring: var(--color-primary); --focus-offset: -2px; }
 .admin-nav-item.active {
   background: rgba(var(--ink), 0.1);
   color: var(--accent-text);
@@ -1153,7 +1149,7 @@
   border-radius: 4px;
 }
 .admin-crumbs a:hover { color: var(--accent-text); text-decoration: underline; }
-.admin-crumbs a:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.admin-crumbs a:focus-visible { --focus-ring: var(--color-primary); --focus-offset: 2px; }
 .admin-crumbs [aria-current] {
   max-width: 42ch;
   overflow: hidden;
@@ -1242,7 +1238,7 @@
   text-decoration: none;
 }
 .admin-attn-card:hover { border-color: var(--border-2); background: rgba(var(--ink), 0.04); }
-.admin-attn-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.admin-attn-card:focus-visible { --focus-ring: var(--color-primary); --focus-offset: 2px; }
 .admin-attn-card.is-hot { border-color: var(--color-primary); }
 .admin-attn-card:not(.is-hot) .admin-stat-num { color: var(--text-3, var(--color-text-warm)); }
 .admin-attn-go { position: absolute; top: 14px; right: 16px; opacity: 0.5; }

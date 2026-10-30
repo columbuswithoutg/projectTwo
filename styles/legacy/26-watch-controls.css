@@ -59,7 +59,7 @@
 .wc-btn.wc-primary:hover:not(:disabled) { background: var(--red-gradient-hover); color: var(--text-on-accent); transform: translateY(-1px); }
 .wc-btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
 .wc-btn.wc-ghost { flex: 0 0 auto; background: transparent; color: var(--text-3); }
-.wc-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.wc-btn:focus-visible { --focus-ring: var(--color-primary); --focus-offset: 2px; }
 .wc-hint { font-size: var(--font-size-xs); color: var(--text-3); line-height: var(--line-height-tight); }
 .popup-watch-controls { margin-bottom: var(--space-3); }
 .popup-watch-controls .wc-btn { min-height: 48px; font-size: var(--font-size-base); }

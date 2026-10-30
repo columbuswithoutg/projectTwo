@@ -195,7 +195,10 @@ function sanitizeCharacter(body, requireId = true) {
   else out.name = trimStr(body.name);
   out.debut = trimStr(body.debut || '', 80);
   out.image = trimStr(body.image || '', 200);
-  out.summary = trimStr(body.summary || '', DIALOG_LINE_MAX).trim();
+  // ADM2-06: an over-long summary is a field error (it used to be cut at
+  // DIALOG_LINE_MAX silently, mid-word).
+  out.summary = typeof body.summary === 'string' ? body.summary.trim() : '';
+  if (out.summary.length > DIALOG_LINE_MAX) errors.summary = `over ${DIALOG_LINE_MAX} characters`;
   out.stages = Array.isArray(body.stages)
     ? body.stages
         .map(s => s && typeof s === 'object' ? {

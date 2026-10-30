@@ -210,16 +210,6 @@
   .pg-modal-body {
     grid-template-columns: 1fr;
   }
-  /* Pin the preview so the live 3D rig stays visible while the user
-     scrolls through the long single-column control list. */
-  .pg-modal-preview {
-    min-height: 180px;
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    background: var(--color-surface);
-    box-shadow: 0 6px 12px -8px rgba(0, 0, 0, 0.6);
-  }
   .pg-joy {
     width: 110px;
     height: 110px;

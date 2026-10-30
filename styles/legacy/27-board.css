@@ -91,7 +91,7 @@
   -webkit-appearance: none;
 }
 .kb-filter:hover { border-color: var(--text-3); }
-.kb-filter:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.kb-filter:focus-visible { --focus-ring: var(--color-primary); --focus-offset: 2px; }
 .kb-list {
   display: flex;
   flex-direction: column;

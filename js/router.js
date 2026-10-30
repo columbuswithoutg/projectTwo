@@ -330,6 +330,20 @@ const Router = (() => {
     return navigate(path, true, opts || {});
   }
 
+  // A view rewriting its own address for in-view state (the admin shell's
+  // open form, sub-view) without a remount: replace the entry AND adopt the
+  // URL, so a later go() to the old URL isn't skipped as "already here" and a
+  // vetoed Back puts this address back, not the stale one. Same path only —
+  // anything else must go through navigate().
+  function replaceUrl(url) {
+    const norm = normalizePath(url);
+    const fullUrl = norm.path + norm.search + norm.hash;
+    if (currentUrl != null && normalizePath(currentUrl).path !== norm.path) return false;
+    try { history.replaceState({ idx: _idx }, '', fullUrl); } catch (_) {}
+    currentUrl = fullUrl;
+    return true;
+  }
+
   // "← Back" buttons: the previous in-app page when there is one, otherwise
   // `fallback` (a page opened in a new tab has nothing behind it). Replaces
   // the entry so Back from the fallback doesn't return to the page we left.
@@ -350,8 +364,8 @@ const Router = (() => {
     });
   }
 
-  return { register, init, navigate, go, back, confirmLeave, firstMount,
-    _debug: { normalizePath, matchPatternIn, isPublic } };
+  return { register, init, navigate, go, back, replaceUrl, confirmLeave, firstMount,
+    _debug: { normalizePath, matchPatternIn, isPublic, currentUrl: () => currentUrl } };
 })();
 // Node (test/router-match.test.js) only — the browser chunk has no `module`.
 if (typeof module !== 'undefined' && module.exports) module.exports = Router;

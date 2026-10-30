@@ -64,10 +64,6 @@
   margin-bottom: 8px;
   border-bottom: 1px solid var(--border-1);
 }
-.cz-toolbar .pg-presets {
-  border-bottom: 0;
-  padding-bottom: 6px;
-}
 .cz-preset-group {
   display: flex;
   flex-direction: column;

@@ -14,7 +14,7 @@
  * navigation goes through Router.go — replacing the entry for a sidebar or
  * sub-view switch, pushing it for a drill-down (Back goes up one level).
  * In-pane state that must survive (Dialogues sections, List/Board, an open
- * form) only rewrites the address with history.replaceState (syncUrl).
+ * form) only rewrites the address with Router.replaceUrl (syncUrl).
  ************************************************/
 
 // Sidebar entries. `pane` is looked up lazily: the pane files load after
@@ -100,8 +100,8 @@ const AdminView = {
   // the entry the current drill-down was pushed from, else a replace.
   up(state) {
     const url = AdminView.url(state);
-    const lp = AdminView._lastPush;
-    if (lp && lp.parent === url && lp.child === location.pathname + location.search) {
+    const here = location.pathname + location.search;
+    if (AdminView._upAction({ lastPush: AdminView._lastPush, here, target: url }) === 'back') {
       AdminView._lastPush = null;
       history.back();
       return Promise.resolve();
@@ -109,13 +109,22 @@ const AdminView = {
     return AdminView.go(state);
   },
 
-  // Rewrite the address for in-pane state without remounting.
+  // up()'s choice, pure: 'back' only when we are still on the drill-down's
+  // child and the target is the entry it was pushed from; else 'replace'.
+  _upAction({ lastPush, here, target }) {
+    return (lastPush && lastPush.parent === target && lastPush.child === here) ? 'back' : 'replace';
+  },
+
+  // Rewrite the address for in-pane state without remounting. Through the
+  // Router so it adopts the URL: otherwise a sidebar or crumb go() back to
+  // the URL we mounted with is skipped as "already there", and a vetoed Back
+  // restores the stale address.
   syncUrl(state) {
     const next = Object.assign({ tab: AdminView._state.tab, sub: '', id: '' }, state);
     AdminView._state = next;
     const url = AdminView.url(next);
     if (location.pathname + location.search !== url) {
-      try { history.replaceState(history.state, '', url); } catch (_) {}
+      Router.replaceUrl(url);
     }
   },
 
@@ -337,6 +346,12 @@ const AdminView = {
     const counts = await AdminView.attention();
     for (const [k, v] of Object.entries(counts)) AdminView.setNavBadge(k, v);
   },
+  // A pane just cleared something that needs attention (a report closed or
+  // deleted): refetch the counts past the cache and repaint the badges.
+  refreshAttention() {
+    AdminView.attention(true);
+    return AdminView._paintAttention();
+  },
   // A count (number) or a dot (true/false) on a sidebar entry. `key` is the
   // entry's badge name (reports / suggestions / friends) for a count, or its
   // tab key for a dot (Projects: unsaved board moves).
@@ -376,12 +391,18 @@ const AdminView = {
     if (!dirty) return;
     const p = AdminView._activeTab;
     bar.querySelector('.admin-savebar-msg').textContent = AdminView._tabDirtyNote() || 'You have unsaved changes';
-    bar.querySelector('[data-bar="save"]').hidden = !(p && typeof p.save === 'function');
+    bar.querySelector('[data-bar="save"]').hidden = !AdminView._canBarSave(p);
+  },
+  // A pane may hold edits Save can't act on (canSave() false: an import
+  // still running in Quote Guess) — then the bar offers Discard only.
+  _canBarSave(p) {
+    if (!p || typeof p.save !== 'function') return false;
+    try { return !(typeof p.canSave === 'function' && !p.canSave()); } catch { return false; }
   },
   async _barSave() {
     const p = AdminView._activeTab;
     const bar = document.getElementById('admin-savebar');
-    if (!p || typeof p.save !== 'function' || !bar) return;
+    if (!AdminView._canBarSave(p) || !bar) return;
     const btns = bar.querySelectorAll('button');
     btns.forEach(b => { b.disabled = true; });
     try { await p.save(); } catch (e) { AdminView.toast(e.message || 'Could not save', 'error'); }
@@ -554,6 +575,7 @@ AdminView._minigamePane = function minigamePane(cfgKey, editorOf) {
     },
     isDirty() { return cfg().isDirty() || !!editorOf().isDirty(); },
     dirtyNote() { const e = editorOf(); return (e.dirtyNote && e.dirtyNote()) || null; },
+    canSave() { const e = editorOf(); return cfg().isDirty() || typeof e.canSave !== 'function' || !!e.canSave(); },
     discard() { cfg().discard(); const e = editorOf(); if (e.discard) e.discard(); },
     async save() {
       const e = editorOf();
@@ -562,3 +584,10 @@ AdminView._minigamePane = function minigamePane(cfgKey, editorOf) {
     }
   };
 };
+
+// Node (tests): the pure URL / breadcrumb / up() parts. The browser bundle
+// has no `module`, so this is a no-op there.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { ADMIN_NAV, ADMIN_LEGACY_TABS, AdminView,
+    _parse: AdminView._parse, url: AdminView.url, _crumbList: AdminView._crumbList, _upAction: AdminView._upAction };
+}

@@ -54,14 +54,16 @@ body {
   transition: none !important;
 }
 
-/* Keyboard focus ring in the theme's accent. */
+/* Keyboard focus ring in the theme's accent. A rule in any layer (legacy/
+   included, which sits below this one) restyles it by setting --focus-ring
+   and/or --focus-offset on the focused element instead of `outline`. */
 :focus-visible {
-  outline: 2px solid var(--highlight);
-  outline-offset: 2px;
+  outline: 2px solid var(--focus-ring, var(--highlight));
+  outline-offset: var(--focus-offset, 2px);
 }
 [data-theme="comic"] :focus-visible {
-  outline: 3px solid var(--info);
-  outline-offset: 2px;
+  outline: 3px solid var(--focus-ring, var(--info));
+  outline-offset: var(--focus-offset, 2px);
 }
 
 ::selection {

@@ -27,7 +27,9 @@
  * reserved for real CMS sub-tabs keyed off js/views/admin/cms.js).
  ************************************************/
 (function () {
-  const esc = AdminView._escapeHtml;
+  // Under node (test/admin-board-logic.test.js) there is no AdminView: only
+  // the pure layout rules are exported, see the bottom of the file.
+  const esc = typeof AdminView !== 'undefined' ? AdminView._escapeHtml : null;
 
   const CELL_W = 110, CELL_H = 130;   // keeps ORDER_CELL's 220:260 pitch aspect
   const NODE_W = 88, NODE_H = 98;
@@ -83,16 +85,9 @@
   // otherwise resets clean (after the board's own save).
   function reseed(items, keepMoves) {
     _items = items || [];
-    const nextOrig = new Map();
-    const nextPos = new Map();
-    for (const p of _items) {
-      const cell = { gx: p.gridX | 0, gy: p.gridY | 0 };
-      nextOrig.set(p.id, cell);
-      const kept = keepMoves && _pos.has(p.id) ? _pos.get(p.id) : cell;
-      nextPos.set(p.id, { gx: kept.gx, gy: kept.gy });
-    }
-    _orig = nextOrig;
-    _pos = nextPos;
+    const next = seedMaps(_items, _pos, keepMoves);
+    _orig = next.orig;
+    _pos = next.pos;
     if (_shell) _paint();
     _syncPendingDot();
   }
@@ -136,9 +131,30 @@
     return { minX, maxX, minY, maxY };
   }
 
-  function _occupancy() {
-    const m = new Map(); // "gx,gy" -> [id]
-    for (const [id, p] of _pos) {
+  function _occupancy() { return occupancyOf(_pos); }
+  function _conflicts() { return conflictsOf(_pos); }
+  function _dirtyList() { return dirtyListOf(_orig, _pos); }
+
+  // ── pure layout rules (no module state; test/admin-board-logic.test.js) ──
+
+  // items → { orig, pos }: Maps id → { gx, gy }. orig is each item's saved
+  // cell; pos keeps prevPos's cell for ids that still exist when keepMoves.
+  function seedMaps(items, prevPos, keepMoves) {
+    const orig = new Map();
+    const pos = new Map();
+    for (const p of items || []) {
+      const cell = { gx: p.gridX | 0, gy: p.gridY | 0 };
+      orig.set(p.id, cell);
+      const kept = keepMoves && prevPos && prevPos.has(p.id) ? prevPos.get(p.id) : cell;
+      pos.set(p.id, { gx: kept.gx, gy: kept.gy });
+    }
+    return { orig, pos };
+  }
+
+  // pos → Map "gx,gy" → [id]
+  function occupancyOf(pos) {
+    const m = new Map();
+    for (const [id, p] of pos) {
       const k = `${p.gx},${p.gy}`;
       if (!m.has(k)) m.set(k, []);
       m.get(k).push(id);
@@ -146,17 +162,32 @@
     return m;
   }
 
-  function _conflicts() {
-    return [..._occupancy().entries()].filter(([, ids]) => ids.length > 1);
+  // Cells holding more than one project: [["gx,gy", [ids]]]
+  function conflictsOf(pos) {
+    return [...occupancyOf(pos).entries()].filter(([, ids]) => ids.length > 1);
   }
 
-  function _dirtyList() {
+  // Moves that differ from the saved cell: [{ id, gridX, gridY }]
+  function dirtyListOf(orig, pos) {
     const out = [];
-    for (const [id, p] of _pos) {
-      const o = _orig.get(id);
+    for (const [id, p] of pos) {
+      const o = orig.get(id);
       if (o && (o.gx !== p.gx || o.gy !== p.gy)) out.push({ id, gridX: p.gx, gridY: p.gy });
     }
     return out;
+  }
+
+  // A point in board (SVG user) coordinates → its cell; padX0/padY0 is the
+  // cell at the board's top-left corner.
+  function cellAt(u, padX0, padY0, cellW, cellH) {
+    return { gx: padX0 + Math.floor(u.x / cellW), gy: padY0 + Math.floor(u.y / cellH) };
+  }
+
+  // The drop / arrow-key rule: may `id` move onto `cell`? Not when another
+  // project is there (its own cell is fine).
+  function cellTaken(pos, id, cell) {
+    const occupants = occupancyOf(pos).get(`${cell.gx},${cell.gy}`) || [];
+    return occupants.some(oid => oid !== id);
   }
 
   // ── shell (built once per mount) ────────────────────────────────────
@@ -487,7 +518,7 @@
   }
 
   function _cellFromUser(u) {
-    return { gx: _padX0 + Math.floor(u.x / CELL_W), gy: _padY0 + Math.floor(u.y / CELL_H) };
+    return cellAt(u, _padX0, _padY0, CELL_W, CELL_H);
   }
 
   function _cellOriginPx(gx, gy) {
@@ -558,8 +589,7 @@
     _drag.el.setAttribute('transform', `translate(${dx} ${dy})`);
 
     const cell = _cellFromUser(u);
-    const occupants = _occupancy().get(`${cell.gx},${cell.gy}`) || [];
-    const isInvalid = occupants.some(id => id !== _drag.id);
+    const isInvalid = cellTaken(_pos, _drag.id, cell);
 
     const drop = svgEl.querySelector('.admin-board-drop');
     if (drop) {
@@ -685,8 +715,7 @@
     const cur = _pos.get(id);
     if (!cur) return;
     const next = { gx: cur.gx + d[0], gy: cur.gy + d[1] };
-    const occupants = _occupancy().get(`${next.gx},${next.gy}`) || [];
-    if (occupants.some(oid => oid !== id)) {
+    if (cellTaken(_pos, id, next)) {
       AdminView.toast('That cell is taken', 'error');
       return;
     }
@@ -754,6 +783,12 @@
   function _shorten(s, n) {
     s = String(s);
     return s.length <= n ? s : s.slice(0, n - 1) + '…';
+  }
+
+  // Node: the pure layout rules only (test/admin-board-logic.test.js).
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { seedMaps, occupancyOf, conflictsOf, dirtyListOf, cellAt, cellTaken, CELL_W, CELL_H };
+    return;
   }
 
   // save: the sticky Save bar (index.js, via cms-projects.js) saves the moves.

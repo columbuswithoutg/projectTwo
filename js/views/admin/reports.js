@@ -187,6 +187,7 @@
         });
         delete s.drafts[id];
         AdminView.toast('Reply sent to ' + r.username, 'success');
+        if (status !== r.status) AdminView.refreshAttention();
         // Awaited: the buttons stay off until the refreshed list (with the
         // draft gone) replaces this row, so the sent text can't go twice.
         await AdminReports.fetch();
@@ -210,6 +211,7 @@
       try {
         await AdminView.api(`/reports/${r._id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
         AdminView.toast(`Marked ${STATUS_LABEL[status] || status}`, 'success');
+        AdminView.refreshAttention();
         await AdminReports.fetch();
       } catch (e) {
         AdminView.toast(e.message, 'error');
@@ -231,6 +233,7 @@
       try {
         await AdminView.api(`/reports/${r._id}`, { method: 'DELETE' });
         AdminView.toast('Report deleted', 'success');
+        AdminView.refreshAttention();
         if (AdminReports._state.openId === String(r._id)) AdminReports._state.openId = null;
         AdminReports.fetch();
       } catch (e) {

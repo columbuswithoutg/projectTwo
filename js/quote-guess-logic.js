@@ -114,6 +114,8 @@
   const normName = norm;
 
   function hasUrl(s) { return /(https?:\/\/|www\.)/i.test(String(s || '')); }
+  // A line's `source` is only ever an http(s) link (it renders as an <a>).
+  function isWebLink(s) { return /^https?:\/\//i.test(String(s || '')); }
 
   // "E3" for episode index 2.
   function episodeLabel(ep) { return Number.isInteger(ep) ? 'E' + (ep + 1) : ''; }
@@ -182,6 +184,15 @@
     }
     if (note.length > C.MAX_NOTE) errors.note = `Keep the note under ${C.MAX_NOTE} characters.`;
     if (source.length > C.MAX_SOURCE) errors.source = 'That link is too long.';
+    else if (source && !isWebLink(source)) errors.source = 'Use a web link (http:// or https://).';
+    // U+FFFD: a file saved in another encoding (Excel's cp1252) came in
+    // garbled: the ’ in "I’m" turns into U+FFFD, and the line no longer
+    // matches its stored key.
+    if (mode === 'import') {
+      for (const [k, v] of [['speaker', speaker], ['text', text], ['replySpeaker', replySpeaker], ['replyText', replyText], ['note', note]]) {
+        if (!errors[k] && v.includes('\uFFFD')) errors[k] = 'Garbled characters: save the file as UTF-8 and import it again.';
+      }
+    }
     if (mode === 'suggest') {
       for (const [k, v] of [['speaker', speaker], ['text', text], ['replySpeaker', replySpeaker], ['replyText', replyText], ['note', note]]) {
         if (!errors[k] && hasUrl(v)) errors[k] = 'No links, please.';
@@ -320,9 +331,11 @@
     if (!keys.includes('text') || !keys.includes('speaker')) {
       return { rows: [], error: 'The first row must be a header with at least "speaker" and "text" (and "projectId").' };
     }
+    // csvField's formula guard ("'=…") comes off again, so an export re-imports as it was.
+    const unguard = (v) => (/^'[=+\-@]/.test(v) ? v.slice(1) : v);
     const rows = grid.slice(1).map(cells => {
       const o = {};
-      keys.forEach((k, i) => { if (k && cells[i] != null && cells[i] !== '') o[k] = cells[i]; });
+      keys.forEach((k, i) => { if (k && cells[i] != null && cells[i] !== '') o[k] = unguard(cells[i]); });
       return o;
     });
     if (rows.length > C.IMPORT_MAX_ROWS) return { rows: [], error: `Up to ${C.IMPORT_MAX_ROWS} lines per import.` };
@@ -440,10 +453,21 @@
     const safe = /^[=+\-@]/.test(s) ? "'" + s : s;
     return /[",\r\n]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
   }
+  // Starts with a BOM so Excel reads it as UTF-8 ("I’m", not "Iâ€™m");
+  // parseCsv drops it again.
   function toCsv(lines) {
     const head = CSV_COLUMNS.join(',');
     const body = (lines || []).map(l => { const r = lineToRow(l); return CSV_COLUMNS.map(k => csvField(r[k])).join(','); });
-    return [head].concat(body).join('\r\n') + '\r\n';
+    return '\uFEFF' + [head].concat(body).join('\r\n') + '\r\n';
+  }
+
+  // UTF-8 bytes, which is what the server's 64 KB body limit counts (a
+  // curly quote is 1 UTF-16 unit but 3 bytes).
+  let encoder = null;
+  function utf8Bytes(s) {
+    if (typeof Buffer !== 'undefined' && Buffer.byteLength) return Buffer.byteLength(s, 'utf8');
+    encoder = encoder || new TextEncoder();
+    return encoder.encode(s).length;
   }
 
   // Split rows into commit requests under both limits.
@@ -452,7 +476,7 @@
     const out = [];
     let cur = [], bytes = 2;
     for (const r of rows || []) {
-      const b = JSON.stringify(r).length + 1;
+      const b = utf8Bytes(JSON.stringify(r)) + 1;
       if (cur.length && (cur.length >= mr || bytes + b > mb)) { out.push(cur); cur = []; bytes = 2; }
       cur.push(r); bytes += b;
     }
@@ -855,7 +879,7 @@
 
   return {
     C, PHASES, OPTION_IDS, ORIGINS, STATUSES, CSV_COLUMNS, ALIASES,
-    cleanText, norm, normName, hasUrl, episodeLabel,
+    cleanText, norm, normName, hasUrl, isWebLink, episodeLabel,
     characterIndex, linkCharacter, validateLine,
     parseCsv, rowsFromCsv, rowsFromJson, planImport, lineToRow, lineToForm, toSeedJson, toCsv, chunkRows,
     poolStats, playable, needs, roundMsFrom,

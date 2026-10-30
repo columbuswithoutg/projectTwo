@@ -86,7 +86,7 @@
   // The add / edit form for one line. A plain form: per-field errors from
   // QuoteGuessLogic.validateLine before sending, then from the server.
   //   opts: { project, line?, speakers: [name], submitLabel, onSubmit(row) → Promise, onCancel?, compact? }
-  // → { el, isDirty(), focus() }
+  // → { el, isDirty(), save() → Promise<boolean>, focus(), reset() }
   Shared.lineForm = (opts) => {
     const p = opts.project;
     const series = Array.isArray(p.episodes) && p.episodes.length > 0;
@@ -224,11 +224,14 @@
     faces();
 
     const msg = el.querySelector('.qte-form-msg');
-    el.addEventListener('submit', async (e) => {
-      e.preventDefault();
+    // One submit at a time: the form's button and the sticky Save bar both
+    // land here, and a second call while one is in flight gets the same
+    // promise (a double click used to POST twice). Resolves true when saved.
+    let inflight = null;
+    async function submit() {
       const v = values();
       const check = Q().validateLine(v, { project: p, mode: 'admin' });
-      if (!check.ok) { showErrors(check.errors); return; }
+      if (!check.ok) { showErrors(check.errors); return false; }
       showErrors(null);
       const btn = el.querySelector('button[type="submit"]');
       btn.disabled = true;
@@ -237,20 +240,27 @@
         await opts.onSubmit(v);
         dirty = false;
         msg.textContent = '';
+        return true;
       } catch (err) {
         msg.textContent = err.message || 'Could not save';
         if (err.body && err.body.fields) showErrors(err.body.fields);
+        return false;
       } finally {
         btn.disabled = false;
       }
-    });
+    }
+    const run = () => {
+      if (!inflight) inflight = submit().finally(() => { inflight = null; });
+      return inflight;
+    };
+    el.addEventListener('submit', (e) => { e.preventDefault(); run(); });
     const cancel = el.querySelector('.qte-cancel');
     if (cancel) cancel.addEventListener('click', () => { dirty = false; opts.onCancel(); });
 
     return {
       el,
       isDirty: () => dirty,
-      save: () => el.requestSubmit(),   // the sticky Save bar (index.js)
+      save: run,   // the sticky Save bar (index.js) → Promise<boolean saved>
       focus: () => f('speaker').focus(),
       reset: () => { el.reset(); picked.speaker = picked.reply = ''; dirty = false; showErrors(null); faces(); }
     };
@@ -309,9 +319,16 @@
       });
     },
 
-    // Sticky Save bar (index.js): submit every open line form with edits.
-    save() {
-      for (const f of [...Editor._forms]) if (f.isDirty() && f.save) f.save();
+    // Sticky Save bar (index.js): submit every open line form with edits and
+    // wait for them, so the bar stays disabled until the requests settle.
+    async save() {
+      await Promise.all([...Editor._forms].filter(f => f.isDirty() && f.save).map(f => f.save()));
+    },
+    // Only line forms can be saved; a running import alone can't (index.js
+    // then shows the bar with Discard only).
+    canSave() {
+      for (const f of Editor._forms) if (f.isDirty()) return true;
+      return false;
     },
 
     unmount() {
@@ -323,16 +340,16 @@
 
     isDirty() {
       for (const f of Editor._forms) if (f.isDirty()) return true;
-      return !!(Shared.io && Shared.io.isBusy && Shared.io.isBusy());
+      // Import / export: a running import, or files / pasted text not imported yet.
+      const io = Shared.io;
+      return !!(io && (io.isDirty ? io.isDirty() : io.isBusy && io.isBusy()));
     },
     dirtyNote() {
-      return Shared.io && Shared.io.isBusy && Shared.io.isBusy()
-        ? 'An import is still running. Leaving stops it after the chunk being sent now; lines already saved stay saved.'
-        : null;
+      return (Shared.io && Shared.io.dirtyNote && Shared.io.dirtyNote()) || null;
     },
     discard() {
       Editor._forms.clear();
-      if (Shared.io && Shared.io.cancel) Shared.io.cancel();
+      if (Shared.io && Shared.io.discard) Shared.io.discard();
     },
 
     _host() { return Editor._container && Editor._container.querySelector('.qte-host'); },
@@ -601,11 +618,22 @@
       form.focus();
     },
 
+    // Open line edit forms by line id: renderLines puts them back in their
+    // cards, so a re-render (search, filter, Hide, another form's Save) keeps
+    // the edits the Save bar counts.
+    _openEdits() {
+      const open = new Map();
+      for (const f of Editor._forms) if (f.lineId) open.set(f.lineId, f);
+      return open;
+    },
+
     _visible() {
       const d = Editor._detail;
       const q = Q().norm(Editor._filter.q);
       const st = Editor._filter.status;
+      const open = Editor._openEdits();
       return d.lines.filter(l => {
+        if (open.has(l.id)) return true;     // being edited: stays on screen whatever the filter
         if (st === 'live' && !(l.status === 'approved' && l.active)) return false;
         if (st === 'hidden' && !(l.status === 'approved' && !l.active)) return false;
         if ((st === 'pending' || st === 'rejected') && l.status !== st) return false;
@@ -618,6 +646,9 @@
     renderLines() {
       const d = Editor._detail;
       const host = Editor._host().querySelector('.qte-lines');
+      const open = Editor._openEdits();
+      // An open form whose line is gone (deleted) has nothing to save.
+      for (const [id, f] of open) if (!d.lines.some(x => x.id === id)) { Editor._forms.delete(f); open.delete(id); }
       const list = Editor._visible();
       Editor._host().querySelector('.qte-lines-count').textContent = `(${list.length} of ${d.lines.length})`;
       if (!list.length) {
@@ -633,7 +664,7 @@
               ${Shared.originBadge(l)}
               ${Shared.when(l) ? `<span class="qte-badge qte-badge-time">⏱ ${esc(Shared.when(l))}</span>` : ''}
               ${l.note ? `<span class="qte-note">${esc(l.note)}</span>` : ''}
-              ${l.source ? `<a class="qte-src" href="${esc(l.source)}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}
+              ${Q().isWebLink(l.source) ? `<a class="qte-src" href="${esc(l.source)}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}
             </div>
           </div>
           <div class="qte-line-actions">
@@ -644,6 +675,8 @@
         </article>`).join('');
       host.querySelectorAll('.qte-line').forEach(card => {
         const l = d.lines.find(x => x.id === card.dataset.id);
+        const form = open.get(l.id);
+        if (form) { Editor._showForm(card, form); return; }
         card.querySelector('.qte-edit').addEventListener('click', () => Editor.editLine(card, l));
         const hide = card.querySelector('.qte-hide');
         if (hide) hide.addEventListener('click', () => Editor._patch(l, { active: !l.active }, l.active ? 'Hidden from games' : 'Back in games'));
@@ -671,11 +704,16 @@
           AdminView.toast('Saved', 'success');
         }
       });
+      form.lineId = l.id;
       Editor._forms.add(form);
+      Editor._showForm(card, form);
+      form.focus();
+    },
+
+    _showForm(card, form) {
       card.innerHTML = '';
       card.classList.add('is-editing');
       card.appendChild(form.el);
-      form.focus();
     },
 
     async _patch(l, body, okMsg) {

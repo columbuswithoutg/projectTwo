@@ -80,8 +80,8 @@
 .confirm-btn:hover { background: rgba(var(--ink), 0.1); }
 
 .confirm-btn:focus-visible {
-  outline: 2px solid var(--color-primary-light);
-  outline-offset: 2px;
+  --focus-ring: var(--color-primary-light);
+  --focus-offset: 2px;
 }
 
 .confirm-btn.confirm-ok {

@@ -52,6 +52,8 @@
         } else {
           const data = await AdminView.api(`/friends/pending?page=${Moderation._state.page}&limit=25`);
           Moderation._state.total = data.total;
+          // The same count as the sidebar's badge: keep it fresh (a delete refetches here).
+          if (Number.isInteger(data.total)) AdminView.setNavBadge('friends', data.total);
           Moderation._state.items = data.items;
           Moderation.renderFriends();
         }

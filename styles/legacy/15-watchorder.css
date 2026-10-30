@@ -125,18 +125,6 @@
   line-height: 1;
 }
 
-.flow-zoom-level {
-  min-width: 58px;
-  height: 40px;
-  padding: 0 6px;
-  font-family: var(--font-ui);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-warm);
-}
-
 .flow-zoom-ui button:hover:not(:disabled) {
   background: var(--gold-01);
   color: var(--color-primary-light);
@@ -162,5 +150,4 @@ body.fight-active .flow-zoom-ui {
   }
   /* Keep ≥44px touch targets. */
   .flow-zoom-btn { width: 44px; height: 44px; }
-  .flow-zoom-level { min-width: 52px; height: 44px; }
 }

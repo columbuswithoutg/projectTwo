@@ -190,6 +190,32 @@ test('edit, hide and delete a line; an edit onto another line\'s text is 409; de
   assert.equal((await call('DELETE', '/line/nope')).status, 400);
 });
 
+test('renaming a speaker or replier drops the old portrait; a hand-picked one survives edits that keep the name', async () => {
+  const a = (await call('POST', '/avengers1', LINE)).body;
+  assert.equal(a.speaker.characterId, 'loki');
+  assert.equal(a.reply.speaker.characterId, 'ironman');
+  // The admin form sends every field, with the id only while the name is unchanged.
+  const ren = await call('PATCH', '/line/' + a.id, { speaker: 'Steve Rogers', text: LINE.text, replySpeaker: 'Loki', replyText: LINE.replyText });
+  assert.equal(ren.status, 200);
+  assert.deepEqual(ren.body.speaker, { name: 'Steve Rogers', key: 'steve rogers', characterId: null });
+  assert.equal(ren.body.reply.speaker.characterId, 'loki', 'the new replier links its own portrait');
+  // A hand-picked portrait: kept by an edit that leaves the name (even re-cased) alone.
+  QuoteLine._rows[0].speaker.characterId = 'ironman';
+  const keep = await call('PATCH', '/line/' + a.id, { speaker: 'steve  rogers', note: 'n' });
+  assert.equal(keep.body.speaker.characterId, 'ironman');
+  assert.equal((await call('PATCH', '/line/' + a.id, { note: 'n2' })).body.speaker.characterId, 'ironman');
+  // A body that picks an id for the new name wins.
+  const pick = await call('PATCH', '/line/' + a.id, { speaker: 'Tony Stark', speakerCharacterId: 'ironman' });
+  assert.equal(pick.body.speaker.characterId, 'ironman');
+  // Edit & approve from the suggestions queue goes through the same merge.
+  QuoteLine._rows.push({ _id: new mongoose.Types.ObjectId().toString(), projectId: 'avengers1', speaker: { name: 'Loki', key: 'loki', characterId: 'loki' }, text: 'Kneel before me.', textKey: 'kneel before me', reply: null, status: 'pending', active: true, origin: 'suggestion', suggestedByName: 'sam', timeSec: 60, createdAt: new Date(1), decoys: {} });
+  const sug = QuoteLine._rows[1];
+  const ap = await call('POST', `/line/${sug._id}/approve`, { edits: { speaker: 'Thor', text: 'Kneel before me.' } });
+  assert.equal(ap.status, 200);
+  assert.equal(ap.body.speaker.name, 'Thor');
+  assert.equal(ap.body.speaker.characterId, null);
+});
+
 test('the queue lists pending suggestions oldest first with look-alikes; approve (with edits) and reject', async () => {
   await call('POST', '/avengers1', LINE);
   QuoteLine._rows.push(
@@ -347,4 +373,38 @@ test('suggest: per-player limits (an hour, waiting for review)', async () => {
   const capped = await suggest('avengers1', { speaker: 'Loki', text: 'Yet another', time: '1:00' });
   assert.equal(capped.status, 429);
   assert.match(capped.body.error, /waiting for review/);
+});
+
+test('suggest: one in flight per player, so parallel requests cannot skip the limits (RT2-02)', async () => {
+  flags.quoteSuggestEnabled = true;
+  player('u1', 'alex', ['avengers1']);
+  player('u2', 'sam', ['avengers1']);
+  // Hold the first insert open until the second request has been answered.
+  const create = QuoteLine.create;
+  let release, entered;
+  const gate = new Promise(r => { release = r; });
+  const inCreate = new Promise(r => { entered = r; });
+  QuoteLine.create = async (data) => { entered(); await gate; return create(data); };
+  try {
+    const first = suggest('avengers1', { speaker: 'Loki', text: 'First line', time: '1:00' });
+    await inCreate;
+    const second = await suggest('avengers1', { speaker: 'Loki', text: 'Second line', time: '1:00' });
+    assert.equal(second.status, 429, 'refused while the first is still being saved');
+    assert.match(second.body.error, /still being saved/);
+    QuoteLine.create = create;
+    // Another player is not blocked by u1's request.
+    currentUser = 'u2';
+    assert.equal((await suggest('avengers1', { speaker: 'Loki', text: 'Sam line', time: '1:00' })).status, 201);
+    currentUser = 'u1';
+    release();
+    assert.equal((await first).status, 201);
+  } finally {
+    QuoteLine.create = create;
+    release();
+  }
+  assert.deepEqual(QuoteLine._rows.map(r => r.textKey).sort(), ['first line', 'sam line']);
+  // The slot is freed after a success and after a refusal (409, 400).
+  assert.equal((await suggest('avengers1', { speaker: 'Loki', text: 'first line!', time: '1:00' })).status, 409);
+  assert.equal((await suggest('avengers1', { speaker: 'Loki', text: 'No time' })).status, 400);
+  assert.equal((await suggest('avengers1', { speaker: 'Loki', text: 'Third line', time: '1:00' })).status, 201);
 });

@@ -44,20 +44,6 @@
   font: 600 30px/1 var(--font-ui);
 }
 
-/* Pending (unsaved) board moves: the sidebar's Projects entry carries the
-   dot now (.admin-nav-item.has-pending, 17-admin.css); kept for any
-   sub-tab that opts in. */
-.admin-subtab.has-pending::after {
-  content: '';
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-left: 6px;
-  border-radius: 50%;
-  background: var(--accent-text);
-  vertical-align: middle;
-}
-
 @media (max-width: 720px) {
   .admin-board-hint { display: none; }
 }
@@ -207,3 +193,7 @@ button.prq-chip-title:hover { text-decoration: underline; }
   text-transform: uppercase;
   color: var(--text-3);
 }
+
+/* Characters: live n/600 count beside the Summary label (ADM2-06). */
+.admin-cms-count { margin-left: 6px; font-style: normal; font-weight: 400; opacity: 0.7; text-transform: none; letter-spacing: 0; }
+.admin-cms-count.is-near { color: var(--accent-text); opacity: 1; }

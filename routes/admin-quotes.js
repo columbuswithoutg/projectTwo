@@ -139,9 +139,15 @@ module.exports = function adminQuotes({ logAudit }) {
   // validated as a whole. → { ok, line } | { ok:false, errors }.
   async function merged(doc, project, body) {
     const row = Object.assign(Logic.lineToForm(doc), {});
+    const was = { speaker: row.speaker, replySpeaker: row.replySpeaker };
+    const has = (k) => body && Object.prototype.hasOwnProperty.call(body, k);
     for (const k of ['speaker', 'speakerCharacterId', 'text', 'replySpeaker', 'replyCharacterId', 'replyText', 'note', 'episode', 'time', 'source', 'decoySpeakers', 'decoyReplies']) {
-      if (body && Object.prototype.hasOwnProperty.call(body, k)) row[k] = body[k];
+      if (has(k)) row[k] = body[k];
     }
+    // A renamed speaker (or replier) drops the stored portrait, so the new
+    // name links its own — unless the body picks one for it.
+    if (has('speaker') && !has('speakerCharacterId') && Logic.norm(row.speaker) !== Logic.norm(was.speaker)) row.speakerCharacterId = '';
+    if (has('replySpeaker') && !has('replyCharacterId') && Logic.norm(row.replySpeaker) !== Logic.norm(was.replySpeaker)) row.replyCharacterId = '';
     return Logic.validateLine(row, { project, mode: 'admin', characters: await characterIndex() });
   }
 
