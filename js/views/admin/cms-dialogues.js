@@ -43,8 +43,12 @@
     _saved: null,
     _pairForm: null,   // { isDirty() } while a pair form is open
 
-    async mount(container) {
+    // ctx (index.js): sub = the section (pairs | defeat | victory), kept in
+    // the address so a reload lands on it.
+    async mount(container, ctx) {
       Editor._container = container;
+      Editor._ctx = ctx || null;
+      Editor._section = ctx && ['pairs', 'defeat', 'victory'].includes(ctx.sub) ? ctx.sub : 'pairs';
       container.innerHTML = '<div class="admin-empty">Loading dialogues…</div>';
       try {
         const [d, p, c] = await Promise.all([
@@ -69,28 +73,38 @@
     renderShell() {
       Editor._container.innerHTML = `
         <div class="admin-cms-dialogues">
-          <div class="admin-subtabs">
-            <button class="admin-subtab" data-sec="pairs">Pair conversations (${Object.keys(Editor._data.pairs).length})</button>
-            <button class="admin-subtab" data-sec="defeat">Villain defeat lines (${Object.keys(Editor._data.villainDefeatLines).length})</button>
-            <button class="admin-subtab" data-sec="victory">Villain victory lines (${Object.keys(Editor._data.villainVictoryLines).length})</button>
+          <div class="admin-subnav">
+            <div class="admin-subtabs" role="tablist" aria-label="Dialogue sections">
+              <button class="admin-subtab" role="tab" data-sec="pairs">Pair conversations (${Object.keys(Editor._data.pairs).length})</button>
+              <button class="admin-subtab" role="tab" data-sec="defeat">Villain defeat lines (${Object.keys(Editor._data.villainDefeatLines).length})</button>
+              <button class="admin-subtab" role="tab" data-sec="victory">Villain victory lines (${Object.keys(Editor._data.villainVictoryLines).length})</button>
+            </div>
+            <div class="admin-subnav-save">
+              <span class="admin-subnav-note">One save covers all three sections — switching sections keeps your edits.</span>
+              <button class="admin-btn admin-btn-primary" id="admin-dialog-save">Save all</button>
+            </div>
           </div>
-          <p class="admin-config-help">All three sections share one save action — your edits apply on Save below.</p>
           <div id="admin-cms-dialog-host"></div>
-          <div class="admin-cms-actions">
-            <button class="admin-btn" id="admin-dialog-save">Save all dialogue changes</button>
-          </div>
         </div>
       `;
       const subtabs = Editor._container.querySelectorAll('.admin-subtab');
+      const LABEL = { pairs: 'Pair conversations', defeat: 'Villain defeat lines', victory: 'Villain victory lines' };
       const setActive = (sec) => {
         Editor._section = sec;
-        subtabs.forEach(b => b.classList.toggle('active', b.dataset.sec === sec));
+        subtabs.forEach(b => {
+          b.classList.toggle('active', b.dataset.sec === sec);
+          b.setAttribute('aria-selected', b.dataset.sec === sec ? 'true' : 'false');
+        });
+        if (Editor._ctx) {
+          Editor._ctx.sync({ sub: sec === 'pairs' ? '' : sec });
+          Editor._ctx.crumbs([{ label: LABEL[sec] }]);
+        }
         if (sec === 'pairs') Editor.renderPairs();
         else if (sec === 'defeat') Editor.renderVillainLines('villainDefeatLines');
         else if (sec === 'victory') Editor.renderVillainLines('villainVictoryLines');
       };
       subtabs.forEach(b => b.addEventListener('click', () => setActive(b.dataset.sec)));
-      setActive('pairs');
+      setActive(Editor._section || 'pairs');
 
       document.getElementById('admin-dialog-save').addEventListener('click', Editor.save);
     },
@@ -285,13 +299,13 @@
 
       const collect = () => JSON.stringify({ a: charAField.get(), b: charBField.get(), exchanges });
       const snapshot = collect();
-      Editor._pairForm = { isDirty: () => collect() !== snapshot };
+      Editor._pairForm = { isDirty: () => collect() !== snapshot, apply: () => applyBtn.click() };
 
       const actions = document.createElement('div');
       actions.className = 'admin-cms-actions';
       const applyBtn = document.createElement('button');
       applyBtn.className = 'admin-btn';
-      applyBtn.textContent = isNew ? 'Apply (Save below to persist)' : 'Apply changes';
+      applyBtn.textContent = isNew ? 'Apply (then Save all)' : 'Apply changes';
       const cancelBtn = document.createElement('button');
       cancelBtn.className = 'admin-btn';
       cancelBtn.textContent = 'Cancel';
@@ -325,7 +339,7 @@
         }
         if (existingKey && existingKey !== key) delete Editor._data.pairs[existingKey];
         Editor._data.pairs[key] = cleaned;
-        AdminView.toast('Pair updated locally — click Save All below to persist', 'info');
+        AdminView.toast('Pair updated locally — Save all to persist', 'info');
         Editor.renderPairs();
       });
 
@@ -408,6 +422,12 @@
     },
 
     save: async function () {
+      // An open pair form with edits is applied first (Save bar / Save all);
+      // if Apply refused it (a toast says why), nothing is sent.
+      if (Editor._pairForm && Editor._pairForm.isDirty() && Editor._pairForm.apply) {
+        Editor._pairForm.apply();
+        if (Editor._pairForm && Editor._pairForm.isDirty()) return;
+      }
       const btn = document.getElementById('admin-dialog-save');
       // Blank villain lines play as empty bubbles in-game (the server keeps
       // them), and too many / too long ones would be cut — drop the former,
@@ -448,6 +468,7 @@
     unmount() {
       Editor._pairForm = null;
       Editor._container = null;
+      Editor._ctx = null;
     }
   };
 

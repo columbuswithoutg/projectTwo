@@ -10,8 +10,11 @@
     _container: null,
     _form: null,     // { isDirty() } while a character form is open
 
-    async mount(container) {
+    // ctx (index.js): id → that character's form ('new' → an empty one), so a
+    // reload lands on the same view.
+    async mount(container, ctx) {
       Editor._container = container;
+      Editor._ctx = ctx || null;
       container.innerHTML = '<div class="admin-empty">Loading characters…</div>';
       try {
         const [chars, projs] = await Promise.all([
@@ -21,6 +24,10 @@
         Editor._items = chars.items || [];
         Editor._projects = projs.items || [];
         Editor.renderList();
+        const id = ctx && ctx.id;
+        const item = id && id !== 'new' && Editor._items.find(i => i.id === id);
+        if (item) Editor.openForm(item, false);
+        else if (id === 'new') Editor.openForm({}, true);
       } catch (e) {
         container.innerHTML = `<div class="admin-error">${esc(e.message)}</div>`;
       }
@@ -29,6 +36,7 @@
     renderList() {
       Editor._form = null;
       Editor._container.innerHTML = '';
+      Editor._syncUrl(null);
       const list = AdminView._cmsListView({
         items: Editor._items,
         columns: [
@@ -50,6 +58,18 @@
     },
     discard() {
       Editor._form = null;
+    },
+    // Sticky Save bar (index.js): presses the open form's own Save.
+    save() {
+      if (Editor._form && Editor._form.save) Editor._form.save();
+    },
+
+    // Address + breadcrumb for the list or an open form (replaceState: the
+    // form is part of this view, not a history level).
+    _syncUrl(form) {
+      if (!Editor._ctx) return;
+      Editor._ctx.sync({ id: form ? form.id : '' });
+      Editor._ctx.crumbs(form ? [{ label: form.label }] : []);
     },
 
     projectOptions() {
@@ -157,7 +177,8 @@
         image: imageField.get(), stages: stagesData
       });
       const snapshot = collect();
-      Editor._form = { isDirty: () => collect() !== snapshot };
+      Editor._form = { isDirty: () => collect() !== snapshot, save: () => saveBtn.click() };
+      Editor._syncUrl({ id: isNew ? 'new' : item.id, label: isNew ? 'New character' : (item.name || item.id) });
 
       saveBtn.addEventListener('click', async () => {
         const payload = {
@@ -218,6 +239,7 @@
     unmount() {
       Editor._form = null;
       Editor._container = null;
+      Editor._ctx = null;
     }
   };
 

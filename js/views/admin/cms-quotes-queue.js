@@ -1,5 +1,5 @@
 /************************************************
- * ADMIN — CMS QUOTES → Suggestions (the review queue)
+ * ADMIN — People → Quote suggestions (the review queue)
  *
  * Lines players suggested from /world, oldest first. Each card shows the
  * line, the reply, the scene note and — big — the time the player gave, so
@@ -159,4 +159,25 @@
   };
 
   Shared.queue = Queue;
+
+  // Its own sidebar entry (People → Quote suggestions, index.js). The
+  // count it loads feeds the sidebar badge.
+  AdminView._tabs.suggestions = {
+    mount(host) {
+      host.innerHTML = `
+        <div class="admin-sugg">
+          <p class="admin-config-help admin-sugg-where">Suggestions are switched on or off, game-wide and per island, in
+            <a href="/admin?tab=quote-guess" data-go="quote-guess">Minigames → Quote Guess</a>.</p>
+          <div class="admin-sugg-host"></div>
+        </div>`;
+      host.querySelector('[data-go="quote-guess"]').addEventListener('click', (e) => {
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        AdminView.go({ tab: 'quote-guess' });
+      });
+      Queue.mount(host.querySelector('.admin-sugg-host'), { onChange: (n) => AdminView.setNavBadge('suggestions', n || 0) });
+    },
+    // A load still in flight renders into the detached host, harmlessly.
+    unmount() { Queue._ctx = {}; }
+  };
 })();

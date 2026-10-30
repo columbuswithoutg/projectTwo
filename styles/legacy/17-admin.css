@@ -1,20 +1,37 @@
 /* ==============================================
    ADMIN PANEL
    ============================================== */
-.admin-page {
-  /* body sets overflow:hidden + height:100vh so the map view doesn't scroll;
-     the admin page needs its own scroll container or detail panels at the
-     bottom of the document get clipped below the fold. */
+/* Shell (js/views/admin/index.js): sidebar | content column. The sidebar
+   scrolls on its own; .admin-page is the content's scroll container (body
+   sets overflow:hidden + height:100vh so the map view doesn't scroll). */
+.admin-shell {
+  display: flex;
   height: 100vh;
   height: 100dvh;
+  overflow: hidden;
+  color: var(--color-text-warm);
+}
+.admin-page {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 16px;
-  max-width: 1200px;
-  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
   color: var(--color-text-warm);
   box-sizing: border-box;
 }
+/* Content stays readable on wide screens; Board mode (.is-wide) opts out. */
+.admin-page > * {
+  width: 100%;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: border-box;
+}
+.admin-tab-host { flex: 1 0 auto; }
 .admin-header {
   display: flex;
   align-items: center;
@@ -42,14 +59,6 @@
   opacity: 0.7;
 }
 
-.admin-tabs {
-  display: flex;
-  gap: 4px;
-  margin: 12px 0;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--border-1);
-}
-.admin-tab,
 .admin-subtab {
   background: transparent;
   color: var(--color-text-warm);
@@ -61,16 +70,21 @@
   letter-spacing: 0.03em;
   border-bottom: 2px solid transparent;
 }
-.admin-tab.active,
 .admin-subtab.active {
   color: var(--accent-text);
   border-bottom-color: var(--color-primary);
 }
+/* Second-level nav inside a pane: one row that scrolls sideways on phones. */
 .admin-subtabs {
   display: flex;
   gap: 4px;
   margin-bottom: 12px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
 }
+.admin-subtab { flex-shrink: 0; white-space: nowrap; }
 
 .admin-toolbar {
   display: flex;
@@ -425,8 +439,6 @@
   .admin-detail-grid { grid-template-columns: 1fr 1fr; }
   .admin-mem-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   .admin-audit-meta pre { max-width: 80vw; }
-  .admin-tabs { overflow-x: auto; flex-wrap: nowrap; }
-  .admin-tab { flex-shrink: 0; }
 }
 
 .admin-link-btn {
@@ -985,4 +997,290 @@
   }
   .admin-table { min-width: 620px; }
   .admin-table thead th { position: static; }
+}
+
+/* ==============================================
+   ADMIN SHELL — sidebar, drawer, breadcrumbs, Save bar
+   (js/views/admin/index.js)
+   ============================================== */
+.admin-side {
+  flex: 0 0 232px;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 10px 24px;
+  box-sizing: border-box;
+  background: var(--surface-2, var(--color-surface));
+  border-right: 1px solid var(--border-1);
+}
+.admin-side-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px 14px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border-1);
+}
+.admin-side-title {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+.admin-side-head .admin-user {
+  min-width: 0;
+  font-size: 12px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-nav-group { padding: 4px 0; }
+.admin-nav-heading {
+  margin: 12px 10px 4px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.1em;
+  color: var(--text-3, var(--color-text-warm));
+}
+.admin-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 10px 8px 14px;
+  border-radius: 8px;
+  color: var(--color-text-warm);
+  text-decoration: none;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.2;
+}
+.admin-nav-item:hover { background: rgba(var(--ink), 0.06); }
+.admin-nav-item:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+.admin-nav-item.active {
+  background: rgba(var(--ink), 0.1);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.admin-nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--color-primary);
+}
+.admin-nav-label { flex: 1; min-width: 0; }
+.admin-nav-badge {
+  min-width: 18px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  font: 700 11px/1.3 var(--font-ui);
+  text-align: center;
+}
+.admin-nav-badge[hidden] { display: none; }
+/* Unsaved board moves on Projects (setNavBadge('projects', true)). */
+.admin-nav-dot {
+  display: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-text);
+}
+.admin-nav-item.has-pending .admin-nav-dot { display: inline-block; }
+
+.admin-menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+}
+.admin-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.55);
+}
+.admin-scrim[hidden] { display: none; }
+
+/* Breadcrumbs: Admin › Minigames › Quote Guess › Iron Man */
+.admin-crumbs {
+  margin-top: 10px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.admin-crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-crumbs li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-3, var(--color-text-warm));
+}
+.admin-crumbs li + li::before { content: '›'; opacity: 0.7; }
+.admin-crumbs a {
+  color: var(--color-text-warm);
+  text-decoration: none;
+  border-radius: 4px;
+}
+.admin-crumbs a:hover { color: var(--accent-text); text-decoration: underline; }
+.admin-crumbs a:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.admin-crumbs [aria-current] {
+  max-width: 42ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* Sticky Save bar: stuck to the bottom of the scroller while the active
+   pane has unsaved work. bottom/margin -16px = the scroller's padding
+   (sticky insets by it), so it sits flush with the bottom edge. */
+.admin-savebar {
+  position: sticky;
+  bottom: -16px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin-top: 16px;
+  margin-bottom: -16px;
+  padding: 12px 16px;
+  background: var(--color-node-bg, var(--color-surface));
+  border: 1px solid var(--border-2);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.28);
+}
+.admin-savebar[hidden] { display: none; }
+.admin-savebar-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-text);
+}
+.admin-savebar-msg { flex: 1; min-width: 12em; font-size: 13px; }
+.admin-savebar .admin-btn[hidden] { display: none; }
+.admin-btn-primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  font-weight: 600;
+}
+.admin-btn-primary:hover { background: var(--color-primary); filter: brightness(1.1); }
+.admin-btn-primary:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
+
+/* A pane's second-level nav with an action beside it (Dialogues: the
+   sections + the one "Save all"). */
+.admin-subnav {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-1);
+}
+.admin-subnav .admin-subtabs { margin-bottom: 0; min-width: 0; max-width: 100%; }
+.admin-subnav-save {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  padding: 6px 0;
+}
+.admin-subnav-note { font-size: 12px; color: var(--text-3, var(--color-text-warm)); max-width: 34ch; }
+
+/* Overview: "Needs attention" cards link to their page. */
+.admin-attention {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.admin-attn-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px;
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: inherit;
+  text-decoration: none;
+}
+.admin-attn-card:hover { border-color: var(--border-2); background: rgba(var(--ink), 0.04); }
+.admin-attn-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.admin-attn-card.is-hot { border-color: var(--color-primary); }
+.admin-attn-card:not(.is-hot) .admin-stat-num { color: var(--text-3, var(--color-text-warm)); }
+.admin-attn-go { position: absolute; top: 14px; right: 16px; opacity: 0.5; }
+
+/* Minigames page: the game's settings card over its content. */
+.admin-mg { display: flex; flex-direction: column; gap: 16px; }
+.admin-config-mini {
+  padding: 2px 16px 14px;
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+.admin-config-mini .admin-h3 { margin-top: 14px; }
+.admin-config-mini .admin-config-actions { align-items: center; }
+.admin-config-mini .admin-config-meta { margin: 0 0 0 auto; font-size: 12px; }
+
+/* Phones: the sidebar becomes a slide-in drawer behind the ☰ button. */
+@media (max-width: 720px) {
+  .admin-menu-btn { display: inline-flex; }
+  .admin-side {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 41;
+    width: min(280px, 86vw);
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0.2s;
+  }
+  .admin-shell.nav-open .admin-side {
+    transform: none;
+    visibility: visible;
+    box-shadow: 8px 0 28px rgba(0, 0, 0, 0.45);
+  }
+  .admin-header .admin-back { padding: 6px 10px; }
+  .admin-subnav-save { margin-left: 0; flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .admin-side { transition: none; }
 }

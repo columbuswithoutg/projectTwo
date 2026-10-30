@@ -1,12 +1,12 @@
 /************************************************
- * ADMIN — CMS > Projects: the drag-to-move board and the project form
+ * ADMIN — Content → Projects: the drag-to-move board and the project form
  *
  * Board (js/views/admin/cms-projects-board.js): moves like the public
  * watch-order chart — drag empty space, wheel/pinch to zoom — so the canvas
  * hides its scrollbars and fills the rest of the window (its height is set
  * inline by the board). Board mode widens the admin page (.is-wide).
  ************************************************/
-.admin-page.is-wide { max-width: none; }
+.admin-page.is-wide > * { max-width: none; }
 
 .admin-board-canvas {
   max-height: none;               /* legacy capped it at 70vh with scrollbars */
@@ -44,7 +44,9 @@
   font: 600 30px/1 var(--font-ui);
 }
 
-/* Pending (unsaved) board moves: a dot on the CMS "Projects" sub-tab. */
+/* Pending (unsaved) board moves: the sidebar's Projects entry carries the
+   dot now (.admin-nav-item.has-pending, 17-admin.css); kept for any
+   sub-tab that opts in. */
 .admin-subtab.has-pending::after {
   content: '';
   display: inline-block;

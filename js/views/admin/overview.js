@@ -1,6 +1,8 @@
 /************************************************
- * ADMIN — OVERVIEW TAB
- * High-level counts + signups-over-time bar chart (inline SVG, no chart lib).
+ * ADMIN — OVERVIEW (the landing page)
+ * "Needs attention" counts (open reports, quote suggestions, friend
+ * requests — AdminView.attention(), index.js), high-level counts and a
+ * signups-over-time bar chart (inline SVG, no chart lib).
  ************************************************/
 (function () {
   const esc = AdminView._escapeHtml;
@@ -9,12 +11,39 @@
     mount(container) {
       container.innerHTML = `
         <div class="admin-overview">
+          <h3 class="admin-h3">Needs attention</h3>
+          <div id="admin-attention" class="admin-attention">Loading…</div>
+          <h3 class="admin-h3">At a glance</h3>
           <div id="admin-stats" class="admin-stats">Loading…</div>
           <h3 class="admin-h3">Signups (last 30 days)</h3>
           <div id="admin-signups" class="admin-signups">Loading…</div>
         </div>
       `;
       Overview.fetch();
+      Overview.fetchAttention();
+    },
+
+    async fetchAttention() {
+      const el = document.getElementById('admin-attention');
+      const c = await AdminView.attention();
+      if (!el || !el.isConnected) return;
+      for (const [k, v] of Object.entries(c)) AdminView.setNavBadge(k, v);
+      const cards = [
+        { n: c.reports, label: 'Open reports', state: { tab: 'reports' } },
+        { n: c.suggestions, label: 'Quote suggestions to review', state: { tab: 'suggestions' } },
+        { n: c.friends, label: 'Pending friend requests', state: { tab: 'moderation', sub: 'friends' } }
+      ];
+      el.innerHTML = cards.map((k, i) => `
+        <a class="admin-attn-card${k.n ? ' is-hot' : ''}" href="${esc(AdminView.url(k.state))}" data-i="${i}">
+          <span class="admin-stat-num">${k.n == null ? '—' : esc(k.n)}</span>
+          <span class="admin-stat-lab">${esc(k.label)}</span>
+          <span class="admin-attn-go" aria-hidden="true">→</span>
+        </a>`).join('');
+      el.querySelectorAll('.admin-attn-card').forEach(a => a.addEventListener('click', (e) => {
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        AdminView.go(cards[parseInt(a.dataset.i, 10)].state);
+      }));
     },
 
     async fetch() {

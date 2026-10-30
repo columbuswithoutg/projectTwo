@@ -141,17 +141,19 @@ projectTwo/
         ├── home.js            /home — playground shell
         ├── home-builder.js    /home character builder modal
         └── admin/
-            ├── index.js       /admin shell — six tabs
-            ├── users.js       Tab: Users (search, ban, reset, delete, online dot)
-            ├── moderation.js  Tab: Moderation (memories grid, friend reqs)
-            ├── cms.js         Tab: CMS shell — sub-tabs router
-            ├── cms-projects.js
-            ├── cms-characters.js
-            ├── cms-locations.js
-            ├── cms-dialogues.js
-            ├── config.js      Tab: Config — live walker tuning sliders
-            ├── audit.js       Tab: Audit Log
-            └── overview.js    Tab: Overview — stats + signup chart
+            ├── index.js       /admin shell — grouped sidebar (ADMIN_NAV), breadcrumbs, ?tab=&sub=&id= URLs, sticky Save bar
+            ├── overview.js    Overview (landing) — needs-attention counts, stats, signup chart
+            ├── users.js       People → Users (sortable table, ban, reset, delete, mark watched)
+            ├── moderation.js  People → Moderation (memories grid, friend reqs)
+            ├── reports.js     People → Reports (bug reports + suggestions, replies, status)
+            ├── cms-quotes-queue.js  People → Quote suggestions (review queue)
+            ├── cms.js         shared CMS helpers (list view, fields, id/error helpers)
+            ├── cms-projects.js, cms-projects-board.js, prereq-picker.js   Content → Projects (list / board)
+            ├── cms-characters.js, cms-locations.js, cms-dialogues.js       Content → …
+            ├── cms-scenes.js  Minigames → Scene Guess (settings card + stills per island)
+            ├── cms-quotes.js, cms-quotes-io.js   Minigames → Quote Guess (settings card + islands, import/export)
+            ├── config.js      World settings sections + the minigames' settings cards (one AdminConfig)
+            └── audit.js       System → Audit log
 ```
 
 ---
@@ -224,14 +226,25 @@ Promote a user to admin by setting `isAdmin: true` on their Mongo document — t
 
 **Access:** `/admin` (hidden route). Visible as a ⚙ button on the `/profile` page once you have `isAdmin: true`.
 
-| Tab         | What it does                                                                 |
-|-------------|------------------------------------------------------------------------------|
-| Users       | Sortable table — click a column header (Username, Last active, Watched, Memories, Joined) to sort the whole list on the server, across pages and with the search applied; never-active users sort last. View details. Ban / unban / reset password / delete. Mark projects watched for a user (skips the watch timer; no feed post; they get an inbox note). Green dot for users active in last 5 min, relative-time "active 3m ago". |
-| Moderation  | Sub-tabs: Memories grid (delete uploads — also wipes from Cloudinary), Pending friend requests. |
-| CMS         | Sub-tabs: Projects, Characters, Locations, Dialogues. Per-field forms. Audit-logged. |
-| Config      | Live sliders for walker speed, pause min/max, encounter dist/cooldown, fight spawn chance, plus default Fights/Dialogues toggles for new users. |
-| Audit Log   | Paginated, action-filterable forensic log of every destructive admin action. |
-| Overview    | Total users, banned count, memory count, and a 30-day signup bar chart.       |
+A grouped left sidebar (a slide-in drawer behind ☰ on phones), a breadcrumb trail over each page,
+and a URL per view: `/admin?tab=<entry>&sub=<view>&id=<item>` — reload lands on the same view, and
+Back from a drill-down (an island, a scene project) goes up one level. Whenever the open page has
+unsaved edits a sticky **Save / Discard** bar sits at the bottom; leaving with edits still asks first.
+
+| Group | Entry | What it does |
+|-------|-------|--------------|
+| — | Overview | The landing page. Needs attention (open reports, quote suggestions to review, pending friend requests — each links to its page; the same counts badge the sidebar), total users, banned count, memory count, a 30-day signup bar chart. |
+| People | Users | Sortable table — click a column header (Username, Last active, Watched, Memories, Joined) to sort the whole list on the server, across pages and with the search applied; never-active users sort last. View details. Ban / unban / reset password / delete. Mark projects watched for a user (skips the watch timer; no feed post; they get an inbox note). Green dot for users active in last 5 min, relative-time "active 3m ago". |
+| People | Moderation | Memories grid (delete uploads — also wipes from Cloudinary) · Pending friend requests (`sub=friends`). |
+| People | Reports | Players' bug reports and suggestions: filter by type / status, search, reply, set status, delete. |
+| People | Quote suggestions | Lines players suggested for Quote Guess, oldest first: approve, edit & approve, or reject with a reason; near-duplicates listed under each card. |
+| Content | Projects | List or drag-to-move Board (`sub=board`); per-field form (`id=<project>`). Audit-logged. |
+| Content | Characters · Locations | Per-field forms (`id=<item>`). Audit-logged. |
+| Content | Dialogues | Pair conversations · Villain defeat lines · Villain victory lines (`sub=`), one **Save all** for the three. |
+| Minigames | Scene Guess | Game settings card (master switch, seconds per round) over the stills editor: per island, drop stills, type their times, switch the island on (`id=<project>`). |
+| Minigames | Quote Guess | Game settings card (master switch, player suggestions switch, seconds per round) over Islands (the quote bank per island, `id=<project>`) and Import / export (`sub=io`). |
+| World settings | Physics & limits · Defaults · NPC bodies · World event | One AdminConfig split into pages: walker speed / pauses, encounter distance / cooldown, fight spawn chance, props per house / room; default Fights / Dialogues toggles for new users; each /world hero's body type; the Infinity Stone event switch. "Reset all settings to defaults" resets every one of them (and both minigames' settings). |
+| System | Audit log | Paginated, action-filterable forensic log of every destructive admin action. |
 
 **Critical security property to preserve:** the JWT carries `isAdmin` for UX gating, but `requireAdmin` re-fetches from Mongo on every admin call. Demoting an admin in the DB takes effect immediately — no waiting 7 days for their token to expire.
 

@@ -1,14 +1,17 @@
 /************************************************
  * ADMIN — CMS QUOTES (Quote Guess minigame)
  *
- * Three views behind one sub-tab:
+ * Minigames → Quote Guess (under its Game settings card, index.js
+ * _minigamePane), two in-pane views:
  *   Islands      — per project: the quote bank (add / edit / hide / delete),
  *                  the island's two switches (game on, suggestions on), what
- *                  it still needs to be playable, and its board.
- *   Suggestions  — players' suggested lines waiting for review
- *                  (js/views/admin/cms-quotes-queue.js).
+ *                  it still needs to be playable, and its board. An island
+ *                  page is a drill-down (?id=, a pushed history entry).
  *   Import       — bulk CSV / JSON import with a preview, and export
- *                  (js/views/admin/cms-quotes-io.js).
+ *                  (?sub=io, js/views/admin/cms-quotes-io.js).
+ * Players' suggestions waiting for review have their own sidebar entry,
+ * People → Quote suggestions (js/views/admin/cms-quotes-queue.js); the
+ * view switch here links to it.
  *
  * Server: routes/admin-quotes.js (/api/admin/quotes/…). Every form is
  * checked here with the same QuoteGuessLogic.validateLine the server uses,
@@ -247,6 +250,7 @@
     return {
       el,
       isDirty: () => dirty,
+      save: () => el.requestSubmit(),   // the sticky Save bar (index.js)
       focus: () => f('speaker').focus(),
       reset: () => { el.reset(); picked.speaker = picked.reply = ''; dirty = false; showErrors(null); faces(); }
     };
@@ -256,7 +260,8 @@
 
   const Editor = {
     _container: null,
-    _view: 'islands',       // 'islands' | 'queue' | 'io'
+    _view: 'islands',       // 'islands' | 'io'
+    _ctx: null,             // index.js nav context while mounted
     _items: [],
     _globals: {},
     _detail: null,          // GET /quotes/:projectId
@@ -264,26 +269,55 @@
     _forms: new Set(),      // open line forms (dirty guard)
     _filter: { q: '', status: 'live' },
 
-    async mount(container) {
+    // ctx (index.js): sub 'io' → Import / export; id → that island's page.
+    async mount(container, ctx) {
       Editor._container = container;
+      Editor._ctx = ctx || null;
       Editor._detail = null;
       Editor._forms.clear();
+      // The old Suggestions view has its own sidebar entry now.
+      if (ctx && ctx.sub === 'queue') { AdminView.go({ tab: 'suggestions' }); return; }
+      if (ctx) Editor._view = ctx.sub === 'io' ? 'io' : 'islands';
       container.innerHTML = `
         <div class="qte">
-          <div class="qte-views" role="tablist">
+          <div class="qte-views" role="tablist" aria-label="Quote Guess views">
             <button type="button" class="qte-view" data-view="islands" role="tab">Islands</button>
-            <button type="button" class="qte-view" data-view="queue" role="tab">Suggestions <b class="qte-pending" hidden></b></button>
             <button type="button" class="qte-view" data-view="io" role="tab">Import / export</button>
+            <a class="qte-view qte-view-link" href="/admin?tab=suggestions" data-go="suggestions">Suggestions <b class="qte-pending" hidden></b> <span aria-hidden="true">→</span></a>
           </div>
           <div class="qte-host"></div>
         </div>`;
-      container.querySelectorAll('.qte-view').forEach(b => b.addEventListener('click', () => Editor.show(b.dataset.view)));
+      container.querySelectorAll('button.qte-view').forEach(b => b.addEventListener('click', () => Editor.show(b.dataset.view)));
+      container.querySelector('[data-go="suggestions"]').addEventListener('click', (e) => {
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        AdminView.go({ tab: 'suggestions' });
+      });
+      if (ctx && ctx.id && Editor._view === 'islands') {
+        Editor._markView('islands');
+        Editor.refreshPending();
+        return Editor.openProject(ctx.id);
+      }
       await Editor.show(Editor._view, true);
+    },
+
+    _markView(view) {
+      Editor._container.querySelectorAll('button.qte-view').forEach(b => {
+        const on = b.dataset.view === view;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+    },
+
+    // Sticky Save bar (index.js): submit every open line form with edits.
+    save() {
+      for (const f of [...Editor._forms]) if (f.isDirty() && f.save) f.save();
     },
 
     unmount() {
       Editor._forms.clear();
       Editor._detail = null;
+      Editor._ctx = null;
       if (Shared.io && Shared.io.unmount) Shared.io.unmount();
     },
 
@@ -309,22 +343,23 @@
         if (!(await AdminView._confirmDiscard())) return;
         Editor.discard();
       }
+      if (view === 'queue') return AdminView.go({ tab: 'suggestions' });
       Editor._view = view;
       Editor._forms.clear();
-      Editor._container.querySelectorAll('.qte-view').forEach(b => {
-        const on = b.dataset.view === view;
-        b.classList.toggle('active', on);
-        b.setAttribute('aria-selected', on ? 'true' : 'false');
-      });
+      Editor._markView(view);
+      if (Editor._ctx) {
+        Editor._ctx.sync({ sub: view === 'io' ? 'io' : '' });
+        Editor._ctx.crumbs(view === 'io' ? [{ label: 'Import / export' }] : []);
+      }
       const host = Editor._host();
-      if (view === 'queue' && Shared.queue) return Shared.queue.mount(host, { onChange: Editor.refreshPending });
       if (view === 'io' && Shared.io) return Shared.io.mount(host, { onChange: Editor.refreshPending });
       return Editor.loadList();
     },
 
-    // The "Suggestions (n)" count on the view switch.
+    // The "Suggestions (n)" count on the view switch (and the sidebar).
     refreshPending(n) {
       const set = (count) => {
+        AdminView.setNavBadge('suggestions', count || 0);
         const b = Editor._container && Editor._container.querySelector('.qte-pending');
         if (!b) return;
         b.hidden = !count;
@@ -355,8 +390,8 @@
       el.className = 'scn-banner' + (g.globalEnabled ? ' is-on' : '');
       el.innerHTML = g.globalEnabled
         ? `<b>Quote Guess is ON for players.</b> Only islands switched on below (with a playable bank) show the game.
-           Suggestions are <b>${g.suggestEnabled ? 'open' : 'closed'}</b> (Config → Players can suggest quotes).`
-        : '<b>Quote Guess is OFF for everyone</b> — players see no trace of it. Build the banks here, then turn it on in <b>Config → Quote Guess minigame enabled</b>.';
+           Suggestions are <b>${g.suggestEnabled ? 'open' : 'closed'}</b> (Game settings above).`
+        : '<b>Quote Guess is OFF for everyone</b> — players see no trace of it. Build the banks here, then switch it on in <b>Game settings</b> above.';
       return el;
     },
 
@@ -386,7 +421,7 @@
           { key: 'pending', label: 'Pending', fmt: (v) => v ? String(v) : '—' },
           { key: 'enabled', label: 'Island', fmt: (v, it) => Editor._statusText(it) }
         ],
-        onPick: (item) => Editor.openProject(item.id)
+        onPick: (item) => (Editor._ctx ? Editor._ctx.go({ id: item.id }, { push: true }) : Editor.openProject(item.id))
       });
       const addBtn = list.querySelector('.admin-toolbar .admin-btn');
       if (addBtn) addBtn.remove();
@@ -418,6 +453,9 @@
     },
 
     async _backToList() {
+      // Up a level: Back to the list (the shell's leave guard asks about
+      // open line forms); the breadcrumb does the same.
+      if (Editor._ctx) { Editor._ctx.up({}); return; }
       if (Editor.isDirty()) {
         if (!(await AdminView._confirmDiscard())) return;
       }
@@ -452,7 +490,7 @@
             <label class="scn-switch">
               <input type="checkbox" class="qte-sw" data-key="enabled" ${d.enabled ? 'checked' : ''}>
               <span class="scn-switch-main">Show the game on this island</span>
-              <span class="scn-switch-sub">Live once the bank is playable and Quote Guess is on in Config.</span>
+              <span class="scn-switch-sub">Live once the bank is playable and Quote Guess is on (Game settings above).</span>
             </label>
             <label class="scn-switch">
               <input type="checkbox" class="qte-sw" data-key="acceptSuggestions" ${d.acceptSuggestions ? 'checked' : ''}>
@@ -480,6 +518,7 @@
           <div class="scn-board qte-board"></div>
         </div>`;
       host.querySelector('.qte-island').prepend(Editor._banner());
+      if (Editor._ctx) Editor._ctx.crumbs([{ label: d.project.title }]);
       host.querySelector('.qte-back').addEventListener('click', () => Editor._backToList());
       host.querySelectorAll('.qte-sw').forEach(sw => sw.addEventListener('change', () => Editor._toggle(sw)));
       host.querySelector('.qte-add-open').addEventListener('click', () => Editor.openAdd());
@@ -725,4 +764,6 @@
   };
 
   AdminView._cms.quotes = Editor;
+  // Minigames → Quote Guess: its settings card (Config 'quote') over this editor.
+  AdminView._tabs['quote-guess'] = AdminView._minigamePane('quote', () => Editor);
 })();

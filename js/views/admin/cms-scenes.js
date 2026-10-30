@@ -65,9 +65,13 @@
     _uploading: false,
     _batch: null,       // token of the running "Upload all"; _clearPending() drops it to stop the loop
 
-    async mount(container) {
+    // ctx (index.js, Minigames → Scene Guess): id → that project's page
+    // (a pushed history entry, so Back returns to the list).
+    async mount(container, ctx) {
       Editor._container = container;
+      Editor._ctx = ctx || null;
       Editor._detail = null;
+      if (ctx && ctx.id) return Editor.openProject(ctx.id);
       container.innerHTML = '<div class="admin-empty">Loading projects…</div>';
       try {
         const res = await AdminView.api('/scenes/summary');
@@ -83,6 +87,7 @@
     unmount() {
       Editor._clearPending();
       Editor._detail = null;
+      Editor._ctx = null;
     },
 
     // Guards (cms.js, index.js): dropped stills not uploaded yet (their typed
@@ -99,6 +104,10 @@
     },
     discard() {
       Editor._clearPending();
+    },
+    // Sticky Save bar (index.js): upload the dropped stills.
+    async save() {
+      if (Editor._pending.length && !Editor._uploading && Editor._detail) await Editor.uploadAll();
     },
 
     // Also cancels a running uploadAll(): it checks its token before every
@@ -128,9 +137,9 @@
           { key: 'active', label: 'Stills', fmt: (v, it) => it.stills === v ? String(v) : `${v} active / ${it.stills}` },
           { key: 'enabled', label: 'Island', fmt: (v, it) => Editor._statusText(it, min) }
         ],
-        onPick: (item) => Editor.openProject(item.id)
+        onPick: (item) => (Editor._ctx ? Editor._ctx.go({ id: item.id }, { push: true }) : Editor.openProject(item.id))
       });
-      // Nothing to "add" here — projects come from CMS → Projects.
+      // Nothing to "add" here — projects come from Content → Projects.
       const addBtn = list.querySelector('.admin-toolbar .admin-btn');
       if (addBtn) addBtn.remove();
       c.append(Editor._globalBanner(), help, list);
@@ -148,7 +157,7 @@
       el.className = 'scn-banner' + (Editor._globalEnabled ? ' is-on' : '');
       el.innerHTML = Editor._globalEnabled
         ? '<b>Scene Guess is ON for players.</b> Only islands switched on below (with enough stills) show the game.'
-        : '<b>Scene Guess is OFF for everyone</b> — players see no trace of it. Prepare islands here, then turn it on in <b>Config → Scene Guess minigame enabled</b>.';
+        : '<b>Scene Guess is OFF for everyone</b> — players see no trace of it. Prepare islands here, then switch it on in <b>Game settings</b> above.';
       return el;
     },
 
@@ -185,7 +194,7 @@
       const c = Editor._container;
       const active = d.stills.filter(s => s.active).length;
       const playable = active >= d.minPool;
-      const lengthText = !tl ? 'No runtime set — add one in CMS → Projects first.'
+      const lengthText = !tl ? 'No runtime set — add one in Content → Projects first.'
         : tl.kind === 'series'
           ? `Series · ${tl.segments.length} episodes (${tl.segments.map(s => `${s.label} ${Math.round(s.len / 60)}m`).join(' · ')})`
           : `Movie · ${L().formatTime(tl.total)}`;
@@ -222,7 +231,13 @@
         </div>
       `;
       c.querySelector('.scn').prepend(Editor._globalBanner());
-      c.querySelector('.scn-back').addEventListener('click', () => { Editor._clearPending(); Editor.mount(c); });
+      // Up a level: Back to the list (the leave guard asks about dropped
+      // stills); the breadcrumb does the same.
+      c.querySelector('.scn-back').addEventListener('click', () => {
+        if (Editor._ctx) { Editor._ctx.up({}); return; }
+        Editor._clearPending(); Editor.mount(c);
+      });
+      if (Editor._ctx) Editor._ctx.crumbs([{ label: d.project.title }]);
       const sw = c.querySelector('.scn-island');
       sw.addEventListener('change', async () => {
         sw.disabled = true;
@@ -615,4 +630,6 @@
   };
 
   AdminView._cms.scenes = Editor;
+  // Minigames → Scene Guess: its settings card (Config 'scene') over this editor.
+  AdminView._tabs['scene-guess'] = AdminView._minigamePane('scene', () => Editor);
 })();

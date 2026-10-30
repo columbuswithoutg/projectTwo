@@ -16,16 +16,26 @@
     _source: 'db',   // 'fallback' = the collection is empty; the site serves projects.js
     _container: null,
     _mode: 'list', // 'list' | 'board'
-    _form: null,     // { isDirty() } while a project form is open
+    _form: null,     // { isDirty(), save() } while a project form is open
+    _ctx: null,      // index.js nav context (sync / crumbs) while mounted
 
-    async mount(container) {
+    // ctx (index.js): sub 'board' → Board mode; id → that project's form
+    // ('new' → an empty one), so a reload lands on the same view.
+    async mount(container, ctx) {
       Editor._container = container;
+      Editor._ctx = ctx || null;
+      if (ctx) Editor._mode = ctx.sub === 'board' ? 'board' : 'list';
       container.innerHTML = '<div class="admin-empty">Loading projects…</div>';
       try {
         const data = await AdminView.api('/content/projects');
+        if (Editor._container !== container) return;
         Editor._items = data.items || [];
         Editor._source = data.source || 'db';
         Editor.render();
+        const id = ctx && ctx.id;
+        const item = id && id !== 'new' && Editor._items.find(p => p.id === id);
+        if (item) Editor.openForm(item, false);
+        else if (id === 'new') Editor.openForm({}, true);
       } catch (e) {
         container.innerHTML = `<div class="admin-error">${esc(e.message)}</div>`;
       }
@@ -35,6 +45,7 @@
       if (!Editor._container) return;
       Editor._form = null;
       Editor._container.innerHTML = '';
+      Editor._syncUrl(null);
       // Board mode uses the full window width.
       const page = Editor._container.closest('.admin-page');
       if (page) page.classList.toggle('is-wide', Editor._mode === 'board');
@@ -66,6 +77,31 @@
     // (AdminView.isDirty covers them for leaving /admin).
     isDirty() { return Editor.isFormDirty(); },
     discard() { Editor.forgetForm(); },
+
+    // Sticky Save bar (index.js): the open form, or — in Board mode — the
+    // board's unsaved moves.
+    _boardDirty() {
+      const b = AdminView._projectsBoard;
+      return Editor._mode === 'board' && !Editor._form && !!(b && b.isDirty && b.isDirty());
+    },
+    saveBarDirty() { return Editor.isFormDirty() || Editor._boardDirty(); },
+    async save() {
+      if (Editor._form && Editor._form.save) return Editor._form.save();
+      if (Editor._boardDirty()) return AdminView._projectsBoard.save();
+    },
+    barDiscard() {
+      Editor.forgetForm();
+      if (Editor._boardDirty()) AdminView._projectsBoard.discardAll();
+    },
+
+    // Address + breadcrumb for the list/board or an open form (replaceState:
+    // the form is part of this view, not a history level).
+    _syncUrl(form) {
+      if (!Editor._ctx) return;
+      const sub = Editor._mode === 'board' ? 'board' : '';
+      Editor._ctx.sync({ sub, id: form ? form.id : '' });
+      Editor._ctx.crumbs(form ? [{ label: form.label }] : []);
+    },
 
     _modeBar() {
       const bar = document.createElement('div');
@@ -320,7 +356,7 @@
         };
       };
       const snapshot = JSON.stringify(collect());
-      Editor._form = { isDirty: () => JSON.stringify(collect()) !== snapshot };
+      Editor._form = { isDirty: () => JSON.stringify(collect()) !== snapshot, save: () => saveBtn.click() };
       const titleOf = (id) => ((Editor._items.find(p => p.id === id) || {}).title) || id;
 
       saveBtn.addEventListener('click', async () => {
@@ -374,6 +410,7 @@
 
       Editor._container.innerHTML = '';
       Editor._container.appendChild(wrap);
+      Editor._syncUrl({ id: isNew ? 'new' : item.id, label: isNew ? 'New project' : (item.title || item.id) });
       wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
     },
 
@@ -427,6 +464,7 @@
       if (page) page.classList.remove('is-wide');
       Editor._form = null;
       Editor._container = null;
+      Editor._ctx = null;
     }
   };
 

@@ -1,97 +1,13 @@
 /************************************************
- * ADMIN — CMS SHELL (Phase 3)
- * Sub-tabs for projects / characters / locations / dialogues. Each
- * sub-tab is registered on AdminView._cms by its own module file.
+ * ADMIN — CMS HELPERS
+ * Shared list / field / id / error helpers for the Content editors
+ * (cms-*.js). The old CMS sub-tab shell is gone: each editor is its own
+ * sidebar entry in js/views/admin/index.js (ADMIN_NAV).
  ************************************************/
 (function () {
   const esc = AdminView._escapeHtml;
 
   AdminView._cms = AdminView._cms || {};
-
-  const CMS = {
-    _activeKey: 'projects',
-    _activeSub: null,
-
-    mount(container) {
-      // The last sub-tab survives a remount (_activeKey), so the highlighted
-      // button is derived from it instead of hard-coded to Projects.
-      const on = (key) => CMS._activeKey === key ? ' active' : '';
-      container.innerHTML = `
-        <div class="admin-cms">
-          <div class="admin-subtabs">
-            <button class="admin-subtab${on('projects')}" data-cms="projects">Projects</button>
-            <button class="admin-subtab${on('characters')}" data-cms="characters">Characters</button>
-            <button class="admin-subtab${on('locations')}" data-cms="locations">Locations</button>
-            <button class="admin-subtab${on('dialogues')}" data-cms="dialogues">Dialogues</button>
-            <button class="admin-subtab${on('scenes')}" data-cms="scenes">Scene stills</button>
-            <button class="admin-subtab${on('quotes')}" data-cms="quotes">Quotes</button>
-          </div>
-          <div id="admin-cms-host"></div>
-        </div>
-      `;
-      container.querySelectorAll('.admin-subtab').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          // Highlight only once the switch happened ("Keep editing" stays put).
-          if (!(await CMS._mountSub(btn.dataset.cms))) return;
-          container.querySelectorAll('.admin-subtab').forEach(b => b.classList.toggle('active', b === btn));
-        });
-      });
-      CMS._mountSub(CMS._activeKey);
-    },
-
-    // Unsaved work in the active editor (its own isDirty()): asked about on a
-    // sub-tab switch here, and on an admin tab switch / by the router leave
-    // guard through AdminView._mountTab and AdminView.isDirty().
-    isDirty() {
-      const sub = CMS._activeSub;
-      return !!(sub && sub.isDirty && sub.isDirty());
-    },
-    discard() {
-      const sub = CMS._activeSub;
-      if (sub && sub.discard) sub.discard();
-    },
-    // The active editor's own wording for the discard prompt, if it has one
-    // (Scene stills while a batch uploads).
-    dirtyNote() {
-      const sub = CMS._activeSub;
-      return (sub && sub.dirtyNote && sub.dirtyNote()) || null;
-    },
-
-    // → false when the admin chose to keep editing the current sub-tab.
-    async _mountSub(key) {
-      const cur = CMS._activeSub;
-      if (cur && CMS.isDirty()) {
-        if (!(await AdminView._confirmDiscard())) return false;
-        // The CMS tab may have been left while the dialog was up.
-        if (CMS._activeSub !== cur || !document.getElementById('admin-cms-host')) return false;
-        CMS.discard();
-      }
-      if (cur && cur.unmount) {
-        try { cur.unmount(); } catch {}
-      }
-      CMS._activeKey = key;
-      const host = document.getElementById('admin-cms-host');
-      host.innerHTML = '';
-      const sub = AdminView._cms[key];
-      if (sub && typeof sub.mount === 'function') {
-        CMS._activeSub = sub;
-        sub.mount(host);
-      } else {
-        CMS._activeSub = null;
-        host.innerHTML = '<div class="admin-empty">Editor not loaded.</div>';
-      }
-      return true;
-    },
-
-    unmount() {
-      if (CMS._activeSub && CMS._activeSub.unmount) {
-        try { CMS._activeSub.unmount(); } catch {}
-      }
-      CMS._activeSub = null;
-    }
-  };
-
-  AdminView._tabs.cms = CMS;
 
   // Shared helpers used by every CMS sub-editor.
   AdminView._cmsListView = function listView(opts) {

@@ -743,11 +743,10 @@
     discardAll();
   }
 
-  // A dot on the CMS "Projects" sub-tab while moves are waiting to be saved.
+  // A dot on the sidebar's "Projects" entry while moves are waiting to be
+  // saved — through the shell's badge hook, not its DOM.
   function _syncPendingDot() {
-    const dirty = isDirty();
-    document.querySelectorAll('.admin-subtab[data-cms="projects"]')
-      .forEach(el => el.classList.toggle('has-pending', dirty));
+    if (AdminView.setNavBadge) AdminView.setNavBadge('projects', isDirty());
   }
 
   // ── tiny utilities ──────────────────────────────────────────────────
@@ -757,5 +756,6 @@
     return s.length <= n ? s : s.slice(0, n - 1) + '…';
   }
 
-  AdminView._projectsBoard = { mount, unmount, reseed, isDirty, discardAll, getWorkingPositions };
+  // save: the sticky Save bar (index.js, via cms-projects.js) saves the moves.
+  AdminView._projectsBoard = { mount, unmount, reseed, isDirty, discardAll, getWorkingPositions, save: _save };
 })();

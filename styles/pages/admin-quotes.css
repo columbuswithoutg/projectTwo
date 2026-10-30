@@ -1,5 +1,6 @@
 /************************************************
- * ADMIN — CMS → Quotes (js/views/admin/cms-quotes*.js)
+ * ADMIN — Minigames → Quote Guess + People → Quote suggestions
+ * (js/views/admin/cms-quotes*.js)
  * Shares the Scene stills page's head / banner / switch / drop-zone /
  * board classes (admin-scenes.css); this file is the quote-specific parts.
  * Tokens only, so the admin follows the theme.
@@ -7,7 +8,8 @@
 
 .qte { display: flex; flex-direction: column; gap: 12px; }
 
-/* ── view switch: Islands · Suggestions (n) · Import / export ── */
+/* ── view switch: Islands · Import / export · Suggestions (n) → ── */
+/* One row; on a phone it scrolls sideways instead of wrapping. */
 .qte-views {
   display: inline-flex;
   gap: 2px;
@@ -15,7 +17,20 @@
   border-radius: 999px;
   background: rgba(var(--ink), 0.08);
   align-self: flex-start;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.qte-views::-webkit-scrollbar { display: none; }
+.qte-view { flex-shrink: 0; white-space: nowrap; }
+/* The link out to People → Quote suggestions. */
+.qte-view-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  opacity: 0.85;
 }
 .qte-view {
   border: 0;

@@ -8,13 +8,20 @@
   const Moderation = {
     _state: { sub: 'memories', page: 1, total: 0, items: [] },
 
-    mount(container) {
-      // _state.sub survives a tab switch, so the highlighted sub-tab is
-      // derived from it rather than hard-coded to Memories.
+    // ctx (index.js): sub 'friends' → the friend-request list (kept in the
+    // address, so a reload or the Overview's link lands on it).
+    mount(container, ctx) {
+      if (ctx) Moderation._state.sub = ctx.sub === 'friends' ? 'friends' : 'memories';
+      const crumb = () => {
+        if (!ctx) return;
+        ctx.sync({ sub: Moderation._state.sub === 'friends' ? 'friends' : '' });
+        ctx.crumbs([{ label: Moderation._state.sub === 'friends' ? 'Pending friend requests' : 'Memories' }]);
+      };
+      crumb();
       const on = (sub) => Moderation._state.sub === sub ? ' active' : '';
       container.innerHTML = `
         <div class="admin-mod">
-          <div class="admin-subtabs">
+          <div class="admin-subtabs" role="tablist" aria-label="Moderation views">
             <button class="admin-subtab${on('memories')}" data-sub="memories">Memories</button>
             <button class="admin-subtab${on('friends')}" data-sub="friends">Pending Friend Requests</button>
           </div>
@@ -26,6 +33,7 @@
           container.querySelectorAll('.admin-subtab').forEach(b => b.classList.toggle('active', b === btn));
           Moderation._state.sub = btn.dataset.sub;
           Moderation._state.page = 1;
+          crumb();
           Moderation.fetch();
         });
       });
