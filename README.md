@@ -350,7 +350,7 @@ All 222 portrait slots (every character's first look and every later look, inclu
 - New looks (`characters.js`): Black Widow and Loki in The Avengers, Thor in The Dark World, Wanda in Infinity War, Star-Lord / Drax / Rocket / Nebula / Mantis in Vol. 3, Wong and Doctor Strange in Multiverse of Madness, Captain Marvel in The Marvels, Yelena in Hawkeye and Thunderbolts*, Ant-Man in Quantumania, Pepper's Rescue armour, Hope as the Wasp, White Vision, Thanos's Endgame armour. Bucky's Thunderbolts* look is relabelled.
 - Shared-body entities have portraits (Bruce Banner ×2, Bob, The Void, Marc, Steven, Jake, Billy); `test/character-page.test.js` checks they exist.
 - `CONFIG.ASSET_VERSION` 4 → 5 so browsers drop the cached old pictures (same file names).
-- Live site: run `scripts/seed-content.js` so the Mongo copy gets the new looks.
+- Live site: the new looks were added to the Mongo copy on 2026-10-30 (19 characters, looks only, nothing else touched). Note that `scripts/seed-content.js` cannot do this: by default it only inserts missing rows, and `--overwrite` resets every project/location/dialogue row too.
 
 ---
 
