@@ -19,11 +19,11 @@
 })(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
   const DOOMSDAY_ID = 'doomsday';
-  // Marvel's order. Fixed here, not derived from Doomsday's prerequisites:
-  // those differ slightly (Loki S1 is required only through Loki S2; X-Men
-  // and X2 are required but not on Marvel's list).
+  // Marvel's order (marvel.com watch guide, as of 2026-10-30). Fixed here,
+  // not derived from Doomsday's prerequisites: those differ slightly (Loki S1
+  // is required only through Loki S2).
   const DOOMSDAY_WATCHLIST = Object.freeze([
-    'cap1', 'avengers1', 'infinitywar', 'endgame', 'loki1', 'loki2', 'shangchi',
+    'xmen1', 'xmen2', 'cap1','avengers1', 'infinitywar', 'endgame', 'loki1', 'loki2', 'shangchi',
     'nowayhome', 'blackpanther2', 'cap4', 'deadpool3', 'drstrange2',
     'thunderbolts', 'fantasticfour'
   ]);

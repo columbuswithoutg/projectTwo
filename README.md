@@ -429,6 +429,7 @@ The Goals panel is now a single checklist: Marvel's official "stream these befor
 
 - `js/goals.js` — `DOOMSDAY_WATCHLIST` + `computeDoomsdayGoal()` (replaces `computeGoals()`); `styles/legacy/08-friends-goals.css` — progress bar, status line, `.is-locked` rows.
 - The list is fixed rather than read from Doomsday's prerequisites, which differ: Loki S1 isn't a direct prerequisite (it's required through Loki S2 and Deadpool & Wolverine), and X-Men + X2 are required by Doomsday but aren't on Marvel's list. Data left as is.
+- 2026-10-30: synced with Marvel's updated guide, which now opens with X-Men and X2 — 16 titles (the list moved to `js/share-logic.js`).
 
 ### 2026-10-13 — Character portrait placeholder
 

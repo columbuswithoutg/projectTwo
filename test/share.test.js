@@ -109,7 +109,8 @@ test('doomsdayProgress: ticks Marvel\'s list in order and skips titles the conte
   const p = ShareLogic.doomsdayProgress(['cap1', 'endgame', 'wandavision'], id => ALL.has(id));
   assert.equal(p.total, ShareLogic.DOOMSDAY_WATCHLIST.length - 1);
   assert.equal(p.met, 2);
-  assert.equal(p.items[0].id, 'cap1');
+  assert.equal(p.items[0].id, 'xmen1');
+  assert.equal(p.items[0].watched, false);
   assert.equal(p.items.some(i => i.id === 'fantasticfour'), false);
   assert.equal(ShareLogic.doomsdayProgress(new Set()).total, ShareLogic.DOOMSDAY_WATCHLIST.length);
 });
@@ -187,7 +188,7 @@ test('creditReferral: dead, banned, malformed or own token → nothing happens',
 });
 
 test('doomsdayFor: counts against the live content', async () => {
-  assert.deepEqual(await Share.doomsdayFor(users[0]), { met: 2, total: 13 });
+  assert.deepEqual(await Share.doomsdayFor(users[0]), { met: 2, total: ALL.size });
 });
 
 // ── routes/share.js ──
