@@ -66,10 +66,21 @@ async function maxPropsNow() {
 // you've watched (routes/world-socket.js), so 5 minutes is real presence.
 const KEEPER_MIN_MS = 5 * 60 * 1000;
 
-// Top stay row per project, joined to the username. Returns
-// { [projectId]: { userId, username, ms } }.
+// A banned account can't edit, so it must not keep a house either: it would
+// lock every other player out until someone out-stayed it. Banned users are
+// few (User.banned is indexed), so their ids are filtered out of the stay
+// rows rather than $lookup-ing every row. Returns a ProjectStay filter.
+async function notBannedFilter() {
+  const banned = await User.distinct('_id', { banned: true });
+  return banned.length ? { userId: { $nin: banned } } : {};
+}
+
+// Top stay row per project (banned users skipped), joined to the username.
+// Returns { [projectId]: { userId, username, ms } }.
 async function keepersByProject() {
+  const notBanned = await notBannedFilter();
   const top = await ProjectStay.aggregate([
+    ...(notBanned.userId ? [{ $match: notBanned }] : []),
     { $sort: { projectId: 1, ms: -1, updatedAt: 1 } },
     { $group: { _id: '$projectId', userId: { $first: '$userId' }, ms: { $first: '$ms' } } }
   ]);
@@ -123,7 +134,7 @@ router.put('/houses/:projectId', auth, async (req, res) => {
   if (!(await watchRules.getProject(projectId))) return res.status(404).json({ error: 'Unknown project' });
 
   await WorldSocket.flushStays();
-  const top = await ProjectStay.findOne({ projectId }).sort({ ms: -1, updatedAt: 1 }).select('userId ms').lean();
+  const top = await ProjectStay.findOne({ projectId, ...(await notBannedFilter()) }).sort({ ms: -1, updatedAt: 1 }).select('userId ms').lean();
   if (!top || !(top.ms >= KEEPER_MIN_MS)) {
     return res.status(403).json({ error: 'Stay on this island for 5 minutes to claim its house' });
   }
@@ -202,7 +213,8 @@ router.get('/scene/:projectId/board', auth, async (req, res) => {
   const s = await SceneData.settings.get();
   if (!s.enabled || !projectId) return res.json({ top: [], me: null });
   const [rows, me] = await Promise.all([
-    SceneScore.find({ projectId, best: { $gt: 0 } }).sort({ best: -1, achievedAt: 1 }).limit(5).populate('userId', 'username').lean(),
+    // Over-fetched: a row whose user is gone is dropped below, then the top 5 kept (RT2-11).
+    SceneScore.find({ projectId, best: { $gt: 0 } }).sort({ best: -1, achievedAt: 1 }).limit(10).populate('userId', 'username').lean(),
     SceneScore.findOne({ projectId, userId: req.user.id }).select('best plays achievedAt').lean()
   ]);
   let rank = null;
@@ -213,7 +225,7 @@ router.get('/scene/:projectId/board', auth, async (req, res) => {
     });
   }
   res.json({
-    top: rows.filter(r => r.userId).map(r => ({ username: r.userId.username, best: r.best, achievedAt: r.achievedAt })),
+    top: rows.filter(r => r.userId).slice(0, 5).map(r => ({ username: r.userId.username, best: r.best, achievedAt: r.achievedAt })),
     me: me ? { best: me.best, plays: me.plays, rank } : null
   });
 });

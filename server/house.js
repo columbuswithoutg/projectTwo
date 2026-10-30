@@ -180,7 +180,7 @@ function validProfilePictureUrl(url) {
 }
 
 module.exports = {
-  portraitOk, READ_CAP, toHouse, homeMaxPropsNow, housesForRooms, pickRoof, homeRoofFor,
+  portraitOk, toHouse, homeMaxPropsNow, housesForRooms, pickRoof, homeRoofFor,
   effectiveLayout, watchedIdsOf,
   HOME_GRID_LIMIT, maxHomeRooms, isLayoutConnected, checkLayoutRooms, validProfilePictureUrl
 };

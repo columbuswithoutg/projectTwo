@@ -56,4 +56,4 @@ function parseAsset(url) {
   return { resource_type: m[1], public_id: m[2] };
 }
 
-module.exports = { MAX_URL_LEN, DEFAULT_FOLDERS, isOurAssetUrl, parseAsset };
+module.exports = { isOurAssetUrl, parseAsset };

@@ -9,6 +9,14 @@ const User = require('../models/user');
 const VALIDATION_TTL_MS = 30 * 1000;
 const validationCache = new Map(); // key = `${id}|${tv}` -> {expires, ok, banReason}
 
+// Per-user invalidation generation. invalidateUser bumps it; validateToken
+// reads it before its DB read and only caches the result if it is unchanged
+// afterwards, so a read that started before a ban / logout-everywhere can't
+// put the stale "ok" back into the cache for 30 s. Values come from one
+// global counter, so a trimmed entry never matches an earlier reading.
+let invalidationSeq = 0;
+const userGeneration = new Map(); // userId -> seq of its last invalidateUser
+
 // Throttled lastActiveAt writer. The admin Users tab shows an "online" dot
 // for users active in the last 5 minutes. Writing on every authed request
 // would double our DB write volume for no extra resolution, so we only
@@ -85,6 +93,7 @@ async function validateToken(token) {
 
   // Cache miss — validate against Mongo. We pull only the fields we need to
   // keep the document small.
+  const genBefore = userGeneration.get(String(payload.id)) || 0;
   let userDoc;
   try {
     userDoc = await User.findById(payload.id).select('tokenVersion banned banReason username').lean();
@@ -100,12 +109,15 @@ async function validateToken(token) {
     // was issued. Force re-login.
     return { ok: false, status: 401, error: 'Session expired, please log in again' };
   }
+  // invalidateUser ran while we were reading: our view may predate the ban,
+  // so answer this request but don't cache it.
+  const fresh = (userGeneration.get(String(payload.id)) || 0) === genBefore;
   if (userDoc.banned) {
-    cacheSet(cacheKey, { ok: false, banReason: userDoc.banReason });
+    if (fresh) cacheSet(cacheKey, { ok: false, banReason: userDoc.banReason });
     return { ok: false, status: 403, error: 'Account suspended', reason: userDoc.banReason || '' };
   }
 
-  cacheSet(cacheKey, { ok: true, username: userDoc.username });
+  if (fresh) cacheSet(cacheKey, { ok: true, username: userDoc.username });
   return { ok: true, payload, username: userDoc.username };
 }
 
@@ -130,6 +142,12 @@ async function auth(req, res, next) {
 // instead of waiting 30s for it to expire.
 auth.invalidateUser = function invalidateUser(userId) {
   const prefix = `${userId}|`;
+  const uid = String(userId);
+  userGeneration.delete(uid);              // re-insert at the end (newest)
+  userGeneration.set(uid, ++invalidationSeq);
+  if (userGeneration.size > 5000) {
+    userGeneration.delete(userGeneration.keys().next().value);
+  }
   for (const key of validationCache.keys()) {
     if (key.startsWith(prefix)) validationCache.delete(key);
   }

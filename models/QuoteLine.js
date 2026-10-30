@@ -37,7 +37,7 @@ const QuoteLineSchema = new mongoose.Schema({
   active:     { type: Boolean, default: true },
   status:     { type: String, enum: Q.STATUSES, default: 'approved' },
   origin:     { type: String, enum: Q.ORIGINS, default: 'admin' },
-  importId:   { type: String, default: null },            // one bulk import (undo / cleanup)
+  importId:   { type: String },                           // one bulk import (undo / cleanup); unset otherwise, so the sparse index skips it
   addedBy:    { type: String, default: '' },
   suggestedBy:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   suggestedByName: { type: String, default: '' },          // "Suggested by @…" at the reveal

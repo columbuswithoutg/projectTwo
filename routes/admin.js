@@ -21,6 +21,7 @@ const Location = require('../models/Location');
 const Dialogue = require('../models/Dialogue');
 const Report = require('../models/Report');
 const ProjectStay = require('../models/ProjectStay');
+const WorldHouse = require('../models/WorldHouse');
 const SceneScore = require('../models/SceneScore');
 const SceneStill = require('../models/SceneStill');
 const SceneIsland = require('../models/SceneIsland');
@@ -391,10 +392,12 @@ router.get('/memories', async (req, res) => {
     { $sort: { uploadedAt: -1, url: 1 } }
   ];
 
+  // Every page re-sorts every memory on the site: past ~100 MB of $group /
+  // $sort state Mongo needs to spill to disk (RT2-09).
   const [agg] = await User.aggregate([
     ...pipeline,
     { $facet: { items: [{ $skip: skip }, { $limit: limit }], total: [{ $count: 'n' }] } }
-  ]);
+  ], { allowDiskUse: true });
   const items = (agg && agg.items) || [];
   const total = (agg && agg.total[0] && agg.total[0].n) || 0;
   res.json({ items, total, page, limit });
@@ -727,7 +730,7 @@ router.get('/analytics/overview', async (req, res) => {
       { $unwind: { path: '$watchedProjects', preserveNullAndEmptyArrays: false } },
       { $unwind: { path: '$watchedProjects.memories', preserveNullAndEmptyArrays: false } },
       { $count: 'n' }
-    ])
+    ], { allowDiskUse: true })
   ]);
   res.json({
     users,
@@ -838,6 +841,26 @@ async function deleteProjectScenes(projectId) {
   }
 }
 
+// RT2-06: a deleted project's island house and stay rows (else re-creating the
+// id brings back the old house and keeper). Its queued stay credit is dropped
+// first, so no flush re-creates the rows. Best-effort, like the above.
+// → { houses, stays } counts, or { error }.
+async function deleteProjectHouses(projectId) {
+  try {
+    let WorldSocket = null;
+    try { WorldSocket = require('./world-socket'); } catch (_) {}
+    if (WorldSocket && WorldSocket.dropProjectCredits) await WorldSocket.dropProjectCredits(projectId);
+    const [houses, stays] = await Promise.all([
+      WorldHouse.deleteMany({ projectId }),
+      ProjectStay.deleteMany({ projectId })
+    ]);
+    return { houses: houses.deletedCount || 0, stays: stays.deletedCount || 0 };
+  } catch (err) {
+    console.error('Project delete → house/stay cleanup failed:', err && err.message);
+    return { error: true };
+  }
+}
+
 // Prerequisite rules on every project write. → { ok, required, recommended }
 // or { status, body } to send. Loops include phase unlockers (Phase N waits
 // for one title) and hidden prerequisites.
@@ -937,7 +960,8 @@ router.delete('/content/projects/:id', async (req, res) => {
   // Cloudinary images, as the still delete does) and the scoreboard.
   const scenes = await deleteProjectScenes(id);
   const quotes = await require('./admin-quotes').deleteProjectQuotes(id);
-  logAudit(req, 'contentEdit', { type: 'project', id }, { action: 'delete', unlinked: linked.map(p => p.id), scenes, quotes });
+  const houses = await deleteProjectHouses(id);
+  logAudit(req, 'contentEdit', { type: 'project', id }, { action: 'delete', unlinked: linked.map(p => p.id), scenes, quotes, houses });
   res.json({ message: 'Deleted', unlinked: linked.map(p => p.id) });
 });
 

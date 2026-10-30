@@ -119,4 +119,4 @@ function sharePage(spaFile) {
   };
 }
 
-module.exports = { findSharer, doomsdayFor, publicPayload, creditReferral, injectMeta, sharePage, OG_IMAGE };
+module.exports = { findSharer, doomsdayFor, publicPayload, creditReferral, injectMeta, sharePage };

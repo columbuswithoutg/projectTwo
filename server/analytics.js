@@ -27,4 +27,4 @@ function fillDailyBuckets(buckets, days, now = Date.now()) {
   return out;
 }
 
-module.exports = { fillDailyBuckets, utcDay };
+module.exports = { fillDailyBuckets };

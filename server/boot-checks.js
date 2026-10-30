@@ -31,4 +31,4 @@ function usePublicDns(env) {
   return !isProd(env) || flag === '1' || flag === 'true';
 }
 
-module.exports = { requiredMissing, warnMissing, usePublicDns, ALWAYS_REQUIRED, CLOUDINARY_VARS };
+module.exports = { requiredMissing, warnMissing, usePublicDns };

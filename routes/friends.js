@@ -14,6 +14,9 @@ const { sanitizeWalkers } = require('../server/walkers');
 // Outgoing friend requests still waiting for an answer. Past this a user
 // is mass-adding, not making friends.
 const MAX_OUTGOING_PENDING = 50;
+// Incoming requests listed by GET /pending (referrals create incoming
+// requests nobody caps). The newest ones are kept.
+const MAX_INCOMING_LISTED = 100;
 
 const FRIEND_RETRY_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 // Friend-request docs only (watch-party requests share the collection).
@@ -109,8 +112,14 @@ router.get('/pending', auth, async (req, res) => {
     const requests = await Friend.find({
         recipient: req.user.id,
         status: 'pending'
-    }).populate('requester', 'username').lean(); // .lean() returns plain objects with all fields
-    res.json(requests);
+    }).sort({ _id: -1 }).limit(MAX_INCOMING_LISTED)
+        .populate('requester', 'username').lean(); // .lean() returns plain objects with all fields
+    // A requester whose account is gone populates as null. Those requests
+    // can't be answered (and broke the client's list), so drop the orphans
+    // here the same way /respond does.
+    const orphans = requests.filter(r => !r.requester).map(r => r._id);
+    if (orphans.length) await Friend.deleteMany({ _id: { $in: orphans } });
+    res.json(requests.filter(r => r.requester).reverse()); // oldest first, as before
 });
 
 // Accept or reject a request

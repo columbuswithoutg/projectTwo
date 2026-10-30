@@ -200,8 +200,8 @@ function showFriendsPanel() {
   <div class="friend-row">
     <span>
       ${r.type === 'watch'
-        ? `<strong>${esc(r.requester.username)}</strong> ${r.postId ? 'says you watched' : 'wants to log'} <em class="friend-req-title">${esc(r.projectTitle || r.projectId)}${r.episode ? ` · Episode ${Number(r.episode)}` : ''}</em> together — accept to be tagged on their post`
-        : `<strong>${esc(r.requester.username)}</strong> sent you a friend request`
+        ? `<strong>${esc(r.requester?.username || 'A deleted user')}</strong> ${r.postId ? 'says you watched' : 'wants to log'} <em class="friend-req-title">${esc(r.projectTitle || r.projectId)}${r.episode ? ` · Episode ${Number(r.episode)}` : ''}</em> together — accept to be tagged on their post`
+        : `<strong>${esc(r.requester?.username || 'A deleted user')}</strong> sent you a friend request`
       }
     </span>
     <div class="friend-row-actions">

@@ -141,6 +141,46 @@ test('a ban that lands after caching is enforced once the cache is invalidated',
   assert.equal(out.body.reason, 'later');
 });
 
+test('a DB read in flight across invalidateUser does not re-cache its stale result (SRV2-03)', async () => {
+  const id = seed({});
+  const t = tokenFor(id, 0);
+  // Hold the first findById until the "ban" has landed.
+  const realFind = User.findById;
+  let release;
+  const gate = new Promise(r => { release = r; });
+  User.findById = (uid) => ({
+    select: () => ({ lean: async () => { const snap = { ...db.get(String(uid)) }; await gate; return snap; } })
+  });
+  let inflight;
+  try {
+    inflight = auth.validateToken(t);          // reads the pre-ban doc
+    await Promise.resolve();
+    db.get(id).banned = true;                  // admin bans (same tv here)
+    db.get(id).banReason = 'raced';
+    auth.invalidateUser(id);
+    release();
+    assert.equal((await inflight).ok, true);   // that request saw the old doc
+  } finally {
+    User.findById = realFind;
+  }
+  // The stale "ok" must not have been cached: the next request re-reads.
+  const before = findCalls;
+  const { out } = await run(t);
+  assert.equal(findCalls - before, 1);
+  assert.equal(out.status, 403);
+  assert.equal(out.body.reason, 'raced');
+});
+
+test('without an invalidateUser in between, the in-flight result is still cached', async () => {
+  const id = seed({});
+  const t = tokenFor(id, 0);
+  auth.invalidateUser('000000000000000000000999');   // another user: no effect on this one
+  await auth.validateToken(t);
+  const before = findCalls;
+  await run(t);
+  assert.equal(findCalls - before, 0);
+});
+
 test('validateToken is exported for the socket handshake and returns the same decisions', async () => {
   const id = seed({ username: 'sock' });
   const r = await auth.validateToken(tokenFor(id, 0));
