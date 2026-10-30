@@ -263,6 +263,30 @@ test('crownLayout: no titles, junk entries, a missing y or ring', () => {
   assert.deepEqual(input, copy, 'inputs are not mutated');
 });
 
+// registerScreenKind keeps the crown spec whole (3D2-02): the engine's
+// _gsCrownSpec, lifted from js/playground3d.js and fed through crownLayout
+// the way _sgTickCrowns does.
+const crownSpec = (() => {
+  const m = ENGINE.match(/\n  function _gsCrownSpec\(c\) \{[\s\S]*?\n  \}\n/);
+  assert.ok(m, '_gsCrownSpec not found in js/playground3d.js');
+  return vm.runInNewContext('(' + m[0].trim() + ')');
+})();
+
+test('registerScreenKind: the crown spec keeps ring / ringStacked, so a lone laurel scales to its own ring', () => {
+  assert.match(ENGINE, /k\.crown = _gsCrownSpec\(s\.crown\);/, 'registerScreenKind stores the crown through _gsCrownSpec');
+  const make = () => null;
+  const laurel = crownSpec({ make, y: 0, ring: 0.18, yStacked: -0.03, ringStacked: 0.16 });
+  assert.equal(laurel.make, make);
+  assert.equal(laurel.ring, 0.18);
+  assert.equal(laurel.ringStacked, 0.16);
+  const crown = crownSpec({ make, y: 0, ring: 0.16 });
+  assert.deepEqual(S.crownLayout([{ kind: 'quote', ...laurel }]), [{ kind: 'quote', y: 0, ring: 0.18 }]);
+  assert.deepEqual(S.crownLayout([{ kind: 'scene', ...crown }, { kind: 'quote', ...laurel }]),
+    [{ kind: 'scene', y: 0, ring: 0.16 }, { kind: 'quote', y: -0.03, ring: 0.16 }]);
+  assert.equal(crownSpec(null), null);
+  assert.equal(crownSpec({ y: 0, ring: 0.18 }), null, 'no make() → no crown');
+});
+
 test('paint: the screen helpers are exported for other games\' painters', () => {
   for (const fn of ['backdrop', 'marquee', 'headline', 'pill', 'roundRect', 'fit', 'initials', 'contain']) {
     assert.equal(typeof S.paint[fn], 'function', fn);
@@ -273,4 +297,38 @@ test('paint: the screen helpers are exported for other games\' painters', () => 
   const ctx = { measureText: (s) => ({ width: s.length * 10 }) };
   assert.equal(S.paint.fit(ctx, 'short', 100), 'short');
   assert.ok(S.paint.fit(ctx, 'a much longer line of text', 100).endsWith('…'));
+});
+
+// 3D2-05: island screens are freed once you walk away (each ≈ 9 MB).
+test('screenEvictions: out of reach for 10 s → freed; never more than 3 kept; a screen in reach stays', () => {
+  const E = S.screenEvictions;
+  assert.deepEqual(S.SCREEN_EVICT, { idleMs: 10000, keep: 3 });
+  const t = 100000;
+  // In reach, or out of reach for under 10 s: kept.
+  assert.deepEqual(E([{ id: 'a', near: true, farSince: null }, { id: 'b', near: false, farSince: t - 9999 }], t), []);
+  // 10 s out of reach: freed.
+  assert.deepEqual(E([{ id: 'a', near: true, farSince: null }, { id: 'b', near: false, farSince: t - 10000 }], t), ['b']);
+  // A 5-island tour within 10 s: the 2 left longest ago go, the newest 3 stay.
+  const tour = [
+    { id: 'p1', near: false, farSince: t - 8000 }, { id: 'p2', near: false, farSince: t - 6000 },
+    { id: 'p3', near: false, farSince: t - 4000 }, { id: 'p4', near: false, farSince: t - 2000 },
+    { id: 'p5', near: true, farSince: null }
+  ];
+  assert.deepEqual(E(tour, t), ['p1', 'p2']);
+  assert.deepEqual(E(tour.slice().reverse(), t), ['p1', 'p2'], 'order of the list does not matter');
+  // Islands in reach are never dropped, even past the cap.
+  const allNear = ['a', 'b', 'c', 'd', 'e'].map(id => ({ id, near: true, farSince: null }));
+  assert.deepEqual(E(allNear, t), []);
+  assert.deepEqual(E(allNear.concat([{ id: 'f', near: false, farSince: t - 1 }]), t), ['f']);
+  // Options override; a screen with no farSince yet counts as just left.
+  assert.deepEqual(E([{ id: 'x', near: false }], t, { idleMs: 0 }), ['x']);
+  assert.deepEqual(E([{ id: 'x', near: false }], t), []);
+  assert.deepEqual(E([], t), []);
+});
+
+test('screenEvictions is wired into the island-game tick, freeing through _sgDropScreen', () => {
+  const m = ENGINE.match(/\n  function _tickSceneGuess\(dt, now\) \{[\s\S]*?\n  \}\n/);
+  assert.ok(m, '_tickSceneGuess not found');
+  assert.match(m[0], /s\.farSince = near \? null : \(s\.farSince \?\? now\);/);
+  assert.match(m[0], /for \(const id of PG3DScene\.screenEvictions\(list, now\)\) _sgDropScreen\(id\);/);
 });

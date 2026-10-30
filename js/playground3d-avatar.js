@@ -30,6 +30,13 @@
     }
     return g;
   }
+  // Leaving a 3D view [gpu-release]: three keeps a per-renderer 'dispose' listener on every geometry, material and texture it has
+  // uploaded, so a page-lifetime cache keeps every disposed WebGLRenderer
+  // reachable. dispose() only frees each renderer's GL copy and drops its
+  // listener: the objects stay valid and re-upload on their next render.
+  function _disposeGpu() {
+    for (const g of _geomCache.values()) g.dispose();
+  }
 
   // Hero gear material — standard-shaded so the pieces sit in the same light
   // as the rigged bodies (the old Lambert boxes read flat and pasted-on).
@@ -1790,7 +1797,7 @@
   }
 
   root.PG3DAvatar = {
-    sharedGeom: _sharedGeom, gearMat: _gearMat, METAL: _METAL, palette: _palette,
+    sharedGeom: _sharedGeom, disposeGpu: _disposeGpu, gearMat: _gearMat, METAL: _METAL, palette: _palette,
     buildBoxPlayer: _buildBoxPlayer, buildProceduralPlayer: _buildProceduralPlayer,
     buildHair: _buildHair, buildFacialHair: _buildFacialHair, buildGlasses: _buildGlasses,
     buildHat: _buildHat, buildHelmet: _buildHelmet, buildProp: _buildProp, buildEmblem: _buildEmblem,

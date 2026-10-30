@@ -58,32 +58,23 @@ function rateOk(socket, key) {
 }
 
 // Copy a sanitized position packet (NetLogic.sanitizePos) onto a player
-// record. Walking, jumping or taking a seat ends a looping emote — peers end
-// it locally from the same packet; this keeps late joiners' snapshots right.
+// record.
 function applyPos(p, s) {
   p.x = s.x; p.y = s.y; p.z = s.z; p.yaw = s.yaw;
-  p.walking = s.walking; p.backward = s.backward; p.pose = s.pose; p.mv = s.mv;
-  if (p.emote && (s.walking || s.pose || (s.mv & NetLogic.MV.AIR))) p.emote = null;
+  p.walking = s.walking; p.backward = s.backward; p.pose = s.pose;
 }
 
 // The position fan-out for world:pos / home:pos.
 function posRelay(id, p) {
-  return { id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward, pose: p.pose, mv: p.mv || 0 };
+  return { id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, walking: p.walking, backward: p.backward, pose: p.pose };
 }
 
-// world:emote / home:emote. `kind` is an EMOTES id or 'stop'. A start needs a
-// token (and no seat); 'stop' is only relayed when a loop is actually running.
-// Returns the payload to relay, or null to drop it.
+// world:emote / home:emote. `kind` is an EMOTES id (the wave); it needs a
+// token and no seat. Returns the payload to relay, or null to drop it.
 function emoteRelay(socket, p, raw) {
   const kind = raw && raw.kind;
-  if (kind === 'stop') {
-    if (!p.emote) return null;
-    p.emote = null;
-    return { id: socket.id, kind: 'stop' };
-  }
   if (!NetLogic.isEmoteKind(kind) || p.pose) return null;
   if (!rateOk(socket, 'emote')) return null;
-  p.emote = NetLogic.isLoopingEmote(kind) ? kind : null;
   return { id: socket.id, kind };
 }
 
@@ -117,10 +108,10 @@ function worldVoicePeers(sid) {
 
 // Bring the /world voice mesh in line with who is where: every voice member
 // links to its nearest same-zone members (≤ VOICE_CAP each). Emits only the
-// deltas — peer-left for dropped links first (a client always destroys
-// before it dials), then peer-joined to BOTH ends of each new link.
-// `announcer` (a socket that just announced) gets its links as one
-// voice:peers reply instead of peer-joined (that reply confirms the
+// deltas (ChatLogic.voiceDeltas) — peer-left for dropped links first (a
+// client always destroys before it dials), then peer-joined to BOTH ends of
+// each new link. `announcer` (a socket that just announced) gets its links
+// as one voice:peers reply instead of peer-joined (that reply confirms the
 // announce). Called on announce / leave / zone change / disconnect and on a
 // slow timer (people move around within a zone).
 function reconcileWorldVoice(io, announcer) {
@@ -130,23 +121,7 @@ function reconcileWorldVoice(io, announcer) {
     if (p) entries.push({ id: sid, zone: ChatLogic.zoneKey(p), x: p.x, z: p.z });
   }
   const want = ChatLogic.selectVoiceLinks(entries, ChatLogic.C.VOICE_CAP, voiceLinks);
-  const has = (m, a, b) => { const s = m.get(a); return !!s && s.has(b); };
-  for (const [a, set] of voiceLinks) {
-    for (const b of set) {
-      if (a < b && !has(want, a, b)) {
-        io.to(a).emit('voice:peer-left', { id: b });
-        io.to(b).emit('voice:peer-left', { id: a });
-      }
-    }
-  }
-  for (const [a, set] of want) {
-    for (const b of set) {
-      if (a < b && !has(voiceLinks, a, b)) {
-        if (a !== announcer) io.to(a).emit('voice:peer-joined', { id: b });
-        if (b !== announcer) io.to(b).emit('voice:peer-joined', { id: a });
-      }
-    }
-  }
+  for (const e of ChatLogic.voiceDeltas(voiceLinks, want, announcer)) io.to(e.to).emit(e.event, { id: e.id });
   voiceLinks.clear();
   for (const [a, set] of want) if (set.size) voiceLinks.set(a, set);
   if (announcer) io.to(announcer).emit('voice:peers', { scope: 'world', peers: worldVoicePeers(announcer) });
@@ -538,7 +513,9 @@ module.exports = (io) => {
   const rlTimer = setInterval(() => { const t = Date.now(); userRl.sweep(t); ipRl.sweep(t); }, 60 * 1000);
   if (rlTimer.unref) rlTimer.unref();
   // Re-pick each voice player's nearest peers as people move within a zone.
-  const voiceTimer = setInterval(() => { if (voiceWorld.size || voiceLinks.size) reconcileWorldVoice(io); }, VOICE_REBALANCE_MS);
+  // Timer callbacks go through guard() like the socket handlers: a throw
+  // here would otherwise be an uncaughtException and restart the server.
+  const voiceTimer = setInterval(guard('world.voiceRebalance', () => { if (voiceWorld.size || voiceLinks.size) reconcileWorldVoice(io); }), VOICE_REBALANCE_MS);
   if (voiceTimer.unref) voiceTimer.unref();
   const trustHops = parseTrustProxy(process.env.TRUST_PROXY);
 
@@ -607,7 +584,7 @@ module.exports = (io) => {
   let npcTicker = null;
   function ensureNpcTicker() {
     if (npcTicker) return;
-    npcTicker = setInterval(() => {
+    npcTicker = setInterval(guard('world.npcTick', () => {
       const now = Date.now();
       for (const id of NpcLogic.NPC_IDS) {
         const r = NpcLogic.tickNpc(worldNpcs[id], now);
@@ -616,7 +593,7 @@ module.exports = (io) => {
         for (const ev of r.events) io.to('world').emit('world:npc-update', npcUpdatePayload(id, ev));
       }
       if (NpcLogic.allIdle(worldNpcs, now)) { clearInterval(npcTicker); npcTicker = null; }
-    }, NpcLogic.C.TICK_MS);
+    }), NpcLogic.C.TICK_MS);
   }
 
   // The user's watched project ids, kept on socket.data (never broadcast).
@@ -704,8 +681,6 @@ module.exports = (io) => {
         ...joinPos(raw), y: 0,
         walking: false,
         pose: null,         // 'sit' | 'lie' while on a chair / bed — in the snapshot so late joiners see it
-        mv: 0,              // movement flags (NetLogic.MV) from the last position packet
-        emote: null,        // looping emote in progress — in the snapshot so late joiners see it
         downAt: 0,          // when their last accepted knockdown landed (punch immunity)
         projectId: null,    // island the player stands on (Project chat / voice scope)
         roadKey: null,      // …or the road segment (RoadRouter key) when off-island
@@ -949,7 +924,6 @@ module.exports = (io) => {
           return reply({ ok: false, reason: verdict });
         }
         victim.downAt = now;
-        victim.emote = null;
       }
       socket.to('world').emit('world:punch', { id: socket.id, target: target || null });
       reply({ ok: true });
@@ -990,7 +964,6 @@ module.exports = (io) => {
       if (!NpcLogic.canNpcSwing(worldNpcs[npc], socket.id, now)) return;
       worldNpcs[npc] = Object.assign({}, worldNpcs[npc], { lastSwingAt: now });
       me.downAt = now;
-      me.emote = null;
       io.to('world').emit('world:npc-punch', { npc, target: socket.id });
     }));
 
@@ -1125,9 +1098,7 @@ module.exports = (io) => {
         ownerId,
         ...joinPos(raw), y: 0,
         walking: false,
-        pose: null,
-        mv: 0,
-        emote: null
+        pose: null
       };
       homePlayers.set(socket.id, player);
 
@@ -1380,6 +1351,20 @@ module.exports.dropCreditsFor = (userId) => {
   }
   for (const p of worldPlayers.values()) {
     if (String(p.userId) === id) p.stay = null;
+  }
+  return Promise.resolve(_flushing);
+};
+// For the admin project delete (routes/admin.js, RT2-06): drop the
+// project's queued credit and end live stays on it, so no flush re-creates its
+// ProjectStay rows. Resolves once a flush in flight has landed, as above.
+module.exports.dropProjectCredits = (projectId) => {
+  const suffix = '|' + String(projectId || '');
+  if (suffix === '|') return Promise.resolve();
+  for (const key of [...pendingCredits.keys()]) {
+    if (key.endsWith(suffix)) pendingCredits.delete(key);
+  }
+  for (const p of worldPlayers.values()) {
+    if (p.stay && '|' + p.stay.projectId === suffix) p.stay = null;
   }
   return Promise.resolve(_flushing);
 };

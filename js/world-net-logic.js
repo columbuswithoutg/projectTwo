@@ -5,8 +5,8 @@
  *
  * Everything a position / emote / snapshot packet goes through lives here
  * so both ends agree on the shape and the server can unit-test its
- * validation: movement flags, position sanitising, the emote whitelist, the
- * public player record, and per-socket token-bucket rate limits.
+ * validation: position sanitising, the emote whitelist, the public player
+ * record, and per-socket token-bucket rate limits.
  *
  * UMD-ish like js/playground3d-physics.js (which it depends on for angle
  * wrapping — load it first in the browser chunk).
@@ -20,43 +20,13 @@
   if (root) root.WorldNetLogic = api;
 })(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this, function (P) {
 
-  // ── Movement flags (the `mv` field of world:pos / home:pos) ──
-  // A small bitfield so peers can animate crouch / sprint / jumps without a
-  // protocol per state. Old clients omit it (treated as 0).
-  const MV = Object.freeze({ CROUCH: 1, SPRINT: 2, AIR: 4, DOUBLE: 8, FALLING: 16 });
-  const MV_MAX = 31;
-
-  function packMove(s) {
-    if (!s) return 0;
-    return (s.crouch ? MV.CROUCH : 0) | (s.sprint ? MV.SPRINT : 0) | (s.air ? MV.AIR : 0)
-      | (s.double ? MV.DOUBLE : 0) | (s.falling ? MV.FALLING : 0);
-  }
-
-  function unpackMove(mv) {
-    const m = sanitizeMove(mv, null);
-    return {
-      crouch: !!(m & MV.CROUCH), sprint: !!(m & MV.SPRINT), air: !!(m & MV.AIR),
-      double: !!(m & MV.DOUBLE), falling: !!(m & MV.FALLING)
-    };
-  }
-
-  // Coerce to a consistent flag set: out of range → 0; seated/lying → 0;
-  // crouching can't sprint; the jump bits only exist while airborne.
-  function sanitizeMove(mv, pose) {
-    if (typeof mv !== 'number' || !Number.isInteger(mv) || mv < 0 || mv > MV_MAX) return 0;
-    if (pose) return 0;
-    let m = mv;
-    if (m & MV.CROUCH) m &= ~MV.SPRINT;
-    if (!(m & MV.AIR)) m &= ~(MV.DOUBLE | MV.FALLING);
-    return m;
-  }
-
   // ── Position packets ──
+  // (The old `mv` movement-flag bitfield is gone: no client sent or read it.)
   const POSITION_BOUND = 1000;          // sanity clamp; the world is < 300u square
   const Y_MIN = -2, Y_MAX = 10;         // matches the engine's BROADCAST_Y_FLOOR
   const POSES = new Set(['sit', 'lie']);
 
-  // raw → { x, y, z, yaw, walking, backward, pose, mv } or null when x / z are
+  // raw → { x, y, z, yaw, walking, backward, pose } or null when x / z are
   // missing, non-finite or out of bounds. yaw is always wrapped to (-π, π]
   // and rounded, so no peer ever receives a value its angle math can't take.
   function sanitizePos(raw, bound) {
@@ -69,7 +39,7 @@
     const yaw = Math.round(P.wrapAngle(raw.yaw) * 1000) / 1000;
     const walking = raw.walking === true;
     const pose = POSES.has(raw.pose) ? raw.pose : null;
-    return { x, y, z, yaw, walking, backward: walking && raw.backward === true, pose, mv: sanitizeMove(raw.mv, pose) };
+    return { x, y, z, yaw, walking, backward: walking && raw.backward === true, pose };
   }
 
   // Where a joiner stands, from the join payload (all fields optional).
@@ -79,21 +49,19 @@
   }
 
   // ── Emotes ──
-  // One-shots end on their own; loops hold until the player moves, jumps,
-  // punches or picks another one. The server stores a looping emote on the
-  // player record so late joiners see it.
-  const EMOTES = Object.freeze(['wave', 'cheer', 'dance', 'hero', 'talk', 'phone', 'lie', 'kneel']);
+  // The wave (the /world emote button): a one-shot that ends on its own. The
+  // client only ever sends and plays 'wave', so that is all the server relays
+  // (the never-used loops and their 'stop' went with NET-14).
+  const EMOTES = Object.freeze(['wave']);
   const EMOTE_SET = new Set(EMOTES);
-  const EMOTE_LOOPS = new Set(['dance', 'hero', 'talk', 'phone', 'lie', 'kneel']);
   function isEmoteKind(k) { return typeof k === 'string' && EMOTE_SET.has(k); }
-  function isLoopingEmote(k) { return typeof k === 'string' && EMOTE_LOOPS.has(k); }
 
   // ── Public player record ──
   // The ONLY fields a snapshot / joined broadcast carries. The server's own
   // record also holds userId, chat timestamps, island stay accounting and
   // punch/snap timing, none of which other players need.
   const PUBLIC_KEYS = Object.freeze(['socketId', 'username', 'character', 'x', 'y', 'z', 'yaw',
-    'walking', 'backward', 'pose', 'mv', 'emote']);
+    'walking', 'backward', 'pose']);
 
   function publicPlayer(p) {
     const s = p || {};
@@ -107,9 +75,7 @@
       yaw: Number.isFinite(s.yaw) ? s.yaw : 0,
       walking: !!s.walking,
       backward: !!s.backward,
-      pose: s.pose || null,
-      mv: Number.isInteger(s.mv) ? s.mv : 0,
-      emote: s.emote || null
+      pose: s.pose || null
     };
   }
 
@@ -184,9 +150,8 @@
   }
 
   return {
-    MV, MV_MAX, packMove, unpackMove, sanitizeMove,
     POSITION_BOUND, sanitizePos, joinPos,
-    EMOTES, isEmoteKind, isLoopingEmote,
+    EMOTES, isEmoteKind,
     PUBLIC_KEYS, publicPlayer,
     RATES, bucket, take, allow, refillMs
   };

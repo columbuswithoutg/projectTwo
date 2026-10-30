@@ -217,6 +217,12 @@
   }
 
   function isShared(tex) { return !!tex && _shared.has(tex); }
+  // Leaving a 3D view [gpu-release]: the town's wall and glass textures carry
+  // a 'dispose' listener from every renderer that drew them; dispose() drops
+  // them (the canvases stay, and re-upload on their next render).
+  function disposeGpu() {
+    for (const t of _shared) t.dispose();
+  }
 
   // ── roof ──
 
@@ -343,5 +349,5 @@
     if (group.parent) group.parent.remove(group);
   }
 
-  return { TILE_W, TILE_H, PITCH, OVERHANG, GLASS_TINT, wallTexture, windowGlass, glassWallMaterial, roofExtra, disposeRoofExtra, roofHeightAt, isShared };
+  return { TILE_W, TILE_H, PITCH, OVERHANG, GLASS_TINT, wallTexture, windowGlass, glassWallMaterial, roofExtra, disposeRoofExtra, roofHeightAt, isShared, disposeGpu };
 });

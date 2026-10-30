@@ -315,3 +315,94 @@ test('crownFit: with a hat, hood or helmet the reward sits higher, on top of it'
     assert.deepEqual(G.crownFit(H, { helmet: 3, hat: 3 }), G.crownFit(H, { helmet: 3 }));
   }
 });
+
+// 3D2-03: volumetric hair on the realistic body. The Afro's halo buried the
+// band (and hid the laurel); Spiky's and Curly's pieces must not cross it.
+const HL = require('../js/playground3d-humanoid-logic.js');
+// How far hair balls reach out from the ring's axis anywhere over the band's height.
+function hairReach(balls, F) {
+  const top = F.bottom + G.CROWN_BAND.h * F.scale;
+  let m = 0;
+  for (const [p, rad] of balls) {
+    const d = p[1] < F.bottom ? F.bottom - p[1] : p[1] > top ? p[1] - top : 0;
+    if (d < rad) m = Math.max(m, Math.hypot(p[0], p[2] - F.center[2]) + Math.sqrt(rad * rad - d * d));
+  }
+  return m;
+}
+
+test('crownFit: Afro (hair 8) — the band rests on the halo, never inside it', () => {
+  const afro = HL.hairSpec(8);
+  assert.deepEqual(afro.extras, ['afro']);
+  for (const [name, k, base] of HEADS) {
+    const H = headOf(k, base);
+    const bare = G.crownFit(H);
+    const F = G.crownFit(H, { hair: afro });
+    const A = G.hairPieces(H.skull, 'afro'), kk = 1 + A.bump;
+    near(F.scale * G.CROWN_BAND.r, F.ringR, 1e-9, name);
+    assert.equal(F.center[2], A.c[2], name + ' centred on the halo (set back)');
+    // The halo's widest cross-section over the band's height fits inside the ring.
+    const top = F.bottom + G.CROWN_BAND.h * F.scale;
+    for (let y = F.bottom; y <= top; y += 0.002) {
+      const t = (y - A.c[1]) / (A.r[1] * kk);
+      if (Math.abs(t) >= 1) continue;
+      const w = Math.max(A.r[0], A.r[2]) * kk * Math.sqrt(1 - t * t);
+      assert.ok(w <= F.ringR + 1e-9, `${name} halo ${w.toFixed(4)} inside the ring ${F.ringR.toFixed(4)} at ${y.toFixed(3)}`);
+    }
+    // ... but resting on it, not floating: the halo is ring-wide at the band's lower edge.
+    const tb = (F.bottom - A.c[1]) / (A.r[1] * kk);
+    near(Math.max(A.r[0], A.r[2]) * kk * Math.sqrt(1 - tb * tb), F.ringR, 0.002, name + ' touches the halo');
+    assert.ok(F.bottom > bare.bottom + 0.02 && F.ringR > bare.ringR, name + ' higher and wider than on a bare head');
+    assert.ok(F.bottom < A.c[1] + A.r[1] * kk, name + ' below the top of the afro');
+    // The bare-head fit was inside the hair (the bug).
+    const t0 = (bare.bottom - A.c[1]) / (A.r[1] * kk);
+    assert.ok(Math.max(A.r[0], A.r[2]) * kk * Math.sqrt(1 - t0 * t0) > bare.ringR + 0.02, name + ' old fit was buried');
+  }
+});
+
+test('crownFit: Spiky (hair 2) and Curly (hair 9) — no spike or curl crosses the band', () => {
+  for (const [style, kind] of [[2, 'spikes'], [9, 'curls']]) {
+    const spec = HL.hairSpec(style);
+    assert.ok(spec.extras.includes(kind));
+    for (const [name, k, base] of HEADS) {
+      const H = headOf(k, base);
+      const bare = G.crownFit(H);
+      const F = G.crownFit(H, { hair: spec });
+      const balls = G.hairBalls(H.skull, kind);
+      assert.ok(balls.length > 10, kind + ' pieces');
+      assert.ok(hairReach(balls, F) <= F.ringR - 0.002 + 1e-9, `${name} ${kind} inside the band (${hairReach(balls, F)} vs ${F.ringR})`);
+      assert.ok(F.bottom >= bare.bottom - 1e-12 && F.bottom < bare.bottom + 0.06, `${name} ${kind} lifted a little at most`);
+      near(F.ringR, bare.ringR, 1e-12, name + ' same ring: only lifted');
+      if (F.bottom > bare.bottom) {
+        // Lifted just enough: 4 mm lower and the hair would touch the band.
+        const lower = { ...F, bottom: F.bottom - 0.004 };
+        assert.ok(hairReach(balls, lower) > F.ringR - 0.002, `${name} ${kind} rests on the hair`);
+      }
+    }
+    // Curly hair stands well off the scalp: the band has to rise over it.
+    const H = headOf(1, 1.70);
+    if (kind === 'curls') assert.ok(G.crownFit(H, { hair: spec }).bottom > G.crownFit(H).bottom + 0.015);
+  }
+});
+
+test('crownFit: hair pieces are ignored under a hat or helmet; plain styles change nothing', () => {
+  const H = headOf(1, 1.70);
+  for (const style of [8, 2, 9]) {
+    const hair = HL.hairSpec(style);
+    for (const hat of [1, 2, 3, 4]) assert.deepEqual(G.crownFit(H, { hat, hair }), G.crownFit(H, { hat }));
+    assert.deepEqual(G.crownFit(H, { helmet: 2, hair }), G.crownFit(H, { helmet: 2 }));
+  }
+  for (const style of [0, 1, 3, 10, 11]) assert.deepEqual(G.crownFit(H, { hair: HL.hairSpec(style) }), G.crownFit(H));
+  assert.deepEqual(G.crownFit(H, { hair: null }), G.crownFit(H));
+});
+
+test('hair volume: the humanoid builder places spikes, curls and the afro from PG3DGearLogic.hairPieces', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../js/playground3d-humanoid.js'), 'utf8');
+  for (const kind of ['spikes', 'curls', 'afro']) assert.ok(src.includes(`G.hairPieces(variant.skull, '${kind}')`), kind);
+  assert.ok(!/R\.x \* 1\.65|ConeGeometry\(0\.022/.test(src), 'no duplicated hair numbers');
+  // The pieces follow the scalp: every curl sits just off it, none inside the skull.
+  const S = { c: [0, 0, 0], r: [0.09, 0.12, 0.11] };
+  for (const b of G.hairPieces(S, 'curls')) {
+    const e = Math.hypot(b.p[0] / S.r[0], b.p[1] / S.r[1], b.p[2] / S.r[2]);
+    assert.ok(e > 1 && e < 1.1);
+  }
+});

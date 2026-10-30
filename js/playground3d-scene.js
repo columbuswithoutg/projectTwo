@@ -14,6 +14,7 @@
  *       open a doorway under it. Bottom 1.9 (over 1.8-tall bookshelves),
  *       0.3 below the wall top and from each end; 16:10 = picture + marquee.
  *   makeScreen(THREE, spot)        the screen: a canvas texture + slim bezel
+ *   screenEvictions(list, now)     which built screens to free (out of reach)
  *   drawScreen(ctx, view, imgOf)   paints one Scene Guess frame of it
  *   paint                          the painting helpers, for other games' painters
  *   pickScreenKind(entries, now)   which island game the shared screen shows
@@ -160,6 +161,23 @@
     group.rotation.y = spot.rotY;
     group.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
     return { group, canvas, ctx, tex, mat, plane, spot };
+  }
+
+  // Which built screens to free [screen-evict] (each holds a 1280×800 canvas
+  // and its texture, ≈ 9 MB): one out of reach for idleMs, and — beyond
+  // `keep` screens in all — the ones out of reach longest. A screen in reach
+  // is never dropped. list: [{ id, near, farSince (ms it left reach; null
+  // while near) }] → ids.
+  const SCREEN_EVICT = { idleMs: 10000, keep: 3 };
+  function screenEvictions(list, now, opts) {
+    const o = Object.assign({}, SCREEN_EVICT, opts || {});
+    const far = list.filter(e => !e.near).sort((a, b) => (a.farSince ?? now) - (b.farSince ?? now));
+    const out = [];
+    let left = list.length;
+    for (const e of far) {
+      if (now - (e.farSince ?? now) >= o.idleMs || left > o.keep) { out.push(e.id); left--; }
+    }
+    return out;
   }
 
   function dispose(obj) {
@@ -434,6 +452,13 @@
   // ── champion's crown ──
 
   let _crownParts = null;
+  // Leaving a 3D view [gpu-release]: three keeps a per-renderer 'dispose' listener on every geometry, material and texture it has
+  // uploaded, so a page-lifetime cache keeps every disposed WebGLRenderer
+  // reachable. dispose() only frees each renderer's GL copy and drops its
+  // listener: the objects stay valid and re-upload on their next render.
+  function disposeGpu() {
+    if (_crownParts) for (const v of Object.values(_crownParts)) v.dispose();
+  }
   function makeCrown(THREE) {
     if (!_crownParts) {
       const gold = new THREE.MeshStandardMaterial({ color: 0xffc93c, metalness: 0.85, roughness: 0.28, emissive: 0x5a3c00, emissiveIntensity: 0.6 });
@@ -546,7 +571,7 @@
 
   const api = {
     SCREEN, CW, CH, SWAP_MS, roadRoutes, roadView, roadPorts, openingsFromPorts, allOpenings, screenSpot,
-    makeScreen, drawScreen, paint, liveScreenKind, pickScreenKind, crownLayout, makeCrown, makeConfetti, makeSpotlight, dispose
+    makeScreen, drawScreen, paint, SCREEN_EVICT, screenEvictions, liveScreenKind, pickScreenKind, crownLayout, makeCrown, makeConfetti, makeSpotlight, dispose, disposeGpu
   };
   // Node (test/scene-geometry.test.js) gets the same object; the placement
   // maths is pure and the THREE / canvas builders are never called there.

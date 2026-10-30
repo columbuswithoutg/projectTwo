@@ -143,6 +143,12 @@ const PG3DProps = (() => {
     if (!UNIT_BOX) { UNIT_BOX = new THREE.BoxGeometry(1, 1, 1); UNIT_BOX.userData.shared = true; }
     return UNIT_BOX;
   }
+  // Leaving a 3D view [gpu-release]: the unit cube carries a 'dispose'
+  // listener from every renderer that drew it; dispose() drops them (it
+  // re-uploads on its next render). The engine owns opts.matCache.
+  function disposeGpu() {
+    if (UNIT_BOX) UNIT_BOX.dispose();
+  }
   function place(m, x, y, z, shadow) {
     m.position.set(x, y, z);
     m.castShadow = shadow !== false;
@@ -990,5 +996,5 @@ const PG3DProps = (() => {
     return g;
   }
 
-  return { KINDS: Object.keys(FOOTPRINTS), FOOTPRINTS, footprint, make };
+  return { KINDS: Object.keys(FOOTPRINTS), FOOTPRINTS, footprint, make, disposeGpu };
 })();

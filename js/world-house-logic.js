@@ -171,7 +171,7 @@
   function sanitizeSign(s) {
     // Strings and numbers only — String() on a crafted object throws.
     return (typeof s === 'string' ? s : typeof s === 'number' ? String(s) : '')
-      .replace(/[ -]/g, '')
+      .replace(/[\u0000-\u001f\u007f]/g, '')
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, C.SIGN_MAX);

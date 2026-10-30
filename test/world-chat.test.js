@@ -8,6 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const L = require('../js/world-chat-logic.js');
 
 const GRID = [
@@ -107,34 +108,6 @@ test('sameName is case-insensitive; errorText covers every rejection', () => {
   for (const e of ['no-project', 'self', 'no-target', 'empty', 'not-sent', 'weird']) assert.ok(L.errorText(e).length > 0);
 });
 
-// ── islandPeers: who shares my island (voice mesh / project scope) ──
-
-function playersMap() {
-  return new Map([
-    ['s1', { projectId: 'ironman1' }],
-    ['s2', { projectId: 'ironman1' }],
-    ['s3', { projectId: 'hulk' }],
-    ['s4', { projectId: null }],
-    ['s5', { projectId: 'ironman1' }]
-  ]);
-}
-
-test('islandPeers: others on the same island, never self, never other islands or roads', () => {
-  assert.deepEqual(L.islandPeers('s1', playersMap()).sort(), ['s2', 's5']);
-  assert.deepEqual(L.islandPeers('s3', playersMap()), []);
-});
-
-test('islandPeers: off-island or unknown self is empty', () => {
-  assert.deepEqual(L.islandPeers('s4', playersMap()), []);
-  assert.deepEqual(L.islandPeers('nope', playersMap()), []);
-  assert.deepEqual(L.islandPeers('s1', null), []);
-});
-
-test('islandPeers: members filter applies to others but not to self', () => {
-  const members = new Set(['s2']);            // s1 already removed from the voice set
-  assert.deepEqual(L.islandPeers('s1', playersMap(), members), ['s2']);
-});
-
 // A source check like the one above: the server's join refusals and the
 // watched-list zone re-check are plumbing (no pure logic to call), and a
 // renamed event on one side silently brings back the empty-world bug.
@@ -150,23 +123,136 @@ test('join refusals: server event names match the client maps; watched load re-d
   assert.ok(/applyZone\(p, nowPos\)/.test(server), 'world:pos shares the same zone helper');
 });
 
-// ── road zones: roadAt / buildRoads / zonePeers / dwell / voice cap ──
+// ── road zones: roadAt / buildRoads / zoneKey / dwell / voice cap ──
 
-// The server's road rectangles must be the ones the client walks on, so the
-// two roadView inputs this module mirrors must match the engine's WORLD
-// table, and the engine must still lay roads out the way roadRects does.
-test('road constants match the /world engine (ROAD_W, DOORWAY_WIDTH, rect shape)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '../js/playground3d.js'), 'utf8');
-  const start = src.indexOf('const WORLD = {');
-  const world = src.slice(start, src.indexOf('};', start));
-  const num = (key) => Number((new RegExp(`\\b${key}:\\s*([0-9.]+)`).exec(world) || [])[1]);
-  assert.equal(L.C.ROAD_W, num('ROAD_W'));
-  assert.equal(L.C.DOORWAY_WIDTH, num('DOORWAY_WIDTH'));
-  const build = src.slice(src.indexOf('function _buildWorldRoad('), src.indexOf('function _isInWalkable('));
-  assert.match(build, /RoadRouter\.toView\(road, PG3DScene\.roadView\(WORLD\)\)\.points/);
-  assert.match(build, /const angle = Math\.atan2\(dx, dz\)/);
-  assert.match(build, /const full = len \+ WORLD\.ROAD_W/);
-  assert.match(build, /halfW,\s*\r?\n\s*halfL: full \/ 2/);
+// The server's road rectangles must be the ones the client walks on (TOOL2-04:
+// this used to be a regex over the engine's source). The engine's own WORLD
+// table and _buildWorldRoad are lifted from js/playground3d.js and RUN with a
+// stub THREE over every bundled road; what they lay out (walkable rects and
+// road meshes) must equal what buildRoads gives the server, value for value.
+const ENGINE = fs.readFileSync(path.join(__dirname, '../js/playground3d.js'), 'utf8');
+function liftEngine(re, what) {
+  const m = ENGINE.match(re);
+  assert.ok(m, what + ' not found in js/playground3d.js');
+  return m[0];
+}
+function engineRoads(projects) {
+  const RR = require('../js/road-router.js');
+  globalThis.RoadRouter = RR;   // PG3DScene.roadRoutes reads it as a global (as in the browser)
+  class Mesh {
+    constructor(geometry, material) {
+      this.geometry = geometry; this.material = material;
+      this.position = { set: (x, y, z) => { Object.assign(this.position, { x, y, z }); } };
+      this.rotation = { y: 0 };
+    }
+  }
+  const THREE = {
+    Mesh,
+    MeshLambertMaterial: class { constructor(o) { this.opts = o; } },
+    BoxGeometry: class { constructor(w, h, d) { this.parameters = { width: w, height: h, depth: d }; } }
+  };
+  const ctx = {
+    window: { THREE }, Math, Map,
+    PG3DPhysics: require('../js/playground3d-physics.js'),
+    PG3DScene: require('../js/playground3d-scene.js'),
+    WorldChatLogic: L,
+    RoadRouter: RR,
+    projects
+  };
+  vm.runInNewContext(
+    'let _walkableRoads = []; const _worldRoads = new Map(); const _worldNodes = new Map();\n' +
+    'const _scene = { add() {} };\n' +
+    liftEngine(/\n  const WORLD = \{[\s\S]*?\n  \};\n/, 'WORLD') +
+    liftEngine(/\n  function _buildWorldRoad\([\s\S]*?\n  \}\n/, '_buildWorldRoad') +
+    '\nfor (const p of projects) _worldNodes.set(p.id, {});' +
+    '\nthis.WORLD = WORLD; this.build = _buildWorldRoad; this.walkable = () => _walkableRoads; this.meshes = _worldRoads;',
+    ctx);
+  return ctx;
+}
+function bundledProjects() {
+  const ctx = {};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../projects.js'), 'utf8') + '\nthis.P = projects;', ctx);
+  return ctx.P;
+}
+
+test('road constants match the /world engine WORLD table (ROAD_W, DOORWAY_WIDTH)', () => {
+  const { WORLD } = engineRoads([]);
+  assert.equal(L.C.ROAD_W, WORLD.ROAD_W);
+  assert.equal(L.C.DOORWAY_WIDTH, WORLD.DOORWAY_WIDTH);
+});
+
+test('the engine\'s _buildWorldRoad lays out exactly the server\'s road rectangles, for every bundled road', () => {
+  const RR = require('../js/road-router.js');
+  const projects = bundledProjects();
+  const server = L.buildRoads(projects, RR, roadView());
+  assert.ok(server.byKey.size > 10, 'bundled roads found: ' + server.byKey.size);
+  const eng = engineRoads(projects);
+  let checked = 0;
+  for (const [key, ends] of server.byKey) {
+    const before = eng.walkable().length;
+    eng.build(ends.fromId, ends.toId);
+    const got = eng.walkable().slice(before);
+    const want = server.rects.filter(r => r.key === key);
+    assert.ok(want.length >= 1, key);
+    assert.equal(got.length, want.length, key + ': one rectangle per leg');
+    const meshes = eng.meshes.get(ends.fromId < ends.toId ? `${ends.fromId}→${ends.toId}` : `${ends.toId}→${ends.fromId}`);
+    assert.equal(meshes.length, want.length, key + ': one mesh per leg');
+    got.forEach((r, i) => {
+      const w = want[i];
+      assert.deepEqual(
+        { a: r.a, b: r.b, cx: r.cx, cz: r.cz, cosA: r.cosA, sinA: r.sinA, halfW: r.halfW, halfL: r.halfL },
+        { a: ends.fromId, b: ends.toId, cx: w.cx, cz: w.cz, cosA: w.cosA, sinA: w.sinA, halfW: w.halfW, halfL: w.halfL },
+        key + ' leg ' + i);
+      const m = meshes[i];
+      assert.deepEqual([m.position.x, m.position.z], [w.cx, w.cz], key + ' mesh ' + i + ' centre');
+      assert.equal(m.geometry.parameters.width, eng.WORLD.ROAD_W);
+      assert.equal(m.geometry.parameters.depth, 2 * w.halfL, key + ' mesh ' + i + ' length');
+      assert.equal(Math.cos(m.rotation.y), w.cosA);
+      assert.equal(Math.sin(m.rotation.y), w.sinA);
+      checked++;
+    });
+  }
+  assert.equal(eng.walkable().length, server.rects.length, 'no extra engine rectangles');
+  assert.ok(checked >= server.byKey.size);
+});
+
+// The formula _buildWorldRoad used inline before it called roadRects
+// (TOOL2-04), kept here so the move is provably value-for-value.
+function inlineRoadLegs(pts, roadW) {
+  const out = [];
+  const halfW = roadW / 2;
+  for (let i = 1; i < pts.length; i++) {
+    const ax = pts[i - 1].x, az = pts[i - 1].y, bx = pts[i].x, bz = pts[i].y;
+    const dx = bx - ax, dz = bz - az;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.01) continue;
+    const angle = Math.atan2(dx, dz);
+    const full = len + roadW;
+    out.push({ angle, full, cx: (ax + bx) / 2, cz: (az + bz) / 2, cosA: Math.cos(angle), sinA: Math.sin(angle), halfW, halfL: full / 2 });
+  }
+  return out;
+}
+
+test('roadRects matches the engine\'s old inline road formula leg for leg', () => {
+  const pts = [
+    { x: 0, y: 8 }, { x: 0, y: 40 },          // straight south
+    { x: 0, y: 40.005 },                        // a sub-0.01 stub: skipped
+    { x: 13.1, y: 40.005 },                     // east
+    { x: -7.3, y: 22.9 },                       // diagonal back north-west
+    { x: -7.3, y: -16.25 }                      // north
+  ];
+  for (const w of [2.5, 3.1]) {
+    const old = inlineRoadLegs(pts, w);
+    const now = L.roadRects('k', pts, w);
+    assert.equal(now.length, old.length);
+    assert.equal(now.length, 4);
+    now.forEach((r, i) => {
+      const o = old[i];
+      assert.deepEqual(
+        { cx: r.cx, cz: r.cz, cosA: r.cosA, sinA: r.sinA, halfW: r.halfW, halfL: r.halfL, angle: r.angle, depth: 2 * r.halfL },
+        { cx: o.cx, cz: o.cz, cosA: o.cosA, sinA: o.sinA, halfW: o.halfW, halfL: o.halfL, angle: o.angle, depth: o.full });
+    });
+  }
 });
 
 function roadView() {
@@ -233,24 +319,10 @@ test('roadLabel: "Road: A → B" from titles, ids as the fallback', () => {
   assert.equal(L.roadLabel(null), '');
 });
 
-test('zoneKey / zonePeers: islands and road segments are zones; open ground is not', () => {
+test('zoneKey: islands and road segments are zones; open ground is not', () => {
   assert.equal(L.zoneKey({ projectId: 'hulk', roadKey: 'a__b' }), 'p:hulk');
   assert.equal(L.zoneKey({ projectId: null, roadKey: 'a__b' }), 'r:a__b');
   assert.equal(L.zoneKey({ projectId: null, roadKey: null }), null);
-  const players = new Map([
-    ['r1', { projectId: null, roadKey: 'a__b' }],
-    ['r2', { projectId: null, roadKey: 'a__b' }],
-    ['r3', { projectId: null, roadKey: 'b__c' }],   // a different road
-    ['i1', { projectId: 'a', roadKey: null }],
-    ['g1', { projectId: null, roadKey: null }],     // open ground
-    ['g2', { projectId: null, roadKey: null }]
-  ]);
-  assert.deepEqual(L.zonePeers('r1', players), ['r2']);
-  assert.deepEqual(L.zonePeers('r3', players), []);
-  assert.deepEqual(L.zonePeers('i1', players), []);
-  assert.deepEqual(L.zonePeers('g1', players), []);
-  assert.deepEqual(L.zonePeers('r1', players, new Set(['r3'])), []);
-  assert.equal(L.islandPeers, L.zonePeers);
 });
 
 test('dwellStep: a new zone lands only after ZONE_DWELL_MS without a break', () => {
@@ -313,6 +385,48 @@ test('selectVoiceLinks: an existing link survives a near-tie (no flapping)', () 
   assert.deepEqual([...L.selectVoiceLinks(entries, 1).get('x')], ['y']);
   const current = new Map([['x', new Set(['z'])], ['z', new Set(['x'])]]);
   assert.deepEqual([...L.selectVoiceLinks(entries, 1, current).get('x')], ['z']);
+});
+
+// Map id → Set from [[a, b], …] pairs, both directions (selectVoiceLinks' shape).
+function links(pairs) {
+  const m = new Map();
+  const add = (a, b) => { if (!m.has(a)) m.set(a, new Set()); m.get(a).add(b); };
+  for (const [a, b] of pairs) { add(a, b); add(b, a); }
+  return m;
+}
+const deltas = (oldL, want, ann) => L.voiceDeltas(oldL, want, ann).map(e => `${e.event.slice(6)} ${e.to}<-${e.id}`);
+
+test('voiceDeltas: every peer-left goes out before any peer-joined, to both ends', () => {
+  // a–b stays, a–c drops, b–d is new, c–d is new.
+  const out = deltas(links([['a', 'b'], ['a', 'c']]), links([['a', 'b'], ['b', 'd'], ['c', 'd']]));
+  assert.deepEqual(out, [
+    'peer-left a<-c', 'peer-left c<-a',
+    'peer-joined b<-d', 'peer-joined d<-b',
+    'peer-joined c<-d', 'peer-joined d<-c'
+  ]);
+  const firstJoin = out.findIndex(s => s.startsWith('peer-joined'));
+  assert.ok(out.slice(firstJoin).every(s => s.startsWith('peer-joined')), 'no peer-left after a peer-joined');
+});
+
+test('voiceDeltas: the announcer gets no peer-joined (its voice:peers reply covers it); its new peers do', () => {
+  const out = deltas(links([['b', 'c']]), links([['a', 'b'], ['a', 'c'], ['b', 'c']]), 'a');
+  assert.deepEqual(out, ['peer-joined b<-a', 'peer-joined c<-a']);
+  // A dropped link of the announcer still gets peer-left both ways.
+  assert.deepEqual(deltas(links([['a', 'b']]), links([]), 'a'), ['peer-left a<-b', 'peer-left b<-a']);
+});
+
+test('voiceDeltas: no change is no events; each pair is sent once; empty / missing maps are fine', () => {
+  const same = links([['a', 'b'], ['b', 'c']]);
+  assert.deepEqual(L.voiceDeltas(same, links([['a', 'b'], ['b', 'c']])), []);
+  assert.deepEqual(deltas(new Map(), links([['x', 'y']])), ['peer-joined x<-y', 'peer-joined y<-x']);
+  assert.deepEqual(deltas(links([['x', 'y']]), new Map()), ['peer-left x<-y', 'peer-left y<-x']);
+  assert.deepEqual(L.voiceDeltas(null, null), []);
+  // A whole selectVoiceLinks round trip: moving one player to another zone
+  // drops exactly their links.
+  const e = [{ id: 'a', zone: 'p:x', x: 0, z: 0 }, { id: 'b', zone: 'p:x', x: 1, z: 0 }, { id: 'c', zone: 'p:x', x: 2, z: 0 }];
+  const before = L.selectVoiceLinks(e);
+  const after = L.selectVoiceLinks([e[0], e[1], { ...e[2], zone: 'r:x__y' }], 8, before);
+  assert.deepEqual(deltas(before, after), ['peer-left a<-c', 'peer-left c<-a', 'peer-left b<-c', 'peer-left c<-b']);
 });
 
 test('server: road zones feed world:zone, Project chat and the capped voice mesh', () => {

@@ -152,3 +152,16 @@ test('every named map event is actually wired to socket.emit or socket.on', () =
     }
   }
 });
+
+// NET2-05: the payloads, not just the names. The client only ever sent and
+// played the wave, and never sent movement flags; the server relays the same.
+test('emote and position payloads: the server accepts exactly what the client sends', () => {
+  const N = require('../js/world-net-logic.js');
+  const sent = new Set([...homeCode.matchAll(/\.emit\(\s*events\.emote,\s*\{\s*kind:\s*'([a-z]+)'/g)].map(m => m[1]));
+  assert.deepEqual([...sent].sort(), [...N.EMOTES].sort(), 'emote kinds sent = kinds relayed');
+  assert.match(read('js/playground3d.js'), /function playRemoteEmote\(id, kind\) \{\n\s*const rp = _remotePlayers\.get\(id\);\n\s*if \(!rp \|\| kind !== 'wave'\) return;/);
+  const ws = read('routes/world-socket.js');
+  assert.ok(!/\bmv\b/.test(ws), 'no mv movement flags on the server');
+  assert.ok(!/\.emote\s*=/.test(ws), 'no looping emote kept on the player record');
+  assert.ok(!/\bmv\s*:/.test(homeCode), 'the client sends no mv');
+});

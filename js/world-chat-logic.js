@@ -5,7 +5,7 @@
  *   world   — everyone in the room
  *   project — only players in the same ZONE: the same project island, or
  *             the same road segment between two islands (voice uses the
- *             same zone — see zoneKey / zonePeers / roadAt)
+ *             same zone — see zoneKey / roadAt)
  *   whisper — one named player (plus an echo to the sender)
  * Only World chat has a cooldown; Project and Whisper send freely.
  *
@@ -65,10 +65,12 @@
   }
 
   // ── roads ──
-  // Walkable rectangles of one road, exactly as js/playground3d.js
-  // _buildWorldRoad pushes them into _walkableRoads: one per leg of the
-  // polyline (`points` = RoadRouter.toView(road, view).points, {x, y} with
-  // y = world z), ROAD_W wide and running ROAD_W/2 past each end.
+  // Walkable rectangles of one road: one per leg of the polyline (`points` =
+  // RoadRouter.toView(road, view).points, {x, y} with y = world z), ROAD_W
+  // wide and running ROAD_W/2 past each end. The ONE copy of this maths:
+  // js/playground3d.js _buildWorldRoad lays its road meshes and
+  // _walkableRoads out from it too (`angle` = the mesh's rotation.y, length
+  // 2·halfL), so the server's road zones are the roads players walk on.
   function roadRects(key, points, roadW) {
     const w = roadW || C.ROAD_W;
     const out = [];
@@ -79,7 +81,7 @@
       const len = Math.hypot(dx, dz);
       if (!(len >= 0.01)) continue;
       const angle = Math.atan2(dx, dz);
-      out.push({ key, cx: (ax + bx) / 2, cz: (az + bz) / 2, cosA: Math.cos(angle), sinA: Math.sin(angle), halfW: w / 2, halfL: (len + w) / 2 });
+      out.push({ key, cx: (ax + bx) / 2, cz: (az + bz) / 2, angle, cosA: Math.cos(angle), sinA: Math.sin(angle), halfW: w / 2, halfL: (len + w) / 2 });
     }
     return out;
   }
@@ -88,7 +90,7 @@
   // `router` is js/road-router.js and `view` is PG3DScene.roadView(WORLD)
   // (passed in so this module stays dependency-free). Mirrors
   // PG3DScene.roadRoutes: placed projects only, no trails.
-  // → { rects: [{ key, cx, cz, cosA, sinA, halfW, halfL }], byKey: Map key → { fromId, toId } }
+  // → { rects: [{ key, cx, cz, angle, cosA, sinA, halfW, halfL }], byKey: Map key → { fromId, toId } }
   function buildRoads(projects, router, view, roadW) {
     const rects = [], byKey = new Map();
     if (!router || typeof router.route !== 'function' || !view) return { rects, byKey };
@@ -150,27 +152,6 @@
     return null;
   }
 
-  // Socket ids of the OTHER players in selfId's zone (same island, or same
-  // road segment). `players` is the server's socketId → player Map (each with
-  // `projectId` / `roadKey`); `members` (optional Set) restricts the result —
-  // e.g. to voice-enabled sockets — but is deliberately NOT applied to
-  // selfId, so leave/eviction paths can call this after removing themselves.
-  // No zone or unknown self → [].
-  function zonePeers(selfId, players, members) {
-    if (!players || typeof players.get !== 'function') return [];
-    const zone = zoneKey(players.get(selfId));
-    if (!zone) return [];
-    const out = [];
-    for (const [sid, p] of players) {
-      if (sid === selfId || zoneKey(p) !== zone) continue;
-      if (members && !members.has(sid)) continue;
-      out.push(sid);
-    }
-    return out;
-  }
-  // Older name, kept for callers/tests: same thing (an island is a zone).
-  const islandPeers = zonePeers;
-
   // Dwell filter for zone changes. `st` = { zone, pending, since } (zone =
   // the committed zone), `cand` = the zone measured now. Returns the next
   // state plus `changed` (commit cand now) and `waitMs` (re-check after this
@@ -221,6 +202,35 @@
         const A = out.get(p.a), B = out.get(p.b);
         if (A.size >= k || B.size >= k) continue;
         A.add(p.b); B.add(p.a);
+      }
+    }
+    return out;
+  }
+
+  // The events that move a /world voice mesh from `oldLinks` to `want` (both
+  // Map id → Set, symmetric: selectVoiceLinks' shape), in send order. Every
+  // voice:peer-left comes first (a client always destroys a dropped link
+  // before it dials a new one), then a voice:peer-joined to BOTH ends of
+  // each new link, except `announcer`: it learns its links from one
+  // voice:peers reply instead (routes/world-socket.js reconcileWorldVoice).
+  // Each pair is visited once (a < b).
+  // → [{ to, event, id }] (send `{ id }` as `event` to socket `to`)
+  function voiceDeltas(oldLinks, want, announcer) {
+    const out = [];
+    const has = (m, a, b) => { const s = m && m.get(a); return !!s && s.has(b); };
+    for (const [a, set] of oldLinks || []) {
+      for (const b of set) {
+        if (a < b && !has(want, a, b)) {
+          out.push({ to: a, event: 'voice:peer-left', id: b }, { to: b, event: 'voice:peer-left', id: a });
+        }
+      }
+    }
+    for (const [a, set] of want || []) {
+      for (const b of set) {
+        if (a < b && !has(oldLinks, a, b)) {
+          if (a !== announcer) out.push({ to: a, event: 'voice:peer-joined', id: b });
+          if (b !== announcer) out.push({ to: b, event: 'voice:peer-joined', id: a });
+        }
       }
     }
     return out;
@@ -280,5 +290,5 @@
     }
   }
 
-  return { CHANNELS, C, projectAt, islandPeers, zonePeers, zoneKey, roadRects, buildRoads, roadAt, roadLabel, dwellStep, selectVoiceLinks, hasCooldown, cooldownLeft, normalizeMessage, parseWhisperCommand, sameName, errorText };
+  return { CHANNELS, C, projectAt, zoneKey, roadRects, buildRoads, roadAt, roadLabel, dwellStep, selectVoiceLinks, voiceDeltas, hasCooldown, cooldownLeft, normalizeMessage, parseWhisperCommand, sameName, errorText };
 });

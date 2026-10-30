@@ -431,17 +431,23 @@ const HomeEditView = (() => {
     }
     _saving = true;
     _renderPanel();
+    // Left the editor while the PUT was out: don't drag them back to /home
+    // or repaint a panel that's gone.
+    const myMount = _mountSeq;
     try {
       const res = await Auth.fetch(`${API}/profile/home-layout`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rooms: _layout })
       });
+      if (myMount !== _mountSeq) return;
       const data = await res.json().catch(() => ({}));
+      if (myMount !== _mountSeq) return;
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       _initialJson = JSON.stringify(_layout);   // saved — leaving no longer asks
       Router.go('/home', { force: true });
     } catch (e) {
+      if (myMount !== _mountSeq) return;
       _saving = false;
       _renderPanel();
       const err = document.getElementById('pg-edit-error');

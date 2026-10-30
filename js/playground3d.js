@@ -302,6 +302,32 @@ const Playground3D = (() => {
     });
   }
 
+  // ── GPU release of the page-lifetime caches [gpu-release] ──
+  // three r160 hangs a per-renderer 'dispose' listener on every geometry,
+  // material and texture it uploads (WebGLGeometries, WebGLTextures,
+  // onMaterialDispose), so the caches that outlive a mount (posters, the lamp
+  // glow, the modules' shared parts — PG3D*.disposeGpu) kept every disposed
+  // WebGLRenderer, its state and its gl objects reachable. dispose() only
+  // runs those listeners: each renderer frees its GL copy and drops its
+  // listener, and the objects stay valid and re-upload on their next render.
+  // It runs when the LAST live renderer (the engine's, a /customize preview,
+  // the thumbnail one) goes, so nothing still drawing loses its buffers
+  // mid-use (a garment shell shares the body's vertex buffers).
+  const _liveRenderers = new Set();
+  function _releaseSharedGpu(renderer) {
+    _liveRenderers.delete(renderer);
+    if (_liveRenderers.size) return false;
+    for (const t of _textureCache.values()) { try { t.dispose(); } catch (_) {} }
+    if (_lampTex) { try { _lampTex.dispose(); } catch (_) {} }
+    const mods = [
+      typeof PG3DAvatar !== 'undefined' && PG3DAvatar, typeof PG3DProps !== 'undefined' && PG3DProps,
+      typeof PG3DScene !== 'undefined' && PG3DScene, typeof PG3DQuote !== 'undefined' && PG3DQuote,
+      typeof PG3DHouse !== 'undefined' && PG3DHouse, typeof PG3DHumanoid !== 'undefined' && PG3DHumanoid
+    ];
+    for (const M of mods) if (M && M.disposeGpu) { try { M.disposeGpu(); } catch (_) {} }
+    return true;
+  }
+
   // ── public API ──
 
   function init(container, character, layout) {
@@ -576,6 +602,7 @@ const Playground3D = (() => {
     if (_orient) { _orient.detach(); _orient = null; }   // exits fullscreen + unlocks if we locked
     if (_worldStateUnsub) { try { _worldStateUnsub(); } catch (_) {} _worldStateUnsub = null; }
     if (_renderer) {
+      _releaseSharedGpu(_renderer);   // the shared caches let go of it (and of earlier renderers)
       try { _renderer.dispose(); } catch (_) {}
       // dispose() alone doesn't release the WebGL context — only GC or an
       // explicit forceContextLoss does. Without this, repeated /home↔/world
@@ -712,6 +739,7 @@ const Playground3D = (() => {
     _viewport.appendChild(_hudLayer);
 
     _renderer = new THREE.WebGLRenderer({ antialias: true });
+    _liveRenderers.add(_renderer);
     _renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     _renderer.shadowMap.enabled = true;
     _renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -3526,7 +3554,9 @@ const Playground3D = (() => {
     node.props = [];
     if (!node.propState) node.propState = new Map();   // E-toggles (TV on, fridge open…) survive a rebuild
     const list = (node.house && Array.isArray(node.house.props)) ? node.house.props : [];
-    if (!list.length || typeof PG3DProps === 'undefined' || typeof WorldHouseLogic === 'undefined') return;
+    // No props left: still run the seat check, or a player sitting on the
+    // last chair stays seated over bare floor (3D2-06).
+    if (!list.length || typeof PG3DProps === 'undefined' || typeof WorldHouseLogic === 'undefined') { _keepSeat(node); return; }
     const L = WorldHouseLogic;
     const cx = node.mesh.position.x, cz = node.mesh.position.z;
     const portrait = (node.house && typeof node.house.portrait === 'string') ? node.house.portrait : '';
@@ -3632,11 +3662,15 @@ const Playground3D = (() => {
       node.props.push({ obj, aabb, act, key, kind: p.kind, gx: p.gx, gy: p.gy, x, z, rot, top: fp.top, nodeId: node.project.id });
     });
     _sgHideHung(node);   // frames behind a Scene Guess screen
+    _keepSeat(node);
+  }
 
-    // If the local player was sitting on this island and their seat is gone
-    // (editor preview rebuild / prop removed), stand them up cleanly.
+  // If the local player was sitting on this island and their seat is gone
+  // (editor preview rebuild / prop removed / every prop removed), stand them
+  // up cleanly; otherwise follow the rebuilt prop.
+  function _keepSeat(node) {
     if (_seat && _seat.nodeId === node.project.id) {
-      const still = node.props.find(pr => pr.kind === _seat.kind && pr.gx === _seat.gx && pr.gy === _seat.gy);
+      const still = (node.props || []).find(pr => pr.kind === _seat.kind && pr.gx === _seat.gx && pr.gy === _seat.gy);
       if (!still) _standUp();
       else { _seat.x = still.x; _seat.z = still.z; }
     }
@@ -3842,28 +3876,24 @@ const Playground3D = (() => {
     // runs under it from the wall out to the gap.
     const mat = new THREE.MeshLambertMaterial({ color: WORLD.ROAD_COLOR });
     const meshes = [];
-    const halfW = WORLD.ROAD_W / 2;
-    for (let i = 1; i < pts.length; i++) {
-      const ax = pts[i - 1].x, az = pts[i - 1].y, bx = pts[i].x, bz = pts[i].y;
-      const dx = bx - ax, dz = bz - az;
-      const len = Math.hypot(dx, dz);
-      if (len < 0.01) continue;
-      const angle = Math.atan2(dx, dz);
-      const full = len + WORLD.ROAD_W;   // + halfW past each end
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(WORLD.ROAD_W, WORLD.ROAD_H, full), mat);
-      mesh.position.set((ax + bx) / 2, WORLD.ROAD_RAISE, (az + bz) / 2);
-      mesh.rotation.y = angle;
+    // One rectangle per leg, ROAD_W/2 past each end: WorldChatLogic.roadRects,
+    // the same call the server's road zones (buildRoads) make, so voice and
+    // Project chat scope to exactly the roads drawn here (TOOL2-04).
+    for (const r of WorldChatLogic.roadRects(null, pts, WORLD.ROAD_W)) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(WORLD.ROAD_W, WORLD.ROAD_H, 2 * r.halfL), mat);
+      mesh.position.set(r.cx, WORLD.ROAD_RAISE, r.cz);
+      mesh.rotation.y = r.angle;
       mesh.receiveShadow = true;
       _scene.add(mesh);
       meshes.push(mesh);
       _walkableRoads.push({
         a: aId, b: bId,                 // node ids at each end (HUD vicinity)
-        cx: (ax + bx) / 2,
-        cz: (az + bz) / 2,
-        cosA: Math.cos(angle),
-        sinA: Math.sin(angle),
-        halfW,
-        halfL: full / 2
+        cx: r.cx,
+        cz: r.cz,
+        cosA: r.cosA,
+        sinA: r.sinA,
+        halfW: r.halfW,
+        halfL: r.halfL
       });
     }
     _worldRoads.set(key, meshes);
@@ -4850,9 +4880,11 @@ const Playground3D = (() => {
   // Ground-to-crown height and widest horizontal reach of a rig, skipping
   // subtrees tagged `userData.noFrame` (held props that can tower over the
   // head). Only y-extents and radius are used, so the group's yaw is harmless.
-  const _frameBox = { minY: 0, maxY: 0, radius: 0, blocky: false };
-  function _measureRig(rig) {
+  // Fills `out` (or a fresh box) — each preview and each thumbnail keeps its
+  // own, so a thumbnail batch can't re-frame the live preview (3D2-04).
+  function _measureRig(rig, out) {
     const THREE = window.THREE;
+    const _frameBox = out || { minY: 0, maxY: 0, radius: 0, blocky: false };
     const box = new THREE.Box3();
     const tmp = new THREE.Box3();
     let any = false;
@@ -4883,11 +4915,12 @@ const Playground3D = (() => {
   }
 
   // Camera pose (position + look-at) that frames `region` of a rig measured by
-  // _measureRig, for a camera of the given vertical FOV and aspect. `zoom` > 1
-  // moves closer. The classic full-body pose is kept verbatim so nothing that
-  // showed the whole figure before looks different now.
-  function _frameCamera(region, fovDeg, aspect, zoom) {
+  // _measureRig into `_frameBox`, for a camera of the given vertical FOV and
+  // aspect. `zoom` > 1 moves closer. The classic full-body pose is kept
+  // verbatim so nothing that showed the whole figure before looks different now.
+  function _frameCamera(region, fovDeg, aspect, zoom, _frameBox) {
     zoom = zoom || 1;
+    _frameBox = _frameBox || { minY: 0, maxY: 2, radius: 0.6, blocky: false };
     // A region name, or a spec of the same shape (contact sheets frame a
     // hand or a foot this way).
     const spec = region && typeof region === 'object' ? region
@@ -4935,6 +4968,7 @@ const Playground3D = (() => {
     // the pose the camera is gliding toward. Re-measured periodically because
     // a rigged body arrives asynchronously and replaces the procedural one.
     let region = 'full', zoom = 1, measureAt = 0, snapCam = true;
+    const frameBox = { minY: 0, maxY: 0, radius: 0, blocky: false };   // this preview's _measureRig
     // Max keeps the camera (near plane 0.1) outside the head at full zoom.
     const ZOOM_MIN = 0.5, ZOOM_MAX = 2.2;
     const camLook = { x: 0, y: 1.0, z: 0 };
@@ -4956,6 +4990,7 @@ const Playground3D = (() => {
       const THREE = window.THREE;
       const { w, h } = _size();
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      _liveRenderers.add(renderer);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.setSize(w, h, false);
       renderer.shadowMap.enabled = true;
@@ -5046,8 +5081,8 @@ const Playground3D = (() => {
     // of bounding boxes) so the async procedural → rigged swap re-frames.
     function _updateCamera(now, dt) {
       if (!camera || !rig) return;
-      if (now >= measureAt) { _measureRig(rig); measureAt = now + 500; }
-      const t = _frameCamera(region, camera.fov, camera.aspect, zoom);
+      if (now >= measureAt) { _measureRig(rig, frameBox); measureAt = now + 500; }
+      const t = _frameCamera(region, camera.fov, camera.aspect, zoom, frameBox);
       if (snapCam) {
         camera.position.set(t.pos[0], t.pos[1], t.pos[2]);
         camLook.x = t.look[0]; camLook.y = t.look[1]; camLook.z = t.look[2];
@@ -5181,6 +5216,7 @@ const Playground3D = (() => {
       if (rig && rotGroup) { rotGroup.remove(rig); _disposeActor(rig); }
       if (scene) _disposeRig(scene);
       if (renderer) {
+        _releaseSharedGpu(renderer);
         try { renderer.dispose(); } catch (_) {}
         // Release the WebGL context (the customize preview is opened/closed
         // repeatedly; dispose() alone leaves the context for GC).
@@ -5249,6 +5285,7 @@ const Playground3D = (() => {
     if (!_thumbR) {
       // preserveDrawingBuffer so toDataURL() reliably reads back the frame.
       _thumbR = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+      _liveRenderers.add(_thumbR);
       _thumbR.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       _thumbScene = new THREE.Scene();
       _thumbScene.add(new THREE.AmbientLight(0xffffff, 0.6));
@@ -5293,8 +5330,8 @@ const Playground3D = (() => {
       const p = opts.pose || { state: 'idle', t: 0 };
       inst.poseAt(p.state, p.t);
     }
-    _measureRig(rig);
-    const pose = _frameCamera(opts.focus || 'full', _thumbCam.fov, _thumbCam.aspect, 1);
+    const box = _measureRig(rig);
+    const pose = _frameCamera(opts.focus || 'full', _thumbCam.fov, _thumbCam.aspect, 1, box);
     _thumbCam.position.set(pose.pos[0], pose.pos[1], pose.pos[2]);
     _thumbCam.lookAt(pose.look[0], pose.look[1], pose.look[2]);
     let url = null;
@@ -5406,21 +5443,32 @@ const Playground3D = (() => {
 
   // A game that can show on the screen. spec: { painter: { draw(ctx, view,
   // imgOf), keyOf(view, imgOf) → string (repaint when it changes; none =
-  // every paint tick) }, crown: { make(THREE), y, yStacked } | null } — the
-  // crown at y × the wearer's height, or at yStacked when they hold another
-  // game's title too (PG3DScene.crownLayout). Registering again replaces the
-  // spec and keeps the game's state.
+  // every paint tick) }, crown: { make(THREE), y, ring, yStacked, ringStacked }
+  // | null } — head-relative: the reward sits y (its own units) off the head's
+  // crown fit, scaled so its radius ring rests on the head; yStacked /
+  // ringStacked instead when the wearer holds another game's title too
+  // (PG3DScene.crownLayout).
+  // Registering again replaces the spec and keeps the game's state.
   function registerScreenKind(kind, spec) {
     const k = _gsKind(kind);
     if (!k) return false;
     const s = spec || {};
     const p = s.painter && typeof s.painter.draw === 'function' ? s.painter : null;
     k.painter = p ? { draw: p.draw, keyOf: typeof p.keyOf === 'function' ? p.keyOf : null } : null;
-    k.crown = s.crown && typeof s.crown.make === 'function' ? { make: s.crown.make, y: s.crown.y, yStacked: s.crown.yStacked } : null;
+    k.crown = _gsCrownSpec(s.crown);
     _gsSyncIslands();
     for (const sc of _gs.screens.values()) sc.dirty = true;
     _gs.lastCrowns = 0;
     return true;
+  }
+
+  // The crown part of a screen-kind spec, kept whole: dropping ring /
+  // ringStacked made crownLayout fall back to 0.16 (a lone laurel drawn 12.5%
+  // too big, 3D2-02). null without a make().
+  function _gsCrownSpec(c) {
+    return c && typeof c.make === 'function'
+      ? { make: c.make, y: c.y, ring: c.ring, yStacked: c.yStacked, ringStacked: c.ringStacked }
+      : null;
   }
 
   // Which islands a game is live on (they get the screen).
@@ -5665,6 +5713,9 @@ const Playground3D = (() => {
       const M = inst.measure();
       const fit = PG3DGearLogic.crownFit(M.head, {
         bald: c.hairStyle === 4,
+        // The hair shown (null under a helmet / the hood): the Afro's halo,
+        // Spiky's and Curly's pieces lift or widen the band.
+        hair: (hidden.hairStyle || typeof PG3DHumanoidLogic === 'undefined') ? null : PG3DHumanoidLogic.hairSpec(c.hairStyle),
         hat: hidden.hat ? 0 : (c.hat ?? 0),
         helmet: c.helmet ?? 0,
         headBox: M.partBox ? M.partBox[PG3DGearLogic.PART.head] : null
@@ -5789,7 +5840,17 @@ const Playground3D = (() => {
         }
         if (!s) continue;
         s.group.visible = near;
+        // Out of reach since when (PG3DScene.screenEvictions frees it later).
+        s.farSince = near ? null : (s.farSince ?? now);
         if (near) _sgPaint(id, s);
+      }
+      // Walked away: free screens out of reach for 10 s, and all but the
+      // last 3 (each is a 1280×800 canvas + texture); they're rebuilt and
+      // repainted on the way back.
+      if (PG3DScene.screenEvictions) {
+        const list = [];
+        for (const [id, s] of _gs.screens) list.push({ id, near: s.farSince === null, farSince: s.farSince });
+        for (const id of PG3DScene.screenEvictions(list, now)) _sgDropScreen(id);
       }
     }
     if (_gs.crowns.size || _gsHasChampions()) _sgTickCrowns(now);
@@ -5863,6 +5924,7 @@ const Playground3D = (() => {
   // Release the shared thumbnail context (call when leaving /customize).
   function disposeThumbnails() {
     if (_thumbR) {
+      _releaseSharedGpu(_thumbR);
       try { _thumbR.dispose(); } catch (_) {}
       try { if (_thumbR.forceContextLoss) _thumbR.forceContextLoss(); } catch (_) {}
     }

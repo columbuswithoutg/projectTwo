@@ -416,3 +416,14 @@ test('a fully furnished house fits the cap, and the seat kinds are the ones peop
   assert.equal(v.ok, true, v.error);
   assert.ok(v.house.props.length <= H.C.MAX_PROPS);
 });
+
+test('sanitizeSign strips every C0 control char and DEL, keeps the rest (3D2-01 escape rewrite)', () => {
+  let all = '';
+  for (let c = 0; c <= 0x1f; c++) all += String.fromCharCode(c);
+  assert.equal(H.sanitizeSign('a' + all + 'b\u007fc'), 'abc');
+  assert.equal(H.sanitizeSign('x\u0000\u0009\u000a\u000d\u001b[31my'), 'x[31my');
+  assert.equal(H.sanitizeSign('caf\u00e9 \u0080 \u00ff'), 'caf\u00e9 \u0080 \u00ff');
+  assert.equal(H.sanitizeSign('a - b ~ c'), 'a - b ~ c');
+  assert.equal(H.sanitizeSign(42), '42');
+  assert.equal(H.sanitizeSign({ toString() { throw new Error('x'); } }), '');
+});

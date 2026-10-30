@@ -8,21 +8,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const N = require('../js/world-net-logic.js');
 
-// ── Movement flags ──
+// ── Movement flags (removed, NET2-05) ──
 
-test('packMove / unpackMove round-trip every flag', () => {
-  const all = { crouch: false, sprint: false, air: true, double: true, falling: true };
-  assert.deepEqual(N.unpackMove(N.packMove(all)), all);
-  assert.equal(N.packMove({ sprint: true }), N.MV.SPRINT);
-  assert.equal(N.packMove(null), 0);
-});
-
-test('sanitizeMove: junk → 0, seated → 0, crouch cancels sprint, jump bits need AIR', () => {
-  for (const bad of [-1, 32, 1.5, NaN, '3', null, undefined, {}, Infinity]) assert.equal(N.sanitizeMove(bad, null), 0, String(bad));
-  assert.equal(N.sanitizeMove(N.MV.SPRINT | N.MV.AIR, 'sit'), 0);
-  assert.equal(N.sanitizeMove(N.MV.CROUCH | N.MV.SPRINT, null), N.MV.CROUCH);
-  assert.equal(N.sanitizeMove(N.MV.DOUBLE | N.MV.FALLING, null), 0);
-  assert.equal(N.sanitizeMove(N.MV.AIR | N.MV.DOUBLE, null), N.MV.AIR | N.MV.DOUBLE);
+test('the unused mv movement flags are gone from the protocol', () => {
+  for (const k of ['MV', 'MV_MAX', 'packMove', 'unpackMove', 'sanitizeMove', 'isLoopingEmote']) {
+    assert.equal(N[k], undefined, k + ' removed');
+  }
+  // An old client's mv is dropped, never relayed.
+  assert.ok(!('mv' in N.sanitizePos({ x: 0, z: 0, mv: 31 })));
 });
 
 // ── Position packets ──
@@ -43,16 +36,15 @@ test('sanitizePos: rejects bad x/z, clamps y, whitelists pose and booleans', () 
   assert.equal(N.sanitizePos({ x: 'a', z: 0 }), null);
   assert.equal(N.sanitizePos({ x: NaN, z: 0 }), null);
   assert.equal(N.sanitizePos({ x: 0, z: 1001 }), null);
-  const s = N.sanitizePos({ x: 1, z: 2, y: 999, walking: 'yes', backward: true, pose: { toString: 1 }, mv: 1 });
+  const s = N.sanitizePos({ x: 1, z: 2, y: 999, walking: 'yes', backward: true, pose: { toString: 1 } });
   assert.equal(s.y, 10);
   assert.equal(s.walking, false, 'only a real true counts');
   assert.equal(s.backward, false);
   assert.equal(s.pose, null);
-  assert.equal(s.mv, 1);
   assert.equal(N.sanitizePos({ x: 0, z: 0, y: -50 }).y, -2);
-  assert.equal(N.sanitizePos({ x: 0, z: 0, pose: 'lie', mv: 4 }).mv, 0, 'seated clears flags');
+  assert.equal(N.sanitizePos({ x: 0, z: 0, pose: 'lie' }).pose, 'lie');
   assert.deepEqual(Object.keys(N.sanitizePos({ x: 0, z: 0 })).sort(),
-    ['backward', 'mv', 'pose', 'walking', 'x', 'y', 'yaw', 'z']);
+    ['backward', 'pose', 'walking', 'x', 'y', 'yaw', 'z']);
 });
 
 test('joinPos: defaults missing / out-of-range fields and wraps yaw', () => {
@@ -62,13 +54,12 @@ test('joinPos: defaults missing / out-of-range fields and wraps yaw', () => {
 
 // ── Emotes ──
 
-test('isEmoteKind: whitelist only, no prototype keys', () => {
-  for (const k of N.EMOTES) assert.ok(N.isEmoteKind(k), k);
-  for (const k of ['__proto__', 'constructor', 'toString', 'stop', '', 'WAVE', 1, null, {}]) {
+test('isEmoteKind: the wave only (the one emote the client sends and plays), no prototype keys', () => {
+  assert.deepEqual([...N.EMOTES], ['wave']);
+  assert.ok(N.isEmoteKind('wave'));
+  for (const k of ['__proto__', 'constructor', 'toString', 'stop', 'dance', 'cheer', 'lie', '', 'WAVE', 1, null, {}]) {
     assert.equal(N.isEmoteKind(k), false, String(k));
   }
-  assert.ok(N.isLoopingEmote('dance'));
-  assert.equal(N.isLoopingEmote('wave'), false, 'one-shot');
 });
 
 // ── Public player record ──
@@ -76,7 +67,7 @@ test('isEmoteKind: whitelist only, no prototype keys', () => {
 test('publicPlayer: exactly the public keys, never the private ones', () => {
   const rec = {
     socketId: 's1', userId: 'u1', username: 'tony', character: { skin: 1 }, x: 1, y: 0, z: 2, yaw: 0.5,
-    walking: true, backward: false, pose: null, mv: 4, emote: 'dance',
+    walking: true, backward: false, pose: null, mv: 4, emote: 'dance',   // stale fields: not broadcast
     lastChat: 5, lastAnyChat: 6, stay: { projectId: 'p' }, lastPunch: 7, lastSnap: 8, projectId: 'p', downAt: 9
   };
   const out = N.publicPlayer(rec);
@@ -84,8 +75,8 @@ test('publicPlayer: exactly the public keys, never the private ones', () => {
   for (const k of ['userId', 'lastChat', 'lastAnyChat', 'stay', 'lastPunch', 'lastSnap', 'projectId', 'downAt']) {
     assert.ok(!(k in out), `${k} must not be broadcast`);
   }
-  assert.equal(out.emote, 'dance');
-  assert.deepEqual(N.publicPlayer({ socketId: 's2' }).mv, 0);
+  assert.ok(!('mv' in out) && !('emote' in out), 'no movement flags or looping emote in the snapshot');
+  assert.equal(N.publicPlayer({ socketId: 's2' }).pose, null);
 });
 
 // ── Token buckets ──

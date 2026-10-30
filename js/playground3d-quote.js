@@ -262,6 +262,12 @@
   // ── the champion's laurel ──
 
   let _parts = null;
+  // Leaving a 3D view [gpu-release]: the laurel's shared parts carry a
+  // 'dispose' listener from every renderer that drew them; dispose() drops
+  // them (the parts stay valid and re-upload on their next render).
+  function disposeGpu() {
+    if (_parts) for (const v of Object.values(_parts)) v.dispose();
+  }
   function makeLaurel(THREE) {
     if (!_parts) {
       const leaf = new THREE.MeshStandardMaterial({ color: 0x8fcf5a, metalness: 0.55, roughness: 0.35, emissive: 0x1f4210, emissiveIntensity: 0.55 });
@@ -311,7 +317,7 @@
     return wreath;
   }
 
-  const api = { drawScreen, keyOf, makeLaurel, wrap };
+  const api = { drawScreen, keyOf, makeLaurel, wrap, disposeGpu };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.PG3DQuote = api;
 })(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this);

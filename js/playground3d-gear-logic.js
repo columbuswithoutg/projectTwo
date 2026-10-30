@@ -509,13 +509,93 @@
     };
   }
 
+  // Volumetric hair [hair-volume]: the procedural pieces that
+  // js/playground3d-humanoid.js _hairExtras builds round the skull ellipsoid
+  // (skull = { c, r }: centre at eye height and radii, as measureHead), kept
+  // here so crownFit can clear them and the builder uses the same numbers.
+  //   afro    an ellipsoid halo: centre skull.c + [0, lift·r.y, −back·r.z],
+  //           radii r × scale, its surface pushed out by up to bump[0] + bump[1]
+  //   spikes  cones (base radius r, length len) on the scalp at spots
+  //           [theta from the crown, phi round from the face], base sunk
+  //           `lift` into it, pointing along the scalp normal
+  //   curls   balls of radius r, `lift` off the scalp, in rows theta = t0,
+  //           t0 + step … < tMax of round(sin(theta) · perRow) balls each,
+  //           phi = j / n · 2π + theta · twist; the forehead kept clear
+  //           (rows past foreheadT skip cos(phi) > foreheadCos)
+  const HAIR_VOLUME = {
+    afro: { lift: 0.35, back: 0.35, scale: [1.65, 1.35, 1.25], bump: [0.045, 0.03] },
+    spikes: {
+      r: 0.022, len: 0.075, lift: -0.004,
+      spots: [[0.15, 0], [0.35, 0.3], [0.35, -0.3], [0.45, 1.3], [0.45, -1.3], [0.55, 2.2],
+        [0.55, -2.2], [0.5, Math.PI], [0.25, 2.8], [0.25, -2.8], [0.6, 0.5], [0.6, -0.5]]
+    },
+    curls: { r: 0.026, lift: 0.006, t0: 0.05, step: 0.26, tMax: 1.5, perRow: 12, twist: 1.7, foreheadT: 0.75, foreheadCos: 0.35 }
+  };
+  // A point on the scalp (theta from the crown down, phi from the face round
+  // to the left side and back), `lift` along the scalp's normal → { p, n }.
+  function scalpPoint(skull, theta, phi, lift) {
+    const C = skull.c, R = skull.r;
+    const u = [Math.sin(theta) * Math.sin(phi), Math.cos(theta), Math.sin(theta) * Math.cos(phi)];
+    const n = [u[0] / R[0], u[1] / R[1], u[2] / R[2]];
+    const len = Math.hypot(n[0], n[1], n[2]) || 1;
+    for (let i = 0; i < 3; i++) n[i] /= len;
+    const p = [0, 1, 2].map((i) => u[i] * R[i] + C[i] + n[i] * (lift || 0));
+    return { p, n };
+  }
+  // The pieces of one kind on this skull: spikes → [{ p (cone base), n, r,
+  // len }], curls → [{ p (centre), r }], afro → { c, r, bump } (the halo).
+  function hairPieces(skull, kind) {
+    if (kind === 'afro') {
+      const A = HAIR_VOLUME.afro, S = skull;
+      return {
+        c: [S.c[0], S.c[1] + S.r[1] * A.lift, S.c[2] - S.r[2] * A.back],
+        r: [S.r[0] * A.scale[0], S.r[1] * A.scale[1], S.r[2] * A.scale[2]],
+        bump: A.bump[0] + A.bump[1]
+      };
+    }
+    if (kind === 'spikes') {
+      const K = HAIR_VOLUME.spikes;
+      return K.spots.map(([t, ph]) => ({ ...scalpPoint(skull, t, ph, K.lift), r: K.r, len: K.len }));
+    }
+    if (kind === 'curls') {
+      const K = HAIR_VOLUME.curls, out = [];
+      for (let t = K.t0; t < K.tMax; t += K.step) {
+        const ring = Math.max(1, Math.round(Math.sin(t) * K.perRow));
+        for (let j = 0; j < ring; j++) {
+          const ph = (j / ring) * Math.PI * 2 + t * K.twist;
+          if (Math.cos(ph) > K.foreheadCos && t > K.foreheadT) continue;
+          out.push({ p: scalpPoint(skull, t, ph, K.lift).p, r: K.r });
+        }
+      }
+      return out;
+    }
+    return null;
+  }
+  // Spikes and curls as balls ([centre, radius]; a cone as a run of shrinking
+  // balls along its axis), for clearance checks.
+  function hairBalls(skull, kind) {
+    const P = hairPieces(skull, kind);
+    if (!Array.isArray(P)) return [];
+    if (kind !== 'spikes') return P.map((b) => [b.p, b.r]);
+    const out = [];
+    for (const c of P) {
+      for (let i = 0; i <= 12; i++) {
+        const d = c.len * i / 12;
+        out.push([[c.p[0] + c.n[0] * d, c.p[1] + c.n[1] * d, c.p[2] + c.n[2] * d], c.r * (1 - i / 12)]);
+      }
+    }
+    return out;
+  }
+
   // Champion rewards (the Scene Guess crown, the Quote Guess laurel) on this
   // head [crown-fit]: a ring resting on the skull just above the hairline, or
   // on whatever is worn on the head — a hat, the hood, a helmet. The reward is
   // authored with its band centred on its origin, inner radius CROWN_BAND.r
   // and height CROWN_BAND.h (js/playground3d-scene.js makeCrown).
-  // opts: { bald, hat (1 Beanie, 2 Cap, 3 Top hat, 4 Hood), helmet (index;
-  // hides the hat), headBox ({ center, size } of the head, for the classic
+  // opts: { bald, hair (PG3DHumanoidLogic.hairSpec of the style shown, null
+  // when a hat / helmet hides it: the Afro's halo, Spiky's and Curly's
+  // pieces are cleared, see HAIR_VOLUME), hat (1 Beanie, 2 Cap, 3 Top hat,
+  // 4 Hood), helmet (index; hides the hat), headBox ({ center, size } of the head, for the classic
   // Iron Man / Soldier helmets that are scaled to it) }.
   // → { y, scale, center, ringR, bottom }: the reward's origin in body space
   // (center = [0, y, z]), the uniform scale that makes its band ring ringR,
@@ -575,6 +655,34 @@
     } else if (hat) {
       const F = hatFit(H, hat, { bald: opts.bald });
       restOn(F.c, F.r);
+    } else {
+      // Bare head with volumetric hair (hats and helmets drop those pieces).
+      const extras = (opts.hair && opts.hair.extras) || [];
+      if (extras.includes('afro')) {
+        // Worn on the halo like on a hat: widened to 80% of it, so it sits
+        // high on the hair instead of buried inside it.
+        const A = hairPieces(S, 'afro'), k = 1 + A.bump;
+        const r = [A.r[0] * k, A.r[1] * k, A.r[2] * k];
+        ring = Math.max(ring, Math.max(r[0], r[2]) * 0.8);
+        restOn(A.c, r);
+      }
+      // Spikes and curls: lift the band until none of them reaches its wall
+      // (2 mm short of the ring) anywhere over its height; what rises above
+      // the band shows through the open crown.
+      const balls = [].concat(...['spikes', 'curls'].filter((k) => extras.includes(k)).map((k) => hairBalls(S, k)));
+      if (balls.length) {
+        const bh = CROWN_BAND.h * ring / CROWN_BAND.r;
+        const reach = (b0) => {
+          let m = 0;
+          for (const [p, rad] of balls) {
+            const d = p[1] < b0 ? b0 - p[1] : p[1] > b0 + bh ? p[1] - b0 - bh : 0;
+            if (d < rad) m = Math.max(m, Math.hypot(p[0], p[2] - cz) + Math.sqrt(rad * rad - d * d));
+          }
+          return m;
+        };
+        const cap = bottom + 0.12;
+        while (bottom < cap && reach(bottom) > ring - 0.002) bottom += 0.002;
+      }
     }
     const scale = ring / CROWN_BAND.r;
     // On a lid, the band rings its top edge (half above, half below).
@@ -668,6 +776,7 @@
   return {
     PART, measureHead, measureTorso, surfaceAt, torsoLandmarks,
     glassesFit, hatFit, hoodFit, maskRegion, visorFit, helmetFit, rimPlane, crownFit, CROWN_BAND,
+    HAIR_VOLUME, scalpPoint, hairPieces, hairBalls,
     autoAccent, contrastRatio, luminance,
     regionPlanesFromBox, bandPlanes
   };

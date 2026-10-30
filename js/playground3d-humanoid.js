@@ -1321,6 +1321,7 @@
           r: [xMax, yMax - eyeY, (zMax - zMin) / 2]
         };
       }
+      const G = root.PG3DGearLogic;
       const C = new THREE.Vector3().fromArray(variant.skull.c);     // skull centre
       const R = new THREE.Vector3().fromArray(variant.skull.r);     // skull radii
       // Point on the scalp: theta from the crown (0) down, phi round from the
@@ -1348,14 +1349,13 @@
 
       for (const kind of kinds) {
         if (kind === 'spikes') {
-          // Tufts over the crown and sides, leaning with the scalp.
-          const spots = [[0.15, 0], [0.35, 0.3], [0.35, -0.3], [0.45, 1.3], [0.45, -1.3], [0.55, 2.2],
-            [0.55, -2.2], [0.5, Math.PI], [0.25, 2.8], [0.25, -2.8], [0.6, 0.5], [0.6, -0.5]];
-          for (const [t, ph] of spots) {
-            const s = scalp(t, ph, -0.004);
-            const cone = new THREE.ConeGeometry(0.022, 0.075, 10);
-            cone.translate(0, 0.0375, 0);
-            add(cone, s.p, new THREE.Quaternion().setFromUnitVectors(UP, s.n));
+          // Tufts over the crown and sides, leaning with the scalp. Spikes,
+          // curls and the afro come from PG3DGearLogic.HAIR_VOLUME /
+          // hairPieces, which the champion's crown clears (crownFit).
+          for (const c of G.hairPieces(variant.skull, 'spikes')) {
+            const cone = new THREE.ConeGeometry(c.r, c.len, 10);
+            cone.translate(0, c.len / 2, 0);
+            add(cone, new THREE.Vector3().fromArray(c.p), new THREE.Quaternion().setFromUnitVectors(UP, new THREE.Vector3().fromArray(c.n)));
           }
         } else if (kind === 'crest') {
           // Mohawk: a flattened tube along the scalp's centre line, forehead to nape.
@@ -1365,26 +1365,21 @@
           add(tube, null, null, new THREE.Vector3(0.32, 1, 1));
         } else if (kind === 'afro') {
           // A big rounded halo with a soft, bumpy surface.
+          const halo = G.hairPieces(variant.skull, 'afro'), bump = G.HAIR_VOLUME.afro.bump;
           const g = new THREE.IcosahedronGeometry(1, 4);
           const pos = g.attributes.position;
           for (let i = 0; i < pos.count; i++) {
             const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-            const k = 1 + 0.045 * Math.sin(x * 17 + y * 5) * Math.sin(y * 13 + z * 7) + 0.03 * Math.sin(z * 23 + x * 11);
+            const k = 1 + bump[0] * Math.sin(x * 17 + y * 5) * Math.sin(y * 13 + z * 7) + bump[1] * Math.sin(z * 23 + x * 11);
             pos.setXYZ(i, x * k, y * k, z * k);
           }
           g.computeVertexNormals();
           // Set back so the face stays clear below the hairline.
-          add(g, new THREE.Vector3(0, C.y + R.y * 0.35, C.z - R.z * 0.35), null, new THREE.Vector3(R.x * 1.65, R.y * 1.35, R.z * 1.25));
+          add(g, new THREE.Vector3().fromArray(halo.c), null, new THREE.Vector3().fromArray(halo.r));
         } else if (kind === 'curls') {
           // Ringlets all over the scalp (the hairline stays clear of the face).
-          for (let t = 0.05; t < 1.5; t += 0.26) {
-            const ring = Math.max(1, Math.round(Math.sin(t) * 12));
-            for (let j = 0; j < ring; j++) {
-              const ph = (j / ring) * Math.PI * 2 + t * 1.7;
-              if (Math.cos(ph) > 0.35 && t > 0.75) continue;     // keep the forehead clear
-              const s = scalp(t, ph, 0.006);
-              add(new THREE.SphereGeometry(0.026, 10, 8), s.p);
-            }
+          for (const b of G.hairPieces(variant.skull, 'curls')) {
+            add(new THREE.SphereGeometry(b.r, 10, 8), new THREE.Vector3().fromArray(b.p));
           }
         } else if (kind === 'ponytail') {
           // A tapered tail tied at the back of the head, hanging down the neck.
@@ -2290,8 +2285,39 @@
     return handle;
   }
 
+  // Leaving a 3D view [gpu-release]: three keeps a per-renderer 'dispose'
+  // listener on every geometry, material and texture it has uploaded, so the
+  // page-lifetime models, hair and baked variants kept every disposed
+  // WebGLRenderer reachable. dispose() only frees each renderer's GL copy and
+  // drops its listener: everything stays valid and re-uploads on its next
+  // render (instances' own cloned materials are theirs to dispose).
+  function disposeGpu() {
+    const seen = new Set();
+    const one = (x) => {
+      if (!x || seen.has(x) || typeof x.dispose !== 'function') return;
+      seen.add(x);
+      if (x.isMaterial) {
+        for (const k of Object.keys(x)) if (x[k] && x[k].isTexture) one(x[k]);
+        if (x.uniforms) for (const u of Object.values(x.uniforms)) if (u && u.value && u.value.isTexture) one(u.value);
+      }
+      x.dispose();
+    };
+    const tree = (o) => {
+      if (o && o.traverse) o.traverse((m) => { one(m.geometry); [].concat(m.material || []).forEach(one); });
+    };
+    for (const p of Object.values(_protos)) tree(p.scene);
+    if (_hair) for (const m of _hair.meshes.values()) tree(m);
+    for (const v of _variants.values()) {
+      tree(v.template);
+      one(v.bodyGeo);
+      for (const g of v.hairGeo.values()) one(g);
+      if (v.shellGeo) for (const g of v.shellGeo.values()) one(g);
+    }
+  }
+
   root.PG3DHumanoid = {
     preload,
+    disposeGpu,
     retry,
     whenReady() { return _ready || preload(); },
     onReady,

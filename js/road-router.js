@@ -124,7 +124,10 @@
   }
 
   // Edge list: required first, then recommended trails that aren't also
-  // required. Sorted shortest-first, ties by key.
+  // required. Sorted shortest-first, ties by key. One road per PAIR of
+  // islands: a mutual pair (A needs B and B needs A, which the admin cycle
+  // check refuses) or a trail backing a required road keeps the first
+  // direction only, so no island gets a second doorway onto the same road.
   function collectEdges(projects, withTrails) {
     const pos = new Map();
     for (const p of projects || []) if (p && typeof p.id === 'string' && !pos.has(p.id)) pos.set(p.id, { X: 2 * gx(p), Y: 2 * gy(p) });
@@ -133,8 +136,9 @@
       const a = pos.get(fromId), b = pos.get(toId);
       if (!a || !b || (a.X === b.X && a.Y === b.Y)) return;
       const key = fromId + '__' + toId;
-      if (seen.has(key)) return;
-      seen.add(key);
+      const pair = fromId < toId ? key : toId + '__' + fromId;
+      if (seen.has(pair)) return;
+      seen.add(pair);
       list.push({ key, fromId, toId, required, a, b, dist: Math.abs(a.X - b.X) + Math.abs(a.Y - b.Y) });
     };
     for (const p of projects || []) {

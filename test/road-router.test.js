@@ -211,3 +211,46 @@ test('pathD rounds corners and samplePolyline measures the same route', () => {
   assert.equal(samples[samples.length - 1].y, 10);
   assert.ok(Math.abs(samples[0].tx - 1) < 1e-9 && Math.abs(samples[samples.length - 1].ty - 1) < 1e-9);
 });
+
+// 3D2-11: degenerate inputs.
+test('degenerate: no projects, null, and junk entries route to nothing without throwing', () => {
+  for (const input of [[], null, undefined, [null, 5, 'x', { gridX: 1 }]]) {
+    const res = R.route(input);
+    assert.deepEqual(res.roads, []);
+    assert.equal(res.byKey.size, 0);
+  }
+  const b = R._internal.buildBoard([]);
+  assert.equal(b.cells.size, 0);
+  assert.ok(b.w > 0 && b.h > 0, 'an empty board is still a valid grid');
+});
+
+test('degenerate: two projects on one cell — the first keeps the cell, a road between them is skipped', () => {
+  const ps = [P('a', 0, 0), P('b', 0, 0, ['a']), P('c', 2, 0, ['b'])];
+  const b = R._internal.buildBoard(ps);
+  assert.equal(b.cells.size, 2);
+  assert.equal(b.cells.get('0,0'), 'a', 'first id per cell');
+  const res = R.route(ps);
+  assert.deepEqual(res.roads.map(r => r.key), ['b__c'], 'a__b has no length: no road');
+  assertAxisAligned(segmentsOf(res, UNIT));
+});
+
+test('degenerate: a prerequisite that is not a project is ignored', () => {
+  const ps = [P('a', 0, 0), P('b', 1, 0, ['a', 'ghost', '', null])];
+  const res = R.route(ps);
+  assert.deepEqual(res.roads.map(r => r.key), ['a__b']);
+  assert.deepEqual(R.portsView(res, 'b', UNIT).map(p => p.otherId), ['a']);
+});
+
+test('degenerate: a mutual prerequisite pair is ONE road, so each island has one doorway onto it', () => {
+  const ps = [P('a', 0, 0, ['b']), P('b', 2, 0, ['a'])];
+  const edges = R._internal.collectEdges(ps, true);
+  assert.equal(edges.length, 1, 'deduped by the unordered pair');
+  assert.equal(edges[0].key, 'b__a', 'the first direction met is kept (a needs b)');
+  const res = R.route(ps);
+  assert.equal(res.roads.length, 1);
+  for (const id of ['a', 'b']) assert.equal(R.portsView(res, id, UNIT).length, 1, id + ' has one port');
+  // A recommended trail backing a required road (either way round) adds nothing.
+  const t = [P('a', 0, 0), P('b', 2, 0, ['a'], { recommendedPrerequisites: ['a'] }), P('c', 4, 0, [], { recommendedPrerequisites: ['b'] })];
+  t[0].recommendedPrerequisites = ['b'];
+  assert.deepEqual(R._internal.collectEdges(t, true).map(e => [e.key, e.required]), [['a__b', true], ['b__c', false]]);
+});
