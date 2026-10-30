@@ -106,3 +106,215 @@
   padding: 60px 0;
   font-size: 0.95rem;
 }
+
+/* Cards are buttons that open the detail sheet. */
+button.character-card {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+button.character-card:focus-visible {
+  outline: 2px solid var(--highlight);
+  outline-offset: 2px;
+}
+.character-card .character-avatar,
+.character-card .character-name {
+  display: block;
+}
+
+/* ======================
+   CHARACTER DETAIL SHEET
+====================== */
+.char-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--scrim);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: charDetailFade 0.18s ease;
+}
+
+@keyframes charDetailFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.char-detail {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding: 28px 24px 24px;
+  border: 1px solid var(--gold-03);
+  border-radius: var(--radius-lg);
+  background: var(--dialog-bg);
+  box-shadow: var(--modal-box-shadow);
+  text-align: left;
+}
+
+.char-detail-hero {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding-right: 32px; /* clear of the ✕ */
+}
+
+.char-detail-hero .char-detail-avatar {
+  display: block;
+  width: 96px;
+  height: 96px;
+}
+
+.char-detail-hero h2 {
+  margin: 0 0 6px;
+  font-family: var(--font-ui);
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--text-1);
+  line-height: 1.2;
+}
+
+.char-detail-debut {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 0.88rem;
+}
+
+.char-detail-year {
+  color: var(--text-3);
+}
+
+.char-detail-summary {
+  margin: 18px 0 0;
+  color: var(--text-2);
+  font-size: 0.97rem;
+  line-height: 1.55;
+}
+
+.char-detail-section {
+  margin-top: 22px;
+}
+
+.char-detail-section h3 {
+  margin: 0 0 10px;
+  font: 600 12px/1.3 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+
+.char-detail-mates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.char-detail-mate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 6px;
+  border: 1px solid var(--gold-02);
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.char-detail-mate:hover {
+  border-color: var(--gold-04);
+  background: var(--gold-005);
+}
+.char-detail-mate:focus-visible {
+  outline: 2px solid var(--highlight);
+  outline-offset: 2px;
+}
+.char-detail-mate .character-avatar {
+  display: block;
+  width: 32px;
+  height: 32px;
+  border-width: 1px;
+  box-shadow: none;
+}
+
+.char-detail-looks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.char-detail-look {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--gold-012);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+.char-detail-look.is-current {
+  border-color: var(--gold-04);
+}
+.char-detail-look .character-avatar {
+  display: block;
+  width: 48px;
+  height: 48px;
+  border-width: 1px;
+  box-shadow: none;
+}
+
+.char-detail-look-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.char-detail-look-label {
+  color: var(--text-1);
+  font-size: 0.93rem;
+  font-weight: 600;
+}
+
+.char-detail-look-from {
+  color: var(--text-3);
+  font-size: 0.82rem;
+}
+
+.char-detail-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--gold-01);
+  color: var(--accent-text);
+  font: 600 11px/1.6 var(--font-ui);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.char-detail-locked {
+  margin: 10px 0 0;
+  color: var(--text-3);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+@media (max-width: 480px) {
+  .char-detail { padding: 24px 16px 18px; }
+  .char-detail-hero { gap: 14px; }
+  .char-detail-hero .char-detail-avatar { width: 76px; height: 76px; }
+  .char-detail-hero h2 { font-size: 1.2rem; }
+}

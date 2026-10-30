@@ -309,6 +309,245 @@ const MERGED_CHARACTER_IDS = {
 };
 
 /************************************************
+ * CHARACTER SUMMARIES
+ * Shown in the /characters detail sheet. Spoiler-safe: each one describes
+ * the character as they are at their debut, never what happens later.
+ * A `summary` set on the character itself (CMS) wins over this table.
+ ************************************************/
+const CHARACTER_SUMMARIES = {
+  ironman: "Tony Stark, genius inventor and billionaire head of Stark Industries, who builds a suit of armour to escape captivity and becomes Iron Man.",
+  pepper: "Pepper Potts, Tony Stark's sharp, unflappable assistant and the person who keeps Stark Industries, and Tony, running.",
+  happy: "Happy Hogan, Tony Stark's loyal driver, bodyguard and friend.",
+  rhodey: "James \"Rhodey\" Rhodes, an Air Force officer, military liaison to Stark Industries and Tony Stark's best friend.",
+  nick_fury: "Nick Fury, the one-eyed director of S.H.I.E.L.D. who has been quietly watching the world's emerging heroes.",
+  coulson: "Phil Coulson, a calm, dry-witted S.H.I.E.L.D. agent who turns up wherever something strange is happening.",
+  blackwidow: "Natasha Romanoff, a former Soviet spy turned S.H.I.E.L.D. agent with elite combat and espionage skills.",
+  hulk: "The Hulk, an enormous, rage-fuelled green giant who takes over Bruce Banner's body when Banner loses control.",
+  banner: "Bruce Banner, a brilliant, soft-spoken scientist living with a gamma-radiation accident that turns him into the Hulk.",
+  bettyross: "Betty Ross, a cell biologist, Bruce Banner's former partner, and the daughter of the general hunting him.",
+  abomination: "Emil Blonsky, a ruthless special-forces soldier who takes an experimental serum to become a monstrous rival to the Hulk.",
+  thor: "Thor, the arrogant Asgardian god of thunder, cast down to Earth without his powers to learn humility.",
+  loki: "Loki, Thor's adopted brother and the god of mischief, a master of illusion who feels he lives in Thor's shadow.",
+  janefoster: "Jane Foster, an astrophysicist studying strange atmospheric phenomena in the New Mexico desert.",
+  hawkeye: "Clint Barton, a S.H.I.E.L.D. agent and master archer who never misses.",
+  heimdall: "Heimdall, the all-seeing guardian of the Bifrost, the bridge between Asgard and the other realms.",
+  cap: "Steve Rogers, a frail but determined young man transformed by the Super Soldier serum into Captain America.",
+  peggy: "Peggy Carter, a British agent of the Strategic Scientific Reserve who can hold her own in any fight.",
+  bucky: "James \"Bucky\" Barnes, Steve Rogers' best friend since childhood and a sergeant in the 107th Infantry.",
+  redskull: "Johann Schmidt, the Red Skull, head of HYDRA and obsessed with harnessing a power beyond human understanding.",
+  howardstark: "Howard Stark, the brilliant inventor and industrialist behind much of the Allies' wartime technology, and Tony's father.",
+  thanos_snap: "Thanos, a powerful warlord from Titan who works from the shadows, hungry for cosmic power.",
+  obadiah: "Obadiah Stane, Howard Stark's former partner and Tony's mentor at Stark Industries.",
+  killian: "Aldrich Killian, a scientist and think-tank founder behind a mysterious programme called Extremis.",
+  malekith: "Malekith, ruler of the Dark Elves, who seeks to return the universe to darkness.",
+  falcon: "Sam Wilson, an Air Force pararescue veteran who flies with a winged jetpack as the Falcon.",
+  starlord: "Peter Quill, a self-styled outlaw called Star-Lord, who was abducted from Earth as a child and raised by space pirates.",
+  gamora: "Gamora, a deadly assassin and adopted daughter of Thanos.",
+  drax: "Drax the Destroyer, a literal-minded warrior bent on revenge against Ronan.",
+  rocket: "Rocket, a genetically modified raccoon with a love of big guns and a talent for prison breaks.",
+  groot: "Groot, a tree-like creature of few words (three of them), and Rocket's loyal partner.",
+  nebula: "Nebula, a cybernetically enhanced assassin, Thanos' adopted daughter, and Gamora's bitter rival.",
+  ronan: "Ronan the Accuser, a fanatical Kree warlord who refuses to accept peace with Xandar.",
+  yondu: "Yondu Udonta, the blue-skinned leader of the Ravagers, who controls a deadly arrow by whistling.",
+  wanda_wv: "Wanda Maximoff, a young woman from Sokovia with powerful telekinetic and mind-altering abilities.",
+  quicksilver: "Pietro Maximoff, Wanda's twin brother, who can move at superhuman speed.",
+  vision: "Vision, a synthetic being born from advanced technology and an Infinity Stone.",
+  ultron: "Ultron, an artificial intelligence built to protect the world who decides humanity is the threat.",
+  antman: "Scott Lang, a reformed thief who wears a suit that lets him shrink to the size of an ant.",
+  wasp_hope: "Hope van Dyne, Hank Pym's daughter, a skilled fighter and businesswoman.",
+  hankpym: "Hank Pym, the scientist who discovered the shrinking Pym Particle and the original Ant-Man.",
+  spiderman: "Peter Parker, a teenager from Queens who gained spider-like powers and fights crime as Spider-Man.",
+  blackpanther: "T'Challa, prince of the hidden, technologically advanced nation of Wakanda, and its protector, the Black Panther.",
+  zemo: "Helmut Zemo, a former Sokovian intelligence officer with a patient, personal plan against the Avengers.",
+  drstrange: "Stephen Strange, an arrogant, brilliant neurosurgeon who turns to the mystic arts after an accident ruins his hands.",
+  wong: "Wong, a master of the mystic arts and the stern guardian of Kamar-Taj's library.",
+  dormammu: "Dormammu, the all-powerful ruler of the Dark Dimension, who hungers to consume every world.",
+  mantis: "Mantis, a gentle, sheltered empath who can sense and change others' feelings.",
+  ego: "Ego, an ancient Celestial being who is literally a living planet.",
+  valkyrie: "Valkyrie, a hard-drinking former Asgardian warrior working as a scrapper for the Grandmaster on Sakaar.",
+  hela: "Hela, the Asgardian goddess of death, Odin's firstborn.",
+  grandmaster: "The Grandmaster, Sakaar's eccentric, hedonistic ruler who loves his gladiator contests.",
+  shuri: "Shuri, T'Challa's younger sister and the brilliant head of Wakanda's technology.",
+  okoye: "Okoye, general of the Dora Milaje, Wakanda's all-female royal guard.",
+  killmonger: "Erik \"Killmonger\" Stevens, a former US black-ops soldier with a claim to the Wakandan throne.",
+  mbaku: "M'Baku, leader of Wakanda's mountain-dwelling Jabari tribe.",
+  captainmarvel: "Carol Danvers, a former US Air Force pilot with immense cosmic energy powers.",
+  talos: "Talos, a commander of the shape-shifting Skrulls.",
+  ghost: "Ava Starr, a woman whose body phases in and out of reality after a quantum accident.",
+  mysterio: "Quentin Beck, a heroic-seeming warrior who says he comes from another Earth.",
+  vulture: "Adrian Toomes, a salvage contractor who turns alien scrap into high-tech weapons and a winged flight suit.",
+  agatha: "Agatha Harkness, a centuries-old witch.",
+  monica: "Monica Rambeau, a S.W.O.R.D. agent and the daughter of Carol Danvers' best friend.",
+  sylvie: "Sylvie, a mysterious and dangerous fugitive on the run from the Time Variance Authority.",
+  mobius: "Mobius, a Time Variance Authority agent who specialises in tracking down dangerous variants.",
+  he_who_remains: "He Who Remains, a mysterious figure said to be behind the Time Variance Authority.",
+  yelena: "Yelena Belova, a Red Room-trained assassin who grew up alongside Natasha Romanoff as her sister.",
+  redguardian: "Alexei Shostakov, the Red Guardian, the Soviet Union's boastful answer to Captain America.",
+  taskmaster: "Taskmaster, a masked assassin who can copy any fighting style after seeing it once.",
+  shangchi: "Shang-Chi, a skilled martial artist hiding from his father's world in San Francisco.",
+  xialing: "Xu Xialing, Shang-Chi's sister, a self-taught fighter who runs an underground fight club in Macau.",
+  wenwu: "Xu Wenwu, the ancient warlord who wields the Ten Rings, and Shang-Chi's father.",
+  kate: "Kate Bishop, a young archer who idolises Hawkeye.",
+  echo: "Maya Lopez, a deaf, highly skilled fighter who leads a tracksuit-wearing gang.",
+  moonknight_mk: "Moon Knight, the white-cloaked fist of vengeance of the Egyptian moon god Khonshu.",
+  marc: "Marc Spector, a former mercenary bound to serve the moon god Khonshu.",
+  steven: "Steven Grant, a mild-mannered London gift-shop worker who keeps losing time.",
+  jake: "Jake Lockley, a quiet, ruthless identity who drives a limousine and keeps his own secrets.",
+  layla: "Layla El-Faouly, a resourceful archaeologist and adventurer.",
+  america: "America Chavez, a teenager who can punch star-shaped portals between universes.",
+  msmarvel: "Kamala Khan, an Avengers-obsessed teenager from Jersey City who gains cosmic powers.",
+  gorr: "Gorr, a man who has sworn vengeance on all gods.",
+  shehulk: "Jennifer Walters, a lawyer who gains the Hulk's powers and wants nothing to do with being a superhero.",
+  namor: "Namor, the ancient ruler of the hidden underwater kingdom of Talokan.",
+  ironheart: "Riri Williams, a genius MIT student who builds her own suit of armour.",
+  kang: "Kang the Conqueror, a time-travelling warlord exiled in the Quantum Realm.",
+  cassie: "Cassie Lang, Scott Lang's daughter, who believes her dad is a hero.",
+  cosmo: "Cosmo, a telepathic Soviet space dog and the head of security on Knowhere.",
+  adam: "Adam Warlock, a powerful golden being created by the Sovereign.",
+  highevolutionary: "The High Evolutionary, a scientist obsessed with creating the perfect society.",
+  gravik: "Gravik, a leader of rebel Skrulls hiding on Earth.",
+  ouroboros: "Ouroboros \"OB\", the Time Variance Authority's eccentric tech-repair genius.",
+  cassandra: "Cassandra Nova, Charles Xavier's powerful twin sister, who rules the Void.",
+  teen_agatha: "Teen, a mysterious teenager who knows a lot about Agatha Harkness and wants to walk the Witches' Road.",
+  billy: "Billy Maximoff, one of Wanda's twin sons, who can sense what other people are thinking.",
+  johnwalker: "John Walker, a decorated soldier chosen by the government to be the new Captain America.",
+  isaiah: "Isaiah Bradley, a forgotten super soldier from the Korean War, hidden away by the government.",
+  red_hulk: "A powerful new Hulk tied to the President of the United States.",
+  sentry: "The Sentry, a golden, near-unstoppable hero with the power of a million exploding suns.",
+  bob: "Bob, a fragile, kind-hearted man who wakes up in a secret facility with no idea why he is there.",
+  void: "The Void, a dark, destructive force that lives inside Bob.",
+  mrcfantastic: "Reed Richards, the genius leader of the Fantastic Four, who can stretch his body to any shape.",
+  invisiblewoman: "Sue Storm, who can turn invisible and project force fields.",
+  humantorch: "Johnny Storm, Sue's hot-headed younger brother, who can burst into flame and fly.",
+  thething: "Ben Grimm, a rock-skinned strongman with a heart of gold.",
+  galactus: "Galactus, a colossal cosmic being who consumes entire planets.",
+  silversurfer: "The Silver Surfer, Galactus' herald, who flies through space on a silver board.",
+  daredevil: "Matt Murdock, a blind lawyer from Hell's Kitchen whose other senses are heightened, fighting crime at night as Daredevil.",
+  foggy: "Foggy Nelson, Matt Murdock's best friend and law partner.",
+  karen: "Karen Page, a determined office worker caught up in a corporate cover-up in Hell's Kitchen.",
+  fisk: "Wilson Fisk, a powerful, private businessman with plans for Hell's Kitchen.",
+  elektra: "Elektra Natchios, a deadly, thrill-seeking assassin from Matt Murdock's past.",
+  punisher: "Frank Castle, an ex-Marine waging a violent one-man war on the criminals of New York.",
+  jessicajones: "Jessica Jones, a hard-drinking private investigator with super strength.",
+  lukecage: "Luke Cage, a bar owner with unbreakable skin and super strength.",
+  trish: "Trish Walker, a former child star, radio host and Jessica Jones' closest friend.",
+  kilgrave: "Kilgrave, a man who can make anyone do whatever he says.",
+  ironfist: "Danny Rand, billionaire heir and martial artist, who returns to New York after years presumed dead.",
+  colleen: "Colleen Wing, a martial artist who runs a dojo in Chinatown.",
+  mistynight: "Misty Knight, a sharp Harlem police detective.",
+  cottonmouth: "Cornell \"Cottonmouth\" Stokes, a Harlem nightclub owner and crime boss.",
+  wolverine: "Logan, a gruff mutant with healing powers, an adamantium skeleton and retractable claws.",
+  profx: "Charles Xavier, a powerful telepath and founder of the X-Men.",
+  magneto: "Erik Lehnsherr, a mutant who controls magnetism and believes mutants should rule.",
+  jeangrey: "Jean Grey, a telepathic and telekinetic mutant and member of the X-Men.",
+  phoenix: "The Phoenix, a vast, uncontrollable power that surfaces inside Jean Grey.",
+  cyclops: "Scott Summers, the X-Men's field leader, who fires powerful beams from his eyes.",
+  storm: "Ororo Munroe, an X-Man who can control the weather.",
+  mystique: "Mystique, a shape-shifting mutant and Magneto's right hand.",
+  rogue: "Rogue, a young runaway mutant who absorbs the powers and memories of anyone she touches.",
+  sabretooth: "Victor Creed, a savage, feral mutant who works for Magneto.",
+  nightcrawler: "Kurt Wagner, a gentle, devout mutant who can teleport.",
+  beast: "Hank McCoy, a brilliant, blue-furred mutant scientist.",
+  gambit: "Remy LeBeau, a smooth-talking mutant who charges cards with explosive energy.",
+  apocalypse: "En Sabah Nur, the world's first and most powerful mutant, awakened after thousands of years.",
+  laura: "Laura, a young mutant with claws and healing powers, much like Logan's.",
+  deadpool: "Wade Wilson, a wisecracking mercenary with a healing factor who knows he is in a movie.",
+  cable: "Cable, a battle-hardened soldier from the future with a cybernetic arm."
+};
+
+/************************************************
+ * SHARED BODIES
+ * Separate entities that share one body (Hulk and Bruce Banner). The
+ * /characters page shows each as its own card and a search for one shows
+ * the rest of its group. A member is an existing character (`char`, with an
+ * optional display `name` and `hideLooks`: stage `after` ids that belong to
+ * another member) or an entity that exists only on that page (`id`, `name`,
+ * `debut`, `image`, `stages`, unlocked like any character).
+ * Walkers, combat and dialogues still use the main characters list.
+ ************************************************/
+const SHARED_BODIES = [
+  [
+    { char: "hulk" },
+    { id: "banner", name: "Bruce Banner", debut: "hulk", image: "",
+      stages: [{ after: "avengers1", image: "", look: "Mark Ruffalo" }] }
+  ],
+  [
+    { char: "sentry" },
+    { id: "bob", name: "Bob", debut: "thunderbolts", image: "" },
+    { id: "void", name: "The Void", debut: "thunderbolts", image: "" }
+  ],
+  [
+    { char: "moonknight_mk" },
+    { id: "marc", name: "Marc Spector", debut: "moonknight", image: "" },
+    { id: "steven", name: "Steven Grant", debut: "moonknight", image: "" },
+    { id: "jake", name: "Jake Lockley", debut: "moonknight", image: "" }
+  ],
+  [
+    { char: "teen_agatha", name: "Teen" },
+    { id: "billy", name: "Billy Maximoff", debut: "wandavision", image: "" }
+  ],
+  [
+    { char: "jeangrey", hideLooks: ["xmen3"] },
+    { id: "phoenix", name: "Phoenix", debut: "xmen3", image: "jeangrey_phoenix.jpg" }
+  ]
+];
+
+// The /characters page's list: copies of every character plus the page-only
+// SHARED_BODIES entities (each placed right after its group's first
+// character). Every entry gets `body` (the other ids sharing its body, [] for
+// most) and `aliases` (its catalogue name when the page renames it).
+function characterPageEntries(chars) {
+  const entries = chars.map(c => ({ ...c, body: [], aliases: [] }));
+  const byId = new Map(entries.map(e => [e.id, e]));
+  const extrasAfter = new Map();
+  SHARED_BODIES.forEach(group => {
+    const anchor = group.find(m => m.char && byId.has(m.char));
+    const members = [];
+    group.forEach(m => {
+      if (m.char) {
+        const e = byId.get(m.char);
+        if (!e) return;
+        if (m.name && m.name !== e.name) { e.aliases.push(e.name); e.name = m.name; }
+        if (m.hideLooks) e.stages = (e.stages || []).filter(s => !m.hideLooks.includes(s.after));
+        members.push(e);
+      } else if (!byId.has(m.id)) {
+        const e = { ...m, stages: m.stages || [], body: [], aliases: [] };
+        byId.set(e.id, e);
+        members.push(e);
+        const key = anchor ? anchor.char : null;
+        if (!extrasAfter.has(key)) extrasAfter.set(key, []);
+        extrasAfter.get(key).push(e);
+      }
+    });
+    members.forEach(e => { e.body = members.filter(o => o !== e).map(o => o.id); });
+  });
+  const out = [];
+  entries.forEach(e => { out.push(e); out.push(...(extrasAfter.get(e.id) || [])); });
+  out.push(...(extrasAfter.get(null) || []));
+  return out;
+}
+
+// Search on the /characters page: a name (or alias) match also brings in
+// everyone sharing that body, so "banner" shows the Hulk too. `entries` is
+// already the unlocked list, so a locked body-mate never leaks through.
+function characterSearch(entries, query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return entries;
+  const hits = new Set();
+  entries.forEach(e => {
+    if ([e.name, ...(e.aliases || [])].some(n => n.toLowerCase().includes(q))) {
+      hits.add(e.id);
+      (e.body || []).forEach(id => hits.add(id));
+    }
+  });
+  return entries.filter(e => hits.has(e.id));
+}
+
+function characterSummary(c) {
+  return (c && c.summary) || (c && CHARACTER_SUMMARIES[c.id]) || '';
+}
+
+/************************************************
  * STAGE HELPERS
  * Resolve which image to show based on watch progress
  ************************************************/

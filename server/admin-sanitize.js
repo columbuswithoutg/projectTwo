@@ -195,6 +195,7 @@ function sanitizeCharacter(body, requireId = true) {
   else out.name = trimStr(body.name);
   out.debut = trimStr(body.debut || '', 80);
   out.image = trimStr(body.image || '', 200);
+  out.summary = trimStr(body.summary || '', DIALOG_LINE_MAX).trim();
   out.stages = Array.isArray(body.stages)
     ? body.stages
         .map(s => s && typeof s === 'object' ? {

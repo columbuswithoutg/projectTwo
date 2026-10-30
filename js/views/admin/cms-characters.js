@@ -85,6 +85,11 @@
       const debutField = AdminView._cmsField('Debut project', 'select', item.debut || '', { options: Editor.projectOptions() });
       debutField.set(item.debut || '');
       const imageField = AdminView._cmsField('Image filename', 'text', item.image || '', { placeholder: 'e.g. ironman.jpg' });
+      const summaryField = AdminView._cmsField('Summary', 'textarea', item.summary || '', {
+        rows: 3,
+        placeholder: (typeof CHARACTER_SUMMARIES !== 'undefined' && CHARACTER_SUMMARIES[item.id]) || '',
+        hint: 'Shown when the character is opened on the Characters page. Keep it spoiler-free (who they are at their debut). Empty uses the built-in text.'
+      });
 
       // Stages: dynamic list of {after, image, look} sub-forms.
       const stagesWrap = document.createElement('div');
@@ -149,7 +154,7 @@
       }
       renderStages();
 
-      wrap.append(idField.wrap, nameField.wrap, debutField.wrap, imageField.wrap, stagesWrap);
+      wrap.append(idField.wrap, nameField.wrap, debutField.wrap, imageField.wrap, summaryField.wrap, stagesWrap);
 
       const actions = document.createElement('div');
       actions.className = 'admin-cms-actions';
@@ -174,7 +179,7 @@
       // basis of the leave guard.
       const collect = () => JSON.stringify({
         id: idField.get(), name: nameField.get(), debut: debutField.get(),
-        image: imageField.get(), stages: stagesData
+        image: imageField.get(), summary: summaryField.get(), stages: stagesData
       });
       const snapshot = collect();
       Editor._form = { isDirty: () => collect() !== snapshot, save: () => saveBtn.click() };
@@ -186,6 +191,7 @@
           name: nameField.get().trim(),
           debut: debutField.get(),
           image: imageField.get().trim(),
+          summary: summaryField.get().trim(),
           stages: stagesData.filter(s => s.after) // drop empty stage rows
         };
         const byName = { id: idField, name: nameField };

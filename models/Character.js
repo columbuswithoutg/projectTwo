@@ -14,6 +14,8 @@ const CharacterSchema = new mongoose.Schema({
   name:   { type: String, required: true },
   debut:  { type: String, default: '' },
   image:  { type: String, default: '' },
+  // Empty → the /characters page uses CHARACTER_SUMMARIES (characters.js).
+  summary: { type: String, default: '' },
   stages: { type: [StageSchema], default: [] }
 }, { timestamps: true });
 
