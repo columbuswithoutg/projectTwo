@@ -28,7 +28,9 @@ const Message = require('../models/Message');
 const Friend = require('../models/Friend');
 const { friendFilter } = require('../server/friendship');
 const MessagingLogic = require('../js/messaging-logic');
-const { PUNCH_COOLDOWN_MS, KNOCKDOWN, punchCheck, stoneSlot, STONE_RING } = require('../js/playground3d-physics');
+const { PUNCH_COOLDOWN_MS, KNOCKDOWN, punchCheck, stoneSlot, STONE_RING, WORLD_GRID } = require('../js/playground3d-physics');
+const RoadRouter = require('../js/road-router');
+const PG3DScene = require('../js/playground3d-scene');
 const NetLogic = require('../js/world-net-logic');
 const contentLoader = require('../server/contentLoader');
 // Scene Guess minigame — the live games; hooked in below (attach, register,
@@ -97,12 +99,58 @@ const homePlayers = new Map();
 // Voice-chat mesh membership (WebRTC P2P). Independent of position presence:
 // a socket can be in worldPlayers/homePlayers without being voice-enabled.
 // voiceWorld holds socketIds that opted into voice in /world; a socket's
-// actual PEERS are the members standing on the SAME project island
-// (ChatLogic.islandPeers over worldPlayers[].projectId) — the same scope as
-// Project chat — so off-island (roads) a voice-enabled socket has no peers.
+// actual PEERS are members in the SAME ZONE — the same project island or the
+// same road segment (ChatLogic.zoneKey: the scope Project chat uses too) —
+// capped to the VOICE_CAP nearest (ChatLogic.selectVoiceLinks). The live
+// links are voiceLinks (symmetric), kept in step by reconcileWorldVoice.
+// On open ground (neither island nor road) a voice socket has no peers.
 // voiceHomes maps ownerId → Set<socketId> for per-home voice meshes (room-wide).
 const voiceWorld = new Set();
 const voiceHomes = new Map();
+const voiceLinks = new Map();   // socketId → Set<socketId>: the /world mesh edges right now
+const VOICE_REBALANCE_MS = 2000;
+
+function worldVoicePeers(sid) {
+  const s = voiceLinks.get(sid);
+  return s ? [...s] : [];
+}
+
+// Bring the /world voice mesh in line with who is where: every voice member
+// links to its nearest same-zone members (≤ VOICE_CAP each). Emits only the
+// deltas — peer-left for dropped links first (a client always destroys
+// before it dials), then peer-joined to BOTH ends of each new link.
+// `announcer` (a socket that just announced) gets its links as one
+// voice:peers reply instead of peer-joined (that reply confirms the
+// announce). Called on announce / leave / zone change / disconnect and on a
+// slow timer (people move around within a zone).
+function reconcileWorldVoice(io, announcer) {
+  const entries = [];
+  for (const sid of voiceWorld) {
+    const p = worldPlayers.get(sid);
+    if (p) entries.push({ id: sid, zone: ChatLogic.zoneKey(p), x: p.x, z: p.z });
+  }
+  const want = ChatLogic.selectVoiceLinks(entries, ChatLogic.C.VOICE_CAP, voiceLinks);
+  const has = (m, a, b) => { const s = m.get(a); return !!s && s.has(b); };
+  for (const [a, set] of voiceLinks) {
+    for (const b of set) {
+      if (a < b && !has(want, a, b)) {
+        io.to(a).emit('voice:peer-left', { id: b });
+        io.to(b).emit('voice:peer-left', { id: a });
+      }
+    }
+  }
+  for (const [a, set] of want) {
+    for (const b of set) {
+      if (a < b && !has(voiceLinks, a, b)) {
+        if (a !== announcer) io.to(a).emit('voice:peer-joined', { id: b });
+        if (b !== announcer) io.to(b).emit('voice:peer-joined', { id: a });
+      }
+    }
+  }
+  voiceLinks.clear();
+  for (const [a, set] of want) if (set.size) voiceLinks.set(a, set);
+  if (announcer) io.to(announcer).emit('voice:peers', { scope: 'world', peers: worldVoicePeers(announcer) });
+}
 
 // Drop socket `sid` from a home's voice mesh and tell the rest of the room.
 // Called whenever a socket leaves a home (leave, switch, retired duplicate
@@ -389,7 +437,7 @@ function projectGrid() {
   if (Date.now() - _projectGridAt >= PROJECT_GRID_TTL_MS && !_projectGridRefreshing) {
     _projectGridRefreshing = true;
     const gen = _projectGridGen;
-    Project.find({}).select('id gridX gridY').lean()
+    Project.find({}).select('id title gridX gridY prerequisites').lean()
       // A read that started before an invalidate is still newer than what we
       // had, but isn't stamped fresh: the next call reads again.
       .then((docs) => { _projectGrid = docs || []; if (gen === _projectGridGen) _projectGridAt = Date.now(); })
@@ -400,6 +448,36 @@ function projectGrid() {
 }
 // After an admin project write (routes/admin.js): re-read on the next use.
 function invalidateProjectGrid() { _projectGridGen++; _projectGridAt = 0; }
+
+// ── Road geometry (for road zones: voice + Project chat on a road) ──
+// The same rook-style roads the client walks on: RoadRouter over the grid,
+// laid out with PG3DScene.roadView and the engine's WORLD constants (the
+// ones ChatLogic mirrors — drift-tested). Rebuilt only when the grid's
+// layout actually changes (routing takes ~80 ms), i.e. after a refresh that
+// brought new ids / cells / prerequisites (invalidateProjectGrid → refresh).
+const ROAD_VIEW = PG3DScene.roadView({
+  SCALE: WORLD_GRID.SCALE, PLATFORM_W: WORLD_GRID.PLATFORM_W, APRON_MARGIN: WORLD_GRID.APRON_MARGIN,
+  ROAD_W: ChatLogic.C.ROAD_W, DOORWAY_WIDTH: ChatLogic.C.DOORWAY_WIDTH
+});
+let _roads = { grid: null, sig: '', rects: [], byKey: new Map(), titles: new Map() };
+function roadGeometry() {
+  const grid = projectGrid();
+  if (_roads.grid === grid) return _roads;
+  const sig = (grid || []).map(p => p && `${p.id}:${p.gridX},${p.gridY}:${(p.prerequisites || []).join(',')}`).join('|');
+  const titles = new Map((grid || []).filter(p => p && p.id).map(p => [p.id, p.title || p.id]));
+  if (sig === _roads.sig) { _roads = { ..._roads, grid, titles }; return _roads; }
+  let built = { rects: [], byKey: new Map() };
+  try { built = ChatLogic.buildRoads(grid, RoadRouter, ROAD_VIEW); } catch (e) { console.error('[ws] road routing failed:', e); }
+  _roads = { grid, sig, rects: built.rects, byKey: built.byKey, titles };
+  return _roads;
+}
+// What world:zone shows for a zone: the island title or "Road: A → B".
+function zoneLabel(projectId, roadKey) {
+  const g = roadGeometry();
+  if (projectId) return g.titles.get(projectId) || projectId;
+  if (roadKey) return ChatLogic.roadLabel(g.byKey.get(roadKey), (id) => g.titles.get(id));
+  return '';
+}
 
 // Centre of the Infinity Stone ring: the START island (Iron Man 1) for every
 // player — the client places the free stones around the same point. Falls
@@ -459,6 +537,9 @@ module.exports = (io) => {
   if (_stayTimer.unref) _stayTimer.unref();
   const rlTimer = setInterval(() => { const t = Date.now(); userRl.sweep(t); ipRl.sweep(t); }, 60 * 1000);
   if (rlTimer.unref) rlTimer.unref();
+  // Re-pick each voice player's nearest peers as people move within a zone.
+  const voiceTimer = setInterval(() => { if (voiceWorld.size || voiceLinks.size) reconcileWorldVoice(io); }, VOICE_REBALANCE_MS);
+  if (voiceTimer.unref) voiceTimer.unref();
   const trustHops = parseTrustProxy(process.env.TRUST_PROXY);
 
   // Handshake auth — verify the JWT AND enforce the same ban / tokenVersion
@@ -578,6 +659,21 @@ module.exports = (io) => {
     return island && allowed ? island : null;
   }
 
+  // The road segment a player stands on (off-island), or null. Only roads
+  // whose BOTH end islands the user has watched count — the client only
+  // builds a road once both ends are unlocked. `prevKey` keeps them on the
+  // road they were on through a crossing (ChatLogic.roadAt hysteresis).
+  function roadOf(socket, p, prevKey) {
+    const g = roadGeometry();
+    const key = ChatLogic.roadAt(p.x, p.z, g.rects, prevKey);
+    if (!key) return null;
+    const road = g.byKey.get(key);
+    const watched = socket.data.watched;
+    const ok = !!road && !!watched && watched.has(road.fromId) && watched.has(road.toId);
+    if (!ok) refreshWatched(socket);
+    return ok ? key : null;
+  }
+
   IslandGames.attach(io, { players: worldPlayers, rateOk, touchStay, zoneOf });
 
   io.on('connection', (socket) => {
@@ -612,6 +708,7 @@ module.exports = (io) => {
         emote: null,        // looping emote in progress — in the snapshot so late joiners see it
         downAt: 0,          // when their last accepted knockdown landed (punch immunity)
         projectId: null,    // island the player stands on (Project chat / voice scope)
+        roadKey: null,      // …or the road segment (RoadRouter key) when off-island
         stay: null          // js/world-stay-logic record while on an island
       };
       worldPlayers.set(socket.id, player);
@@ -627,12 +724,8 @@ module.exports = (io) => {
           // Retire it from the voice mesh too, or its island peers would keep
           // a dead RTCPeerConnection open until it finally disconnects.
           if (voiceWorld.has(sid)) {
-            const peers = ChatLogic.islandPeers(sid, worldPlayers, voiceWorld);
             voiceWorld.delete(sid);
-            for (const pid of peers) {
-              io.to(pid).emit('voice:peer-left', { id: sid });
-              io.to(sid).emit('voice:peer-left', { id: pid });
-            }
+            reconcileWorldVoice(io);   // peer-left both ways for its links
             const old = io.sockets.sockets.get(sid);
             if (old && old.data) old.data.voiceScope = null;
           }
@@ -691,40 +784,47 @@ module.exports = (io) => {
       socket.to('world').emit('world:pos', posRelay(socket.id, p));
     }));
 
-    // Re-derive the island `p` stands on and, if it changed, apply it: stay
-    // credit, world:zone, Scene Guess and the island voice mesh. Shared by
-    // world:pos and the watched-list load (onWatched below), so an island
-    // found without a move behaves exactly like walking onto it. Idempotent:
-    // a load that lands after a move already set the zone sends nothing.
-    // Returns true when the zone changed.
+    // Re-derive the zone `p` stands in (island, else road segment, else
+    // none) and, once it has held for ZONE_DWELL_MS, apply it: stay credit,
+    // world:zone, the island games and the voice mesh. Shared by world:pos
+    // and the watched-list load (onWatched below), so a zone found without a
+    // move behaves exactly like walking into it. Idempotent: a load that
+    // lands after a move already set the zone sends nothing. A pending
+    // change re-checks itself on a timer (a player who stops in the new zone
+    // sends no more positions). Returns true when the zone changed.
     function applyZone(p, now) {
-      const zone = zoneOf(socket, p);
-      if (zone === p.projectId) return false;
-      const prevZone = p.projectId;
-      // Voice: peers are computed from projectId, so snapshot the OLD
-      // island's peers before mutating it. Both sides tear down, then the
-      // mover gets a fresh snapshot of the new island and its residents get
-      // a peer-joined. Per-socket emit order is preserved by Socket.IO, so
-      // the client always destroys before it dials.
-      const inVoice = voiceWorld.has(socket.id);
-      const oldPeers = inVoice ? islandVoicePeers() : [];
-      drainStay(p, now);
-      p.stay = zone ? Stay.enter(zone, now) : null;
-      p.projectId = zone;
-      socket.emit('world:zone', { projectId: zone });
-      // After the zone so the client knows its island before the game shows.
-      IslandGames.onZone(socket, p, prevZone, zone);
-      if (inVoice) {
-        for (const id of oldPeers) {
-          io.to(id).emit('voice:peer-left', { id: socket.id });
-          socket.emit('voice:peer-left', { id });
+      const d = socket.data;
+      const island = zoneOf(socket, p);
+      const road = island ? null : roadOf(socket, p, d.roadCand || p.roadKey || null);
+      d.roadCand = road;
+      const cand = island ? 'p:' + island : road ? 'r:' + road : null;
+      const prev = d.zoneDwell || {};
+      const step = ChatLogic.dwellStep({ zone: ChatLogic.zoneKey(p), pending: prev.pending, since: prev.since }, cand, now);
+      d.zoneDwell = step;
+      if (d.zoneTimer) { clearTimeout(d.zoneTimer); d.zoneTimer = null; }
+      if (!step.changed) {
+        if (step.waitMs > 0) {
+          d.zoneTimer = setTimeout(guard('world.zoneDwell', () => {
+            d.zoneTimer = null;
+            const q = socket.connected && worldPlayers.get(socket.id);
+            if (q) applyZone(q, Date.now());
+          }), step.waitMs + 10);
         }
-        if (zone) {
-          const newPeers = islandVoicePeers();
-          socket.emit('voice:peers', { scope: 'world', peers: newPeers });
-          for (const id of newPeers) io.to(id).emit('voice:peer-joined', { id: socket.id });
-        }
+        return false;
       }
+      const prevIsland = p.projectId;
+      if (island !== prevIsland) {
+        drainStay(p, now);
+        p.stay = island ? Stay.enter(island, now) : null;
+      }
+      p.projectId = island;
+      p.roadKey = road;
+      socket.emit('world:zone', { projectId: island, roadKey: road, label: zoneLabel(island, road) });
+      // After the zone so the client knows its island before the game shows.
+      if (island !== prevIsland) IslandGames.onZone(socket, p, prevIsland, island);
+      // Voice: drop the old zone's links, link up in the new one (deltas;
+      // the client destroys before it dials — see reconcileWorldVoice).
+      if (voiceWorld.has(socket.id)) reconcileWorldVoice(io);
       return true;
     }
 
@@ -775,11 +875,15 @@ module.exports = (io) => {
         accept();
         io.to('world').emit('world:chat', out);
       } else if (m.channel === 'project') {
-        if (!p.projectId) return reply({ ok: false, error: 'no-project' });
+        // Project chat = the sender's zone: their island, or the road
+        // segment they're on (ChatLogic.zoneKey — the voice scope too).
+        const zone = ChatLogic.zoneKey(p);
+        if (!zone) return reply({ ok: false, error: 'no-project' });
         accept();
-        out.projectId = p.projectId;
+        out.projectId = p.projectId || null;
+        if (p.roadKey && !p.projectId) out.roadKey = p.roadKey;
         for (const [sid, other] of worldPlayers) {
-          if (other.projectId === p.projectId) io.to(sid).emit('world:chat', out);
+          if (ChatLogic.zoneKey(other) === zone) io.to(sid).emit('world:chat', out);
         }
       } else {
         // Whisper has no cooldown, so nothing below this branch applies —
@@ -1105,20 +1209,19 @@ module.exports = (io) => {
     // scope. Each signal is validated to be a single-target relay within
     // the sender's scope (no cross-scope leaks, no broadcasts).
     //
-    // /world scope is the sender's ISLAND (same membership as Project chat):
-    // voice-enabled sockets standing on the same project island. Off-island
-    // there are no peers. Island changes are handled in world:pos above.
+    // /world scope is the sender's ZONE (same membership as Project chat):
+    // voice-enabled sockets on the same island or the same road segment,
+    // capped to the nearest VOICE_CAP (voiceLinks, kept by
+    // reconcileWorldVoice). On open ground there are no peers. Zone changes
+    // are handled in applyZone above.
     // /home scope is the whole home room, unchanged.
     //
     // socket.data.voiceSignalLog tracks the per-sender signaling budget.
 
-    function islandVoicePeers() {
-      return ChatLogic.islandPeers(socket.id, worldPlayers, voiceWorld);
-    }
-
     function voicePeersInSameRoom(scope) {
       if (scope === 'world') {
-        return voiceWorld.has(socket.id) ? islandVoicePeers() : [];
+        // The relay gate: only a current mesh link may carry signals.
+        return voiceWorld.has(socket.id) ? worldVoicePeers(socket.id) : [];
       }
       if (scope === 'home') {
         const home = homePlayers.get(socket.id);
@@ -1130,12 +1233,9 @@ module.exports = (io) => {
       return [];
     }
 
+    // /home only — /world membership changes go through reconcileWorldVoice.
     function emitVoicePeerEvent(scope, event, payload) {
-      if (scope === 'world') {
-        // Targeted, not room-wide: a room-wide peer-joined would make every
-        // voice client in the town dial the newcomer regardless of island.
-        for (const id of islandVoicePeers()) io.to(id).emit(event, payload);
-      } else if (scope === 'home') {
+      if (scope === 'home') {
         const home = homePlayers.get(socket.id);
         if (home) socket.to('home:' + home.ownerId).emit(event, payload);
       }
@@ -1167,6 +1267,12 @@ module.exports = (io) => {
         return;
       }
       socket.data.voiceScope = scope;
+      if (scope === 'world') {
+        // voice:peers back to us; peer-joined only for NEW links, so a
+        // repeated announce never makes anyone rebuild a call.
+        reconcileWorldVoice(io, socket.id);
+        return;
+      }
       const peers = voicePeersInSameRoom(scope);
       socket.emit('voice:peers', { scope, peers });
       if (!already) emitVoicePeerEvent(scope, 'voice:peer-joined', { id: socket.id });
@@ -1177,7 +1283,7 @@ module.exports = (io) => {
       if (!scope) return;
       let removed = false;
       if (scope === 'world') {
-        removed = voiceWorld.delete(socket.id);
+        if (voiceWorld.delete(socket.id)) reconcileWorldVoice(io);   // peer-left both ways
       } else if (scope === 'home') {
         const home = homePlayers.get(socket.id);
         if (home) {
@@ -1240,12 +1346,9 @@ module.exports = (io) => {
         homePlayers.delete(socket.id);
         socket.to('home:' + home.ownerId).emit('home:left', { id: socket.id });
       }
-      // Voice mesh cleanup. The world player record is already gone, so the
-      // island peers can't be computed here; a room-wide peer-left is safe
-      // because clients ignore peer-left for ids they never dialled.
-      if (voiceWorld.delete(socket.id)) {
-        socket.to('world').emit('voice:peer-left', { id: socket.id });
-      }
+      // Voice mesh cleanup: its current links (voiceLinks) get peer-left.
+      if (socket.data.zoneTimer) { clearTimeout(socket.data.zoneTimer); socket.data.zoneTimer = null; }
+      if (voiceWorld.delete(socket.id) || voiceLinks.has(socket.id)) reconcileWorldVoice(io);
       if (home) leaveHomeVoice(io, socket.id, home.ownerId);
     }));
   });

@@ -1192,8 +1192,8 @@ button.world-chat-name[data-whisper]:focus-visible { text-decoration: underline;
   box-shadow: 0 0 0 2px rgba(255, 200, 80, 0.22),
               0 0 14px rgba(255, 200, 80, 0.4);
 }
-/* Voice is on but we're off-island (roads): /world voice is island-scoped,
-   so nobody can hear us until we step onto an island. Dimmed, not red. */
+/* Voice is on but we're on open ground: /world voice is zone-scoped (an
+   island or one road segment), so nobody can hear us here. Dimmed, not red. */
 .pg3d-voice[aria-pressed="true"].idle {
   opacity: 0.6;
   box-shadow: none;

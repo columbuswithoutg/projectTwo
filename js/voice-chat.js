@@ -6,17 +6,21 @@
  *   - js/views/home.js        → scope: 'home'
  *   - js/views/friend-home.js → scope: 'home'
  *
- * Architecture: P2P mesh. Every voice-enabled peer in the same scope
- * opens an RTCPeerConnection with every other voice-enabled peer.
+ * Architecture: P2P mesh. Every voice-enabled peer opens an
+ * RTCPeerConnection with each peer the server links it to (in /world: the
+ * nearest few in the same zone, at most 8 — see below; in /home: everyone).
  * Audio never touches the server — only signaling (SDP offer/answer,
  * ICE candidates) is relayed through Socket.IO `voice:signal` events.
  *
- * Scope: in /world the mesh is ISLAND-scoped — the same membership as the
- * Project chat channel. You only connect to players standing on the same
- * project island, and off-island (roads) you have no peers. The server
- * (routes/world-socket.js) drives island changes with the ordinary
+ * Scope: in /world the mesh is ZONE-scoped — the same membership as the
+ * Project chat channel. You connect to players on the same project island,
+ * or on the same road segment between two islands; on open ground you have
+ * no peers. Each player links to at most the 8 NEAREST voice players in the
+ * zone (re-picked every ~2 s), and a zone change only lands after ~1 s in
+ * the new zone, so walking through a doorway doesn't drop a call. The
+ * server (routes/world-socket.js) drives all of this with the ordinary
  * voice:peer-left / voice:peers / voice:peer-joined events, so nothing
- * here needs to know about islands beyond reporting the current one in
+ * here needs to know about zones beyond reporting the current one in
  * the diagnostics (opts.getZone). /home voice is room-wide as before.
  *
  * Distance-based volume: a 100ms loop reads the local player's position
@@ -95,8 +99,9 @@ const VoiceManager = (() => {
   //                        teardown. 'gave-up' (with `username` when known)
   //                        means the failure retries are spent and this side
   //                        won't try that peer again until it re-enters scope.
-  //   getZone              Optional () → projectId | null (the island we stand
-  //                        on, /world only) — shown in the diagnostics panel.
+  //   getZone              Optional () → projectId | 'road:<key>' | null (the
+  //                        island or road segment we stand on, /world only)
+  //                        — shown in the diagnostics panel.
   //
   // Returns { stop, mutePeer, isMuted, _diag, scope }.
   function start(opts) {
@@ -906,10 +911,14 @@ const VoiceManager = (() => {
       // Audio output state — 'suspended' (iOS autoplay) means peers are
       // inaudible even when connected, so flag it.
       const audioCls = (d.audioState === 'running') ? 'ok' : (d.audioState === 'suspended' ? 'bad' : 'warn');
-      // /world voice is island-scoped: say which island (if any) we're on.
+      // /world voice is zone-scoped: say which island or road (if any) we're on.
       const islandKnown = d.scope === 'world' && d.zone !== undefined;
+      const onRoad = typeof d.zone === 'string' && d.zone.startsWith('road:');
+      const zoneText = !d.zone ? 'none (open ground)'
+        : onRoad ? 'road ' + escapeHtml(d.zone.slice(5).replace('__', ' → '))
+        : escapeHtml(projectTitle(d.zone));
       const islandRow = islandKnown
-        ? `<div class="pg3d-voice-debug-meta">island: ${d.zone ? escapeHtml(projectTitle(d.zone)) : 'none (roads)'}</div>`
+        ? `<div class="pg3d-voice-debug-meta">zone: ${zoneText}</div>`
         : '';
       rows.push(`
         <div class="pg3d-voice-debug-row mic">
@@ -924,8 +933,8 @@ const VoiceManager = (() => {
       `);
       if (!d.peers.length) {
         const empty = (islandKnown && !d.zone)
-          ? 'Not on a project island — walk onto one to talk.'
-          : (islandKnown ? 'No one else on this island has voice on.'
+          ? 'Not on a project island or road — walk onto one to talk.'
+          : (islandKnown ? `No one else on this ${onRoad ? 'road' : 'island'} has voice on.`
                          : 'No peers connected yet — waiting for someone else to join voice.');
         rows.push(`<div class="pg3d-voice-debug-empty">${empty}</div>`);
       } else {

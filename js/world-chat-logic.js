@@ -3,7 +3,9 @@
  *
  * The rules behind /world's chat channels:
  *   world   — everyone in the room
- *   project — only players standing on the same project island
+ *   project — only players in the same ZONE: the same project island, or
+ *             the same road segment between two islands (voice uses the
+ *             same zone — see zoneKey / zonePeers / roadAt)
  *   whisper — one named player (plus an echo to the sender)
  * Only World chat has a cooldown; Project and Whisper send freely.
  *
@@ -34,7 +36,19 @@
     // test/world-chat.test.js fails if these drift from js/playground3d.js —
     // a stale SCALE put players in the wrong island's Project chat.
     GRID_SCALE: 24,
-    ZONE_HALF: 8
+    ZONE_HALF: 8,
+    // Mirrors js/playground3d.js WORLD.ROAD_W / WORLD.DOORWAY_WIDTH, the two
+    // inputs (with WORLD_GRID) of PG3DScene.roadView — so the server's road
+    // rectangles are the ones the client walks on. Drift-tested like above.
+    ROAD_W: 2.5,
+    DOORWAY_WIDTH: 4.0,
+    // A zone change only takes effect once the new zone has been reported
+    // this long without a break — walking through a doorway (road → apron →
+    // road) must not tear a voice call down and rebuild it.
+    ZONE_DWELL_MS: 1000,
+    // Max voice peers per player in /world: a full P2P mesh of N costs every
+    // client N-1 uploads, so each player only links to their nearest few.
+    VOICE_CAP: 8
   };
 
   // Id of the project whose apron contains (x, z), or null when the point is
@@ -50,20 +64,164 @@
     return null;
   }
 
-  // Socket ids of the OTHER players standing on selfId's island. `players` is
-  // the server's socketId → player Map (each with a `projectId`); `members`
-  // (optional Set) restricts the result — e.g. to voice-enabled sockets — but
-  // is deliberately NOT applied to selfId, so leave/eviction paths can call
-  // this after removing themselves. Off-island or unknown self → [].
-  function islandPeers(selfId, players, members) {
+  // ── roads ──
+  // Walkable rectangles of one road, exactly as js/playground3d.js
+  // _buildWorldRoad pushes them into _walkableRoads: one per leg of the
+  // polyline (`points` = RoadRouter.toView(road, view).points, {x, y} with
+  // y = world z), ROAD_W wide and running ROAD_W/2 past each end.
+  function roadRects(key, points, roadW) {
+    const w = roadW || C.ROAD_W;
+    const out = [];
+    if (!Array.isArray(points)) return out;
+    for (let i = 1; i < points.length; i++) {
+      const ax = points[i - 1].x, az = points[i - 1].y, bx = points[i].x, bz = points[i].y;
+      const dx = bx - ax, dz = bz - az;
+      const len = Math.hypot(dx, dz);
+      if (!(len >= 0.01)) continue;
+      const angle = Math.atan2(dx, dz);
+      out.push({ key, cx: (ax + bx) / 2, cz: (az + bz) / 2, cosA: Math.cos(angle), sinA: Math.sin(angle), halfW: w / 2, halfL: (len + w) / 2 });
+    }
+    return out;
+  }
+
+  // Every required road of the /world graph as rectangles + an index.
+  // `router` is js/road-router.js and `view` is PG3DScene.roadView(WORLD)
+  // (passed in so this module stays dependency-free). Mirrors
+  // PG3DScene.roadRoutes: placed projects only, no trails.
+  // → { rects: [{ key, cx, cz, cosA, sinA, halfW, halfL }], byKey: Map key → { fromId, toId } }
+  function buildRoads(projects, router, view, roadW) {
+    const rects = [], byKey = new Map();
+    if (!router || typeof router.route !== 'function' || !view) return { rects, byKey };
+    const placed = (projects || []).filter(p => p && typeof p.gridX === 'number' && typeof p.gridY === 'number');
+    const routed = router.route(placed, { trails: false });
+    for (const road of (routed && routed.roads) || []) {
+      if (!road || road.required === false) continue;
+      byKey.set(road.key, { fromId: road.fromId, toId: road.toId });
+      for (const r of roadRects(road.key, router.toView(road, view).points, roadW)) rects.push(r);
+    }
+    return { rects, byKey };
+  }
+
+  // Same point test as Playground3D's _roadHas.
+  function inRoadRect(r, x, z) {
+    const dx = x - r.cx, dz = z - r.cz;
+    return Math.abs(dx * r.cosA - dz * r.sinA) <= r.halfW &&
+           Math.abs(dx * r.sinA + dz * r.cosA) <= r.halfL;
+  }
+  // Distance from (x, z) to the rectangle's centre-line segment.
+  function centreDist(r, x, z) {
+    const dx = x - r.cx, dz = z - r.cz;
+    const across = dx * r.cosA - dz * r.sinA;
+    const along = dx * r.sinA + dz * r.cosA;
+    const over = Math.max(0, Math.abs(along) - Math.max(0, r.halfL - r.halfW));
+    return Math.hypot(across, over);
+  }
+
+  // Key of the road segment (x, z) stands on, or null. Where roads overlap
+  // (a crossing, lanes sharing a stretch) the nearest centre line wins, ties
+  // by key; but while the point is still inside `prevKey`'s road it stays
+  // on it (hysteresis — no flapping across a crossing).
+  function roadAt(x, z, rects, prevKey) {
+    if (!Array.isArray(rects) || !Number.isFinite(x) || !Number.isFinite(z)) return null;
+    let best = null, bestD = Infinity;
+    for (const r of rects) {
+      if (!r || !inRoadRect(r, x, z)) continue;
+      if (prevKey && r.key === prevKey) return prevKey;
+      const d = centreDist(r, x, z);
+      if (d < bestD || (d === bestD && String(r.key) < String(best))) { bestD = d; best = r.key; }
+    }
+    return best;
+  }
+
+  // "Road: Iron Man → Iron Man 2" — titles from `titleOf(id)` (falls back to ids).
+  function roadLabel(road, titleOf) {
+    if (!road) return '';
+    const t = (id) => (typeof titleOf === 'function' && titleOf(id)) || id;
+    return `Road: ${t(road.fromId)} → ${t(road.toId)}`;
+  }
+
+  // ── zones ──
+  // A player's chat / voice zone: 'p:<projectId>' on an island, 'r:<roadKey>'
+  // on a road, null on open ground (or unknown).
+  function zoneKey(p) {
+    if (!p) return null;
+    if (p.projectId) return 'p:' + p.projectId;
+    if (p.roadKey) return 'r:' + p.roadKey;
+    return null;
+  }
+
+  // Socket ids of the OTHER players in selfId's zone (same island, or same
+  // road segment). `players` is the server's socketId → player Map (each with
+  // `projectId` / `roadKey`); `members` (optional Set) restricts the result —
+  // e.g. to voice-enabled sockets — but is deliberately NOT applied to
+  // selfId, so leave/eviction paths can call this after removing themselves.
+  // No zone or unknown self → [].
+  function zonePeers(selfId, players, members) {
     if (!players || typeof players.get !== 'function') return [];
-    const me = players.get(selfId);
-    if (!me || !me.projectId) return [];
+    const zone = zoneKey(players.get(selfId));
+    if (!zone) return [];
     const out = [];
     for (const [sid, p] of players) {
-      if (sid === selfId || !p || p.projectId !== me.projectId) continue;
+      if (sid === selfId || zoneKey(p) !== zone) continue;
       if (members && !members.has(sid)) continue;
       out.push(sid);
+    }
+    return out;
+  }
+  // Older name, kept for callers/tests: same thing (an island is a zone).
+  const islandPeers = zonePeers;
+
+  // Dwell filter for zone changes. `st` = { zone, pending, since } (zone =
+  // the committed zone), `cand` = the zone measured now. Returns the next
+  // state plus `changed` (commit cand now) and `waitMs` (re-check after this
+  // long if nothing else arrives; 0 = nothing pending).
+  function dwellStep(st, cand, now, dwellMs) {
+    const dwell = dwellMs == null ? C.ZONE_DWELL_MS : dwellMs;
+    const zone = st ? st.zone : null;
+    const c = cand || null;
+    if (c === zone) return { zone, pending: undefined, since: 0, changed: false, waitMs: 0 };
+    const since = (st && st.pending === c) ? st.since : now;
+    if (now - since >= dwell) return { zone: c, pending: undefined, since: 0, changed: true, waitMs: 0 };
+    return { zone, pending: c, since, changed: false, waitMs: dwell - (now - since) };
+  }
+
+  // Who links to whom in a capped voice mesh. `entries` = [{ id, zone, x, z }];
+  // only entries sharing a non-null zone can link, and nobody gets more than
+  // `cap` links. Greedy by distance (nearest pairs first, ties by ids), so
+  // each player's peers are their nearest ones that still have room. A pair
+  // linked in `current` (Map id → Set) counts as `keep`× its distance, so
+  // two near-equal candidates don't swap back and forth every re-check.
+  // → Map id → Set of linked ids (symmetric; every entry present).
+  function selectVoiceLinks(entries, cap, current, keep) {
+    const k = cap == null ? C.VOICE_CAP : cap;
+    const stick = keep == null ? 0.8 : keep;
+    const out = new Map(), byZone = new Map();
+    for (const e of entries || []) {
+      if (!e || !e.id || out.has(e.id)) continue;
+      out.set(e.id, new Set());
+      if (!e.zone) continue;
+      if (!byZone.has(e.zone)) byZone.set(e.zone, []);
+      byZone.get(e.zone).push(e);
+    }
+    const num = (v) => (Number.isFinite(v) ? v : 0);
+    const linked = (a, b) => !!(current && typeof current.get === 'function' && current.get(a) && current.get(a).has(b));
+    for (const list of byZone.values()) {
+      list.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const pairs = [];
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const a = list[i], b = list[j];
+          let d = Math.hypot(num(a.x) - num(b.x), num(a.z) - num(b.z));
+          if (linked(a.id, b.id)) d *= stick;
+          pairs.push({ a: a.id, b: b.id, d });
+        }
+      }
+      pairs.sort((p, q) => p.d - q.d || (p.a < q.a ? -1 : p.a > q.a ? 1 : 0) || (p.b < q.b ? -1 : p.b > q.b ? 1 : 0));
+      for (const p of pairs) {
+        const A = out.get(p.a), B = out.get(p.b);
+        if (A.size >= k || B.size >= k) continue;
+        A.add(p.b); B.add(p.a);
+      }
     }
     return out;
   }
@@ -110,7 +268,7 @@
   function errorText(err, info) {
     switch (err) {
       case 'cooldown':   return `Slow down — you can chat in World again in ${Math.ceil(((info && info.retryInMs) || 0) / 1000)}s.`;
-      case 'no-project': return 'You’re not on a project island — walk onto one to use Project chat.';
+      case 'no-project': return 'You’re not on a project island or road — walk onto one to use Project chat.';
       case 'not-found':  return `${(info && info.to) || 'That player'} isn’t a player here.`;
       case 'not-sent':   return 'Couldn’t deliver that whisper — try again.';
       case 'self':       return 'You can’t whisper to yourself.';
@@ -122,5 +280,5 @@
     }
   }
 
-  return { CHANNELS, C, projectAt, islandPeers, hasCooldown, cooldownLeft, normalizeMessage, parseWhisperCommand, sameName, errorText };
+  return { CHANNELS, C, projectAt, islandPeers, zonePeers, zoneKey, roadRects, buildRoads, roadAt, roadLabel, dwellStep, selectVoiceLinks, hasCooldown, cooldownLeft, normalizeMessage, parseWhisperCommand, sameName, errorText };
 });

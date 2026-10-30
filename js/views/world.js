@@ -39,6 +39,10 @@ const WorldView = (() => {
   // Keeper-editable houses. `_zone` mirrors the server's world:zone (the
   // island we stand on); keepers/me come from GET /api/world/houses.
   let _zone = null;
+  // Off-island, the road segment we stand on (its own voice / Project chat
+  // zone) and its "Road: A → B" label, also from world:zone.
+  let _roadKey = null;
+  let _roadLabel = '';
   let _houseMe = null;
   let _houseKeepers = {};
   let _houseMine = {};             // projectId → my own stay ms (for "time to take over")
@@ -594,8 +598,10 @@ const WorldView = (() => {
     if (label !== _liveLabel) { _liveLabel = label; _refreshHouseHud(); }
   }
 
-  function _onZone(projectId) {
+  function _onZone(projectId, info) {
     const next = projectId || null;
+    _roadKey = (!next && info && info.roadKey) || null;
+    _roadLabel = (_roadKey && info && info.label) || '';
     if (_liveStay && _liveStay.projectId !== next) {
       // Leaving: keep what I earned on that island's tag until the next poll.
       _liveSettle(Date.now());
@@ -838,13 +844,16 @@ const WorldView = (() => {
     _voiceState = stateName;
     _voiceMsg = msg || '';
     _voiceBtn.classList.remove('listen-only', 'voice-error', 'idle');
-    // /world voice is island-scoped: "on" but off-island means nobody can be
-    // heard until you step onto an island — dim the button and say so.
-    const where = _zone ? `talking to players on ${_projectTitle(_zone)}` : 'walk onto a project island to talk';
+    // /world voice is zone-scoped (an island, or one road segment): "on" but
+    // on open ground means nobody can be heard — dim the button and say so.
+    const inZone = !!(_zone || _roadKey);
+    const where = _zone ? `talking to players on ${_projectTitle(_zone)}`
+      : _roadKey ? `talking to players on ${_roadLabel || 'this road'}`
+      : 'walk onto a project island or road to talk';
     switch (stateName) {
       case 'on':
         _voiceBtn.setAttribute('aria-pressed', 'true');
-        _voiceBtn.classList.toggle('idle', !_zone);
+        _voiceBtn.classList.toggle('idle', !inZone);
         _voiceBtn.setAttribute('aria-label', `Voice on — ${where}. Click to mute; right-click or long-press for diagnostics.`);
         _voiceBtn.title = `Voice on — ${where} · click to mute · right-click for diagnostics`;
         _voiceBtn.textContent = '🎙️';
@@ -852,7 +861,7 @@ const WorldView = (() => {
       case 'listen-only':
         _voiceBtn.setAttribute('aria-pressed', 'true');
         _voiceBtn.classList.add('listen-only');
-        _voiceBtn.classList.toggle('idle', !_zone);
+        _voiceBtn.classList.toggle('idle', !inZone);
         _voiceBtn.setAttribute('aria-label', `Listen-only — mic blocked, others can’t hear you (${where}). Right-click or long-press for diagnostics.`);
         _voiceBtn.title = (msg || 'Listen-only — mic blocked') + ` · ${where} · right-click for diagnostics`;
         _voiceBtn.textContent = '🎧';
@@ -909,7 +918,7 @@ const WorldView = (() => {
         scope,
         getLocalState: () => Playground3D.getLocalState && Playground3D.getLocalState(),
         getRemotePlayers: () => Playground3D.getRemotePlayers && Playground3D.getRemotePlayers(),
-        getZone: () => _zone,
+        getZone: () => _zone || (_roadKey ? 'road:' + _roadKey : null),
         onError: (msg) => {
           sawError = true;
           _voice = null;
@@ -1039,7 +1048,7 @@ const WorldView = (() => {
     _dismissOverlays('.world-house');
     if (_kickNotice) { try { _kickNotice(); } catch (_) {} _kickNotice = null; }
     if (_housePoll) { clearInterval(_housePoll); _housePoll = null; }
-    _zone = null; _houseMe = null; _houseKeepers = {}; _houseMine = {}; _housesAt = 0;
+    _zone = null; _roadKey = null; _roadLabel = ''; _houseMe = null; _houseKeepers = {}; _houseMine = {}; _housesAt = 0;
     if (_liveTick) { clearInterval(_liveTick); _liveTick = null; }
     if (_liveInputHandler) {
       window.removeEventListener('keydown', _liveInputHandler, true);

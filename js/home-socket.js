@@ -94,7 +94,8 @@ const Multiplayer = (() => {
   //   joinPayload extra fields merged with { username, character } on join.
   //               For home, this is { ownerUsername }.
   //   character   the local player's saved homeCharacter (or default).
-  //   onZone(projectId|null)  /world only — the island we stand on changed
+  //   onZone(projectId|null, { roadKey, label })  /world only — the zone we
+  //                           stand in changed (island, else road segment)
   //               (also fired with null on reconnect until the server re-derives it).
   //   onHouse({ projectId, house, keeper })  /world only — a keeper saved a house;
   //               the engine is restyled here, the callback updates the HUD.
@@ -141,6 +142,8 @@ const Multiplayer = (() => {
       unread: { world: false, project: false, whisper: false },
       active: 'world',
       projectId: null,
+      roadKey: null,         // road segment we stand on (off-island), from world:zone
+      zoneLabel: '',        // "Road: A → B" for that road
       whisperTo: '',
       cooldownUntil: 0,
       cooldownTimer: null,
@@ -174,8 +177,15 @@ const Multiplayer = (() => {
       return (p && p.title) || id;
     }
 
+    // The zone Project chat talks to: the island title, or "Road: A → B"
+    // from world:zone when we stand on a road between two islands.
+    function zoneTitle() {
+      if (chan.projectId) return projectTitle(chan.projectId);
+      return chan.roadKey ? (chan.zoneLabel || 'this road') : '';
+    }
+
     function placeholderFor(tab) {
-      if (tab === 'project') return chan.projectId ? `Say something to ${projectTitle(chan.projectId)}…` : 'Walk onto a project island to chat here';
+      if (tab === 'project') return zoneTitle() ? `Say something to ${zoneTitle()}…` : 'Walk onto a project island or road to chat here';
       if (tab === 'whisper') return chan.whisperTo ? `Whisper to ${chan.whisperTo}…` : 'Pick a player, or type /w name message';
       return 'Say something to everyone…';
     }
@@ -190,9 +200,10 @@ const Multiplayer = (() => {
       });
       const label = document.getElementById('world-chat-project-label');
       if (label) {
-        label.textContent = chan.projectId ? projectTitle(chan.projectId) : 'Project';
-        label.parentElement.classList.toggle('off-island', !chan.projectId);
-        label.parentElement.title = chan.projectId ? `Chat with players on ${projectTitle(chan.projectId)}` : 'Not on a project island';
+        const where = zoneTitle();
+        label.textContent = where || 'Project';
+        label.parentElement.classList.toggle('off-island', !where);
+        label.parentElement.title = where ? `Chat with players on ${where}` : 'Not on a project island or road';
       }
       const row = document.querySelector('.world-chat-row');
       if (row) row.setAttribute('data-channel', chan.active);
@@ -289,7 +300,7 @@ const Multiplayer = (() => {
       } else if (channel === 'whisper') {
         to = chan.whisperTo;
         if (!to) { chatWarn(ChatL.errorText('no-target')); return; }
-      } else if (channel === 'project' && !chan.projectId) {
+      } else if (channel === 'project' && !chan.projectId && !chan.roadKey) {
         chatWarn(ChatL.errorText('no-project'));
         return;
       }
@@ -367,8 +378,10 @@ const Multiplayer = (() => {
         // …and in /world the server re-derives our island from it, bringing
         // the Project tab back.
         chan.projectId = null;
+        chan.roadKey = null;
+        chan.zoneLabel = '';
         renderTabs();
-        if (onZone) onZone(null);
+        if (onZone) onZone(null, { roadKey: null, label: '' });
       }
       // Tell the engine our (possibly new-on-reconnect) socket id so it can
       // tell "held by me" from "held by a remote" for the shared stones, and
@@ -485,10 +498,14 @@ const Multiplayer = (() => {
       appendChatLog(username, text);
     });
     if (events.zone) {
-      socket.on(events.zone, ({ projectId }) => {
+      // { projectId, roadKey, label }: an island, else a road segment (its
+      // own Project chat + voice zone), else neither.
+      socket.on(events.zone, ({ projectId, roadKey, label } = {}) => {
         chan.projectId = projectId || null;
+        chan.roadKey = (!chan.projectId && typeof roadKey === 'string' && roadKey) || null;
+        chan.zoneLabel = typeof label === 'string' ? label.slice(0, 120) : '';
         renderTabs();
-        if (onZone) onZone(chan.projectId);
+        if (onZone) onZone(chan.projectId, { roadKey: chan.roadKey, label: chan.zoneLabel });
       });
     }
     // A keeper saved an island's decorations: restyle that house for
