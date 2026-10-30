@@ -342,6 +342,18 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-10-30 — Every character picture is a still from the film or episode of that look; new looks; shared-body portraits
+
+All 222 portrait slots (every character's first look and every later look, including the page-only shared-body characters) were re-sourced from stills of the actual film or episode, taken from the Marvel Cinematic Universe Wiki and the X-Men Movies Wiki on Fandom, where each file is labelled with the character and the film/episode. Who and which era was decided from those labels plus costume/setting cues, never from faces. Each was cropped to 540x614 JPEG q82 so the head sits inside the circular avatar. An independent checker reviewed every image (label, look/era, real still, framing); 218 passed first time and the 4 it failed were re-sourced and passed on recheck. Only Jake Lockley uses an official promo still (no usable episode still).
+
+- `assets/characters/` — every portrait replaced. Earlier problems are gone: later-film pictures used for first looks, site badges, fan/comic art, blurry or tiny files. Isaiah Bradley has his picture (the allowlist in test/walker-content.test.js is empty); Sentry is in his gold suit and Bob has his own picture; Thanos's first look is the 2012 mid-credits scene.
+- New looks (`characters.js`): Black Widow and Loki in The Avengers, Thor in The Dark World, Wanda in Infinity War, Star-Lord / Drax / Rocket / Nebula / Mantis in Vol. 3, Wong and Doctor Strange in Multiverse of Madness, Captain Marvel in The Marvels, Yelena in Hawkeye and Thunderbolts*, Ant-Man in Quantumania, Pepper's Rescue armour, Hope as the Wasp, White Vision, Thanos's Endgame armour. Bucky's Thunderbolts* look is relabelled.
+- Shared-body entities have portraits (Bruce Banner ×2, Bob, The Void, Marc, Steven, Jake, Billy); `test/character-page.test.js` checks they exist.
+- `CONFIG.ASSET_VERSION` 4 → 5 so browsers drop the cached old pictures (same file names).
+- Live site: run `scripts/seed-content.js` so the Mongo copy gets the new looks.
+
+---
+
 ### 2026-10-27 — Admin can mark projects watched; "Don't post" when finishing; Clear progress removed
 An admin can now skip the watch timer for a user: Users → View → **Mark watched…** opens a searchable tick-list of every project (titles they already have show ticked and locked), and the chosen ones count as one finished watch each, dated now, so characters, /home rooms and phases unlock exactly as after a normal watch. It deliberately bypasses both server rules a normal watch goes through (the runtime timer and the "watch X first" / phase locks) but only accepts real project ids, never touches a title already watched, drops any timer running on the marked titles, makes no feed post, writes a `markWatched` audit row and sends the user an "Admin" inbox note naming what was marked. There is no un-mark. When finishing a watch, the post composer now has a **Don't post** button next to Post: the movie or episode still counts, but nothing goes to the feed (if a caption, photos or tags were added it asks first, then drops them). The user-facing **Clear progress** (wipe every watch) is gone, at the user's request, so a watch can no longer be undone by anyone.
 - `server/admin-watch.js` (new) — `planMarkWatched` (validation: list of 1–200 known ids, already-watched ones skipped, 200-title cap), `newEntries`, `inboxText` (first 10 titles, then "and N more"). `test/admin-watch.test.js` covers it.

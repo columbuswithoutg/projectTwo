@@ -82,6 +82,20 @@ test('search never brings in a locked body-mate', () => {
   assert.deepEqual(ids(characterSearch(unlocked, 'banner')).sort(), ['banner', 'hulk']);
 });
 
+test('every page-only entity portrait exists', () => {
+  const dir = path.join(__dirname, '..', 'assets', 'characters');
+  const missing = [];
+  for (const group of ctx.SHARED) {
+    for (const m of group) {
+      if (m.char) continue;
+      for (const img of [m.image, ...(m.stages || []).map(s => s.image)]) {
+        if (img && !fs.existsSync(path.join(dir, img))) missing.push(`${m.id}: ${img}`);
+      }
+    }
+  }
+  assert.deepEqual(missing, []);
+});
+
 test('Jean Grey no longer lists the Phoenix as one of her looks', () => {
   assert.ok(!entry('jeangrey').stages.some(s => s.after === 'xmen3'));
   // ...but the catalogue entry the walkers use keeps it

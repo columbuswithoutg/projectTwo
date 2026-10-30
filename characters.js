@@ -12,7 +12,10 @@ var characters = [
       { after: "avengers1",   image: "ironman_avengers.jpg",   look: "Mark VII" },
       { after: "infinitywar",  image: "ironman_nano.jpg",       look: "Nanotech bleeding edge suit" }
     ] },
-  { id: "pepper",         name: "Pepper Potts",               debut: "ironman1",      image: "pepper.jpg" },
+  { id: "pepper",         name: "Pepper Potts",               debut: "ironman1",      image: "pepper.jpg",
+    stages: [
+      { after: "endgame", image: "pepper_rescue.jpg", look: "Rescue armour, Endgame" }
+    ] },
   { id: "happy",          name: "Happy Hogan",                debut: "ironman1",      image: "happy.jpg" },
   { id: "rhodey",         name: "James Rhodes",               debut: "ironman1",      image: "rhodey.jpg",
     stages: [
@@ -26,6 +29,7 @@ var characters = [
   { id: "coulson",        name: "Agent Coulson",              debut: "ironman1",      image: "coulson.jpg" },
   { id: "blackwidow",     name: "Black Widow",                debut: "ironman2",      image: "blackwidow.jpg",
     stages: [
+      { after: "avengers1",   image: "blackwidow_avengers.jpg", look: "Short curly hair, The Avengers" },
       { after: "infinitywar", image: "blackwidow_blonde.jpg", look: "Blonde hair, Infinity War era" },
       { after: "blackwidow",  image: "blackwidow_white.jpg",  look: "White suit, Black Widow movie" }
     ] },
@@ -39,12 +43,14 @@ var characters = [
   { id: "abomination",    name: "Abomination",                debut: "hulk",          image: "abomination.jpg" },
   { id: "thor",           name: "Thor",                       debut: "thor1",         image: "thor.jpg",
     stages: [
+      { after: "thor2",   image: "thor_darkworld.jpg",    look: "Dark World armour" },
       { after: "thor3",   image: "thor_ragnarok.jpg",     look: "Short hair" },
       { after: "endgame", image: "thor_endgame.jpg",      look: "Bro Thor, Endgame" },
       { after: "thor4",   image: "thor_lovethunder.jpg",  look: "Love & Thunder" }
     ] },
   { id: "loki",           name: "Loki",                       debut: "thor1",         image: "loki.jpg",
     stages: [
+      { after: "avengers1", image: "loki_avengers.jpg", look: "Horned helmet, The Avengers" },
       { after: "loki1", image: "loki_tva.jpg", look: "TVA suit variant" },
       { after: "loki2", image: "loki_s2.jpg",  look: "God of Stories, throne at end of time" }
     ] },
@@ -71,11 +77,14 @@ var characters = [
       { after: "cap2",         image: "wintersoldier.jpg", look: "The Winter Soldier" },
       { after: "infinitywar",  image: "bucky_wakanda.jpg", look: "Vibranium arm, Wakanda look" },
       { after: "falconws",     image: "bucky_fatws.jpg",   look: "Short hair, black-and-gold arm" },
-      { after: "thunderbolts", image: "bucky_tb.jpg",      look: "Congressman, Thunderbolts*" }
+      { after: "thunderbolts", image: "bucky_tb.jpg",      look: "Thunderbolts*" }
     ] },
   { id: "redskull",       name: "Red Skull",                  debut: "cap1",          image: "redskull.jpg" },
   { id: "howardstark",    name: "Howard Stark",               debut: "cap1",          image: "howardstark.jpg" },
-  { id: "thanos_snap",    name: "Thanos",                     debut: "avengers1",     image: "thanos.jpg" },
+  { id: "thanos_snap",    name: "Thanos",                     debut: "avengers1",     image: "thanos.jpg",
+    stages: [
+      { after: "endgame", image: "thanos_endgame.jpg", look: "Battle armour, Endgame" }
+    ] },
   { id: "obadiah",        name: "Obadiah Stane / Iron Monger",debut: "ironman1",      image: "obadiah.jpg" },
 
   // ─── PHASE 2 ───────────────────────────────
@@ -86,13 +95,22 @@ var characters = [
       { after: "falconws", image: "falcon_cap.jpg", look: "First Captain America suit, with wings" },
       { after: "cap4",     image: "samwilson.jpg",  look: "Captain America, Brave New World suit" }
     ] },
-  { id: "starlord",       name: "Star-Lord",                  debut: "guardians1",    image: "starlord.jpg" },
+  { id: "starlord",       name: "Star-Lord",                  debut: "guardians1",    image: "starlord.jpg",
+    stages: [
+      { after: "guardians3", image: "starlord_vol3.jpg", look: "Vol. 3 team suit" }
+    ] },
   { id: "gamora",         name: "Gamora",                     debut: "guardians1",    image: "gamora.jpg",
     stages: [
       { after: "guardians3", image: "gamora_variant.jpg", look: "Alternate Gamora, armored, Guardians 3" }
     ] },
-  { id: "drax",           name: "Drax",                       debut: "guardians1",    image: "drax.jpg" },
-  { id: "rocket",         name: "Rocket",                     debut: "guardians1",    image: "rocket.jpg" },
+  { id: "drax",           name: "Drax",                       debut: "guardians1",    image: "drax.jpg",
+    stages: [
+      { after: "guardians3", image: "drax_vol3.jpg", look: "Vol. 3 team suit" }
+    ] },
+  { id: "rocket",         name: "Rocket",                     debut: "guardians1",    image: "rocket.jpg",
+    stages: [
+      { after: "guardians3", image: "rocket_vol3.jpg", look: "Vol. 3 team suit" }
+    ] },
   { id: "groot",          name: "Groot",                      debut: "guardians1",    image: "groot.jpg",
     stages: [
       { after: "guardians1",  image: "groot_baby.jpg",  look: "Baby Groot, small and cute" },
@@ -101,19 +119,30 @@ var characters = [
     ] },
   { id: "nebula",         name: "Nebula",                     debut: "guardians1",    image: "nebula.jpg",
     stages: [
-      { after: "endgame", image: "nebula_hero.jpg", look: "Hero Nebula, gold plating, softer look" }
+      { after: "endgame", image: "nebula_hero.jpg", look: "Hero Nebula, gold plating, softer look" },
+      { after: "guardians3", image: "nebula_vol3.jpg", look: "Vol. 3 team suit" }
     ] },
   { id: "ronan",          name: "Ronan the Accuser",          debut: "guardians1",    image: "ronan.jpg" },
   { id: "yondu",          name: "Yondu",                      debut: "guardians1",    image: "yondu.jpg" },
   { id: "wanda_wv",       name: "Wanda Maximoff",             debut: "ageofultron",   image: "wanda.jpg",
     stages: [
+      { after: "infinitywar", image: "wanda_iw.jpg", look: "Long coat, Infinity War" },
       { after: "wandavision", image: "wanda_scarletwitch.jpg", look: "Scarlet Witch with crown/headpiece" }
     ] },
   { id: "quicksilver",    name: "Quicksilver",                debut: "ageofultron",   image: "quicksilver.jpg" },
-  { id: "vision",         name: "Vision",                     debut: "ageofultron",   image: "vision.jpg" },
+  { id: "vision",         name: "Vision",                     debut: "ageofultron",   image: "vision.jpg",
+    stages: [
+      { after: "wandavision", image: "vision_white.jpg", look: "White Vision, WandaVision" }
+    ] },
   { id: "ultron",         name: "Ultron",                     debut: "ageofultron",   image: "ultron.jpg" },
-  { id: "antman",         name: "Ant-Man",                    debut: "antman",        image: "antman.jpg" },
-  { id: "wasp_hope",      name: "Hope Van Dyne",              debut: "antman",        image: "hope.jpg" },
+  { id: "antman",         name: "Ant-Man",                    debut: "antman",        image: "antman.jpg",
+    stages: [
+      { after: "antman3", image: "antman_quantumania.jpg", look: "Quantumania suit" }
+    ] },
+  { id: "wasp_hope",      name: "Hope Van Dyne",              debut: "antman",        image: "hope.jpg",
+    stages: [
+      { after: "antmanwasp", image: "hope_wasp.jpg", look: "The Wasp, Ant-Man and the Wasp" }
+    ] },
   { id: "hankpym",        name: "Hank Pym",                   debut: "antman",        image: "hankpym.jpg" },
 
   // ─── PHASE 3 ───────────────────────────────
@@ -128,10 +157,19 @@ var characters = [
     stages: [
       { after: "falconws", image: "zemo_fatws.jpg", look: "Purple mask and fur coat, FATWS" }
     ] },
-  { id: "drstrange",      name: "Doctor Strange",             debut: "doctorstrange", image: "drstrange.jpg" },
-  { id: "wong",           name: "Wong",                       debut: "doctorstrange", image: "wong.jpg" },
+  { id: "drstrange",      name: "Doctor Strange",             debut: "doctorstrange", image: "drstrange.jpg",
+    stages: [
+      { after: "drstrange2", image: "drstrange_mom.jpg", look: "Multiverse of Madness" }
+    ] },
+  { id: "wong",           name: "Wong",                       debut: "doctorstrange", image: "wong.jpg",
+    stages: [
+      { after: "drstrange2", image: "wong_mom.jpg", look: "Sorcerer Supreme, Multiverse of Madness" }
+    ] },
   { id: "dormammu",       name: "Dormammu",                   debut: "doctorstrange", image: "dormammu.jpg" },
-  { id: "mantis",         name: "Mantis",                     debut: "guardians2",    image: "mantis.jpg" },
+  { id: "mantis",         name: "Mantis",                     debut: "guardians2",    image: "mantis.jpg",
+    stages: [
+      { after: "guardians3", image: "mantis_vol3.jpg", look: "Vol. 3 team suit" }
+    ] },
   { id: "ego",            name: "Ego the Living Planet",      debut: "guardians2",    image: "ego.jpg" },
   { id: "valkyrie",       name: "Valkyrie",                   debut: "thor3",         image: "valkyrie.jpg" },
   { id: "hela",           name: "Hela",                       debut: "thor3",         image: "hela.jpg" },
@@ -143,7 +181,10 @@ var characters = [
   { id: "okoye",          name: "Okoye",                      debut: "blackpanther",  image: "okoye.jpg" },
   { id: "killmonger",     name: "Killmonger",                 debut: "blackpanther",  image: "killmonger.jpg" },
   { id: "mbaku",          name: "M'Baku",                     debut: "blackpanther",  image: "mbaku.jpg" },
-  { id: "captainmarvel",  name: "Captain Marvel",             debut: "captainmarvel", image: "captainmarvel.jpg" },
+  { id: "captainmarvel",  name: "Captain Marvel",             debut: "captainmarvel", image: "captainmarvel.jpg",
+    stages: [
+      { after: "themarvels", image: "captainmarvel_marvels.jpg", look: "The Marvels" }
+    ] },
   { id: "talos",          name: "Talos",                      debut: "captainmarvel", image: "talos.jpg" },
   { id: "ghost",          name: "Ghost",                      debut: "antmanwasp",    image: "ghost.jpg",
     stages: [
@@ -164,7 +205,11 @@ var characters = [
   { id: "sylvie",         name: "Sylvie",                     debut: "loki1",         image: "sylvie.jpg" },
   { id: "mobius",         name: "Mobius",                     debut: "loki1",         image: "mobius.jpg" },
   { id: "he_who_remains", name: "He Who Remains",             debut: "loki1",         image: "hewhoremains.jpg" },
-  { id: "yelena",         name: "Yelena Belova",              debut: "blackwidow",    image: "yelena.jpg" },
+  { id: "yelena",         name: "Yelena Belova",              debut: "blackwidow",    image: "yelena.jpg",
+    stages: [
+      { after: "hawkeye",      image: "yelena_hawkeye.jpg", look: "Hawkeye, tracking Clint" },
+      { after: "thunderbolts", image: "yelena_tb.jpg",      look: "Thunderbolts*" }
+    ] },
   { id: "redguardian",    name: "Red Guardian",               debut: "blackwidow",    image: "redguardian.jpg" },
   { id: "taskmaster",     name: "Taskmaster",                 debut: "blackwidow",    image: "taskmaster.jpg" },
   { id: "shangchi",       name: "Shang-Chi",                  debut: "shangchi",      image: "shangchi.jpg" },
@@ -468,23 +513,23 @@ const CHARACTER_SUMMARIES = {
 const SHARED_BODIES = [
   [
     { char: "hulk" },
-    { id: "banner", name: "Bruce Banner", debut: "hulk", image: "",
-      stages: [{ after: "avengers1", image: "", look: "Mark Ruffalo" }] }
+    { id: "banner", name: "Bruce Banner", debut: "hulk", image: "banner.jpg",
+      stages: [{ after: "avengers1", image: "banner_avengers.jpg", look: "Mark Ruffalo, The Avengers" }] }
   ],
   [
     { char: "sentry" },
-    { id: "bob", name: "Bob", debut: "thunderbolts", image: "" },
-    { id: "void", name: "The Void", debut: "thunderbolts", image: "" }
+    { id: "bob", name: "Bob", debut: "thunderbolts", image: "bob.jpg" },
+    { id: "void", name: "The Void", debut: "thunderbolts", image: "void.jpg" }
   ],
   [
     { char: "moonknight_mk" },
-    { id: "marc", name: "Marc Spector", debut: "moonknight", image: "" },
-    { id: "steven", name: "Steven Grant", debut: "moonknight", image: "" },
-    { id: "jake", name: "Jake Lockley", debut: "moonknight", image: "" }
+    { id: "marc", name: "Marc Spector", debut: "moonknight", image: "marc.jpg" },
+    { id: "steven", name: "Steven Grant", debut: "moonknight", image: "steven.jpg" },
+    { id: "jake", name: "Jake Lockley", debut: "moonknight", image: "jake.jpg" }
   ],
   [
     { char: "teen_agatha", name: "Teen" },
-    { id: "billy", name: "Billy Maximoff", debut: "wandavision", image: "" }
+    { id: "billy", name: "Billy Maximoff", debut: "wandavision", image: "billy_wv.jpg" }
   ],
   [
     { char: "jeangrey", hideLooks: ["xmen3"] },

@@ -37,9 +37,7 @@ const isCharId = (id) => charIds.has(id) || Object.prototype.hasOwnProperty.call
 // (characters grid, profile picker, map walkers) shows the character's
 // monogram when the file 404s, so these degrade cleanly — but each one is
 // still a missing asset. Remove an entry as soon as its file is added.
-const MISSING_PORTRAIT_ALLOWLIST = new Set([
-  'isaiah.jpg', // Isaiah Bradley — no portrait yet (TOOL-09)
-]);
+const MISSING_PORTRAIT_ALLOWLIST = new Set([]);
 
 test('dialogues were extracted at all', () => {
   assert.ok(Object.keys(pairs).length > 10);

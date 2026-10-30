@@ -18,7 +18,7 @@ const CONFIG = {
   // this version number changes the URL. Increment this whenever you swap
   // an image/webp under assets/ and want every user to pick it up on
   // their next load.
-  ASSET_VERSION: 4,
+  ASSET_VERSION: 5,
 };
 
 // Append the cache-busting version to any asset URL. Use this everywhere
