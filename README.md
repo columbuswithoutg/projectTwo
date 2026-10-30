@@ -34,7 +34,7 @@ projectTwo/
 ├── .env                       MONGO_URI, JWT_SECRET, CLOUDINARY_*, CLIENT_URL
 ├── README.md                  ← this file
 │
-├── projects.js                Static fallback: 71 MCU projects (data, var-declared)
+├── projects.js                Static fallback: 92 projects — MCU, Marvel Netflix, Fox X-Men (data, var-declared)
 ├── characters.js              Static fallback: 130 MCU + Fox X-Men characters
 ├── locations.js               Static fallback: 36 world-map locations
 ├── spa.html                   SPA shell TEMPLATE → dist/spa.html (build fills stylesheet, chunk manifest, core script)
@@ -44,44 +44,24 @@ projectTwo/
 │   ├── legacy/                01-global.css … 28-composer.css — the old single stylesheet, split verbatim
 │   ├── base/                  base.css
 │   ├── components/            header, buttons, surfaces, forms, brand, overlays, route-progress, poster
-│   ├── pages/                 login, profile, board, feed, watchorder, map, admin-cms, customize, admin-scenes
-│   └── hud/                   3D-view HUD: world, scene-guess
+│   ├── pages/                 login, profile, board, feed, watchorder, map, admin-cms, customize, admin-scenes, admin-quotes, share
+│   └── hud/                   3D-view HUD: world, scene-guess, quote-guess
 │
-├── models/                    Mongoose schemas
-│   ├── user.js                username, password, watchedProjects, walkers,
-│   │                          isAdmin, banned, tokenVersion, lastActiveAt,
-│   │                          homeCharacter (4-slot layered-SVG config)
-│   ├── Friend.js              friend & watch-party requests
-│   ├── AuditLog.js            forensic log of every destructive admin action
-│   ├── AdminConfig.js         singleton — walker physics overrides
-│   ├── Project.js             CMS-editable MCU project content
-│   ├── Character.js           CMS-editable MCU character content
-│   ├── Location.js            CMS-editable map location content
-│   └── Dialogue.js            CMS-editable walker dialogue content (singleton)
+├── models/                    Mongoose schemas, one per file: users and friends, feed / messages / reports / uploads,
+│                              CMS content (Project, Character, Location, Dialogue), AdminConfig + AuditLog,
+│                              /world houses and stays, Scene Guess and Quote Guess islands, items and scores
 │
 ├── middleware/
 │   ├── auth.js                JWT verify + tokenVersion check + ban check
 │   │                          + 30s validation cache + lastActiveAt throttle
 │   └── requireAdmin.js        composes auth + fresh DB isAdmin re-check
 │
-├── routes/
-│   ├── auth.js                /api/auth/{register,login}
-│   ├── progress.js            /api/progress/* — watch progress + memories
-│   ├── friends.js             /api/friends/*
-│   ├── upload.js              /api/upload — Cloudinary single-file upload
-│   ├── profile.js             /api/profile/*
-│   ├── admin.js               /api/admin/* — users, mod, audit, config, CMS
-│   ├── config.js              /api/config/public — walker physics for SPA boot
-│   └── content.js             /api/content/* — projects/chars/locs/dialogues
+├── routes/                    Express routers, one per /api area (mounted in server.js) + the Socket.IO
+│                              handlers for /world and /home (world-socket.js)
 │
-├── server/
-│   ├── contentLoader.js       vm.runInNewContext loader of static JS files,
-│   │                          used as the Mongo-down fallback for /api/content/*
-│   ├── feed.js                Feed post creation/merge helpers (server-side only)
-│   ├── house.js               toHouse / portraitOk / housesForRooms — shared by the
-│   │                          /world house routes and the /home room routes
-│   └── friendship.js          friendFilter() / getFriendIds() — the ONE place the
-│                              "accepted friend incl. legacy type-less docs" query lives
+├── server/                    Server-only helpers the routes share: contentLoader.js (static-file fallback
+│                              for /api/content/*), friendship.js, house.js, boot-checks.js, the minigame
+│                              engine (island-game.js) and its Scene / Quote Guess adapters, sanitizers
 │
 ├── scripts/
 │   ├── build.mjs              Client build → dist/ (`npm run build`; `--watch --serve` = `npm run dev`)
@@ -89,15 +69,9 @@ projectTwo/
 │   ├── export-content.js      Inverse: Mongo → static fallback files (--dry-run)
 │   ├── optimize-images.mjs    Shrink assets/characters + assets/images in place (--dry-run)
 │   ├── build-humanoid-assets.mjs  Raw Quaternius glTF → assets/models/humanoid/v1
-│   └── audit-humanoid-assets.mjs  Report on the built humanoid assets
+│   └── audit-humanoid-assets.mjs  Audit the raw Quaternius downloads in _incoming/quaternius before a build
 │
-├── test/                      node --test unit tests (npm test) — no Mongo needed
-│   ├── physics.test.js        3D physics helpers
-│   ├── humanoid.test.js       humanoid rig logic
-│   ├── npc.test.js            /world NPC patrol logic
-│   ├── world-chat.test.js     /world chat channels
-│   ├── friendship.test.js     server/friendship.js filter shapes + getFriendIds
-│   └── auth-middleware.test.js middleware/auth.js (JWT, tokenVersion, ban, cache)
+├── test/                      node --test unit tests (npm test) — no Mongo needed; one <area>.test.js per module or route
 │
 ├── docs/
 │   └── VOICE-TURN-SETUP.md    5-minute TURN relay setup for cross-NAT voice
@@ -110,7 +84,7 @@ projectTwo/
     ├── three-shim.mjs         ES module: imports three from unpkg, exposes window.THREE (loaded with the world chunk)
     ├── router.js              Hash-free SPA router
     ├── auth.js                Auth helper (token, isAdmin via JWT decode)
-    ├── theme.js               Light/Dark/System theme manager (see profile toggle)
+    ├── theme.js               Cinematic / Comic / System theme manager (profile Appearance control)
     ├── playground3d-physics.js Pure jump/fall/walkability math (unit-tested)
     ├── playground3d-avatar.js  Avatar mesh builders + shared geometry cache + hero-gear material
     ├── playground3d-input.js   Keyboard / mouse / touch / joystick input for the 3D views
@@ -181,7 +155,7 @@ PORT=3000
 npm install          # also builds dist/ (postinstall)
 npm run dev          # build, watch js/ + styles/ + templates, and start server.js
 ```
-Open `http://localhost:3000`. Edits rebuild in ~300 ms; reload to pick them up. `npm start` (= `node server.js`) serves an existing build without watching — run `npm run build` first. The server forces Google DNS (8.8.8.8) at startup to work around Atlas SRV resolution issues on Windows.
+Open `http://localhost:3000`. Edits rebuild in about 1.5 s; reload to pick them up. `npm start` (= `node server.js`) serves an existing build without watching — run `npm run build` first. Outside production the server switches to Google DNS (8.8.8.8) at startup to work around Atlas SRV resolution issues on Windows; production keeps the host resolver unless `FORCE_PUBLIC_DNS=1` (see "Known constraints & gotchas").
 
 ### One-time content seed (optional)
 The CMS tab will be empty until you copy the static JS files into MongoDB:
