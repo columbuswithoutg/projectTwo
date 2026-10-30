@@ -118,7 +118,7 @@ function harness() {
     return null;
   }
 
-  return { mgr, io, sent, env, champs, scores, deleted, invalidations, players, join, advance, lastState, flush, now: () => clock };
+  return { mgr, io, sent, env, data, SceneScore, champs, scores, deleted, invalidations, players, join, advance, lastState, flush, now: () => clock };
 }
 
 // Every 'answer' key must sit inside history[] — and during a round the
@@ -377,4 +377,195 @@ test('a player deleted mid-game is not saved; bad payloads are refused', async (
   }
   assert.ok(h.scores.get(`u1|${PID}`));
   assert.equal(h.scores.get(`u2|${PID}`), undefined);
+});
+
+// ── the champion's pick (world:sg-pick → core.onPick) ──
+
+test('sg-pick: only the champion, with a real index into their record game; ok saves the pick and refreshes the board', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  const b = h.join('sb', 'u2', 'sam');
+  h.champs.set(PID, { userId: 'u1', username: 'alex', score: 9000 });
+  h.scores.set(`u1|${PID}`, { userId: 'u1', projectId: PID, best: 9000, plays: 3, bestStills: STILLS.map(s => s.id), pick: 's0' });
+  h.scores.set(`u2|${PID}`, { userId: 'u2', projectId: PID, best: 4000, plays: 1, bestStills: STILLS.map(s => s.id), pick: 's1' });
+
+  // Someone else (even one with their own score row) is refused.
+  assert.deepEqual(await b.call('world:sg-pick', { projectId: PID, index: 3 }), { ok: false, error: 'not-champion' });
+  // No champion on that island at all.
+  assert.deepEqual(await a.call('world:sg-pick', { projectId: 'hulk', index: 3 }), { ok: false, error: 'not-champion' });
+  // Bad indexes are refused before anything is read.
+  for (const index of [-1, 10, 2.5, '3', null, undefined]) {
+    assert.deepEqual(await a.call('world:sg-pick', { projectId: PID, index }), { ok: false, error: 'bad' }, String(index));
+  }
+  assert.deepEqual(await a.call('world:sg-pick', { projectId: { $ne: 1 }, index: 3 }), { ok: false, error: 'bad' });
+  assert.equal(h.scores.get(`u1|${PID}`).pick, 's0', 'nothing written by a refused pick');
+  assert.equal(h.scores.get(`u2|${PID}`).pick, 's1');
+  assert.equal(h.invalidations.length, 0);
+
+  assert.deepEqual(await a.call('world:sg-pick', { projectId: PID, index: 3 }), { ok: true });
+  assert.equal(h.scores.get(`u1|${PID}`).pick, 's3');
+  assert.deepEqual(h.invalidations, [['board', PID]]);
+
+  // An index past a short stored game (an older row) has no item → bad.
+  h.scores.get(`u1|${PID}`).bestStills = ['s0', 's1'];
+  assert.deepEqual(await a.call('world:sg-pick', { projectId: PID, index: 5 }), { ok: false, error: 'bad' });
+  assert.equal(h.scores.get(`u1|${PID}`).pick, 's3');
+});
+
+test('sg-pick: the champion without a score row, a failing read, the off switch and a socket not in /world', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  h.champs.set(PID, { userId: 'u1', username: 'alex', score: 9000 });
+  assert.deepEqual(await a.call('world:sg-pick', { projectId: PID, index: 0 }), { ok: false, error: 'bad' }, 'no row');
+  h.data.champions.get = async () => { throw new Error('mongo down'); };
+  assert.deepEqual(await a.call('world:sg-pick', { projectId: PID, index: 0 }), { ok: false, error: 'error' });
+  h.env.enabled = false;
+  assert.deepEqual(await a.call('world:sg-pick', { projectId: PID, index: 0 }), { ok: false, error: 'off' });
+  h.players.delete('sa');
+  assert.deepEqual(await a.call('world:sg-pick', { projectId: PID, index: 0 }), { ok: false, error: 'not-joined' });
+});
+
+// ── async races: a slow draw, a slow score save ──
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(r => { resolve = r; });
+  return { promise, resolve };
+}
+
+test('a slow draw: the lobby waits for it (one draw, even when the host presses Go meanwhile), then "get ready"', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  const gate = deferred();
+  let draws = 0;
+  h.data.drawStills = async () => { draws++; await gate.promise; return STILLS.map(s => ({ ...s })); };
+  await a.call('world:sg-start', { projectId: PID });
+  await h.advance(L.C.LOBBY_MS);                       // the lobby timer starts the draw
+  assert.deepEqual(await a.call('world:sg-go', { projectId: PID }), { ok: true });
+  await h.advance(60000);                              // the draw is still out
+  assert.equal(draws, 1, 'no second draw while one is in flight');
+  assert.equal(h.lastState().phase, 'lobby');
+  gate.resolve();
+  await h.flush(); await h.flush();
+  assert.equal(h.lastState().phase, 'ready');
+  await h.advance(L.C.READY_MS);
+  assert.equal(h.lastState().phase, 'round');
+});
+
+test('a slow draw that resolves after every player quit sends nothing more; the island is free again', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  const gate = deferred();
+  h.data.drawStills = async () => { await gate.promise; return STILLS.map(s => ({ ...s })); };
+  await a.call('world:sg-start', { projectId: PID });
+  await h.advance(L.C.LOBBY_MS);
+  assert.deepEqual(await a.call('world:sg-leave', {}), { ok: true });
+  assert.equal(h.lastState().phase, 'idle');
+  assert.equal(h.lastState().reason, 'empty');
+  const before = h.sent.length;
+  gate.resolve();
+  await h.flush(); await h.flush();
+  assert.equal(h.sent.length, before, 'the late draw broadcasts nothing');
+  assert.equal(h.mgr.hasGame(PID), false);
+  // A fresh game on the same island works (the stale draw did not resurrect the old one).
+  h.data.drawStills = async () => STILLS.map(s => ({ ...s }));
+  assert.deepEqual(await a.call('world:sg-start', { projectId: PID }), { ok: true });
+  await h.advance(L.C.LOBBY_MS);
+  assert.equal(h.lastState().phase, 'ready');
+});
+
+async function playToResults(h, a) {
+  await a.call('world:sg-start', { projectId: PID });
+  await h.advance(L.C.LOBBY_MS + L.C.READY_MS);
+  for (let r = 0; r < L.C.ROUNDS; r++) {
+    await playRound(h, [[a, 0]]);
+    await h.advance(L.C.REVEAL_MS);
+  }
+}
+
+function slowSaves(h) {
+  const gate = deferred();
+  const orig = h.SceneScore.updateOne;
+  h.SceneScore.updateOne = async (...args) => { await gate.promise; return orig.apply(h.SceneScore, args); };
+  return gate;
+}
+
+test('a score save slower than the reveal but inside RESULTS_MS: the record and fanfare still arrive', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  const gate = slowSaves(h);
+  await playToResults(h, a);
+  // The results screen shows at once; the record joins it when the save lands.
+  assert.equal(h.lastState().phase, 'results');
+  assert.equal(h.lastState().record, null);
+  assert.ok(!h.sent.some(s => s.event === 'world:sg-fanfare'));
+  await h.advance(L.C.RESULTS_MS / 2);
+  gate.resolve();
+  for (let i = 0; i < 5; i++) await h.flush();
+  assert.deepEqual(h.lastState().record, { username: 'alex', score: 10000, previous: null, previousHolder: null });
+  assert.ok(h.sent.some(s => s.event === 'world:sg-fanfare' && s.payload.username === 'alex'));
+  await h.advance(L.C.RESULTS_MS / 2);
+  assert.equal(h.lastState().phase, 'idle', 'the results ran their full RESULTS_MS from the moment they showed');
+  assert.equal(h.lastState().reason, 'done');
+});
+
+test('the results screen shows at once and runs its full RESULTS_MS, whatever the save takes', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  const gate = slowSaves(h);
+  await playToResults(h, a);
+  assert.equal(h.lastState().phase, 'results');
+  await h.advance(L.C.RESULTS_MS - 1);
+  assert.equal(h.lastState().phase, 'results');
+  await h.advance(1);
+  assert.equal(h.lastState().phase, 'idle');
+  gate.resolve();
+});
+
+test('a score save slower than RESULTS_MS: the game ends "done" on time, the score is still saved, no state is sent after idle', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  const gate = slowSaves(h);
+  await playToResults(h, a);
+  await h.advance(L.C.RESULTS_MS + 1);
+  assert.equal(h.lastState().phase, 'idle');
+  assert.equal(h.lastState().reason, 'done');
+  assert.equal(h.mgr.isPlaying('sa'), false);
+  const before = h.sent.length;
+  gate.resolve();
+  for (let i = 0; i < 5; i++) await h.flush();
+  const sa = h.scores.get(`u1|${PID}`);
+  assert.equal(sa && sa.best, 10000, 'the late save still lands');
+  assert.ok(h.invalidations.some(([k]) => k === 'board'), 'the board refreshes, so the laurels / roof label update');
+  // RT2-10: after the 'done' idle only the record fanfare may follow (next test), never a state.
+  assert.deepEqual(h.sent.slice(before).map(s => s.event), ['world:sg-fanfare']);
+  assert.equal(h.lastState().phase, 'idle');
+});
+
+test('a score save slower than RESULTS_MS still shows the results and fires the record fanfare', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  h.join('sw', 'u3', 'watcher');                       // on the island, not playing
+  const gate = slowSaves(h);
+  await playToResults(h, a);
+  await h.advance(L.C.RESULTS_MS + 1);
+  gate.resolve();
+  for (let i = 0; i < 5; i++) await h.flush();
+  assert.ok(h.sent.some(s => s.event === 'world:sg-state' && s.payload.phase === 'results'));
+  const fan = h.sent.filter(s => s.event === 'world:sg-fanfare');
+  assert.equal(fan.length, 1);
+  assert.equal(fan[0].payload.username, 'alex');
+  assert.ok(fan[0].to.includes('sa') && fan[0].to.includes('sw'), 'the seated player and the island both get it');
+});
+
+test('a slow save whose game ended any other way than "done" sends no fanfare', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  const gate = slowSaves(h);
+  await playToResults(h, a);
+  assert.equal(h.mgr.endAll('restart'), 1);
+  gate.resolve();
+  for (let i = 0; i < 5; i++) await h.flush();
+  assert.equal(h.scores.get(`u1|${PID}`).best, 10000, 'the score is still saved');
+  assert.ok(!h.sent.some(s => s.event === 'world:sg-fanfare'));
 });

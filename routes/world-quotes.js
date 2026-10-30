@@ -94,7 +94,8 @@ router.get('/quote/:projectId/board', auth, async (req, res) => {
   const s = await QuoteData.settings.get();
   if (!s.enabled || !projectId) return res.json({ top: [], me: null });
   const [rows, me] = await Promise.all([
-    QuoteScore.find({ projectId, best: { $gt: 0 } }).sort({ best: -1, achievedAt: 1 }).limit(5).populate('userId', 'username').lean(),
+    // Over-fetched: a row whose user is gone is dropped below, then the top 5 kept.
+    QuoteScore.find({ projectId, best: { $gt: 0 } }).sort({ best: -1, achievedAt: 1 }).limit(10).populate('userId', 'username').lean(),
     QuoteScore.findOne({ projectId, userId: req.user.id }).select('best plays achievedAt').lean()
   ]);
   let rank = null;
@@ -105,7 +106,7 @@ router.get('/quote/:projectId/board', auth, async (req, res) => {
     });
   }
   res.json({
-    top: rows.filter(r => r.userId).map(r => ({ username: r.userId.username, best: r.best, achievedAt: r.achievedAt })),
+    top: rows.filter(r => r.userId).slice(0, 5).map(r => ({ username: r.userId.username, best: r.best, achievedAt: r.achievedAt })),
     me: me ? { best: me.best, plays: me.plays, rank } : null
   });
 });
@@ -132,7 +133,7 @@ router.get('/quote/:projectId/picks', auth, async (req, res) => {
 // A player suggests a line for an island they've watched. It waits in the
 // admin queue (CMS → Quotes → Suggestions) and joins games once approved,
 // credited to them at the reveal.
-router.post('/quote/:projectId/suggest', auth, async (req, res) => {
+async function suggestLine(req, res) {
   const projectId = quoteProjectId(req.params.projectId);
   await Promise.all([QuoteData.settings.get(), QuoteData.islands.get()]);
   if (!QuoteData.acceptsSuggestionsSync(projectId)) {
@@ -185,6 +186,21 @@ router.post('/quote/:projectId/suggest', auth, async (req, res) => {
     throw e;
   }
   res.status(201).json({ status: 'pending' });
+}
+
+// One suggestion in flight per player: the limits above are count-then-insert,
+// so parallel POSTs would all read the same counts and all get in (RT2-02).
+// In-process is enough, the server is single instance (see server.js).
+const suggesting = new Set();
+router.post('/quote/:projectId/suggest', auth, async (req, res) => {
+  const uid = String(req.user.id);
+  if (suggesting.has(uid)) return res.status(429).json({ error: 'Your last line is still being saved — try again in a moment.' });
+  suggesting.add(uid);
+  try {
+    await suggestLine(req, res);
+  } finally {
+    suggesting.delete(uid);
+  }
 });
 
 module.exports = router;

@@ -126,12 +126,16 @@ const champions = cached('quote champions', async () => {
   for (const r of rows) {
     const username = names.get(String(r.userId));
     if (!username) continue;
+    const pick = r.pick ? (lines.get(String(r.pick)) || null) : null;
     out.set(r._id, {
       userId: String(r.userId),
       username,
       score: r.best,
       achievedAt: r.achievedAt,
-      pick: r.pick ? (lines.get(String(r.pick)) || null) : null
+      pick,
+      // Server only (not in publicRecord): drawLines keeps the featured
+      // line, shown with its speaker on the island, out of the games.
+      pickId: pick ? String(r.pick) : null
     });
   }
   return out;
@@ -160,11 +164,26 @@ function toBank(l) {
 }
 
 // A game's 10 rounds (answers included — server only), or null when the
-// island no longer has a playable bank.
+// island no longer has a playable bank. The champion's featured line is on
+// the island screen (and sent to every /world client) with its speaker, so
+// it is left out of the draw — unless that leaves the bank unplayable, when
+// the full bank is used rather than closing the island.
 async function drawLines(projectId, rng) {
-  const rows = await QuoteLine.find({ projectId, status: 'approved', active: true })
-    .select('speaker text textKey reply note episode decoys origin suggestedByName').lean();
-  return Logic.buildRounds(rows.map(toBank), rng);
+  const [rows, champs] = await Promise.all([
+    QuoteLine.find({ projectId, status: 'approved', active: true })
+      .select('speaker text textKey reply note episode decoys origin suggestedByName').lean(),
+    champions.get()
+  ]);
+  const bank = rows.map(toBank);
+  const champ = champs.get(projectId);
+  const featured = champ && champ.pickId;
+  if (featured) {
+    const rest = bank.filter(l => l.id !== featured);
+    // buildRounds rejects an unplayable bank before it draws from rng.
+    const rounds = rest.length < bank.length ? Logic.buildRounds(rest, rng) : null;
+    if (rounds) return rounds;
+  }
+  return Logic.buildRounds(bank, rng);
 }
 
 // ── portraits ──

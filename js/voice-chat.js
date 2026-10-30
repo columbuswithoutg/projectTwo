@@ -80,6 +80,11 @@ const VoiceManager = (() => {
 
   let _lastHandle = null;
   let _openPanel = null;
+  // Peers muted in the diagnostics panel, by username (socket ids change on
+  // a reconnect): a rebuilt link — the cap's re-pick, a step onto a road and
+  // back, a reconnect — makes a fresh entry, and it must stay muted
+  // (NET2-04). 'id:<peerId>' until the peer's name is known.
+  const _mutedNames = new Set();
 
   // ── start ──
   //
@@ -259,6 +264,9 @@ const VoiceManager = (() => {
         pendingIce: [],
         selectedPair: null
       };
+      const rp0 = (getRemotePlayers() || []).find(r => r && r.id === peerId);
+      if (rp0 && rp0.username) entry.username = rp0.username;
+      syncMute(peerId, entry);
       peers.set(peerId, entry);
 
       // Add local mic tracks (already acquired by caller).
@@ -457,6 +465,9 @@ const VoiceManager = (() => {
     function destroyPeer(peerId, reason, extra) {
       const entry = peers.get(peerId);
       if (!entry) return;
+      // The entry is gone by the time the view hears of it: hand over a
+      // snapshot (taken before close()) for its "peer disconnected" log (NET2-06).
+      const diag = peerDiag(peerId, entry);
       try { entry.pc.close(); } catch (_) {}
       if (entry.audioEl) {
         entry.audioEl.srcObject = null;
@@ -468,7 +479,7 @@ const VoiceManager = (() => {
       peers.delete(peerId);
       if (onPeerStateChange) {
         onPeerStateChange(peerId, Object.assign(
-          { connected: false, speaking: false, reason: reason || 'closed' }, extra));
+          { connected: false, speaking: false, reason: reason || 'closed', diag }, extra));
       }
     }
 
@@ -515,7 +526,7 @@ const VoiceManager = (() => {
         const rp = remoteById.get(peerId);
         let target;
         if (rp) {
-          if (rp.username) entry.username = rp.username;
+          if (rp.username && entry.username !== rp.username) { entry.username = rp.username; syncMute(peerId, entry); }
           entry.distance = distance2D(local.x, local.z, rp.x, rp.z);
           target = computeGain(entry.distance);
         } else {
@@ -789,10 +800,22 @@ const VoiceManager = (() => {
       const entry = peers.get(peerId);
       if (!entry) return;
       entry.muted = !!muted;
+      _mutedNames.delete('id:' + peerId);
+      if (entry.username) { if (entry.muted) _mutedNames.add(entry.username); else _mutedNames.delete(entry.username); }
+      else if (entry.muted) _mutedNames.add('id:' + peerId);
       _log(peerId, entry.muted ? 'locally muted' : 'unmuted');
       if (onPeerStateChange) {
         onPeerStateChange(peerId, { muted: entry.muted, speaking: false });
       }
+    }
+
+    // A fresh entry, or one whose name we just learned: muted if this user
+    // (or, before the name was known, this socket) was muted before. A mute
+    // made under the id moves to the name.
+    function syncMute(peerId, entry) {
+      const idKey = 'id:' + peerId;
+      if (entry.username && _mutedNames.has(idKey)) { _mutedNames.delete(idKey); _mutedNames.add(entry.username); }
+      entry.muted = _mutedNames.has(idKey) || (!!entry.username && _mutedNames.has(entry.username));
     }
 
     function isMuted(peerId) {
@@ -800,10 +823,8 @@ const VoiceManager = (() => {
       return !!(entry && entry.muted);
     }
 
-    function _diag() {
-      const peerList = [];
-      peers.forEach((entry, id) => {
-        peerList.push({
+    function peerDiag(id, entry) {
+      return {
           id,
           username: entry.username || ('peer ' + shortId(id)),
           connectionState: entry.pc.connectionState,
@@ -819,8 +840,12 @@ const VoiceManager = (() => {
           remoteIceCandidateTypes: entry.remoteIceCandidateTypes.slice(),
           pendingIce: entry.pendingIce.length,
           selectedPair: entry.selectedPair
-        });
-      });
+      };
+    }
+
+    function _diag() {
+      const peerList = [];
+      peers.forEach((entry, id) => { peerList.push(peerDiag(id, entry)); });
       const servers = (_iceConfig && _iceConfig.iceServers) || [];
       const turnConfigured = servers.some(s => {
         const u = s && s.urls;

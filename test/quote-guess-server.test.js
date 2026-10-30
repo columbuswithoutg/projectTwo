@@ -337,3 +337,114 @@ test('the registry fans every hook out to every game', () => {
   assert.equal(reg.isPlaying('y'), false);
   assert.equal(reg.get('b').kind, 'b');
 });
+
+// ── the champion's featured line (world:qg-pick → core.onPick) ──
+
+test('qg-pick: not the champion, a bad index, and a good pick that saves the line and refreshes the board', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  const b = h.join('sb', 'u2', 'sam');
+  const lines = BANK.slice(0, 10).map(l => l.id);
+  h.qData.champs.set(PID, { userId: 'u1', username: 'alex', score: 9000, pick: null, pickId: null });
+  h.qScores.scores.set(`u1|${PID}`, { userId: 'u1', projectId: PID, best: 9000, plays: 2, bestLines: lines, pick: lines[0] });
+  h.qScores.scores.set(`u2|${PID}`, { userId: 'u2', projectId: PID, best: 100, plays: 1, bestLines: lines, pick: lines[1] });
+
+  assert.deepEqual(await b.call('world:qg-pick', { projectId: PID, index: 4 }), { ok: false, error: 'not-champion' });
+  assert.deepEqual(await a.call('world:qg-pick', { projectId: 'thor1', index: 4 }), { ok: false, error: 'not-champion' }, 'no champion there');
+  for (const index of [-1, Q.C.ROUNDS, 1.5, '4', null]) {
+    assert.deepEqual(await a.call('world:qg-pick', { projectId: PID, index }), { ok: false, error: 'bad' }, String(index));
+  }
+  assert.equal(h.qScores.scores.get(`u1|${PID}`).pick, lines[0]);
+  assert.equal(h.qScores.scores.get(`u2|${PID}`).pick, lines[1]);
+  assert.equal(h.qData.invalidations.length, 0);
+
+  assert.deepEqual(await a.call('world:qg-pick', { projectId: PID, index: 4 }), { ok: true });
+  assert.equal(h.qScores.scores.get(`u1|${PID}`).pick, lines[4]);
+  assert.equal(h.qScores.scores.get(`u2|${PID}`).pick, lines[1], "the other player's row is untouched");
+  assert.deepEqual(h.qData.invalidations, [['board', PID]]);
+
+  // The pick is checked against the user's own stored game: no row → bad.
+  h.qScores.scores.delete(`u1|${PID}`);
+  assert.deepEqual(await a.call('world:qg-pick', { projectId: PID, index: 4 }), { ok: false, error: 'bad' });
+  // A champion read that throws is answered, not thrown.
+  h.qData.champions.get = async () => { throw new Error('mongo down'); };
+  assert.deepEqual(await a.call('world:qg-pick', { projectId: PID, index: 4 }), { ok: false, error: 'error' });
+});
+
+// ── a slow draw (begin awaits data.drawLines) ──
+
+test('a slow line draw: nothing breaks while it is out; resolving after everyone quit sends nothing and frees the island', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  let release;
+  let draws = 0;
+  h.qData.drawLines = (pid, rng) => { draws++; return new Promise(r => { release = () => r(Q.buildRounds(BANK, rng)); }); };
+  await a.call('world:qg-start', { projectId: PID });
+  await h.advance(Q.C.LOBBY_MS);
+  assert.deepEqual(await a.call('world:qg-go', { projectId: PID }), { ok: true });
+  await h.advance(30000);
+  assert.equal(draws, 1, 'Go during a draw does not start a second one');
+  assert.equal(h.lastState().phase, 'lobby');
+  assert.deepEqual(await a.call('world:qg-leave', {}), { ok: true });
+  assert.equal(h.lastState().reason, 'empty');
+  const before = h.sent.length;
+  release();
+  await h.advance(0); await h.advance(0);
+  assert.equal(h.sent.length, before, 'the late draw broadcasts nothing');
+  assert.equal(h.quote.hasGame(PID), false);
+  assert.equal(h.reg.islandBusy(PID, 'scene'), false, 'Scene Guess can use the island');
+
+  // And a slow draw the players wait out ends in "get ready" with those lines.
+  assert.deepEqual(await a.call('world:qg-start', { projectId: PID }), { ok: true });
+  await h.advance(Q.C.LOBBY_MS);
+  assert.equal(h.lastState().phase, 'lobby');
+  release();
+  await h.advance(0); await h.advance(0);
+  assert.equal(h.lastState().phase, 'ready');
+  await h.advance(Q.C.READY_MS);
+  assert.equal(h.lastState().phase, 'round');
+});
+
+test('a draw that comes back empty (the bank went unplayable) ends the lobby with "no-lines"', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  h.qData.drawLines = async () => null;
+  await a.call('world:qg-start', { projectId: PID });
+  await h.advance(Q.C.LOBBY_MS);
+  assert.equal(h.lastState().phase, 'idle');
+  assert.equal(h.lastState().reason, 'no-lines');
+  assert.equal(h.quote.hasGame(PID), false);
+});
+
+// ── a slow score save (RT2-10: finish() shows the results before persist) ──
+
+test('a score save slower than RESULTS_MS: the results show at once, the game ends "done" on time, the record fanfare still fires', async () => {
+  const h = harness();
+  const a = h.join('sa', 'u1', 'alex');
+  h.join('sw', 'u3', 'watcher');
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const orig = h.qScores.updateOne;
+  h.qScores.updateOne = async (...args) => { await gate; return orig.apply(h.qScores, args); };
+  await a.call('world:qg-start', { projectId: PID });
+  await h.advance(Q.C.LOBBY_MS + Q.C.READY_MS);
+  const rounds = h.rounds();
+  for (let r = 0; r < Q.C.ROUNDS; r++) {
+    assert.deepEqual(await a.call('world:qg-answer', { round: r, choice: rounds[r].answer }), { ok: true });
+    await h.advance(Q.C.REVEAL_MS);
+  }
+  assert.equal(h.lastState().phase, 'results', 'the results do not wait for the save');
+  assert.equal(h.lastState().record, null);
+  await h.advance(Q.C.RESULTS_MS);
+  assert.equal(h.lastState().phase, 'idle');
+  assert.equal(h.lastState().reason, 'done');
+  const before = h.sent.length;
+  release();
+  for (let i = 0; i < 5; i++) await h.advance(0);
+  assert.equal(h.qScores.scores.get(`u1|${PID}`).best, 10000);
+  // After the 'done' idle only the fanfare follows, never a state.
+  const late = h.sent.slice(before);
+  assert.deepEqual(late.map(s => s.event), ['world:qg-fanfare']);
+  assert.equal(late[0].payload.username, 'alex');
+  assert.ok(late[0].to.includes('sa') && late[0].to.includes('sw'));
+});

@@ -54,7 +54,7 @@ function createCore(spec) {
   let io = null;
   let world = null;        // { players: Map(socketId → player), rateOk, touchStay, zoneOf }
   let peers = null;        // { islandBusy(pid, kind), userBusy(uid, kind) } — the registry
-  const games = new Map(); // projectId → { state, sockets: Map(userId → socketId|null), awayUntil: Map(userId → ms), timer, seq, beginning }
+  const games = new Map(); // projectId → { state, sockets: Map(userId → socketId|null), awayUntil: Map(userId → ms), timer, seq, beginning, ended: end reason once over }
   const arrivals = new Map();   // "userId|projectId" → ms of the last arrival fanfare
 
   // ── lookups ──
@@ -195,9 +195,14 @@ function createCore(spec) {
     schedule(g);
   }
 
-  // Results: save every finisher's game, decide the record, then show it.
+  // Results: show them at once (their RESULTS_MS runs from here), then save
+  // every finisher's game and decide the record. A record re-broadcasts the
+  // results while they are still up; a save that outlasts them (the game
+  // already ended 'done') still sends the fanfare to the island and the
+  // seated players, never a state (the client keeps the final results).
   async function finish(g) {
     schedule(g);
+    broadcast(g);
     const projectId = g.state.projectId;
     let record = null;
     try {
@@ -205,12 +210,14 @@ function createCore(spec) {
     } catch (e) {
       log(tag + ': saving scores failed:', e && e.message);
     }
-    if (games.get(projectId) !== g) return;
-    if (record) g.state = Object.assign({}, g.state, { record });
-    broadcast(g);
-    if (record) {
-      emitTo(targets(g), EV.fanfare, { projectId, kind: 'record', username: record.username, score: record.score });
+    if (!record) return;
+    const running = games.get(projectId) === g;
+    if (!running && g.ended !== 'done') return;
+    if (running) {
+      g.state = Object.assign({}, g.state, { record });
+      broadcast(g);
     }
+    emitTo(targets(g), EV.fanfare, { projectId, kind: 'record', username: record.username, score: record.score });
   }
 
   async function persist(g) {
@@ -259,6 +266,7 @@ function createCore(spec) {
     const projectId = g.state.projectId;
     if (games.get(projectId) !== g) return;
     games.delete(projectId);
+    g.ended = reason;
     g.seq++;
     if (g.timer) clearT(g.timer);
     g.timer = null;

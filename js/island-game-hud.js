@@ -150,7 +150,7 @@ const IslandGameHud = (() => {
         if (_engine.setScreenInteract) _engine.setScreenInteract(spec.kind, (pid) => onScreen(pid));
       }
       spec.listen(on, { state: onState, live: onLive, islands: onIslands, records: onRecords, fanfare: onFanfare, arrived: onArrived });
-      on('connect', () => { if (_started) loadConfig(); });
+      on('connect', () => { if (_started) { onReconnect(); loadConfig(); } });
       _ticker = setInterval(tick, 250);
       loadConfig();
     }
@@ -205,6 +205,18 @@ const IslandGameHud = (() => {
       _onTags = null;
       _onChange = null;
       _engineKey = '';
+    }
+
+    // Back after a drop (NET2-01): nobody could tell the old socket that a
+    // game ended or that our seat's grace ran out, so what we hold may be a
+    // ghost ("Back to your game" for good, Play disabled). Forget it all:
+    // world:join → resume(), and onZone once we're on an island again,
+    // re-send every game that is still live. Final results stay up.
+    function onReconnect() {
+      _states.clear();
+      if (_overlay && !_overlay.final) closeOverlay();
+      if (_panel) renderPanel();
+      render();
     }
 
     function onZone(projectId) {
@@ -622,7 +634,10 @@ const IslandGameHud = (() => {
       };
       _overlay = { el, projectId: pid, mode, final: null, refs, local: {}, confettiFor: '' };
       refs.close.addEventListener('click', onCloseClick);
-      el.addEventListener('keydown', onOverlayKey);
+      // On document, not the overlay (NET2-02): a click that disables the
+      // focused choice, or a new round's buttons, drops focus to <body> and
+      // the keys must keep working. onDocKey skips keys aimed elsewhere.
+      document.addEventListener('keydown', onDocKey);
       if (spec.initStage) spec.initStage(_overlay, h);
       syncInput();
       renderOverlay();
@@ -635,6 +650,7 @@ const IslandGameHud = (() => {
       if (!_overlay.final && live && live.phase === 'results') _dismissed.add(live.projectId);
       const el = _overlay.el;
       _overlay = null;
+      document.removeEventListener('keydown', onDocKey);
       el.remove();
       if (!silent) syncInput();
       else if (_engine && _engine.setInputSuspended) _engine.setInputSuspended(!!_panel, spec.kind);
@@ -651,6 +667,15 @@ const IslandGameHud = (() => {
         await spec.send.leave(emit);
       }
       closeOverlay();
+    }
+
+    // Keys inside the overlay, or with focus lost to <body>; never a key
+    // typed into something else (the world chat box).
+    function onDocKey(e) {
+      if (!_overlay) return;
+      const t = e.target;
+      if (t && t !== document.body && t !== document.documentElement && !_overlay.el.contains(t)) return;
+      onOverlayKey(e);
     }
 
     function onOverlayKey(e) {

@@ -160,7 +160,9 @@ const FriendHomeView = (() => {
           }
           if (st && st.connected === false && _voice && _voice._diag) {
             const d = _voice._diag();
-            const peer = d.peers.find(p => p.id === peerId);
+            // 'failed' tears the peer down before telling us, so it comes with
+            // its own snapshot (st.diag); other teardowns stay quiet as before.
+            const peer = (st.reason === 'failed' && st.diag && st.diag.id === peerId) ? st.diag : d.peers.find(p => p.id === peerId);
             if (peer) {
               console.warn('[Voice] peer disconnected:', peer.username,
                 'connState=' + peer.connectionState,

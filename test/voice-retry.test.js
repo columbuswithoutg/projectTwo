@@ -3,6 +3,8 @@
  * 'failed' (NET-03): retry after 1 s, then 10 s, then give up on that peer
  * with reason 'gave-up'; counts reset when the peer leaves / rejoins or a
  * connection succeeds; the non-initiating side never rebuilds on its own.
+ * Also: a muted peer stays muted when its link is rebuilt (NET2-04), and a
+ * 'failed' teardown hands the view a diagnostics snapshot (NET2-06).
  *
  * voice-chat.js is a browser script (const VoiceManager = (() => …)()), so
  * it runs in a vm context with just enough fake WebRTC / DOM / timers.
@@ -17,7 +19,7 @@ const vm = require('vm');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'voice-chat.js'), 'utf8');
 
-function harness(socketId) {
+function harness(socketId, remotes) {
   const timers = [];   // pending setTimeout callbacks, fired by hand
   const pcs = [];
   class FakePC {
@@ -56,7 +58,7 @@ function harness(socketId) {
   const states = [];
   const handle = VM.start({
     socket, scope: 'world',
-    getLocalState: () => null, getRemotePlayers: () => [],
+    getLocalState: () => null, getRemotePlayers: () => remotes || [],
     onPeerStateChange: (id, st) => states.push([id, st])
   });
   const retryTimers = () => timers.filter(t => !t.done && (t.ms === 1000 || t.ms === 10000));
@@ -135,4 +137,71 @@ test('non-initiator never rebuilds on its own and gives up after the same count'
   const reasons = h.states.map(s => s[1].reason).filter(Boolean);
   assert.deepEqual(reasons, ['failed', 'failed', 'gave-up']);
   h.handle.stop();
+});
+
+test("'failed' hands the view a snapshot of the peer it just tore down", () => {
+  const h = harness('a', [{ id: 'b', username: 'bob' }]);
+  h.handlers['voice:peers']({ scope: 'world', peers: ['b'] });
+  h.pcs[0].fail();
+  const st = h.states.find(s => s[1].reason === 'failed')[1];
+  assert.ok(st.diag, 'diag snapshot attached');
+  assert.equal(st.diag.id, 'b');
+  assert.equal(st.diag.username, 'bob');
+  assert.equal(st.diag.connectionState, 'failed', 'taken before close()');
+  assert.equal(h.handle._diag().peers.length, 0, 'the live list no longer has it');
+});
+
+test('a muted peer stays muted when the link is rebuilt (peer-left → peer-joined)', () => {
+  const remotes = [{ id: 'b', username: 'bob' }];
+  const h = harness('a', remotes);
+  h.handlers['voice:peers']({ scope: 'world', peers: ['b'] });
+  h.handle.mutePeer('b', true);
+  assert.equal(h.handle.isMuted('b'), true);
+  h.handlers['voice:peer-left']({ id: 'b' });
+  h.handlers['voice:peer-joined']({ id: 'b' });
+  assert.equal(h.handle.isMuted('b'), true, 'still muted on the fresh entry');
+
+  // A reconnect gives bob a new socket id: the mute follows the name.
+  h.handlers['voice:peer-left']({ id: 'b' });
+  remotes[0] = { id: 'b2', username: 'bob' };
+  h.handlers['voice:peer-joined']({ id: 'b2' });
+  assert.equal(h.handle.isMuted('b2'), true);
+
+  // Unmuting clears it for the next rebuild too.
+  h.handle.mutePeer('b2', false);
+  h.handlers['voice:peer-left']({ id: 'b2' });
+  h.handlers['voice:peer-joined']({ id: 'b2' });
+  assert.equal(h.handle.isMuted('b2'), false);
+  h.handle.stop();
+});
+
+test('a mute made before the name is known moves to the name once it is', () => {
+  const remotes = [];
+  const h = harness('a', remotes);
+  h.handlers['voice:peers']({ scope: 'world', peers: ['b'] });
+  h.handle.mutePeer('b', true);                 // no username yet
+  h.handlers['voice:peer-left']({ id: 'b' });
+  h.handlers['voice:peer-joined']({ id: 'b' });
+  assert.equal(h.handle.isMuted('b'), true, 'same socket: still muted');
+  remotes.push({ id: 'b', username: 'bob' });
+  h.handlers['voice:peer-left']({ id: 'b' });
+  h.handlers['voice:peer-joined']({ id: 'b' }); // createPeer learns the name
+  h.handlers['voice:peer-left']({ id: 'b' });
+  remotes[0] = { id: 'b9', username: 'bob' };
+  h.handlers['voice:peer-joined']({ id: 'b9' });
+  assert.equal(h.handle.isMuted('b9'), true, 'new socket, same user');
+  h.handle.stop();
+});
+
+test('the mute list outlives a voice session (VoiceManager scope)', () => {
+  const remotes = [{ id: 'b', username: 'bob' }];
+  const h = harness('a', remotes);
+  h.handlers['voice:peers']({ scope: 'world', peers: ['b'] });
+  h.handle.mutePeer('b', true);
+  h.handle.stop();
+  const socket = { id: 'a', on(ev, fn) { h.handlers[ev] = fn; }, off() {}, emit() {} };
+  const again = h.VM.start({ socket, scope: 'world', getLocalState: () => null, getRemotePlayers: () => remotes });
+  h.handlers['voice:peers']({ scope: 'world', peers: ['b'] });
+  assert.equal(again.isMuted('b'), true);
+  again.stop();
 });

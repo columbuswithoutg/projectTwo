@@ -46,10 +46,11 @@ function real() {
   return _real;
 }
 
-// The real registry's methods, resolved on first call (so requiring this
-// file loads no models).
+// The real registry's methods that routes/world-socket.js and server.js call,
+// resolved on first call (so requiring this file loads no models). get /
+// islandBusy / userBusy stay on the registry itself (the games' peers).
 const api = { createRegistry };
-for (const k of ['get', 'islandBusy', 'userBusy', 'isPlaying', 'attach', 'register', 'retire', 'resume', 'onZone', 'socketGone', 'endAll']) {
+for (const k of ['isPlaying', 'attach', 'register', 'retire', 'resume', 'onZone', 'socketGone', 'endAll']) {
   api[k] = (...args) => real()[k](...args);
 }
 module.exports = api;

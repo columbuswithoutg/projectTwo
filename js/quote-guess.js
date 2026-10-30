@@ -91,6 +91,22 @@ const QuoteGuess = (() => {
     return ov.local.refs;
   }
 
+  // One optional part of a choice button (the ✓ / ★ / ✗ mark, the dots for
+  // who picked it): added, changed or removed in place.
+  function patchPart(btn, cls, content, isText) {
+    let el = btn.querySelector('.' + cls);
+    if (!content) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement('span');
+      el.className = cls;
+      if (isText) el.setAttribute('aria-hidden', 'true');
+      const who = cls === 'qg-mark' ? btn.querySelector('.qg-who') : null;
+      if (who) btn.insertBefore(el, who); else btn.appendChild(el);
+    }
+    if (isText) { if (el.textContent !== content) el.textContent = content; }
+    else if (el._qgHtml !== content) { el._qgHtml = content; el.innerHTML = content; }
+  }
+
   // My answer for this round: { round, choice, sending, locked }.
   function mine(ov, st) {
     if (!ov.local.mine || ov.local.mine.round !== st.round) ov.local.mine = { round: st.round, choice: null, sending: false, locked: false };
@@ -140,7 +156,7 @@ const QuoteGuess = (() => {
     r.card.hidden = !cur;
     r.options.hidden = !cur;
     r.speed.hidden = !(cur && st.phase === 'round');
-    if (!cur) { r.reveal.hidden = true; r.options.innerHTML = ''; return; }
+    if (!cur) { r.reveal.hidden = true; r.options.innerHTML = ''; delete r.options.dataset.key; return; }
 
     const reply = cur.type === 'reply';
     const hist = st.phase === 'reveal' ? (st.history || [])[st.round] : null;
@@ -160,26 +176,42 @@ const QuoteGuess = (() => {
       r.quote.textContent = cur.prompt.text;
     }
 
-    // The four choices.
+    // The four choices: built once per round, then patched in place
+    // (NET2-02) — a rebuild on every broadcast dropped focus (the keys went
+    // dead) and ate a click whose press spanned it.
     const can = canAnswer(ov, st, h);
     const picksBy = {};
     if (hist) for (const p of hist.picks || []) if (p.choice) (picksBy[p.choice] = picksBy[p.choice] || []).push(p.username);
     r.options.className = 'qg-options ' + (reply ? 'is-reply' : 'is-who') + (can ? ' is-open' : '');
-    r.options.innerHTML = cur.options.map((o, i) => {
-      const chosen = m && m.choice === o.id;
-      const right = hist && hist.answer === o.id;
-      const wrong = hist && chosen && !right;
-      const who = (picksBy[o.id] || []).map(u => `<i class="sg-chip-dot ${h.colorOf(st, u)}" title="${esc(u)}">${esc(H.initials(u))}</i>`).join('');
+    const optKey = JSON.stringify([cardKey, cur.options.map(o => [o.id, o.label, o.characterId || null])]);
+    if (r.options.dataset.key !== optKey) {
+      const act = document.activeElement;
+      const hadFocus = !act || act === document.body || r.options.contains(act);
+      r.options.dataset.key = optKey;
+      r.options.innerHTML = cur.options.map((o, i) => `
+        <button type="button" class="qg-opt" data-choice="${esc(o.id)}" ${i === 0 ? 'data-focus' : ''}
+            aria-pressed="false" aria-label="${esc((i + 1) + '. ' + o.label)}">
+          <kbd>${'ABCD'[i]}</kbd>
+          ${reply ? '' : face(o.label, o.characterId, 36)}
+          <span class="qg-opt-label">${esc(o.label)}</span>
+        </button>`).join('');
+      // A new round: focus that was on the old choices (or lost to <body>
+      // when a click disabled them) moves to the new ones.
+      const first = hadFocus && r.options.querySelector('[data-focus]');
+      if (first) first.focus({ preventScroll: true });
+    }
+    for (const btn of r.options.querySelectorAll('button[data-choice]')) {
+      const id = btn.dataset.choice;
+      const chosen = !!(m && m.choice === id);
+      const right = !!(hist && hist.answer === id);
+      const wrong = !!(hist && chosen && !right);
       const cls = ['qg-opt', chosen ? 'is-chosen' : '', right ? 'is-right' : '', wrong ? 'is-wrong' : '', hist && !right && !chosen ? 'is-dim' : ''].join(' ');
-      return `<button type="button" class="${cls}" data-choice="${o.id}" ${can ? '' : 'disabled'} ${i === 0 ? 'data-focus' : ''}
-          aria-pressed="${chosen ? 'true' : 'false'}" aria-label="${esc((i + 1) + '. ' + o.label)}">
-        <kbd>${'ABCD'[i]}</kbd>
-        ${reply ? '' : face(o.label, o.characterId, 36)}
-        <span class="qg-opt-label">${esc(o.label)}</span>
-        ${right ? '<span class="qg-mark" aria-hidden="true">★</span>' : wrong ? '<span class="qg-mark" aria-hidden="true">✗</span>' : chosen ? '<span class="qg-mark" aria-hidden="true">✓</span>' : ''}
-        ${who ? `<span class="qg-who">${who}</span>` : ''}
-      </button>`;
-    }).join('');
+      if (btn.className !== cls) btn.className = cls;
+      if (btn.disabled !== !can) btn.disabled = !can;
+      btn.setAttribute('aria-pressed', chosen ? 'true' : 'false');
+      patchPart(btn, 'qg-mark', right ? '★' : wrong ? '✗' : chosen ? '✓' : '', true);
+      patchPart(btn, 'qg-who', (picksBy[id] || []).map(u => `<i class="sg-chip-dot ${h.colorOf(st, u)}" title="${esc(u)}">${esc(H.initials(u))}</i>`).join(''), false);
+    }
 
     // Under the choices: waiting / the reveal.
     r.reveal.hidden = !(hist || (m && m.choice));

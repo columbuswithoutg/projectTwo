@@ -158,7 +158,7 @@ const SceneGuess = (() => {
     on('world:sg-records', onRecords);
     on('world:sg-fanfare', onFanfare);
     on('world:sg-arrived', onArrived);
-    on('connect', () => { if (_started) loadConfig(); });
+    on('connect', () => { if (_started) { onReconnect(); loadConfig(); } });
     _ticker = setInterval(tick, 250);
     loadConfig();
   }
@@ -215,6 +215,18 @@ const SceneGuess = (() => {
     _engine = null;
     _onTags = null;
     _engineKey = '';
+  }
+
+  // Back after a drop (NET2-01): nobody could tell the old socket that a
+  // game ended or that our seat's grace ran out, so what we hold may be a
+  // ghost ("Back to your game" for good, Play disabled). Forget it all:
+  // world:join → resume(), and onZone once we're on an island again,
+  // re-send every game that is still live. Final results stay up.
+  function onReconnect() {
+    _states.clear();
+    if (_overlay && !_overlay.final) closeOverlay();
+    if (_panel) renderPanel();
+    render();
   }
 
   function onZone(projectId) {

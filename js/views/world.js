@@ -943,8 +943,9 @@ const WorldView = (() => {
           // and must not raise the alarm.
           const trouble = st && st.connected === false && (st.reason === 'failed' || st.reason === 'disconnected');
           if (trouble && _voice && _voice._diag) {
-            const d = _voice._diag();
-            const peer = d.peers.find(p => p.id === peerId);
+            // 'failed' tears the peer down before telling us, so it comes
+            // with its own snapshot (st.diag); 'disconnected' is still live.
+            const peer = (st.diag && st.diag.id === peerId) ? st.diag : _voice._diag().peers.find(p => p.id === peerId);
             if (peer) {
               console.warn('[Voice] peer disconnected:', peer.username,
                 'connState=' + peer.connectionState,
