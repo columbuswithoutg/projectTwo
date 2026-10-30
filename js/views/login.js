@@ -100,6 +100,8 @@ const LoginView = {
     tabs.forEach(tab => {
       tab.addEventListener('click', () => setMode(tab.dataset.tab));
     });
+    // "Start your own" on a Doomsday share page lands here on Register.
+    if (new URLSearchParams(location.search).get('register') === '1') setMode('register');
 
     function showError(msg, kind = 'error') {
       errorEl.textContent = msg;
@@ -184,11 +186,18 @@ const LoginView = {
       submitBtn.disabled = true;
       submitBtn.textContent = 'Please wait…';
 
+      // Signing up from someone's share page: their token rides along, and
+      // the server sends them a friend request from the new account.
+      let ref = null;
+      if (currentMode === 'register') {
+        try { ref = ShareLogic.refFromStorage(localStorage.getItem(SHARE_REF_KEY)); } catch (_) {}
+      }
+
       try {
         const res = await fetch(`${API}/auth/${currentMode}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password })
+          body: JSON.stringify(ref ? { username, password, ref } : { username, password })
         });
 
         let data = null;
@@ -211,6 +220,8 @@ const LoginView = {
           localStorage.setItem('mcu_username', data.username);
           Router.go(nextUrl, { replace: true });
         } else {
+          try { localStorage.removeItem(SHARE_REF_KEY); } catch (_) {}
+          if (data.referredBy) toast(`Friend request sent to ${data.referredBy}.`, 'success');
           await playSuccessTransition(username);
         }
       } catch (e) {

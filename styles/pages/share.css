@@ -1,0 +1,304 @@
+/************************************************
+ * DOOMSDAY SHARE
+ *   .share-panel / .share-box   the "Share to your story" dialog (js/share.js)
+ *   .share-page                 the public /s/:token page (js/views/shared.js)
+ *   .share-order                its read-only watch order (/s/:token/map)
+ *   #profile-share, .goals-share-btn   the two ways in
+ ************************************************/
+
+/* ── Dialog ── */
+.share-panel {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--scrim-heavy);
+}
+.share-box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(440px, 100%);
+  max-height: 92vh;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding: 22px;
+  background: var(--dialog-bg);
+  border: var(--dialog-border);
+  box-shadow: var(--dialog-shadow);
+  border-radius: var(--radius-panel);
+  color: var(--text-1);
+}
+.share-box h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  font-size: calc(24px * var(--display-scale));
+}
+.share-box .popup-close { position: absolute; top: 12px; right: 12px; }
+
+.share-preview {
+  align-self: center;
+  width: min(220px, 52vw);
+  aspect-ratio: 9 / 16;
+  border-radius: 14px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  box-shadow: var(--shadow-2);
+}
+.share-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.share-preview-wait { color: var(--text-3); font-size: var(--font-size-sm); padding: 12px; text-align: center; }
+.share-preview[aria-busy="true"] .share-preview-wait { animation: share-pulse 1.2s ease-in-out infinite; }
+@keyframes share-pulse { 50% { opacity: 0.45; } }
+
+.share-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+  color: var(--text-2);
+}
+.share-steps strong { color: var(--text-1); }
+
+.share-link-row { display: flex; gap: 8px; }
+.share-link-row input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--touch-target-min);
+  padding: 0 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-2);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font: 500 var(--font-size-sm) var(--font-ui);
+}
+.share-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.share-actions .btn { flex: 1 1 160px; }
+.share-actions .btn[hidden] { display: none; }
+
+.share-note { margin: 0; font-size: var(--font-size-xs); line-height: var(--line-height-base); color: var(--text-3); }
+.share-joins { display: block; margin-top: 4px; color: var(--highlight); font-weight: 600; }
+.share-joins[hidden] { display: none; }
+.share-off {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: 600 var(--font-size-xs) var(--font-ui);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.share-off[hidden] { display: none; }
+
+/* ── Ways in ── */
+.goals-share-btn { align-self: stretch; }
+#profile-share { margin: 22px auto 0; max-width: 520px; text-align: center; }
+.profile-share-text { margin: 10px 0 6px; font-size: var(--font-size-sm); color: var(--text-2); }
+.profile-share-status { margin: 0 0 10px; font-size: var(--font-size-sm); color: var(--highlight); font-weight: 600; }
+.profile-share-status[hidden] { display: none; }
+#profile-share .profile-support-btn[hidden] { display: none; }
+
+/* ── Public page ── */
+.share-page {
+  min-height: 100dvh;
+  background: var(--page-deco), var(--surface-0);
+  color: var(--text-1);
+}
+.share-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--header-height);
+  padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+  background: linear-gradient(180deg, var(--color-dark-gradient-top) 0%, var(--color-bg) 100%);
+  border-bottom: 2px solid var(--border-print);
+  box-shadow: var(--shadow-1);
+}
+.share-topbar .brand-mark { width: 30px; height: 30px; flex-shrink: 0; }
+.share-topbar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 600 var(--font-size-base) var(--font-ui);
+  letter-spacing: 0.03em;
+}
+.share-topbar-title b { color: var(--accent-text); }
+.share-topbar-btn.btn { min-height: 36px; padding: 0 14px; font-size: var(--font-size-sm); }
+.share-topbar-back {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-2);
+  background: rgba(var(--ink), 0.05);
+  color: var(--text-1);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.share-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: min(640px, 100%);
+  margin: 0 auto;
+  padding: 20px 16px calc(40px + env(safe-area-inset-bottom));
+}
+.share-loading { text-align: center; color: var(--text-3); padding: 40px 0; }
+
+.share-card {
+  padding: 22px 18px;
+  background: var(--card-bg);
+  border: var(--card-border);
+  box-shadow: var(--card-shadow);
+  border-radius: var(--radius-card);
+}
+
+.share-hero { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.share-avatar {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--surface-3);
+  box-shadow: 0 0 0 3px rgba(var(--highlight-rgb), 0.75), 0 14px 32px rgba(var(--primary-rgb), 0.3);
+  font: 400 44px var(--font-bebas);
+}
+.share-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 20%; }
+[data-theme="comic"] .share-avatar { border: 3px solid #111111; box-shadow: 4px 4px 0 #111111; }
+
+.share-eyebrow {
+  margin: 14px 0 0;
+  font: 700 var(--font-size-xs) var(--font-ui);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--highlight);
+}
+[data-theme="comic"] .share-eyebrow { color: #111111; }
+.share-title {
+  margin: 4px 0 6px;
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  font-size: calc(clamp(30px, 9vw, 44px) * var(--display-scale));
+  line-height: 1;
+}
+
+.share-ring { width: 168px; height: 168px; margin: 8px 0 4px; }
+.share-ring-track { fill: none; stroke: rgba(var(--ink), 0.1); stroke-width: 12; }
+.share-ring-fill { fill: none; stroke-width: 12; stroke-linecap: round; }
+.share-ring-count { text-anchor: middle; fill: var(--text-1); font: 400 38px var(--font-bebas); }
+.share-ring-label { text-anchor: middle; fill: var(--text-3); font: 700 9px var(--font-ui); letter-spacing: 0.2em; }
+
+.share-countdown {
+  margin: 6px 0 0;
+  padding: 7px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(var(--primary-rgb), 0.55);
+  background: rgba(var(--primary-rgb), 0.12);
+  font: 700 var(--font-size-sm) var(--font-ui);
+  letter-spacing: 0.04em;
+}
+.share-owner-note { margin: 12px 0 0; font-size: var(--font-size-sm); color: var(--text-3); }
+.share-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 18px;
+  width: 100%;
+}
+.share-hero-actions .btn { flex: 1 1 200px; }
+
+.share-section-title {
+  margin: 0 0 14px;
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  font-size: calc(20px * var(--display-scale));
+}
+
+.share-posters {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 12px;
+}
+.share-poster { position: relative; display: flex; flex-direction: column; gap: 6px; }
+.share-poster-art {
+  position: relative;
+  display: block;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 2px solid var(--border-1);
+}
+.share-poster-art .poster-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.share-poster:not(.is-watched) .share-poster-art { opacity: 0.38; filter: grayscale(0.85); }
+.share-poster.is-watched .share-poster-art { border-color: rgba(var(--highlight-rgb), 0.8); }
+.share-poster-check {
+  position: absolute;
+  z-index: 2;               /* above the poster card + image (components/poster.css) */
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--color-health-good, #2fbf71);
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 14px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+.share-poster-title { font-size: var(--font-size-xs); line-height: var(--line-height-tight); color: var(--text-2); }
+.share-poster:not(.is-watched) .share-poster-title { color: var(--text-3); }
+
+.share-join { text-align: center; }
+.share-join p { margin: 0 0 16px; color: var(--text-2); font-size: var(--font-size-sm); }
+.share-join .btn { width: 100%; }
+
+.share-gone { text-align: center; }
+.share-gone h1 { margin: 0 0 8px; font: 700 var(--font-size-xl) var(--font-ui); }
+.share-gone p { margin: 0 0 18px; color: var(--text-3); }
+
+/* ── Read-only watch order ── */
+.share-order { display: flex; flex-direction: column; height: 100dvh; }
+.share-order-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-1);
+  font-size: var(--font-size-sm);
+  color: var(--text-2);
+}
+.share-order-banner .btn { min-height: 36px; padding: 0 14px; font-size: var(--font-size-sm); }
+.share-order .flow-wrapper { flex: 1; min-height: 0; }

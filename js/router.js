@@ -21,6 +21,11 @@ const Router = (() => {
   // view that's accidentally added without going through navigate (e.g.
   // a test harness calling view.mount() directly) still self-defends.
   const PUBLIC_ROUTES = new Set(['/login']);
+  // ...and every route under these prefixes: /s/<token> is a Doomsday share
+  // page, opened from a story by people who may have no account
+  // (js/views/shared.js — it shows only what the sharer chose to share).
+  const PUBLIC_PREFIXES = ['/s/'];
+  const isPublic = (path) => PUBLIC_ROUTES.has(path) || PUBLIC_PREFIXES.some(p => path.startsWith(p));
 
   function register(path, view) {
     if (path.includes(':')) {
@@ -193,8 +198,9 @@ const Router = (() => {
     // address-bar navigation, browser back/forward, and clicks on
     // non-friend links — without it, friend state.data + walker overrides
     // would leak into the user's own views. Called even when not yet active
-    // so a friend load still in flight is cancelled too.
-    if (typeof FriendView !== 'undefined' && !path.startsWith('/friend/')) {
+    // so a friend load still in flight is cancelled too. A share page
+    // (/s/<token>) swaps in the sharer's data the same way.
+    if (typeof FriendView !== 'undefined' && !path.startsWith('/friend/') && !path.startsWith('/s/')) {
       FriendView.exit();
     }
 
@@ -207,7 +213,7 @@ const Router = (() => {
     let redirectedToLogin = false;
     let loginUrl = '/login';
     const authReady = typeof Auth !== 'undefined';
-    if (authReady && !PUBLIC_ROUTES.has(path) && !Auth.isLoggedIn()) {
+    if (authReady && !isPublic(path) && !Auth.isLoggedIn()) {
       if (fullUrl !== '/') loginUrl += '?next=' + encodeURIComponent(fullUrl);
       path = '/login';
       redirectedToLogin = true;
@@ -345,7 +351,7 @@ const Router = (() => {
   }
 
   return { register, init, navigate, go, back, confirmLeave, firstMount,
-    _debug: { normalizePath, matchPatternIn } };
+    _debug: { normalizePath, matchPatternIn, isPublic } };
 })();
 // Node (test/router-match.test.js) only — the browser chunk has no `module`.
 if (typeof module !== 'undefined' && module.exports) module.exports = Router;

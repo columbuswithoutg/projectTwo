@@ -23,7 +23,9 @@ function showPopup(project) {
   <h3>${esc(project.title)}</h3>
 
   ${isWatched ? `
-    <p class="watch-count">Watched ${count} time${count !== 1 ? 's' : ''}</p>
+    <p class="watch-count">${FriendView.getActive()?.shareToken
+      ? 'Watched'   /* a share page carries watched status only, no counts */
+      : `Watched ${count} time${count !== 1 ? 's' : ''}`}</p>
 ${watchedWith.length ? (() => {
       const currentUsername = Auth.getUsername();
       const formatted = watchedWith.map(name =>

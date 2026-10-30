@@ -86,6 +86,16 @@ const ProfileView = {
           <p id="cowatcher-name"></p>
         </div>
 
+        <div id="profile-share">
+          <p class="profile-section-label">Share your progress</p>
+          <p class="profile-share-text">Post your road to Avengers: Doomsday to your Instagram or Facebook story. Friends who tap your link see your checklist and watch order — no account needed.</p>
+          <p class="profile-share-status" id="profile-share-status" hidden></p>
+          <div class="profile-support-actions">
+            <button type="button" class="profile-support-btn primary" id="profile-share-btn">Share to story</button>
+            <button type="button" class="profile-support-btn" id="profile-share-off" hidden>Turn off link</button>
+          </div>
+        </div>
+
         <div id="profile-appearance">
           <p class="profile-section-label">Appearance</p>
           <div id="theme-toggle" role="radiogroup" aria-label="Theme">
@@ -126,6 +136,28 @@ const ProfileView = {
     document.getElementById('profile-reports-btn').addEventListener('click', () => Router.go('/reports'));
     document.getElementById('profile-report-btn').addEventListener('click', () => showReportDialog());
     MessagesBadge.apply();
+
+    // Share your progress: whether the link is on, and how many joined from it.
+    const shareStatus = document.getElementById('profile-share-status');
+    const shareOff = document.getElementById('profile-share-off');
+    const paintShare = (info) => {
+      if (!shareStatus.isConnected) return;
+      shareOff.hidden = !(info && info.enabled);
+      if (!info || !info.enabled) { shareStatus.hidden = true; return; }
+      const joins = info.joins || 0;
+      shareStatus.textContent = `Your link is on${joins ? ` · ${joins} ${joins === 1 ? 'person' : 'people'} joined from it` : ''}.`;
+      shareStatus.hidden = false;
+    };
+    ShareProgress.link().then(paintShare).catch(() => {});
+    document.getElementById('profile-share-btn').addEventListener('click', () => ShareProgress.open());
+    shareOff.addEventListener('click', async () => {
+      try {
+        const info = await ShareProgress.turnOff();
+        if (info) paintShare(info);
+      } catch (_) {
+        toast('Couldn’t turn the link off — try again.', 'error');
+      }
+    });
 
     // Appearance toggle — drives js/theme.js; active state mirrors the
     // SAVED mode ('system' when no explicit choice), not the resolved theme.

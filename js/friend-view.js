@@ -28,7 +28,7 @@ const FriendView = (() => {
   // the home fields (layout / decorations / roof) even when cached, so the
   // Home tab never shows rooms the friend has since redecorated.
   async function enter(username, opts) {
-    if (_active && _active.username === username) {
+    if (_active && !_active.shareToken && _active.username === username) {
       if (!(opts && opts.freshHome)) return _active;
       const seq = _enterSeq;
       try {
@@ -42,6 +42,28 @@ const FriendView = (() => {
       } catch (_) { /* keep the cached copy */ }
       return (_active && _active.username === username) ? _active : null;
     }
+    return _enterWith(() => Friends.getByUsername(username));
+  }
+
+  // A Doomsday share page (/s/<token>): the same read-only swap, fed by the
+  // public share data — { username, profilePicture, watched: [ids] }. Keyed
+  // by token, so it never matches a /friend/ visit of the same person.
+  async function enterShared(token) {
+    if (_active && _active.shareToken === token) return _active;
+    return _enterWith(async () => {
+      const res = await fetch(`${API}/share/public/${encodeURIComponent(token)}`);
+      const d = await res.json().catch(() => null);
+      if (!res.ok || !d || d.error) return null;
+      return {
+        ...d,
+        shareToken: token,
+        watchedProjects: (d.watched || []).map(id => ({ projectId: id, count: 1, watchedWith: [], memories: [] })),
+        walkers: []
+      };
+    });
+  }
+
+  async function _enterWith(load) {
     if (_active) exit();
 
     // exit() (or a newer enter()) bumps _enterSeq while we await, so a late
@@ -50,7 +72,7 @@ const FriendView = (() => {
     const seq = ++_enterSeq;
     let data;
     try {
-      data = await Friends.getByUsername(username);
+      data = await load();
     } catch (_) {
       return null;
     }
@@ -187,5 +209,5 @@ const FriendView = (() => {
     if (back) back.addEventListener('click', () => Router.go('/'));
   }
 
-  return { enter, exit, isActive, getActive, replaceSaved, renderHeader, wireHeader, render404 };
+  return { enter, enterShared, exit, isActive, getActive, replaceSaved, renderHeader, wireHeader, render404 };
 })();

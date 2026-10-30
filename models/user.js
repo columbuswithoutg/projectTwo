@@ -48,6 +48,13 @@ const UserSchema = new mongoose.Schema({
   // ranked in the /api/friends/stones leaderboard. (Replaced the old
   // per-player daily stoneHunt, which is gone with the shared redesign.)
   stoneSnaps: { type: Number, default: 0 },
+  // Doomsday story share (routes/share.js). shareToken is the secret in the
+  // public /s/<token> link — set when the user first shares, removed when
+  // they turn the link off (a new share then mints a new one, so old stories
+  // stay dead). No default: the index is sparse. shareJoins counts accounts
+  // created from "Start your own" on that page.
+  shareToken: { type: String },
+  shareJoins: { type: Number, default: 0 },
   // Admin-panel fields. isAdmin is set manually in MongoDB (no public path
   // to admin promotion). banned/bannedAt/banReason gate the user out of the
   // app; tokenVersion is bumped on ban so existing JWTs invalidate without
@@ -144,6 +151,7 @@ const UserSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 UserSchema.index({ usernameLower: 1 }, { unique: true, sparse: true });
+UserSchema.index({ shareToken: 1 }, { unique: true, sparse: true });
 
 // New accounts always carry usernameLower. Existing documents are left
 // alone here (an unrelated save must never hit a duplicate key because of

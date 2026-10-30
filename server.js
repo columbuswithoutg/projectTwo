@@ -148,6 +148,17 @@ const spaFile = path.join(DIST, 'spa.html');
 app.get(/^\/friend\/[^/]+(\/(map|home|profile))?$/, (req, res) => res.sendFile(spaFile));
 // /home/edit also goes through the SPA shell.
 app.get('/home/edit', (req, res) => res.sendFile(spaFile));
+// Doomsday share page — public, no login. The SPA shell with link-preview
+// tags for this share filled in (server/share.js). One DB read per hit, so
+// it gets the same IP limit as the public content endpoints.
+const sharePageLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests, try again in a minute.',
+});
+app.get(/^\/s\/[A-Za-z0-9_-]{12}(\/map)?$/, sharePageLimiter, require('./server/share').sharePage(spaFile));
 
 // Static serving — scoped allowlist. Previously `express.static('.')` exposed
 // server.js, routes/, models/, middleware/, .env, package.json, etc. over HTTP.
@@ -292,6 +303,8 @@ app.use('/api/friends', apiLimiter, require('./routes/friends'));
 app.use('/api/feed', apiLimiter, require('./routes/feed'));
 app.use('/api/upload', uploadLimiter, require('./routes/upload'));
 app.use('/api/profile', apiLimiter, require('./routes/profile'));
+// Doomsday story share: the owner's link settings + the public share data.
+app.use('/api/share', apiLimiter, require('./routes/share'));
 // Messages inbox (persisted whispers / DMs / admin replies) and bug &
 // suggestion reports (user side; the admin side is under /api/admin).
 app.use('/api/messages', apiLimiter, require('./routes/messages'));

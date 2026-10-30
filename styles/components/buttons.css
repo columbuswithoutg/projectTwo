@@ -1,7 +1,8 @@
 /************************************************
  * BUTTONS — one system for the whole app
  *
- *   .btn + .btn--primary (the 3D engine's Retry/Reload button uses it).
+ *   .btn + .btn--primary (the 3D engine's Retry/Reload button uses it) or
+ *   .btn--secondary (the Doomsday share page and dialog).
  *   Secondary looks come from the selector lists below.
  *
  * The older one-off button classes adopt the same looks by selector list
@@ -105,6 +106,7 @@
 }
 
 /* ── Secondary ── */
+.btn--secondary,
 :is(.popup-action.secondary, .friend-reject-btn, .friend-remove-btn, .profile-support-btn:not(.primary),
     .confirm-btn:not(.confirm-ok), .wc-btn:not(.wc-primary)) {
   background: var(--btn2-bg);
@@ -112,12 +114,14 @@
   border: var(--btn2-border);
   box-shadow: var(--btn2-shadow);
 }
+.btn--secondary:not(:disabled):hover,
 :is(.popup-action.secondary, .friend-reject-btn, .friend-remove-btn, .profile-support-btn:not(.primary),
     .confirm-btn:not(.confirm-ok), .wc-btn:not(.wc-primary)):not(:disabled):hover {
   background: var(--btn2-bg-hover);
   color: var(--btn2-fg);
   transform: var(--btn-lift);
 }
+.btn--secondary:not(:disabled):active,
 :is(.popup-action.secondary, .friend-reject-btn, .friend-remove-btn, .profile-support-btn:not(.primary),
     .confirm-btn:not(.confirm-ok), .wc-btn:not(.wc-primary)):not(:disabled):active {
   transform: var(--btn-press);

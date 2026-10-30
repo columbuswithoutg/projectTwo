@@ -63,10 +63,10 @@ export const CHUNKS = {
     'js/config.js', 'js/theme.js', 'js/auth.js', 'js/state.js', 'js/layout.js',
     // scene-guess-logic: Scene Guess rules, used by the /world HUD and the admin stills tab;
     // quote-guess-logic (after it — it reuses its time parsing): Quote Guess rules, /world HUD + admin quotes tab
-    'js/utils.js', 'js/pan-zoom-logic.js', 'js/ux-logic.js', 'js/pan-zoom.js', 'js/messaging-logic.js', 'js/scene-guess-logic.js', 'js/quote-guess-logic.js', 'js/poster-art.js', 'js/nodeFactory.js', 'js/renderer.js',
+    'js/utils.js', 'js/pan-zoom-logic.js', 'js/ux-logic.js', 'js/share-logic.js', 'js/pan-zoom.js', 'js/messaging-logic.js', 'js/scene-guess-logic.js', 'js/quote-guess-logic.js', 'js/poster-art.js', 'js/nodeFactory.js', 'js/renderer.js',
     // road-router: rook-style roads shared by the chart, walkers, the admin board and /world
     'js/road-router.js', 'js/orderRenderer.js',
-    'js/watch-controls.js', 'js/post-composer.js', 'js/popup.js', 'js/goals.js', 'js/friend-view.js', 'js/friends.js',
+    'js/watch-controls.js', 'js/post-composer.js', 'js/popup.js', 'js/goals.js', 'js/share.js', 'js/friend-view.js', 'js/friends.js',
     'js/messages.js', 'js/reports.js',
     'js/memory.js', 'js/walker-dialogues.js', 'js/walkerView.js', 'js/walkers.js',
     'js/chunk-loader.js', 'js/router.js', 'js/nav-drawer.js', 'js/humanoid-prefetch.js',
@@ -75,6 +75,8 @@ export const CHUNKS = {
     'js/views/messages.js', 'js/views/reports.js',
     'js/views/home-builder.js', 'js/views/home-edit.js',
     'js/views/friend-watch.js', 'js/views/friend-map.js', 'js/views/friend-profile.js',
+    // shared: the public Doomsday share pages (/s/:token)
+    'js/views/shared.js',
     'js/boot.js'
   ],
   world: [
@@ -115,7 +117,8 @@ export const CHUNKS = {
 export const EXPECT_GLOBALS = {
   core: ['Router', 'Auth', 'state', 'Chunks', 'CONFIG', 'API', 'Walkers', 'WALKER_DIALOGUES',
          'FriendView', 'WatchOrderView', 'AppView', 'LoginView', 'HomeEditView', 'esc', 'toast',
-         'MessagesView', 'ReportsView', 'Messages', 'MessagesBadge', 'Reports', 'showReportDialog', 'PanZoom', 'PosterArt', 'NavDrawer'],
+         'MessagesView', 'ReportsView', 'Messages', 'MessagesBadge', 'Reports', 'showReportDialog', 'PanZoom', 'PosterArt', 'NavDrawer',
+         'ShareProgress', 'SharedView', 'SharedOrderView'],
   world: ['Playground', 'Playground3D', 'Multiplayer', 'VoiceManager', 'PG3DProps', 'HouseEditor', 'SceneGuess',
           'IslandGameHud', 'QuoteGuess', 'IslandGames',
           'HomeView', 'CustomizeView', 'WorldView', 'FriendHomeView'],
@@ -124,7 +127,7 @@ export const EXPECT_GLOBALS = {
 // Globals attached as properties (`root.PG3DPhysics = api` in the UMD-style
 // files) rather than declared — checked for a `root.Name =` assignment instead.
 export const EXPECT_ATTACHED = {
-  core: ['MessagingLogic', 'HumanoidPrefetch', 'SceneGuessLogic', 'QuoteGuessLogic', 'PanZoomLogic', 'UxLogic'],
+  core: ['MessagingLogic', 'HumanoidPrefetch', 'SceneGuessLogic', 'QuoteGuessLogic', 'PanZoomLogic', 'UxLogic', 'ShareLogic'],
   admin: ['ProjectLogic', 'AdminUsersLogic'],
   world: ['PG3DPhysics', 'WorldNetLogic', 'PG3DInputLogic', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid', 'PG3DGearLogic',
           'PG3DAvatar', 'PG3DGear', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation', 'PG3DScene', 'PG3DQuote']

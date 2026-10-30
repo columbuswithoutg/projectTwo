@@ -101,6 +101,9 @@ Router.register('/friend/:username',         FriendWatchView);
 Router.register('/friend/:username/map',     FriendMapView);
 Router.register('/friend/:username/home',    lazyRoute(['world'], () => FriendHomeView));
 Router.register('/friend/:username/profile', FriendProfileView);
+// Doomsday share pages — public (js/router.js PUBLIC_PREFIXES).
+Router.register('/s/:token',     SharedView);
+Router.register('/s/:token/map', SharedOrderView);
 Router.init('app');
 // Unread-messages badge in the nav drawers — polls a cheap endpoint; each
 // view paints the cached count into its own drawer via MessagesBadge.apply().

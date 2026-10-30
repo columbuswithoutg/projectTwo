@@ -7,18 +7,12 @@
  * requirements were all in view), so this panel now names titles the user
  * may not have unlocked yet — on purpose, it's Marvel's public list.
  *
- * The list is fixed here, not derived from Doomsday's prerequisites: those
- * differ slightly (Loki S1 is required only through Loki S2; X-Men and X2
- * are required but not on Marvel's list).
+ * The list lives in js/share-logic.js (the story share and its server-side
+ * link preview count the same titles).
  ************************************************/
 
-const DOOMSDAY_ID = 'doomsday';
-// Marvel's order.
-const DOOMSDAY_WATCHLIST = [
-  'cap1', 'avengers1', 'infinitywar', 'endgame', 'loki1', 'loki2', 'shangchi',
-  'nowayhome', 'blackpanther2', 'cap4', 'deadpool3', 'drstrange2',
-  'thunderbolts', 'fantasticfour'
-];
+const DOOMSDAY_ID = ShareLogic.DOOMSDAY_ID;
+const DOOMSDAY_WATCHLIST = ShareLogic.DOOMSDAY_WATCHLIST;
 
 // → { target, items: [{ id, title, watched, ready }], met, total }
 // ready = unlocked and not watched yet (something you can watch now).
@@ -100,6 +94,7 @@ function showGoalsPanel() {
       <h3 id="goals-panel-heading">Goals</h3>
       <p class="goals-subtitle">Stream these on Disney+, then catch <strong>${esc(title)}</strong> ${_doomsdayReleaseText(g.target)}.</p>
       <div class="goals-list">${body}</div>
+      ${state.readonly ? '' : `<button type="button" class="btn btn--primary goals-share-btn" id="goals-share">Share to story</button>`}
     </div>
   `;
 
@@ -109,6 +104,10 @@ function showGoalsPanel() {
     initialFocus: panel.querySelector('#close-goals')
   });
   panel.querySelector('#close-goals').addEventListener('click', close);
+  panel.querySelector('#goals-share')?.addEventListener('click', () => {
+    close();
+    ShareProgress.open();
+  });
   activateOnKey(panel, '.goal-req[data-action="goal-req"]');
 
   panel.querySelectorAll('.goal-req[data-action="goal-req"]').forEach(el => {

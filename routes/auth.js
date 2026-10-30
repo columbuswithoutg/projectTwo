@@ -6,6 +6,8 @@ const User = require('../models/user');
 const auth = require('../middleware/auth');
 const Username = require('../server/username');
 const { passwordError, hashPassword, needsRehash, dummyHash, PASSWORD_MAX_BYTES } = require('../server/password');
+const Share = require('../server/share');
+const ShareLogic = require('../js/share-logic');
 
 // Username: 3–30 chars, letters/digits/underscore/dash. Rejects NoSQL operator objects.
 // Password: server/password.js (8 chars … 72 bytes — bcrypt ignores anything
@@ -32,8 +34,17 @@ router.post('/register', async (req, res) => {
     const clean = username.trim();
     if (await Username.exists(clean)) return res.status(400).json({ error: 'Username already exists' });
     const hashed = await hashPassword(password);
-    await User.create({ username: clean, password: hashed });   // the model fills usernameLower
-    res.json({ message: 'User created' });
+    const created = await User.create({ username: clean, password: hashed });   // the model fills usernameLower
+    // Signed up from someone's Doomsday share page ("Start your own"): ask
+    // them to be friends. Best effort — the account exists either way.
+    let referredBy = null;
+    if (ShareLogic.isToken(req.body.ref)) {
+      referredBy = await Share.creditReferral(created._id, req.body.ref).catch(err => {
+        console.error('Register referral error:', err && err.message);
+        return null;
+      });
+    }
+    res.json({ message: 'User created', referredBy });
   } catch (e) {
     // Distinguish duplicate-key from real errors — previously every failure
     // was reported as "username exists", which masked server-side outages.
