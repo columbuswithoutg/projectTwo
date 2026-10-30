@@ -416,14 +416,19 @@
     return list[((slot % list.length) + list.length) % list.length].kind;
   }
 
-  // Where each crown a champion wears sits, × their height. kinds:
-  // [{ kind, y, yStacked }] — the titles one player holds, in order. Alone, a
-  // crown sits at its y; with another it moves to its yStacked if it has one
-  // (a laurel rings the gold crown's band). → [{ kind, y }].
+  // How each reward a champion wears sits on the head [crown-layout]. kinds:
+  // [{ kind, y, yStacked, ring, ringStacked }] — the titles one player holds,
+  // in order. y is an offset from the head's crown fit (PG3DGearLogic.crownFit,
+  // or the Box head's top) in the reward's own units, so it scales with it;
+  // ring is the radius of the reward that rests on the head (a crown's band
+  // 0.16, the default). Alone, a reward uses y / ring; with another it uses
+  // yStacked / ringStacked when it has them (the laurel drops a little and
+  // widens to ring the gold crown's band). → [{ kind, y, ring }].
   function crownLayout(kinds) {
     const list = (kinds || []).filter(k => k && k.kind);
     const stacked = list.length > 1;
-    return list.map(k => ({ kind: k.kind, y: stacked && k.yStacked != null ? k.yStacked : (k.y != null ? k.y : 1.86) }));
+    const pick = (k, a, b, def) => (stacked && k[b] != null ? k[b] : (k[a] != null ? k[a] : def));
+    return list.map(k => ({ kind: k.kind, y: pick(k, 'y', 'yStacked', 0), ring: pick(k, 'ring', 'ringStacked', 0.16) }));
   }
 
   // ── champion's crown ──

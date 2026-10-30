@@ -509,6 +509,80 @@
     };
   }
 
+  // Champion rewards (the Scene Guess crown, the Quote Guess laurel) on this
+  // head [crown-fit]: a ring resting on the skull just above the hairline, or
+  // on whatever is worn on the head — a hat, the hood, a helmet. The reward is
+  // authored with its band centred on its origin, inner radius CROWN_BAND.r
+  // and height CROWN_BAND.h (js/playground3d-scene.js makeCrown).
+  // opts: { bald, hat (1 Beanie, 2 Cap, 3 Top hat, 4 Hood), helmet (index;
+  // hides the hat), headBox ({ center, size } of the head, for the classic
+  // Iron Man / Soldier helmets that are scaled to it) }.
+  // → { y, scale, center, ringR, bottom }: the reward's origin in body space
+  // (center = [0, y, z]), the uniform scale that makes its band ring ringR,
+  // and where the band's lower edge rests.
+  const CROWN_BAND = { r: 0.16, h: 0.09 };
+  // The classic helmets' shells as fractions of the head box (their Box
+  // builders: radius 0.56 × 1.02 / 1.05 of a 0.55 head, then stretched).
+  const CLASSIC_HELM = { 1: [0.571, 0.617, 0.594], 6: [0.588, 0.6, 0.612] };
+  function crownFit(H, opts) {
+    opts = opts || {};
+    const S = H.skull;
+    const hc = opts.bald ? 0.008 : 0.014;
+    // Bare head: the band rests 60% of the way from the eyes to the crown
+    // (just above the hairline), touching the skull + hair front and back.
+    const T0 = 0.6;
+    let ring = Math.max(S.r[0], S.r[2]) * Math.sqrt(1 - T0 * T0) + hc;
+    let bottom = S.c[1] + T0 * S.r[1];
+    let cz = S.c[2];
+    let top = null;                     // a flat lid to ring (the top hat)
+    // An ellipsoid dome (hat, hood, helmet): the ring settles where the dome's
+    // cross-section reaches it — high on the dome, so it reads as worn ON it.
+    const restOn = (c, r) => {
+      const R = Math.max(r[0], r[2]);
+      const t = clamp(Math.sqrt(Math.max(0, 1 - (ring / R) ** 2)), 0.35, 0.97);
+      bottom = c[1] + t * r[1];
+      cz = c[2];
+    };
+    const helm = opts.helmet | 0;
+    const hat = helm ? 0 : (opts.hat | 0);
+    if (helm === 4) {
+      // The Knight's great helm (playground3d-gear.js knightHelm): a barrel
+      // narrowing to 0.9 at the top, closed by a 6 cm dome.
+      const front = Math.max(H.noseZ, H.maxZ) + 0.014, back = H.minZ - 0.016;
+      const rx = Math.max(S.r[0], H.templeX, H.earX) + 0.02;
+      const rz = (front - back) / 2;
+      ring = Math.max(ring, Math.max(rx, rz) * 0.9 * 0.8);
+      restOn([0, H.crownY - 0.012, (front + back) / 2], [rx * 0.9, 0.06, rz * 0.9]);
+    } else if (helm === 1 || helm === 6) {
+      if (opts.headBox && opts.headBox.size) {
+        const b = opts.headBox, f = CLASSIC_HELM[helm];
+        restOn(b.center, [b.size[0] * f[0], b.size[1] * f[1], b.size[2] * f[2]]);
+      } else {
+        const F = helmetFit(H, { pad: 0.03 });
+        restOn(F.c, F.r);
+      }
+    } else if (helm) {
+      const F = helmetFit(H);           // the cowl, Winged and Visor domes
+      restOn(F.c, F.r);
+    } else if (hat === 3) {
+      const F = hatFit(H, 3, { bald: opts.bald });
+      ring = Math.max(ring, Math.max(F.rx, F.rz) * 1.04 + 0.004);
+      top = F.bandY + F.crown * Math.cos(F.tilt);
+      cz = F.c[2] + F.crown * Math.sin(F.tilt);
+    } else if (hat === 4) {
+      const F = hoodFit(H);
+      restOn(F.c, F.r);
+    } else if (hat) {
+      const F = hatFit(H, hat, { bald: opts.bald });
+      restOn(F.c, F.r);
+    }
+    const scale = ring / CROWN_BAND.r;
+    // On a lid, the band rings its top edge (half above, half below).
+    if (top != null) bottom = top - CROWN_BAND.h * scale * 0.5;
+    const y = bottom + CROWN_BAND.h * scale * 0.5;
+    return { y, scale, center: [0, y, cz], ringR: ring, bottom };
+  }
+
   // Dome helmets: over the skull, rim at the brow in front and lower at the
   // back so the skull is covered (no "bald under a skullcap").
   function helmetFit(H, opts) {
@@ -593,7 +667,7 @@
 
   return {
     PART, measureHead, measureTorso, surfaceAt, torsoLandmarks,
-    glassesFit, hatFit, hoodFit, maskRegion, visorFit, helmetFit, rimPlane,
+    glassesFit, hatFit, hoodFit, maskRegion, visorFit, helmetFit, rimPlane, crownFit, CROWN_BAND,
     autoAccent, contrastRatio, luminance,
     regionPlanesFromBox, bandPlanes
   };

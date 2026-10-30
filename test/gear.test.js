@@ -17,9 +17,9 @@ const P = G.PART;
 // A synthetic head: an ellipsoid cranium (radii .09/.12/.11 round y=1.70)
 // with a nose ridge on the front midline and a jaw below — roughly the
 // Masculine Normal head (eyes at ±.034, 1.698, .070).
-function syntheticHead() {
+function syntheticHead(k = 1, base = 1.70) {
   const pos = [], parts = [];
-  const C = [0, 1.70, 0.005], R = [0.09, 0.12, 0.11];
+  const C = [0, base, 0.005 * k], R = [0.09 * k, 0.12 * k, 0.11 * k];
   for (let i = 0; i <= 40; i++) {
     const th = (i / 40) * Math.PI;
     for (let j = 0; j < 48; j++) {
@@ -244,5 +244,74 @@ test('autoAccent: Auto trims read on every palette colour', () => {
       assert.ok(G.contrastRatio(hex, G.autoAccent(hex, 'contrast')) >= 3, `${name} ${c} contrast`);
       assert.ok(G.contrastRatio(hex, G.autoAccent(hex, 'tone')) >= 1.35, `${name} ${c} tone`);
     }
+  }
+});
+
+// Crown + laurel (crown-fit): heads of different sizes and heights stand in
+// for the builds and sexes (Feminine ≈ 0.93, Huge ≈ 1.105 × 1.4 tall).
+const HEADS = [
+  ['Masculine Normal', 1, 1.70],
+  ['Feminine Slim', 0.93, 1.58],
+  ['Huge', 1.105, 1.70],
+  ['small', 0.85, 1.45]
+];
+function headOf(k, base) {
+  const { pos, parts } = syntheticHead(k, base);
+  const eyes = { c: [[-0.034 * k, base - 0.002, 0.098 * k], [0.034 * k, base - 0.002, 0.098 * k]], r: 0.012 };
+  return G.measureHead(pos, parts, eyes);
+}
+
+test('crownFit: bare head — the band rings the skull + hair just above the hairline', () => {
+  for (const [name, k, base] of HEADS) {
+    const H = headOf(k, base);
+    const F = G.crownFit(H);
+    const S = H.skull;
+    // Scale makes the band's inner radius the ring radius.
+    near(F.scale * G.CROWN_BAND.r, F.ringR, 1e-9, name);
+    // The ring is wider than the skull where it rests (no clipping), but not loose.
+    const t = (F.bottom - S.c[1]) / S.r[1];
+    const k2 = Math.sqrt(1 - t * t);
+    assert.ok(F.ringR > Math.max(S.r[0], S.r[2]) * k2 + 0.01, name + ' clears the hair');
+    assert.ok(F.ringR < Math.max(S.r[0], S.r[2]) + 0.01, name + ' is not wider than the head');
+    // Above the hairline, below the top of the head; the band's top above the crown is fine.
+    assert.ok(F.bottom >= H.hairlineY - 0.002 && F.bottom < H.crownY, name + ' rests at the upper forehead');
+    near(F.y, F.bottom + G.CROWN_BAND.h * F.scale / 2, 1e-9, name + ' origin = band centre');
+    assert.deepEqual(F.center, [0, F.y, S.c[2]]);
+  }
+  // Fits follow the head: a bigger head gets a bigger crown, a lower head a lower one.
+  const a = G.crownFit(headOf(1, 1.70)), b = G.crownFit(headOf(1.105, 1.70)), c = G.crownFit(headOf(0.93, 1.58));
+  assert.ok(b.scale > a.scale && c.scale < a.scale);
+  assert.ok(c.y < a.y - 0.1);
+  // Bald: less hair room.
+  assert.ok(G.crownFit(headOf(1, 1.70), { bald: true }).ringR < a.ringR);
+});
+
+test('crownFit: with a hat, hood or helmet the reward sits higher, on top of it', () => {
+  for (const [name, k, base] of HEADS) {
+    const H = headOf(k, base);
+    const bare = G.crownFit(H);
+    for (const hat of [1, 2, 4]) {
+      const F = G.crownFit(H, { hat });
+      assert.ok(F.bottom > bare.bottom + 0.005, `${name} hat ${hat} lifts it (${F.bottom} vs ${bare.bottom})`);
+      // Still on the dome: below the hat's own top.
+      const D = hat === 4 ? G.hoodFit(H) : G.hatFit(H, hat);
+      assert.ok(F.bottom < D.c[1] + D.r[1], `${name} hat ${hat} rests on the dome`);
+    }
+    // Top hat: the band rings the lid, wider than the hat.
+    const T = G.hatFit(H, 3);
+    const F = G.crownFit(H, { hat: 3 });
+    const lid = T.bandY + T.crown * Math.cos(T.tilt);
+    assert.ok(F.bottom < lid && F.y + G.CROWN_BAND.h * F.scale / 2 > lid, name + ' rings the top hat\'s lid');
+    assert.ok(F.ringR > Math.max(T.rx, T.rz), name + ' wider than the top hat');
+    // Helmets (dome, knight, classic with and without the head box) lift it too.
+    for (const helmet of [2, 3, 4, 5, 1, 6]) {
+      const opts = { helmet };
+      if (helmet === 1) opts.headBox = { center: [0, base - 0.03 * k, 0.01], size: [0.18 * k, 0.27 * k, 0.24 * k] };
+      const Fh = G.crownFit(H, opts);
+      assert.ok(Fh.bottom > bare.bottom, `${name} helmet ${helmet} lifts it`);
+      assert.ok(Fh.bottom < H.crownY + 0.12 * k, `${name} helmet ${helmet} is not floating`);
+    }
+    // A helmet hides the hat: the hat is ignored.
+    assert.deepEqual(G.crownFit(H, { helmet: 3, hat: 3 }), G.crownFit(H, { helmet: 3 }));
   }
 });

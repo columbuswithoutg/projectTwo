@@ -231,26 +231,32 @@ test('pickScreenKind / liveScreenKind: inputs are not mutated', () => {
   assert.deepEqual(entries, copy);
 });
 
-const CROWN = { kind: 'scene', y: 1.86 };
-const LAUREL = { kind: 'quote', y: 1.86, yStacked: 1.84 };
+// Head-relative (crown-layout): offsets from the head's crown fit in the
+// reward's own units, and the radius of the part that rests on the head.
+const CROWN = { kind: 'scene', y: 0, ring: 0.16 };
+const LAUREL = { kind: 'quote', y: 0, ring: 0.18, yStacked: -0.03, ringStacked: 0.16 };
 
-test('crownLayout: one title → that crown at its own y', () => {
-  assert.deepEqual(S.crownLayout([CROWN]), [{ kind: 'scene', y: 1.86 }]);
-  assert.deepEqual(S.crownLayout([LAUREL]), [{ kind: 'quote', y: 1.86 }], 'a lone laurel ignores yStacked');
-  assert.deepEqual(S.crownLayout([{ kind: 'quote', y: 1.9, yStacked: 1.84 }]), [{ kind: 'quote', y: 1.9 }]);
+test('crownLayout: one title → that reward on the head at its own offset and ring', () => {
+  assert.deepEqual(S.crownLayout([CROWN]), [{ kind: 'scene', y: 0, ring: 0.16 }]);
+  assert.deepEqual(S.crownLayout([LAUREL]), [{ kind: 'quote', y: 0, ring: 0.18 }], 'a lone laurel ignores the stacked values');
+  assert.deepEqual(S.crownLayout([{ kind: 'quote', y: 0.01, yStacked: -0.03 }]), [{ kind: 'quote', y: 0.01, ring: 0.16 }]);
 });
 
-test('crownLayout: both titles → the gold crown stays at 1.86, the laurel rings its band at 1.84', () => {
-  assert.deepEqual(S.crownLayout([CROWN, LAUREL]), [{ kind: 'scene', y: 1.86 }, { kind: 'quote', y: 1.84 }]);
+test('crownLayout: both titles → the crown stays put, the laurel drops a little and rings its band', () => {
+  assert.deepEqual(S.crownLayout([CROWN, LAUREL]), [{ kind: 'scene', y: 0, ring: 0.16 }, { kind: 'quote', y: -0.03, ring: 0.16 }]);
   // Order in, order out — and the crown stays put whichever comes first.
-  assert.deepEqual(S.crownLayout([LAUREL, CROWN]), [{ kind: 'quote', y: 1.84 }, { kind: 'scene', y: 1.86 }]);
+  assert.deepEqual(S.crownLayout([LAUREL, CROWN]), [{ kind: 'quote', y: -0.03, ring: 0.16 }, { kind: 'scene', y: 0, ring: 0.16 }]);
+  const [crown, laurel] = S.crownLayout([CROWN, LAUREL]);
+  assert.ok(laurel.y < crown.y, 'the laurel sits below the crown');
+  // Same ring → same scale, so the wreath (radius 0.2) rings the band (0.17).
+  assert.equal(laurel.ring, crown.ring);
 });
 
-test('crownLayout: no titles, junk entries, a missing y', () => {
+test('crownLayout: no titles, junk entries, a missing y or ring', () => {
   assert.deepEqual(S.crownLayout([]), []);
   assert.deepEqual(S.crownLayout(null), []);
-  assert.deepEqual(S.crownLayout([null, { y: 2 }, CROWN]), [{ kind: 'scene', y: 1.86 }]);
-  assert.deepEqual(S.crownLayout([{ kind: 'x' }]), [{ kind: 'x', y: 1.86 }], 'no y → just above the hair');
+  assert.deepEqual(S.crownLayout([null, { y: 2 }, CROWN]), [{ kind: 'scene', y: 0, ring: 0.16 }]);
+  assert.deepEqual(S.crownLayout([{ kind: 'x' }]), [{ kind: 'x', y: 0, ring: 0.16 }], 'no y → on the head fit; no ring → a crown band');
   const input = [CROWN, LAUREL];
   const copy = JSON.parse(JSON.stringify(input));
   S.crownLayout(input);

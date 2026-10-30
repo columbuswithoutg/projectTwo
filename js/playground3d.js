@@ -1230,6 +1230,7 @@ const Playground3D = (() => {
       console.warn('[pg3d] humanoid build failed — staying procedural', err);
       return;
     }
+    _sgDetachCrowns(root);               // re-fitted to the new head on the next crown pass [crown-mount]
     const old = root.children.slice();
     root.add(inst.object);
     root.userData.humanoid = inst;
@@ -1382,6 +1383,7 @@ const Playground3D = (() => {
     const offReady = root.userData.offReady;
     root.userData.offReady = null;
     if (typeof offReady === 'function') { try { offReady(); } catch (_) {} }
+    _sgDetachCrowns(root);   // champion rewards on the head [crown-mount]
     const inst = root.userData.humanoid;
     if (inst) { try { inst.dispose(); } catch (_) {} root.userData.humanoid = null; }
     _disposeRig(root);
@@ -1490,9 +1492,11 @@ const Playground3D = (() => {
     if (_isBoxBody(c)) {
       const box = _buildBoxPlayer(c);
       box.userData.boxBody = true;   // blocky proportions → see PREVIEW_REGIONS_BOX
+      box.userData.char = c;         // what's on the head, for the champion's crown [crown-mount]
       return box;
     }
     const root = _buildProceduralPlayer(c);
+    root.userData.char = c;
     if (!_humanoidUsable()) return root;
     // Already loaded → swap synchronously, so callers that render the very
     // next frame (thumbnails) get the real model.
@@ -5327,13 +5331,13 @@ const Playground3D = (() => {
   // and are only built / painted for islands near the player.
   const _gs = {
     // kind → { islands, views, champions, me, handler, painter: { draw, keyOf },
-    // crown: { make, y, yStacked } } in registration order, which breaks
+    // crown: { make, y, ring, yStacked, ringStacked } } in registration order, which breaks
     // ties (whose card shows first, how crowns stack).
     kinds: new Map(),
     islands: new Set(),     // union of the painted kinds' islands (they get a screen)
     screens: new Map(),     // projectId → PG3DScene.makeScreen() + { key, dirty, kind }
     imgs: new Map(),        // url → Image
-    crowns: new Map(),      // rig → Map(kind → { group, y })
+    crowns: new Map(),      // rig → { key, holder, ringR, worn: Map(kind → { group, base, scale }) } (_sgTickCrowns)
     fx: [],                 // { update(dt) → alive, dispose() }
     beams: new Map(),       // spotlight target → when its last beam started (ms)
     router: null,           // see setScreenRouter
@@ -5499,8 +5503,8 @@ const Playground3D = (() => {
 
   registerScreenKind('scene', {
     painter: { draw: (ctx, view, imgOf) => PG3DScene.drawScreen(ctx, view, imgOf), keyOf: _sceneScreenKey },
-    // Just above the hair (the name tag's 2.05 is the top of its box, not the head).
-    crown: { make: (THREE) => PG3DScene.makeCrown(THREE), y: 1.86 }
+    // Worn on the head (see _sgMountCrown): its band rings the skull, or the hat.
+    crown: { make: (THREE) => PG3DScene.makeCrown(THREE), y: 0, ring: 0.16 }
   });
 
   function _sgImg(url) {
@@ -5573,6 +5577,12 @@ const Playground3D = (() => {
 
   // Champions standing on the island they hold wear that game's crown; one
   // who holds several titles wears them stacked (PG3DScene.crownLayout).
+  // [crown-mount] The rewards hang on the HEAD, like hats: on the realistic
+  // body in its bind space (inst.mountRigid, fitted by
+  // PG3DGearLogic.crownFit — the skull, or on top of the hat / helmet), on
+  // the Box body and the stand-in shown while the models load on the head
+  // group, resting on whatever is highest there (hair, hat, helmet). So they
+  // turn, nod and sit with the head; the root already carries the build scale.
   function _sgTickCrowns(now) {
     const THREE = window.THREE;
     if (now - _gs.lastCrowns >= 250) {
@@ -5594,41 +5604,129 @@ const Playground3D = (() => {
       for (const rp of _remotePlayers.values()) {
         consider(rp.rig, () => rp.username, !!(rp.target && rp.target.pose === 'lie') || (rp.opacity != null && rp.opacity < 0.5));
       }
-      for (const [rig, worn] of [..._gs.crowns]) {
+      for (const [rig, rec] of [..._gs.crowns]) {
         const keep = want.get(rig) || [];
-        for (const [kind, c] of [...worn]) {
+        for (const [kind, c] of [...rec.worn]) {
           if (keep.includes(kind)) continue;
           PG3DScene.dispose(c.group);
-          worn.delete(kind);
+          rec.worn.delete(kind);
         }
-        if (!worn.size) _gs.crowns.delete(rig);
+        if (!rec.worn.size) _sgDetachCrowns(rig);
       }
       for (const [rig, kinds] of want) {
-        let worn = _gs.crowns.get(rig);
-        if (!worn) { worn = new Map(); _gs.crowns.set(rig, worn); }
+        const anchor = _sgCrownAnchor(rig);
+        let rec = _gs.crowns.get(rig);
+        // The body under it changed (stand-in → rigged model): fit again.
+        if (rec && (!anchor || rec.key !== anchor.key)) { _sgDetachCrowns(rig); rec = null; }
+        if (!anchor) continue;
+        if (!rec) {
+          const holder = new THREE.Group();
+          holder.name = 'gear:champion';
+          anchor.mount(holder);
+          const fit = anchor.fit || _sgBoxCrownFit(anchor.head, holder);
+          holder.position.set(fit.center[0], fit.center[1], fit.center[2]);
+          rec = { key: anchor.key, holder, ringR: fit.ringR, worn: new Map() };
+          _gs.crowns.set(rig, rec);
+        }
         for (const kind of kinds) {
-          if (worn.has(kind)) continue;
+          if (rec.worn.has(kind)) continue;
           const group = _gs.kinds.get(kind).crown.make(THREE);
           if (!group) continue;
-          _scene.add(group);
-          worn.set(kind, { group, y: 0 });
+          _sgOwnMaterials(group);
+          rec.holder.add(group);
+          rec.worn.set(kind, { group, base: 0, scale: 1 });
         }
         for (const l of PG3DScene.crownLayout(kinds.map(kind => ({ kind, ..._gs.kinds.get(kind).crown })))) {
-          const c = worn.get(l.kind);
-          if (c) c.y = l.y;
+          const c = rec.worn.get(l.kind);
+          if (!c) continue;
+          c.scale = rec.ringR / (l.ring || 0.16);
+          c.base = l.y * c.scale;
+          c.group.scale.setScalar(c.scale);
         }
-        if (!worn.size) _gs.crowns.delete(rig);
+        if (!rec.worn.size) _sgDetachCrowns(rig);
       }
     }
-    const bob = Math.sin(now / 650) * 0.02;
-    for (const [rig, worn] of _gs.crowns) {
-      const sc = rig.scale.y || 1;
-      for (const c of worn.values()) {
-        c.group.position.set(rig.position.x, (rig.position.y || 0) + c.y * sc + bob, rig.position.z);
-        c.group.rotation.y = rig.rotation.y;
-        c.group.scale.setScalar(sc);
-      }
+    // A gentle bob on the head, in proportion to the reward.
+    const bob = Math.sin(now / 650) * 0.012;
+    for (const rec of _gs.crowns.values()) {
+      for (const c of rec.worn.values()) c.group.position.y = c.base + bob * c.scale;
     }
+  }
+
+  // Where a rig's rewards hang: { key, mount(holder), fit } on the realistic
+  // body, { key, mount(holder), head } on a Box / stand-in head; null when the
+  // rig has no head to wear them on. key changes when the body is swapped.
+  function _sgCrownAnchor(rig) {
+    const inst = rig.userData.humanoid;
+    if (inst) {
+      if (!inst.mountRigid || !inst.measure || typeof PG3DGearLogic === 'undefined' || !PG3DGearLogic.crownFit) return null;
+      const c = rig.userData.char || {};
+      const hidden = (typeof Playground !== 'undefined' && Playground.characterHidden) ? Playground.characterHidden(c) : {};
+      const M = inst.measure();
+      const fit = PG3DGearLogic.crownFit(M.head, {
+        bald: c.hairStyle === 4,
+        hat: hidden.hat ? 0 : (c.hat ?? 0),
+        helmet: c.helmet ?? 0,
+        headBox: M.partBox ? M.partBox[PG3DGearLogic.PART.head] : null
+      });
+      return { key: inst, fit, mount: (holder) => inst.mountRigid('head', holder) };
+    }
+    const head = rig.userData.bones && rig.userData.bones.head;
+    if (!head) return null;
+    return { key: head, head, mount: (holder) => head.add(holder) };
+  }
+
+  // The Box head (a 0.55 cube, hair to ~0.36 above its centre): the band
+  // rings the cube's width and rests on the highest thing on the head —
+  // hair, or the hat / helmet on top of it — sunk in a little so it sits.
+  const BOX_CROWN_RING = 0.285;
+  function _sgBoxCrownFit(head, skip) {
+    const THREE = window.THREE;
+    head.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(head.matrixWorld).invert();
+    const m = new THREE.Matrix4(), box = new THREE.Box3();
+    let top = -Infinity;
+    const walk = (o) => {
+      if (o === skip || o.visible === false) return;
+      if (o.isMesh && o.geometry) {
+        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+        box.copy(o.geometry.boundingBox).applyMatrix4(m.multiplyMatrices(inv, o.matrixWorld));
+        if (box.max.y > top) top = box.max.y;
+      }
+      for (const ch of o.children) walk(ch);
+    };
+    walk(head);
+    if (!isFinite(top)) top = 0.275;
+    const scale = BOX_CROWN_RING / 0.16;
+    const bottom = Math.max(top - 0.09, 0.22);
+    const y = bottom + 0.045 * scale;
+    return { center: [0, y, 0], ringR: BOX_CROWN_RING };
+  }
+
+  // Each worn reward gets its own copies of the shared crown materials: the
+  // rigged body fades the gear on its bones (setOpacity), which must not fade
+  // every other champion's crown with it. Geometry stays shared.
+  function _sgOwnMaterials(group) {
+    const own = new Map();
+    group.traverse(o => {
+      if (!o.isMesh || !o.material || Array.isArray(o.material)) return;
+      if (!own.has(o.material)) {
+        const copy = o.material.clone();
+        copy.userData = {};
+        own.set(o.material, copy);
+      }
+      o.material = own.get(o.material);
+    });
+  }
+
+  // Take a rig's rewards off (it is being disposed, or its body swapped).
+  function _sgDetachCrowns(rig) {
+    const rec = _gs.crowns.get(rig);
+    if (!rec) return;
+    _gs.crowns.delete(rig);
+    const slot = rec.holder.parent;
+    PG3DScene.dispose(rec.holder);
+    if (slot && slot.name === 'slot:head' && !slot.children.length) slot.removeFromParent();
   }
 
   // The screen you're standing in front of (inside its house, within its
@@ -5742,7 +5840,7 @@ const Playground3D = (() => {
   function _sgReset() {
     if (typeof PG3DScene !== 'undefined') {
       for (const id of [..._gs.screens.keys()]) _sgDropScreen(id);
-      for (const worn of _gs.crowns.values()) for (const c of worn.values()) PG3DScene.dispose(c.group);
+      for (const rig of [..._gs.crowns.keys()]) _sgDetachCrowns(rig);
     }
     _gs.screens.clear();
     _gs.crowns.clear();
@@ -5881,7 +5979,7 @@ const Playground3D = (() => {
         for (const [id, s] of _gs.screens) showing[id] = s.kind || null;
         for (const [kind, k] of _gs.kinds) {
           let crowns = 0;
-          for (const worn of _gs.crowns.values()) if (worn.has(kind)) crowns++;
+          for (const rec of _gs.crowns.values()) if (rec.worn.has(kind)) crowns++;
           kinds[kind] = { islands: [...k.islands], champions: Object.fromEntries(k.champions), me: k.me, handler: !!k.handler, painter: !!k.painter, crown: !!k.crown, crowns };
         }
         const c = _gs.candidate;

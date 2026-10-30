@@ -483,7 +483,9 @@ const QuoteGuess = (() => {
       if (!engine.registerScreenKind || typeof PG3DQuote === 'undefined') return;
       engine.registerScreenKind('quote', {
         painter: { draw: PG3DQuote.drawScreen, keyOf: PG3DQuote.keyOf },
-        crown: { make: PG3DQuote.makeLaurel, y: 1.86, yStacked: 1.84 }
+        // Head-relative (PG3DScene.crownLayout): alone the wreath (inner radius
+        // ≈ 0.18) rests on the head; with the crown it rings the crown's band.
+        crown: { make: PG3DQuote.makeLaurel, y: 0, ring: 0.18, yStacked: -0.03, ringStacked: 0.16 }
       });
     },
     screenView(base, pid, h) {
