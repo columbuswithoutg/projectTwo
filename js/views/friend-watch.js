@@ -59,6 +59,9 @@ const FriendWatchView = {
       FriendWatchView._deployTimer = null;
     }
     if (typeof Walkers !== 'undefined' && Walkers.destroy) Walkers.destroy();
+    // No adapter while no walker view is mounted, so a late deploy() (e.g.
+    // FriendView.exit → restoreSelections) is a no-op (MAP2-05).
+    if (typeof WalkerView !== 'undefined') WalkerView.set(null);
     if (typeof orderRenderer !== 'undefined' && orderRenderer.destroy) orderRenderer.destroy();
   }
 };

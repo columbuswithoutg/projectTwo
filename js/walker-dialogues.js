@@ -449,6 +449,15 @@ const WALKER_DIALOGUES = (() => {
     sabretooth:     ["This ain't over, runt.", "You never could finish it, Jimmy."],
     apocalypse:     ["I have been... everything.", "I will rise again."],
     cable:          ["This isn't the future I came back for.", "Time's up."],
+    obadiah:         ["The suit... was supposed to be mine.", "You always were the better engineer, Tony..."],
+    ghost:           ["I just wanted the pain to stop...", "Phasing... out..."],
+    taskmaster:      ["Pattern... not learned...", "Programming... interrupted."],
+    namor:           ["Talokan will endure.", "You have made an enemy of the sea."],
+    highevolutionary: ["My work... was perfect...", "I am not finished perfecting this universe..."],
+    gravik:          ["We were promised a home...", "The Skrulls will not be forgotten."],
+    red_hulk:        ["I only wanted to make it right...", "Betty... I'm sorry."],
+    sentry:          ["The Void... is still in here.", "I'm not... a hero..."],
+    galactus:        ["Hunger... is eternal.", "All worlds end. I will return for yours."],
     _default:       ["This isn't over...", "I'll be back.", "You got lucky."]
   };
 
@@ -489,6 +498,15 @@ const WALKER_DIALOGUES = (() => {
     sabretooth:     ["Too slow, runt.", "I'm the animal here."],
     apocalypse:     ["Everything they've built will fall.", "I am eternal."],
     cable:          ["Mission complete.", "I came back to fix the future."],
+    obadiah:         ["I'm going to need that suit back.", "Tony Stark built his in a cave. I built a better one."],
+    ghost:           ["You can't hit what you can't catch.", "Every breath hurts. Now you know how it feels."],
+    taskmaster:      ["Every move you make, I've already learned.", "Copied. Countered. Done."],
+    namor:           ["Imperius Rex!", "The surface world will learn to fear the deep."],
+    highevolutionary: ["I am the High Evolutionary!", "Imperfection is a disease. I am the cure."],
+    gravik:          ["This planet is ours now.", "No more hiding."],
+    red_hulk:        ["Now you know how Banner felt.", "Still think I'm just a politician?"],
+    sentry:          ["I'm the strongest there is.", "The Void sends its regards."],
+    galactus:        ["Your world will satisfy my hunger.", "All worlds end. Yours ends now."],
     _default:       ["Too easy.", "Is that all?", "Pathetic."]
   };
 

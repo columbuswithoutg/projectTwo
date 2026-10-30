@@ -69,6 +69,24 @@ const SharedView = {
     container.querySelector('[data-share-act="join-plain"]')?.addEventListener('click', () => Router.go('/login?register=1'));
   },
 
+  // The share data didn't load (offline, server busy or restarting) — the
+  // link may be fine, so offer a retry rather than the "gone" card.
+  renderUnavailable(container, token, retry) {
+    container.innerHTML = `
+      <div class="share-page">
+        ${SharedView.topbar(token)}
+        <main class="share-main">
+          <section class="share-card share-gone">
+            <h1>Couldn’t load this page</h1>
+            <p>Check your connection and try again.</p>
+            <button type="button" class="btn btn--primary" data-share-retry>Try again</button>
+          </section>
+        </main>
+      </div>`;
+    SharedView.wire(container, token);
+    container.querySelector('[data-share-retry]')?.addEventListener('click', () => retry());
+  },
+
   async mount(container, params) {
     const token = params && params.token;
     const myMount = SharedView._mountSeq = (SharedView._mountSeq || 0) + 1;
@@ -78,6 +96,7 @@ const SharedView = {
     const sharer = await FriendView.enterShared(token);
     if (myMount !== SharedView._mountSeq) return;
     if (!sharer) { SharedView.render404(container); return; }
+    if (sharer.error) { SharedView.renderUnavailable(container, token, () => SharedView.mount(container, params)); return; }
 
     state.initProjects(projects);
     const g = computeDoomsdayGoal();
@@ -177,6 +196,7 @@ const SharedOrderView = {
     const sharer = await FriendView.enterShared(token);
     if (myMount !== SharedOrderView._mountSeq) return;
     if (!sharer) { SharedView.render404(container); return; }
+    if (sharer.error) { SharedView.renderUnavailable(container, token, () => SharedOrderView.mount(container, params)); return; }
     document.title = `${sharer.username}'s watch order`;
 
     container.innerHTML = `
@@ -204,6 +224,11 @@ const SharedOrderView = {
 
   unmount() {
     SharedOrderView._mountSeq = (SharedOrderView._mountSeq || 0) + 1;
+    // FriendView.exit() runs before this unmount and its restoreSelections()
+    // could start walkers in this chart; stop them before the DOM goes, or
+    // the rAF loop keeps running on detached nodes (MAP2-05).
+    if (typeof Walkers !== 'undefined' && Walkers.destroy) Walkers.destroy();
+    if (typeof WalkerView !== 'undefined') WalkerView.set(null);
     if (typeof orderRenderer !== 'undefined' && orderRenderer.destroy) orderRenderer.destroy();
   }
 };

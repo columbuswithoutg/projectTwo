@@ -67,6 +67,9 @@ const FriendMapView = {
       FriendMapView._deployTimer = null;
     }
     if (typeof Walkers !== 'undefined' && Walkers.destroy) Walkers.destroy();
+    // No adapter while no walker view is mounted, so a late deploy() (e.g.
+    // FriendView.exit → restoreSelections) is a no-op (MAP2-05).
+    if (typeof WalkerView !== 'undefined') WalkerView.set(null);
     if (typeof renderer !== 'undefined' && renderer.destroy) {
       renderer.destroy();
       // Drop the DOM refs too, as AppView.unmount does: a left-over

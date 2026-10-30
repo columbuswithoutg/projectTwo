@@ -216,6 +216,8 @@ const BoardView = (() => {
       return { action: 'start' };
     }
     if (from === 'progress' && to === 'done') {
+      // `from` was read on pointerdown; the session may be gone by the drop.
+      if (!s) return { error: 'It isn’t in progress any more.' };
       const left = state.remainingMs(p.id);
       if (s && !s.startedAt) return { error: `Start episode ${s.episode + 1} first.` };
       if (left > 0) return { error: `Mark as watched unlocks in ${WatchControls.fmtClock(left)}.` };
@@ -393,5 +395,7 @@ const BoardView = (() => {
     _root = null;
   }
 
-  return { title: 'Board — MCU Tracker', mount, unmount };
+  // _debug: the pure drag / filter rules, for tests (test/board-logic.test.js).
+  return { title: 'Board — MCU Tracker', mount, unmount,
+    _debug: { transition, todoOptions, filterTodo, doneOptions, filterDone } };
 })();

@@ -305,20 +305,26 @@ router.delete('/memory', auth, async (req, res) => {
 
 // Load walker selections
 router.get('/walkers', auth, async (req, res) => {
-  const user = await User.findById(req.user.id).select('walkers').lean();
+  const user = await User.findById(req.user.id).select('walkers walkersSavedAt').lean();
   // Re-sanitised on the way out too, so anything stored before the rule
   // (server/walkers.js) never reaches a client.
-  res.json({ walkers: sanitizeWalkers((user && user.walkers) || []) });
+  const walkers = sanitizeWalkers((user && user.walkers) || []);
+  // `saved` tells "cleared on another device" ([] after a POST) from "never
+  // saved" (the schema default []), so the client only lets an empty list
+  // wipe its local picks in the first case (MAP2-09b). A non-empty list was
+  // saved by definition, also on accounts from before walkersSavedAt.
+  const saved = !!(user && user.walkersSavedAt) || walkers.length > 0;
+  res.json({ walkers, saved });
 });
 
 // Save walker selections
 router.post('/walkers', auth, async (req, res) => {
   const { walkers } = req.body || {};
   if (!Array.isArray(walkers)) return res.status(400).json({ error: 'walkers must be an array' });
-  // Every entry rebuilt as { id, stage } — nothing else is stored (friends
+  // Every entry rebuilt as { id, look } / { id, stage } — nothing else is stored (friends
   // download this list straight into their walker code).
   const clean = sanitizeWalkers(walkers);
-  await User.updateOne({ _id: req.user.id }, { $set: { walkers: clean } });
+  await User.updateOne({ _id: req.user.id }, { $set: { walkers: clean, walkersSavedAt: new Date() } });
   res.json({ message: 'Saved' });
 });
 

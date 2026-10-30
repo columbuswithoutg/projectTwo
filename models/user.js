@@ -43,6 +43,10 @@ const UserSchema = new mongoose.Schema({
   watchSessions: { type: [WatchSessionSchema], default: [] },
   profilePicture: { type: String, default: '' },
   walkers: { type: mongoose.Schema.Types.Mixed, default: [] },
+  // Set by every POST /api/progress/walkers. No default on purpose: absent
+  // means "never saved", so GET can tell that from "cleared" ([] saved) and
+  // the client keeps its local picks instead of wiping them (MAP2-09b).
+  walkersSavedAt: { type: Date },
   // Lifetime Infinity Stone snaps performed in the shared /world PvP contest.
   // Incremented server-side in routes/world-socket.js on a successful snap;
   // ranked in the /api/friends/stones leaderboard. (Replaced the old

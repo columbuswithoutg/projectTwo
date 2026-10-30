@@ -27,11 +27,13 @@ const { characters, projects, MERGED, STATS, VILLAINS, COLORS } = ctx;
 
 // The dialogue pairs live inside an IIFE; read them the same way the server
 // builds its static fallback, so this also covers that extraction.
-const { pairs } = require('../server/contentLoader').get('dialogues');
+const { pairs, villainDefeatLines, villainVictoryLines } = require('../server/contentLoader').get('dialogues');
 
 const charIds = new Set(characters.map(c => c.id));
 const projectIds = new Set(projects.map(p => p.id));
-const isCharId = (id) => charIds.has(id) || Object.prototype.hasOwnProperty.call(MERGED, id);
+// A merged id is mapped to its live id before a walker exists
+// (normalizeEntry in js/walkers.js), so a pair keyed on one never plays.
+const isCharId = (id) => charIds.has(id) && !Object.prototype.hasOwnProperty.call(MERGED, id);
 
 // Portraits referenced by the data but not yet supplied. Every consumer
 // (characters grid, profile picker, map walkers) shows the character's
@@ -48,7 +50,20 @@ test('every dialogue pair key is sorted and names two real characters', () => {
     const ids = key.split('|');
     assert.equal(ids.length, 2, `${key}: not an "a|b" key`);
     assert.equal([...ids].sort().join('|'), key, `${key}: ids not in sorted order`);
-    for (const id of ids) assert.ok(isCharId(id), `${key}: "${id}" is not a character id`);
+    for (const id of ids) assert.ok(isCharId(id), `${key}: "${id}" is not a live (non-merged) character id`);
+  }
+});
+
+test('every villain line key is a character, and every spawnable villain has its own defeat and victory lines', () => {
+  for (const [name, table] of [['villainDefeatLines', villainDefeatLines], ['villainVictoryLines', villainVictoryLines]]) {
+    assert.ok(Array.isArray(table._default) && table._default.length, `${name}: no _default lines`);
+    for (const [id, lines] of Object.entries(table)) {
+      if (id !== '_default') assert.ok(charIds.has(id), `${name}: "${id}" is not a character id`);
+      assert.ok(Array.isArray(lines) && lines.length && lines.every(l => typeof l === 'string' && l.trim()), `${name}.${id}: empty or bad lines`);
+    }
+    for (const villainIds of Object.values(VILLAINS)) {
+      for (const v of villainIds) assert.ok(Object.prototype.hasOwnProperty.call(table, v), `${name}: villain "${v}" has no lines (falls back to _default)`);
+    }
   }
 });
 

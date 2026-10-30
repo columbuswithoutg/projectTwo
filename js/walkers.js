@@ -99,6 +99,14 @@ const Walkers = (() => {
   let faintedWalkers = new Set();      // walkers waiting to revive after fight
   let activeProjectiles = [];          // { x, y, vx, vy, ownerId, dmg, el, isVillainProj }
   let overrideSelections = null;       // when set, deploy uses these instead of localStorage
+  // Fight resolve / revive timeouts, cleared on destroy so a redeploy inside a
+  // villain's 2 s defeat window can't tear down the next fight (MAP2-03).
+  let fightTimers = new Set();
+  function fightTimeout(fn, ms) {
+    const id = setTimeout(() => { fightTimers.delete(id); fn(); }, ms);
+    fightTimers.add(id);
+    return id;
+  }
 
   // Fight toggle — user can enable villain spawns from the nav drawer.
   // Default OFF so a fresh user (or one who clears storage) gets the calm
@@ -130,28 +138,85 @@ const Walkers = (() => {
   let globalFightCooldownEnd = 0;
 
   /* ---- persistence ---- */
-  // Storage format: [{ id: "thor", stage: 1 }, { id: "cap", stage: 0 }, ...]
-  // Backward compat: plain string "thor" → { id: "thor", stage: -1 } (-1 = highest unlocked)
+  // Storage format: [{ id: "thor", look: "ragnarok" }, { id: "cap", look: "@base" }, { id: "hulk", stage: -1 }]
+  // look = a stable key for one look (MAP2-02): the project id that unlocks
+  // it (the stage's `after`), or BASE_LOOK for the debut look. It used to be
+  // an index into the *unlocked* looks, which shifted whenever an earlier
+  // look unlocked or a title was un-watched and silently switched the walker.
+  // stage -1 = "highest unlocked look", and keeps following new looks.
+  // Backward compat: plain string "thor" → { id: "thor", stage: -1 }; an old
+  // { id, stage: n ≥ 0 } index is mapped to its look key once (migrateLegacyEntries).
   // A merged character id (e.g. "thor_lt", see MERGED_CHARACTER_IDS in characters.js)
   // becomes the character it was merged into, at its highest unlocked look.
+  const BASE_LOOK = '@base';
 
   function normalizeEntry(entry) {
     const id = typeof entry === 'string' ? entry : (entry && typeof entry.id === 'string' ? entry.id : null);
     if (!id) return null;
     if (MERGED_CHARACTER_IDS[id]) return { id: MERGED_CHARACTER_IDS[id], stage: -1 };
     if (typeof entry === 'string') return { id, stage: -1 };
-    return { id, stage: entry.stage ?? -1 };
+    if (typeof entry.look === 'string' && entry.look) return { id, look: entry.look };
+    return { id, stage: Number.isInteger(entry.stage) ? entry.stage : -1 };
+  }
+
+  // The stable key of one getCharStages() look. Not just `after`: Groot's
+  // first stage unlocks at his debut, so the debut look gets its own token.
+  function lookKeyOf(char, look) {
+    return (look.after === char.debut && look.image === char.image) ? BASE_LOOK : look.after;
+  }
+
+  // The unlocked look an entry draws, or null while that look is locked.
+  function resolveLook(entry, char) {
+    const looks = getCharStages(char, state);
+    if (!looks.length) return null;
+    if (entry.look !== undefined) return looks.find(l => lookKeyOf(char, l) === entry.look) || null;
+    if (entry.stage === -1) return looks[looks.length - 1];
+    return looks[entry.stage] || null;   // a legacy index not mapped yet
+  }
+
+  function entryLookKey(entry, char) {
+    const look = resolveLook(entry, char);
+    return look ? lookKeyOf(char, look) : null;
+  }
+
+  // Old saves hold { stage: n }, an index into the looks unlocked back then.
+  // Map each to its look key once, against the user's own progress: not a
+  // friend's swapped-in data (state.readonly), not before progress loaded.
+  // An index past the end (a title since un-watched) maps to the highest
+  // unlocked look, which is what resolveWalkerImage drew for it.
+  function migrateLegacyEntries(entries) {
+    if (state.readonly || !state.data || state.data.size === 0) return false;
+    const charMap = new Map(characters.map(c => [c.id, c]));
+    let changed = false;
+    entries.forEach((e, i) => {
+      if (e.look !== undefined || !(e.stage >= 0)) return;
+      const char = charMap.get(e.id);
+      if (!char) return;
+      const looks = getCharStages(char, state);
+      if (!looks.length) return;
+      entries[i] = { id: e.id, look: lookKeyOf(char, looks[Math.min(e.stage, looks.length - 1)]) };
+      changed = true;
+    });
+    return changed;
   }
 
   function loadSelections() {
+    let list;
     try {
       const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      return raw.map(normalizeEntry).filter(Boolean);
+      list = raw.map(normalizeEntry).filter(Boolean);
     } catch { return []; }
+    // Written back, so the legacy mapping runs once (MAP2-02).
+    if (migrateLegacyEntries(list)) saveSelections(list);
+    return list;
   }
 
   function saveSelections(entries) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    postSelections(entries);
+  }
+
+  function postSelections(entries) {
     // Persist to server if logged in — store as JSON-serializable array
     if (Auth.isLoggedIn()) {
       fetch(`${API}/progress/walkers`, {
@@ -172,8 +237,17 @@ const Walkers = (() => {
         headers: { Authorization: `Bearer ${Auth.getToken()}` }
       });
       const data = await res.json();
-      if (Array.isArray(data.walkers) && data.walkers.length > 0) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data.walkers));
+      // An array is authoritative, empty included: [] means the user cleared
+      // every walker on another device (MAP2-09). Unless the server says this
+      // account never saved any (saved: false, MAP2-09b): then the local picks
+      // (made signed out, or every POST failed) stay, and are uploaded once.
+      if (Array.isArray(data.walkers)) {
+        if (data.walkers.length > 0 || data.saved !== false) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data.walkers));
+        } else {
+          const local = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+          if (Array.isArray(local) && local.length) postSelections(local.map(normalizeEntry).filter(Boolean));
+        }
       }
     } catch { /* offline — use localStorage */ }
   }
@@ -181,17 +255,12 @@ const Walkers = (() => {
   // Resolve which image to use for a walker entry
   function resolveWalkerImage(entry, char) {
     const stages = getCharStages(char, state);
-    if (entry.stage === -1 || entry.stage >= stages.length) {
-      return stages[stages.length - 1].image; // highest unlocked
-    }
-    return stages[Math.max(0, entry.stage)].image;
+    const look = resolveLook(entry, char) || stages[stages.length - 1]; // highest unlocked
+    return look.image;
   }
 
-  // Each stage starts at the node that unlocked it. stageIndex counts the
-  // UNLOCKED looks (getCharStages), not char.stages, so read the node from there.
-  function getStageStartNode(char, stageIndex, visibleIds) {
-    const looks = getCharStages(char, state);
-    const look = looks[Math.min(Math.max(0, stageIndex), looks.length - 1)];
+  // Each look starts at the node that unlocked it (look = resolveLook()).
+  function getStageStartNode(char, look, visibleIds) {
     if (look && visibleIds.includes(look.after)) return look.after;
     return visibleIds.includes(char.debut) ? char.debut : pickRandom(visibleIds);
   }
@@ -389,7 +458,10 @@ const Walkers = (() => {
 
       // Release walkers. They may have bumped either inside a cluster or
       // mid-road — preserve that context so we don't teleport them.
+      // Only those still in this dialogue: one a fight enrolled meanwhile
+      // must not be flipped back to WALKING mid-fight (MAP2-07).
       [w1, w2].forEach(w => {
+        if (w.state !== W_STATE.ENCOUNTER) return;
         let inClusterId = null;
         if (cachedRects && w._cx != null) {
           for (const [cid, r] of cachedRects) {
@@ -701,6 +773,17 @@ const Walkers = (() => {
       if (d < bestDist) { bestDist = d; best = m; }
     }
     return best.id;
+  }
+
+  // Pull (x, y) inside a buildNodeRects rect (left/top/right/bottom), keeping
+  // radius r off the walls. A non-finite result falls back to the rect's
+  // centre, so a bad position can't leave a walker stuck at NaN (MAP2-06).
+  function clampIntoRect(rect, x, y, r) {
+    const clamp = (v, lo, hi, mid) => {
+      const c = Math.max(lo + r, Math.min(v, hi - r));
+      return Number.isFinite(c) ? c : mid;
+    };
+    return { x: clamp(x, rect.left, rect.right, rect.cx), y: clamp(y, rect.top, rect.bottom, rect.cy) };
   }
 
   // Bounce walker off cluster AABB walls from INSIDE, with openings toward
@@ -1151,6 +1234,9 @@ const Walkers = (() => {
       if (w === fight.villain) return;
       if (w.isVillain) return;
       if (w.state === W_STATE.DEFEATED) return;
+      // Mid-dialogue walkers finish talking first; their end-of-dialogue
+      // timer would otherwise reset a fighter to WALKING (MAP2-07).
+      if (w.state === W_STATE.ENCOUNTER) return;
       if (w.clusterId === fightClusterId && w.location === 'node' && w._spawned) {
         if (!fight.participants.has(w)) {
           fight.participants.add(w);
@@ -1185,7 +1271,7 @@ const Walkers = (() => {
     const bubble = createSpeechBubble(villain, line);
     activeBubbles.push({ el: bubble, owner: villain.charId, walker: villain });
 
-    setTimeout(() => {
+    fightTimeout(() => {
       // Clean up villain
       bubble.remove();
       activeBubbles = activeBubbles.filter(b => b.walker !== villain);
@@ -1224,7 +1310,7 @@ const Walkers = (() => {
     const bubble = createSpeechBubble(villain, line);
     activeBubbles.push({ el: bubble, owner: villain.charId, walker: villain });
 
-    setTimeout(() => {
+    fightTimeout(() => {
       bubble.remove();
       activeBubbles = activeBubbles.filter(b => b.walker !== villain);
       unequipFight(villain);
@@ -1243,7 +1329,7 @@ const Walkers = (() => {
 
       // Zoom out, then revive fainted walkers after delay
       endFightZoom();
-      setTimeout(() => checkFaintedRevives(), 1500);
+      fightTimeout(() => checkFaintedRevives(), 1500);
     }, PHYSICS.FIGHT.defeatDisplayMs);
   }
 
@@ -1299,7 +1385,7 @@ const Walkers = (() => {
     });
 
     if (faintedWalkers.size > 0) {
-      setTimeout(checkFaintedRevives, 500);
+      fightTimeout(checkFaintedRevives, 500);
     }
   }
 
@@ -1525,7 +1611,22 @@ const Walkers = (() => {
 
   /* ---- animation loop ---- */
 
+  // One frame. A throw no longer stops every walker until the next remount
+  // (MAP-13): it is logged once and the loop goes on. The next frame is
+  // skipped only when destroy() ran (no walkers) or a redeploy inside the
+  // frame already started its own loop (animFrameId changed).
   function tick(now) {
+    const frame = animFrameId;
+    try {
+      tickFrame(now);
+    } catch (e) {
+      if (!tick._logged) { tick._logged = true; console.error('Walkers: tick failed', e); }
+    } finally {
+      if (activeWalkers.length && animFrameId === frame) animFrameId = requestAnimationFrame(tick);
+    }
+  }
+
+  function tickFrame(now) {
     if (!lastTime) lastTime = now;
     const dt = Math.min(now - lastTime, 50);
     lastTime = now;
@@ -1582,13 +1683,15 @@ const Walkers = (() => {
           let best = null, bestDist = Infinity;
           nodeRects.forEach((r, cid) => {
             const d = Math.hypot(r.cx - w._cx, r.cy - w._cy);
-            if (d < bestDist) { bestDist = d; best = r; }
+            // `!best`: a NaN position makes every d NaN; take any cluster.
+            if (!best || d < bestDist) { bestDist = d; best = r; }
           });
           if (best) {
             w.clusterId = best.id;
             w.currentNode = nearestMemberNode(best, w._cx, w._cy) || best.memberIds[0];
-            w._cx = Math.max(best.minX + PHYSICS.WALKER.r, Math.min(w._cx, best.maxX - PHYSICS.WALKER.r));
-            w._cy = Math.max(best.minY + PHYSICS.WALKER.r, Math.min(w._cy, best.maxY - PHYSICS.WALKER.r));
+            const p = clampIntoRect(best, w._cx, w._cy, PHYSICS.WALKER.r);
+            w._cx = p.x;
+            w._cy = p.y;
           }
         }
         const rect = nodeRects.get(w.clusterId);
@@ -1947,69 +2050,54 @@ const Walkers = (() => {
     activeBubbles.forEach(b => {
       if (b.walker) positionBubbleAboveWalker(b.el, b.walker);
     });
-
-    animFrameId = requestAnimationFrame(tick);
   }
 
   /* ---- public API ---- */
+
+  // The picks that deploy now: an unlocked character at an unlocked look, up
+  // to the slot count. Only filtered, never re-saved (MAP2-02): a pick whose
+  // look is locked again, or one past the slot count, stays in storage and
+  // comes back when it fits; stage -1 keeps following the newest look.
+  // Returns the same objects as `raw`, so toggleCharacter can find them.
+  function deployableOf(raw) {
+    const charMap = new Map(characters.map(c => [c.id, c]));
+    const unlocked = new Set(getUnlockedCharacters().map(c => c.id));
+    return raw.filter(e => {
+      if (!unlocked.has(e.id)) return false;
+      const char = charMap.get(e.id);
+      return !!char && !!resolveLook(e, char);
+    }).slice(0, getMaxSlots());
+  }
 
   function getSelectedEntries() {
     const raw = overrideSelections !== null
       ? overrideSelections.map(normalizeEntry).filter(Boolean)
       : loadSelections();
-    const maxSlots = getMaxSlots();
-    const charMap = new Map(characters.map(c => [c.id, c]));
-    const unlocked = new Set(getUnlockedCharacters().map(c => c.id));
-    const result = raw.filter(e => {
-      if (!unlocked.has(e.id)) return false;
-      const char = charMap.get(e.id);
-      if (!char) return false;
-      // Verify the specific stage is unlocked
-      if (e.stage !== -1) {
-        const stages = getCharStages(char, state);
-        if (e.stage >= stages.length) return false;
-      }
-      return true;
-    }).slice(0, maxSlots);
-
-    // Resolve stage: -1 → actual highest unlocked stage index
-    let needsSave = false;
-    result.forEach(e => {
-      if (e.stage === -1) {
-        const char = charMap.get(e.id);
-        if (char) {
-          e.stage = getCharStages(char, state).length - 1;
-          needsSave = true;
-        }
-      }
-    });
-    if (needsSave && overrideSelections === null) {
-      saveSelections(result);
-    }
-
-    return result;
+    return deployableOf(raw);
   }
 
   // What the walker line-up looks like right now: each entry's id, its
   // resolved stage (stage -1 = "latest", which moves when something new is
-  // watched) and the image that stage draws, plus the slot count. Two equal
-  // signatures mean a redeploy would spawn the very same walkers.
+  // watched) and the image that stage draws. Two equal signatures mean a
+  // redeploy would spawn the very same walkers. No slot count: entries are
+  // already truncated to it, and watching a title bumps it (MAP2-01).
   function lineupSignature(entries) {
     const charMap = new Map(characters.map(c => [c.id, c]));
     const parts = entries.map(entry => {
       const char = charMap.get(entry.id);
       if (!char) return `${entry.id}:?`;
-      const resolved = entry.stage === -1 ? getCharStages(char, state).length - 1 : Math.max(0, entry.stage);
-      return `${entry.id}:${entry.stage}:${resolved}:${resolveWalkerImage(entry, char)}`;
+      return `${entry.id}:${entry.look ?? entry.stage}:${entryLookKey(entry, char)}:${resolveWalkerImage(entry, char)}`;
     });
-    return `${getMaxSlots()}|${parts.join(',')}`;
+    return parts.join(',');
   }
 
   function deploy() {
     // View not mounted — or mounted then torn down: a container that has
     // left the document (e.g. a late timer after leaving /friend/:u/map)
     // would host walkers and fight overlays nobody can see.
-    const mountedIn = WalkerView.get().container();
+    // A view hosting walkers sets WalkerView to null on unmount (MAP2-05).
+    const view = WalkerView.get();
+    const mountedIn = view && view.container();
     if (!mountedIn || !mountedIn.isConnected) return;
     // Remove old walkers
     destroy();
@@ -2035,9 +2123,9 @@ const Walkers = (() => {
       const el = createWalkerElement(img, char);
       container.appendChild(el);
 
-      // Start at the node that unlocked this stage
-      const resolvedStage = entry.stage === -1 ? getCharStages(char, state).length - 1 : Math.max(0, entry.stage);
-      let startNode = getStageStartNode(char, resolvedStage, visibleIds);
+      // Start at the node that unlocked this look
+      const look = resolveLook(entry, char);
+      let startNode = getStageStartNode(char, look, visibleIds);
 
       // Stagger walkers from same node — each one waits before appearing
       const spawnIndex = nodeSpawnCount.get(startNode) || 0;
@@ -2045,9 +2133,9 @@ const Walkers = (() => {
       const spawnAt = performance.now() + 500 + spawnIndex * 3000;  // 3s apart
 
       const w = {
-        id: `${entry.id}_s${entry.stage}_${i}`,
+        id: `${entry.id}_s${entry.look ?? entry.stage}_${i}`,
         charId: entry.id,
-        stageIndex: entry.stage,
+        lookKey: look ? lookKeyOf(char, look) : null,
         charImg: img,
         charName: char.name,
         el,
@@ -2108,10 +2196,13 @@ const Walkers = (() => {
       clearTimeout(zoomEndTimer);
       zoomEndTimer = null;
     }
+    fightTimers.forEach(t => clearTimeout(t));
+    fightTimers.clear();
     activeWalkers.forEach(w => {
       w.el?.remove();
       w.weaponEl?.remove();
       w.hpEl?.remove();
+      w.hpBarEl?.remove();
     });
     activeWalkers = [];
     activeBubbles.forEach(b => b.el.remove());
@@ -2163,18 +2254,32 @@ const Walkers = (() => {
     });
   }
 
-  function toggleCharacter(charId, stageIndex = -1) {
-    const current = getSelectedEntries();
-    const maxSlots = getMaxSlots();
+  // lookKey: a look's stable key (lookKeyOf), or -1 for "latest look".
+  function toggleCharacter(charId, lookKey = -1) {
+    // On a friend page getSelectedEntries() is the friend's line-up; saving
+    // it would overwrite the user's own picks (MAP2-04).
+    if (overrideSelections !== null) return false;
+    if (lookKey !== -1 && typeof lookKey !== 'string') return false;
+    const char = characters.find(c => c.id === charId);
+    if (!char) return false;
+    // Edit the whole stored list, so picks that are locked or past the slot
+    // count right now survive the save (MAP2-02).
+    const stored = loadSelections();
+    const current = deployableOf(stored);
+    const want = lookKey === -1 ? entryLookKey({ id: charId, stage: -1 }, char) : lookKey;
 
-    const idx = current.findIndex(e => e.id === charId && e.stage === stageIndex);
-    if (idx !== -1) {
-      current.splice(idx, 1);
-      saveSelections(current);
+    const hit = current.find(e => e.id === charId && entryLookKey(e, char) === want);
+    if (hit) {
+      stored.splice(stored.indexOf(hit), 1);
+      saveSelections(stored);
     } else {
-      if (current.length >= maxSlots) return false;
-      current.push({ id: charId, stage: stageIndex });
-      saveSelections(current);
+      if (current.length >= getMaxSlots()) return false;
+      // A stored copy of this pick that isn't deploying is replaced, not doubled.
+      const dup = stored.findIndex(e => e.id === charId &&
+        (lookKey === -1 ? e.stage === -1 : e.look === lookKey));
+      if (dup !== -1) stored.splice(dup, 1);
+      stored.push(lookKey === -1 ? { id: charId, stage: -1 } : { id: charId, look: lookKey });
+      saveSelections(stored);
     }
     deploy();
     return true;
@@ -2183,7 +2288,8 @@ const Walkers = (() => {
   /* ---- Walker Picker UI ---- */
 
   function showWalkerPicker() {
-    document.getElementById('walker-picker-overlay')?.remove();
+    const prevPicker = document.getElementById('walker-picker-overlay');
+    if (prevPicker) { if (prevPicker._closeModal) prevPicker._closeModal(); else prevPicker.remove(); }
 
     const maxSlots = getMaxSlots();
     const unlocked = getUnlockedCharacters();
@@ -2219,17 +2325,18 @@ const Walkers = (() => {
         `${count} / ${getMaxSlots()} slots used`;
     }
 
-    function isSelected(charId, stageIdx) {
-      return getSelectedEntries().some(e => e.id === charId && e.stage === stageIdx);
+    function isSelected(char, key) {
+      return getSelectedEntries().some(e => e.id === char.id && entryLookKey(e, char) === key);
     }
 
     // Build flat list: each unlocked stage = one card
     unlocked.forEach(char => {
       const stages = getCharStages(char, state);
 
-      stages.forEach((stage, si) => {
-        const selected = isSelected(char.id, si);
-        const label = si === 0 ? char.name : `${char.name} — ${stage.label}`;
+      stages.forEach((stage) => {
+        const key = lookKeyOf(char, stage);
+        const selected = isSelected(char, key);
+        const label = key === BASE_LOOK ? char.name : `${char.name} — ${stage.label}`;
 
         const card = document.createElement('div');
         card.className = 'walker-card' + (selected ? ' selected' : '');
@@ -2244,9 +2351,8 @@ const Walkers = (() => {
         `;
 
         card.addEventListener('click', () => {
-          if (isSelected(char.id, si)) {
-            toggleCharacter(char.id, si);
-            card.classList.remove('selected');
+          if (isSelected(char, key)) {
+            if (toggleCharacter(char.id, key)) card.classList.remove('selected');
           } else {
             if (getSelectedEntries().length >= getMaxSlots()) {
               const info = overlay.querySelector('.walker-slots-info');
@@ -2258,8 +2364,7 @@ const Walkers = (() => {
               }, 1500);
               return;
             }
-            toggleCharacter(char.id, si);
-            card.classList.add('selected');
+            if (toggleCharacter(char.id, key)) card.classList.add('selected');
           }
           updateSlotCount();
         });
@@ -2268,10 +2373,11 @@ const Walkers = (() => {
       });
     });
 
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.remove();
-    });
-    overlay.querySelector('#walker-picker-close').addEventListener('click', () => overlay.remove());
+    // A registered modal (MAP2-04): Escape, backdrop, focus trap, and the
+    // router's closeAllModals() on navigation all close it.
+    const closeBtn = overlay.querySelector('#walker-picker-close');
+    const close = wireModalDismiss(overlay, () => overlay.remove(), { initialFocus: closeBtn });
+    closeBtn.addEventListener('click', () => close());
   }
 
   /* ---- friend view support ---- */
@@ -2387,8 +2493,18 @@ const Walkers = (() => {
     spawnVillain: (nodeId) => spawnVillain(nodeId),
     clearCooldown: () => { globalFightCooldownEnd = 0; },
     // Run one frame by hand (the preview's rAF can stall during scripts).
-    step: () => { if (animFrameId) cancelAnimationFrame(animFrameId); tick(performance.now()); }
+    step: () => { if (animFrameId) cancelAnimationFrame(animFrameId); tick(performance.now()); },
+    // Pure-ish helpers for test/walker-logic.test.js.
+    lineupSignature: (entries) => lineupSignature(entries),
+    clampIntoRect: (rect, x, y, r) => clampIntoRect(rect, x, y, r),
+    lookKeyOf: (char, look) => lookKeyOf(char, look),
+    resolveLook: (entry, char) => resolveLook(entry, char),
+    joinFight: (nodeId) => joinFight(nodeId),
+    queueEncounter: (w1, w2) => queueEncounter(w1, w2),
+    tick: (now) => tick(now),
+    animFrameId: () => animFrameId
   };
 
   return { _debug, init, deploy, destroy, resetInit, showWalkerPicker, getSelectedEntries, toggleCharacter, deployWithSelections, restoreSelections, setFightsEnabled, getFightsEnabled, setDialoguesEnabled, getDialoguesEnabled, applyConfig, applyFlagDefaults };
 })();
+if (typeof module !== 'undefined' && module.exports) module.exports = Walkers;
