@@ -40,7 +40,11 @@ const NodeFactory = (() => {
 
   function updateState(node, project) {
     const isWatched = state.isWatched(project.id);
-    const locked = !isUnlocked(project);
+    // A watched title is never locked, even when a prerequisite added later
+    // isn't watched: `.node.locked` is display:none (05-map.css), so it used
+    // to blank the poster and leave only its label (Deadpool once
+    // X-Men Origins: Wolverine became its prerequisite).
+    const locked = !isWatched && !isUnlocked(project);
     const inProgress = state.isInProgress(project.id);
     node.classList.toggle("watched", isWatched);
     node.classList.toggle("locked", locked);
@@ -53,7 +57,7 @@ const NodeFactory = (() => {
   // announced as unavailable and skipped by activateOnKey.
   function applyA11y(el, project, s) {
     const isWatched = s ? s.isWatched : state.isWatched(project.id);
-    const locked = s ? s.locked : !isUnlocked(project);
+    const locked = s ? s.locked : !isWatched && !isUnlocked(project);
     const inProgress = s ? s.inProgress : state.isInProgress(project.id);
     const open = !locked || isWatched;
     const status = isWatched ? 'watched' : inProgress ? 'watching' : open ? 'not started' : 'locked';
