@@ -34,6 +34,8 @@ const UploadPolicy = require('../server/upload-policy');
 const { parseAsset } = require('../server/cloudinary-url');
 const feed = require('../server/feed');
 const MessagingLogic = require('../js/messaging-logic');
+const UserRequests = require('../server/user-requests');   // approve/reject a user's request
+const Username = require('../server/username');
 const auth = require('../middleware/auth');
 // Pure payload validators for the config / CMS / board routes below.
 const {
@@ -174,21 +176,28 @@ router.delete('/users/:id', async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) {
     return res.status(400).json({ error: 'Invalid user id' });
   }
-  if (req.params.id === req.adminUser.id) {
-    return res.status(400).json({ error: "You can't delete your own admin account" });
+  const out = await deleteUserAccount(req, req.params.id);
+  res.status(out.status).json(out.body);
+});
+
+// The whole delete, shared by DELETE /users/:id and an approved "Delete my
+// account" request. → { status, body } (the HTTP answer to send).
+async function deleteUserAccount(req, userId) {
+  if (userId === req.adminUser.id) {
+    return { status: 400, body: { error: "You can't delete your own admin account" } };
   }
-  const user = await User.findById(req.params.id).select('username isAdmin').lean();
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const user = await User.findById(userId).select('username isAdmin').lean();
+  if (!user) return { status: 404, body: { error: 'User not found' } };
   // One admin must not be able to remove another; demoting is a deliberate
   // separate step (there is no demote route yet — it's a DB edit).
-  if (user.isAdmin) return res.status(400).json({ error: 'Demote this admin before deleting them' });
+  if (user.isAdmin) return { status: 400, body: { error: 'Demote this admin before deleting them' } };
 
   // Lazy: world-socket is only needed here, and keeps admin.js loadable on
   // its own (tests, scripts).
   let WorldSocket = null;
   try { WorldSocket = require('./world-socket'); } catch (_) {}
   const dropCredits = () => (WorldSocket && WorldSocket.dropCreditsFor
-    ? WorldSocket.dropCreditsFor(req.params.id).catch(() => {})
+    ? WorldSocket.dropCreditsFor(userId).catch(() => {})
     : Promise.resolve());
   // Stop island stay credit BEFORE the cascade (and wait out a flush in
   // flight) — otherwise the next flush upserts their ProjectStay rows back.
@@ -203,28 +212,31 @@ router.delete('/users/:id', async (req, res) => {
     QuoteLine: require('../models/QuoteLine'),
     Message: require('../models/Message'),
     WorldHouse: require('../models/WorldHouse')
-  }, cloudinary, { userId: req.params.id, username: user.username });
+  }, cloudinary, { userId, username: user.username });
   SceneData.invalidate('board', null);
   QuoteData.invalidate('board', null);
   QuoteData.invalidate('pool', null);
   // Live sockets drop last. Their disconnect handlers drain any stay into
   // pendingCredits; dropCreditsFor marked the user, so that credit is
   // discarded — the second call just sweeps anything queued meanwhile.
-  auth.invalidateUser(req.params.id);
+  auth.invalidateUser(userId);
   dropCredits();
-  logAudit(req, 'deleteUser', req.params.id, {
+  logAudit(req, 'deleteUser', userId, {
     username: user.username,
     failed: summary.ok ? undefined : summary.steps.filter(s => s.error).map(s => s.name)
   });
   const userStep = summary.steps.find(s => s.name === 'user');
   if (!userStep || userStep.error) {
-    return res.status(500).json({ error: 'User delete failed', steps: summary.steps });
+    return { status: 500, body: { error: 'User delete failed', steps: summary.steps } };
   }
-  res.json({
-    message: summary.ok ? 'User deleted' : 'User deleted — some cleanup steps failed (see server log)',
-    steps: summary.steps
-  });
-});
+  return {
+    status: 200,
+    body: {
+      message: summary.ok ? 'User deleted' : 'User deleted — some cleanup steps failed (see server log)',
+      steps: summary.steps
+    }
+  };
+}
 
 router.post('/users/:id/password', async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) {
@@ -308,13 +320,28 @@ router.post('/users/:id/watched', async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) {
     return res.status(400).json({ error: 'Invalid user id' });
   }
-  const user = await User.findById(req.params.id).select('username watchedProjects.projectId').lean();
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const out = await markWatchedFor(req, req.params.id, req.body && req.body.projectIds);
+  if (out.error) return res.status(out.status).json({ error: out.error, unknown: out.unknown });
+  const titles = out.added.map(out.titleOf);
+  if (titles.length) {
+    Messages.sendSystem({ recipientId: req.params.id, kind: 'admin-notice', text: AdminWatch.inboxText(titles) })
+      .catch(err => console.error('Mark watched → inbox failed:', err && err.message));
+  }
+  res.json({ added: out.added, skipped: out.skipped });
+});
+
+// The Mark-watched write, shared by the route above and an approved "Mark
+// as watched" request. → { added, skipped, titleOf } | { status, error, unknown? }.
+// The caller sends the inbox note (the request names its report).
+async function markWatchedFor(req, userId, projectIds) {
+  const user = await User.findById(userId).select('username watchedProjects.projectId').lean();
+  if (!user) return { status: 404, error: 'User not found' };
   const projects = await watchRules.allProjects();
+  const titleOf = (id) => String((projects.get(id) || {}).title || id);
   const watched = new Set((user.watchedProjects || []).map(e => e.projectId));
-  const plan = AdminWatch.planMarkWatched(req.body && req.body.projectIds, watched, projects);
-  if (plan.error) return res.status(400).json({ error: plan.error, unknown: plan.unknown });
-  if (!plan.add.length) return res.json({ added: [], skipped: plan.skip });
+  const plan = AdminWatch.planMarkWatched(projectIds, watched, projects);
+  if (plan.error) return { status: 400, error: plan.error, unknown: plan.unknown };
+  if (!plan.add.length) return { added: [], skipped: plan.skip, titleOf };
 
   // The filter makes it all-or-nothing: if the user finished one of these
   // titles since the read above, nothing is written (no duplicate entry).
@@ -327,17 +354,13 @@ router.post('/users/:id/watched', async (req, res) => {
     { returnDocument: 'after', projection: { _id: 1 } }
   ).lean();
   if (!updated) {
-    return res.status(409).json({ error: 'Their progress just changed. Reopen the user and try again.' });
+    return { status: 409, error: 'Their progress just changed. Reopen it and try again.' };
   }
-
-  const titles = plan.add.map(id => String((projects.get(id) || {}).title || id));
-  Messages.sendSystem({ recipientId: user._id, kind: 'admin-notice', text: AdminWatch.inboxText(titles) })
-    .catch(err => console.error('Mark watched → inbox failed:', err && err.message));
-  logAudit(req, 'markWatched', req.params.id, {
+  logAudit(req, 'markWatched', userId, {
     username: user.username, projectIds: plan.add, ...(plan.skip.length ? { skipped: plan.skip } : {})
   });
-  res.json({ added: plan.add, skipped: plan.skip });
-});
+  return { added: plan.add, skipped: plan.skip, titleOf };
+}
 
 // -----------------------------------------------------------------------
 // MEMORIES (moderation)
@@ -532,7 +555,7 @@ router.patch('/reports/:id', async (req, res) => {
   // Tell the reporter — a status change used to be invisible to them unless
   // it came with a reply. Best-effort, like the reply notification below.
   if (from !== status && await User.exists({ _id: doc.user })) {
-    const label = doc.kind === 'bug' ? 'bug report' : 'suggestion';
+    const label = MessagingLogic.kindLabel(doc.kind);
     const STATUS_TEXT = {
       'open': 'is open again',
       'in-progress': 'is now being worked on',
@@ -570,7 +593,7 @@ router.post('/reports/:id/replies', async (req, res) => {
   // (deleted since filing) or a Mongo blip must not fail the admin action.
   const userExists = await User.exists({ _id: doc.user });
   if (userExists) {
-    const label = doc.kind === 'bug' ? 'bug report' : 'suggestion';
+    const label = MessagingLogic.kindLabel(doc.kind);
     Messages.sendSystem({
       recipientId: doc.user,
       reportId: doc._id,
@@ -587,6 +610,98 @@ router.delete('/reports/:id', async (req, res) => {
   if (!doc) return res.status(404).json({ error: 'Not found' });
   logAudit(req, 'deleteReport', req.params.id, { username: doc.username, title: doc.title, kind: doc.kind });
   res.json({ message: 'Report deleted' });
+});
+
+// Approve or reject a user's request (Report kind 'request'). Approving
+// makes the change (server/user-requests.js; Mark watched and Delete reuse
+// the Users-tab paths above), sets the status to Fixed, adds the outcome to
+// the thread and sends the inbox note. Rejecting sets Won't fix.
+// Body: { outcome: 'approved'|'rejected', projectIds?: subset to approve
+// (mark-watched), text?: an optional reason / note added as a reply }.
+router.post('/reports/:id/resolve', async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid report id' });
+  const body = req.body || {};
+  const outcome = body.outcome;
+  if (outcome !== 'approved' && outcome !== 'rejected') return res.status(400).json({ error: 'Invalid outcome' });
+  const note = typeof body.text === 'string' ? body.text.trim().slice(0, MessagingLogic.C.REPLY_MAX) : '';
+  const doc = await Report.findById(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  const rq = doc.request;
+  if (doc.kind !== 'request' || !rq) return res.status(400).json({ error: 'Not a request' });
+  if (rq.resolution && rq.resolution.outcome) return res.status(409).json({ error: 'Already handled' });
+  if (doc.status === 'closed') return res.status(400).json({ error: 'The user withdrew this request' });
+
+  const projects = await watchRules.allProjects();
+  const titleOf = (id) => String((projects.get(id) || {}).title || id);
+  const userId = String(doc.user);
+  const userExists = await User.exists({ _id: doc.user });
+  let added, skipped;
+
+  if (outcome === 'approved') {
+    if (!userExists) return res.status(404).json({ error: 'That user no longer exists' });
+    switch (rq.type) {
+      case 'mark-watched': {
+        // The admin may untick some; anything not in the request is ignored.
+        const asked = rq.projectIds || [];
+        const pick = Array.isArray(body.projectIds) ? asked.filter(id => body.projectIds.includes(id)) : asked;
+        if (!pick.length) return res.status(400).json({ error: 'Tick at least one title, or reject the request' });
+        const out = await markWatchedFor(req, userId, pick);
+        if (out.error) return res.status(out.status).json({ error: out.error });
+        added = out.added;
+        skipped = out.skipped;
+        break;
+      }
+      case 'undo-watch': {
+        const out = await UserRequests.undoWatch(User, userId, rq.projectId);
+        if (!out.ok) return res.status(409).json({ error: out.error });
+        logAudit(req, 'undoWatch', userId, { username: doc.username, projectId: rq.projectId });
+        break;
+      }
+      case 'fix-count': {
+        const out = await UserRequests.setCount(User, userId, rq.projectId, rq.count);
+        if (!out.ok) return res.status(409).json({ error: out.error });
+        logAudit(req, 'setWatchCount', userId, { username: doc.username, projectId: rq.projectId, count: rq.count });
+        break;
+      }
+      case 'rename': {
+        const cur = await User.findById(userId).select('username').lean();
+        const taken = await Username.findByUsername(rq.newUsername, '_id');
+        if (taken && String(taken._id) !== userId) return res.status(409).json({ error: 'That username is taken now — reject it, or reply asking for another name' });
+        const out = await UserRequests.rename({ User, FeedPost, Report }, userId, cur.username, rq.newUsername);
+        if (!out.ok) return res.status(409).json({ error: out.error });
+        rq.oldUsername = cur.username;
+        doc.username = rq.newUsername;
+        auth.invalidateUser(userId);
+        logAudit(req, 'renameUser', userId, { from: cur.username, to: rq.newUsername, failed: out.steps.filter(s => s.error).map(s => s.name) });
+        break;
+      }
+      case 'delete-account': {
+        const out = await deleteUserAccount(req, userId);
+        if (out.status !== 200) return res.status(out.status).json(out.body);
+        break;
+      }
+      // add-title: nothing automatic — the admin adds it in the CMS.
+    }
+  }
+
+  rq.resolution = { outcome, by: req.adminUser.username, at: new Date(), added, skipped };
+  doc.status = outcome === 'approved' ? 'fixed' : 'wontfix';
+  const inbox = UserRequests.inboxText(rq, outcome, { titleOf, added, skipped, reason: outcome === 'rejected' ? note : '' });
+  if (doc.replies.length < MessagingLogic.C.REPLIES_MAX) {
+    doc.replies.push({
+      author: req.adminUser.id, authorUsername: req.adminUser.username, isAdmin: true,
+      text: (outcome === 'approved' && note ? `${inbox}\n\n${note}` : inbox).slice(0, MessagingLogic.C.REPLY_MAX)
+    });
+    doc.lastReplyAt = new Date();
+  }
+  await doc.save();
+  // The deleted account has no inbox; everyone else hears about it.
+  if (!(outcome === 'approved' && rq.type === 'delete-account') && await User.exists({ _id: doc.user })) {
+    Messages.sendSystem({ recipientId: doc.user, reportId: doc._id, kind: 'admin-notice', text: inbox })
+      .catch(err => console.error('Request outcome → inbox failed:', err && err.message));
+  }
+  logAudit(req, 'resolveRequest', req.params.id, { username: doc.username, type: rq.type, outcome });
+  res.json(doc.toObject());
 });
 
 // -----------------------------------------------------------------------

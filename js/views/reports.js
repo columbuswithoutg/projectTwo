@@ -45,6 +45,32 @@ const ReportsView = (() => {
     }
   }
 
+  const KIND_LABEL = { bug: 'Bug', suggestion: 'Suggestion', request: 'Request' };
+  const titleOf = (id) => {
+    const p = (Array.isArray(window.projects) ? window.projects : []).find(x => x && x.id === id);
+    return p ? p.title : id;
+  };
+
+  // What a request asked for, and (once handled) what the admin did.
+  function requestBlock(r) {
+    const rq = r.request;
+    if (!rq) return '';
+    let what = '';
+    if (rq.type === 'mark-watched') {
+      const res = rq.resolution;
+      const added = new Set(res ? res.added : []);
+      what = `<ul class="request-titles">${rq.projectIds.map(id => `
+        <li${res ? ` class="${added.has(id) ? 'is-added' : 'is-left'}"` : ''}>${esc(titleOf(id))}${res ? (added.has(id) ? ' — added' : ' — not added') : ''}</li>`).join('')}</ul>`;
+    }
+    const waiting = (r.status === 'open' || r.status === 'in-progress') && !rq.resolution;
+    return `
+      <div class="request-detail">
+        <p class="report-meta">${esc(MessagingLogic.REQUEST_LABEL[rq.type] || 'Request')}${rq.resolution ? ` · ${rq.resolution.outcome === 'approved' ? 'Approved' : 'Not approved'}` : ''}</p>
+        ${what}
+        ${waiting ? '<button type="button" class="msg-btn msg-btn-ghost request-withdraw">Withdraw request</button>' : ''}
+      </div>`;
+  }
+
   function card(r, note) {
     const open = _open.has(r.id);
     const closed = r.status === 'closed';
@@ -52,13 +78,14 @@ const ReportsView = (() => {
       <p class="report-meta">${esc(note)}</p>` : ''}
       <article class="report-card${open ? ' open' : ''}" data-id="${esc(r.id)}" id="report-${esc(r.id)}">
         <button type="button" class="report-card-head" aria-expanded="${open}">
-          <span class="report-pill report-kind-${esc(r.kind)}">${r.kind === 'bug' ? 'Bug' : 'Suggestion'}</span>
+          <span class="report-pill report-kind-${esc(r.kind)}">${esc(KIND_LABEL[r.kind] || r.kind)}</span>
           <span class="report-title">${esc(r.title)}</span>
           <span class="report-pill report-status-${esc(r.status)}">${esc(STATUS_LABEL[r.status] || r.status)}</span>
           <span class="report-date">${esc(stamp(r.createdAt))}</span>
         </button>
         <div class="report-card-body" ${open ? '' : 'hidden'}>
-          <p class="report-desc">${esc(r.description)}</p>
+          ${r.description ? `<p class="report-desc">${esc(r.description)}</p>` : ''}
+          ${requestBlock(r)}
           ${r.page ? `<p class="report-meta">Page: <code>${esc(r.page)}</code></p>` : ''}
           <div class="report-thread">
             ${r.replies.length
@@ -107,6 +134,25 @@ const ReportsView = (() => {
         el.querySelector('.report-card-head').setAttribute('aria-expanded', String(nowOpen));
         if (nowOpen) _open.add(id); else _open.delete(id);
       });
+      const withdraw = el.querySelector('.request-withdraw');
+      if (withdraw) {
+        withdraw.addEventListener('click', async () => {
+          const ok = await confirmDialog({ title: 'Withdraw this request?', confirmLabel: 'Withdraw', cancelLabel: 'Keep it' });
+          if (!ok) return;
+          withdraw.disabled = true;
+          try {
+            const data = await Reports.withdraw(id);
+            const idx = _items.findIndex(r => r.id === id);
+            if (idx !== -1 && data.report) _items[idx] = data.report;
+            if (_pinned && _pinned.id === id && data.report) _pinned = data.report;
+            toast('Request withdrawn.', 'success');
+            render();
+          } catch (err) {
+            toast(err.message || 'Could not withdraw it', 'error');
+            withdraw.disabled = false;
+          }
+        });
+      }
       const form = el.querySelector('.report-form');
       if (form) {
         form.addEventListener('submit', async (e) => {
@@ -148,6 +194,7 @@ const ReportsView = (() => {
         <div class="msg-column">
           <div class="msg-toolbar">
             <button type="button" class="msg-new-btn" id="reports-new-btn">＋ Report a bug or idea</button>
+            <button type="button" class="msg-btn msg-btn-ghost" id="reports-request-btn">Ask the admin</button>
             <a href="/messages?admin=1" data-link class="reports-inbox-link">Admin replies in Messages</a>
           </div>
           <div id="reports-list" class="report-list"></div>
@@ -161,6 +208,7 @@ const ReportsView = (() => {
     `;
     container.querySelector('#back-btn').addEventListener('click', () => Router.back('/'));
     container.querySelector('#reports-new-btn').addEventListener('click', () => showReportDialog());
+    container.querySelector('#reports-request-btn').addEventListener('click', () => showRequestDialog());
     container.querySelector('#reports-prev').addEventListener('click', () => { if (_page > 1) { _page--; load(); } });
     container.querySelector('#reports-next').addEventListener('click', () => { _page++; load(); });
 

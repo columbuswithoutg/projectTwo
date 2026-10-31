@@ -124,6 +124,8 @@ const ProfileView = {
           <div class="profile-support-actions">
             <button type="button" class="profile-support-btn" id="profile-messages-btn">Messages <span class="nav-badge" data-unread-badge hidden></span></button>
             <button type="button" class="profile-support-btn" id="profile-reports-btn">My reports</button>
+            <button type="button" class="profile-support-btn" id="profile-request-btn">Ask the admin</button>
+            <button type="button" class="profile-support-btn" id="profile-password-btn">Change password</button>
             <button type="button" class="profile-support-btn primary" id="profile-report-btn">Report a bug or idea</button>
           </div>
         </div>
@@ -142,6 +144,8 @@ const ProfileView = {
     document.getElementById('profile-messages-btn').addEventListener('click', () => Router.go('/messages'));
     document.getElementById('profile-reports-btn').addEventListener('click', () => Router.go('/reports'));
     document.getElementById('profile-report-btn').addEventListener('click', () => showReportDialog());
+    document.getElementById('profile-request-btn').addEventListener('click', () => showRequestDialog());
+    document.getElementById('profile-password-btn').addEventListener('click', () => showPasswordDialog());
     MessagesBadge.apply();
 
     // Share your progress: whether the link is on, and how many joined from it.

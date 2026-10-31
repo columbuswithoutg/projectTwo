@@ -1,7 +1,9 @@
 /************************************************
  * ADMIN — REPORTS TAB
- * Bug reports & suggestions filed by users: filter, triage (status),
- * reply (also pushed to the user's Messages inbox), delete.
+ * Bug reports, suggestions and requests filed by users: filter, triage
+ * (status), reply (also pushed to the user's Messages inbox), delete.
+ * A request also gets Approve / Reject (POST /reports/:id/resolve), which
+ * makes the change on the user's account.
  ************************************************/
 (function () {
   const esc = AdminView._escapeHtml;
@@ -27,6 +29,7 @@
               <option value="">All types</option>
               <option value="bug"${s.kind === 'bug' ? ' selected' : ''}>Bugs</option>
               <option value="suggestion"${s.kind === 'suggestion' ? ' selected' : ''}>Suggestions</option>
+              <option value="request"${s.kind === 'request' ? ' selected' : ''}>Requests</option>
             </select>
             <select id="admin-reports-status" class="admin-input">
               <option value="">All statuses</option>
@@ -126,13 +129,131 @@
         row.querySelector('.admin-report-reply').addEventListener('click', () => AdminReports.reply(r, row));
         row.querySelector('.admin-report-setstatus').addEventListener('click', () => AdminReports.setStatus(r, row));
         row.querySelector('.admin-report-delete').addEventListener('click', () => AdminReports.remove(r));
+        const approve = row.querySelector('.admin-request-approve');
+        if (approve) approve.addEventListener('click', () => AdminReports.resolve(r, row, 'approved'));
+        const reject = row.querySelector('.admin-request-reject');
+        if (reject) reject.addEventListener('click', () => AdminReports.resolve(r, row, 'rejected'));
+        const all = row.querySelector('.admin-request-all');
+        if (all) all.addEventListener('click', () => {
+          const boxes = [...row.querySelectorAll('.admin-request-pick input')];
+          const on = !boxes.every(b => b.checked);
+          boxes.forEach(b => { b.checked = on; });
+          AdminReports._paintPick(row);
+        });
+        row.querySelectorAll('.admin-request-pick input').forEach(b => b.addEventListener('change', () => AdminReports._paintPick(row)));
       });
+    },
+
+    _titleOf(id) {
+      const p = (Array.isArray(window.projects) ? window.projects : []).find(x => x && x.id === id);
+      return p ? p.title : id;
+    },
+
+    // Approve button names how many ticked titles it will add.
+    _paintPick(row) {
+      const boxes = [...row.querySelectorAll('.admin-request-pick input')];
+      const n = boxes.filter(b => b.checked).length;
+      const btn = row.querySelector('.admin-request-approve');
+      if (btn) btn.textContent = `Approve ${n} title${n === 1 ? '' : 's'}`;
+      const all = row.querySelector('.admin-request-all');
+      if (all) all.textContent = boxes.every(b => b.checked) ? 'Untick all' : 'Tick all';
+    },
+
+    // The request panel: what was asked, and Approve / Reject while open.
+    requestPanel(r) {
+      const rq = r.request;
+      if (!rq) return '';
+      const t = AdminReports._titleOf;
+      const res = rq.resolution && rq.resolution.outcome ? rq.resolution : null;
+      const handled = res || r.status === 'closed';
+      let body = '';
+      switch (rq.type) {
+        case 'mark-watched': {
+          const ids = rq.projectIds || [];
+          const added = new Set((res && res.added) || []);
+          body = handled
+            ? `<ul class="request-titles">${ids.map(id => `<li class="${added.has(id) ? 'is-added' : 'is-left'}">${esc(t(id))}${res ? (added.has(id) ? ' — added' : ' — not added') : ''}</li>`).join('')}</ul>`
+            : `<p class="admin-row-meta">Untick anything you don’t want to add. Locks and the watch timer don’t apply.</p>
+               <div class="admin-request-pick">
+                 ${ids.map(id => `<label><input type="checkbox" value="${esc(id)}" checked /> ${esc(t(id))}</label>`).join('')}
+               </div>
+               ${ids.length > 1 ? '<button type="button" class="admin-btn admin-request-all">Untick all</button>' : ''}`;
+          break;
+        }
+        case 'undo-watch':
+          body = `<p>Remove <strong>${esc(t(rq.projectId))}</strong> from their watched list (its memory photos go with it; later titles stay watched).</p>`;
+          break;
+        case 'fix-count':
+          body = `<p>Set <strong>${esc(t(rq.projectId))}</strong> to <strong>${esc(String(rq.count))}</strong> watch${rq.count === 1 ? '' : 'es'}.</p>`;
+          break;
+        case 'add-title':
+          body = `<p>Add <strong>${esc(rq.title || '')}</strong> to the board. Approving only tells them it’s coming — add it in Content → Projects.</p>`;
+          break;
+        case 'rename':
+          body = `<p>Rename <strong>${esc(rq.oldUsername || r.username)}</strong> → <strong>${esc(rq.newUsername || '')}</strong>. Co-watcher tags follow; they sign in again with the new name.</p>`;
+          break;
+        case 'delete-account':
+          body = `<p class="admin-request-warn">Delete <strong>${esc(r.username)}</strong>’s account and everything in it. This can’t be undone.</p>`;
+          break;
+      }
+      const approveLabel = rq.type === 'mark-watched'
+        ? `Approve ${(rq.projectIds || []).length} title${(rq.projectIds || []).length === 1 ? '' : 's'}`
+        : rq.type === 'delete-account' ? 'Approve & delete account' : 'Approve';
+      return `
+        <div class="admin-request">
+          <p class="admin-row-meta"><strong>${esc(L.REQUEST_LABEL[rq.type] || 'Request')}</strong>${res ? ` · ${res.outcome === 'approved' ? 'Approved' : 'Rejected'} by ${esc(res.by || 'admin')} · ${AdminView.formatDate(res.at)}` : r.status === 'closed' ? ' · Withdrawn' : ''}</p>
+          ${body}
+          ${handled ? '' : `
+            <div class="admin-report-actions">
+              <button class="admin-btn admin-btn-primary admin-request-approve${rq.type === 'delete-account' ? ' admin-btn-danger' : ''}">${esc(approveLabel)}</button>
+              <button class="admin-btn admin-request-reject">Reject</button>
+              <span class="admin-row-meta">The reply box below is sent with it (a rejection reason, or a note).</span>
+            </div>`}
+        </div>`;
+    },
+
+    async resolve(r, row, outcome) {
+      const s = AdminReports._state;
+      const id = String(r._id);
+      if (s.busy[id]) return;
+      const rq = r.request;
+      const text = row.querySelector('.admin-report-text').value.trim();
+      const body = { outcome, text: text || undefined };
+      if (outcome === 'approved' && rq.type === 'mark-watched') {
+        body.projectIds = [...row.querySelectorAll('.admin-request-pick input')].filter(b => b.checked).map(b => b.value);
+        if (!body.projectIds.length) { AdminView.toast('Tick at least one title, or reject the request', 'error'); return; }
+      }
+      if (outcome === 'approved' && (rq.type === 'delete-account' || rq.type === 'rename' || rq.type === 'undo-watch')) {
+        const ok = await confirmDialog({
+          title: rq.type === 'delete-account' ? `Delete ${r.username}’s account?` : rq.type === 'rename' ? `Rename ${r.username} to ${rq.newUsername}?` : `Undo ${AdminReports._titleOf(rq.projectId)} for ${r.username}?`,
+          message: rq.type === 'delete-account' ? 'Their progress, posts, photos, messages and friends are removed permanently.' : rq.type === 'undo-watch' ? 'Its memory photos are removed with it.' : 'They’ll be signed out and sign in again with the new name.',
+          confirmLabel: rq.type === 'delete-account' ? 'Delete account' : 'Approve',
+          danger: rq.type === 'delete-account'
+        });
+        if (!ok) return;
+      }
+      s.busy[id] = true;
+      AdminReports._setBusy(row, true);
+      try {
+        await AdminView.api(`/reports/${r._id}/resolve`, { method: 'POST', body: JSON.stringify(body) });
+        delete s.drafts[id];
+        AdminView.toast(outcome === 'approved' ? 'Approved — they’ve been told in Messages' : 'Rejected — they’ve been told in Messages', 'success');
+        AdminView.refreshAttention();
+        await AdminReports.fetch();
+      } catch (e) {
+        AdminView.toast(e.message, 'error');
+      } finally {
+        delete s.busy[id];
+        const cur = AdminReports._rowFor(id);
+        if (cur) AdminReports._setBusy(cur, false);
+      }
     },
 
     detail(r) {
       return `
         <div class="admin-detail admin-report-detail">
-          <p class="admin-report-desc">${esc(r.description)}</p>
+          ${r.description ? `<p class="admin-report-desc">${esc(r.description)}</p>` : ''}
+          ${AdminReports.requestPanel(r)}
           <div class="admin-row-meta">
             ${r.page ? `Page: <code>${esc(r.page)}</code><br>` : ''}
             ${r.userAgent ? `Browser: <code>${esc(r.userAgent)}</code>` : ''}
@@ -160,7 +281,7 @@
     // Reply + Set status are off while either request is in flight, so a
     // double click can't send the same reply twice.
     _setBusy(row, busy) {
-      row.querySelectorAll('.admin-report-reply, .admin-report-setstatus').forEach(b => { b.disabled = busy; });
+      row.querySelectorAll('.admin-report-reply, .admin-report-setstatus, .admin-request-approve, .admin-request-reject').forEach(b => { b.disabled = busy; });
     },
 
     // The row the list currently shows for a report (a re-render replaces

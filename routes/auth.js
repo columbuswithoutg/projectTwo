@@ -8,6 +8,7 @@ const Username = require('../server/username');
 const { passwordError, hashPassword, needsRehash, dummyHash, PASSWORD_MAX_BYTES } = require('../server/password');
 const Share = require('../server/share');
 const ShareLogic = require('../js/share-logic');
+const MessagingLogic = require('../js/messaging-logic');
 
 // Username: 3–30 chars, letters/digits/underscore/dash. Rejects NoSQL operator objects.
 // Password: server/password.js (8 chars … 72 bytes — bcrypt ignores anything
@@ -16,10 +17,8 @@ function validateCredentials(username, password) {
   if (typeof username !== 'string' || typeof password !== 'string') {
     return 'Username and password must be strings';
   }
-  const u = username.trim();
-  if (u.length < 3 || u.length > 30) return 'Username must be 3–30 characters';
-  if (!/^[a-zA-Z0-9_-]+$/.test(u)) return 'Username can only contain letters, numbers, _ or -';
-  return passwordError(password);
+  // Shared with the "Change my username" request (js/messaging-logic.js).
+  return MessagingLogic.usernameError(username) || passwordError(password);
 }
 
 router.post('/register', async (req, res) => {
@@ -103,6 +102,41 @@ router.post('/login', async (req, res) => {
     watchedProjects: user.watchedProjects,
     isAdmin: !!user.isAdmin
   });
+});
+
+// Change your own password while signed in: the current one is required.
+// Every other session is signed out (tokenVersion bump) and this one gets
+// a fresh token so the user stays signed in here.
+router.post('/password', auth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (typeof currentPassword !== 'string' || !currentPassword) {
+    return res.status(400).json({ error: 'Enter your current password', field: 'current' });
+  }
+  const pwErr = passwordError(newPassword);
+  if (pwErr) return res.status(400).json({ error: pwErr, field: 'new' });
+  const user = await User.findById(req.user.id).select('password tokenVersion isAdmin').lean();
+  if (!user) return res.status(401).json({ error: 'Invalid token' });
+  if (!(await bcrypt.compare(currentPassword, user.password))) {
+    return res.status(400).json({ error: 'Your current password is wrong', field: 'current' });
+  }
+  if (await bcrypt.compare(newPassword, user.password)) {
+    return res.status(400).json({ error: 'Pick a password different from your current one', field: 'new' });
+  }
+  const hashed = await hashPassword(newPassword);
+  // Guarded on the hash we checked, so two changes at once can't both win.
+  const updated = await User.findOneAndUpdate(
+    { _id: user._id, password: user.password },
+    { $set: { password: hashed }, $inc: { tokenVersion: 1 } },
+    { returnDocument: 'after', projection: { tokenVersion: 1, isAdmin: 1 } }
+  ).lean();
+  if (!updated) return res.status(409).json({ error: 'Your password just changed somewhere else — sign in again' });
+  auth.invalidateUser(req.user.id);
+  const token = jwt.sign(
+    { id: updated._id, isAdmin: !!updated.isAdmin, tv: updated.tokenVersion || 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+  res.json({ ok: true, token });
 });
 
 // Log out EVERYWHERE: bumping tokenVersion makes every JWT this user holds
