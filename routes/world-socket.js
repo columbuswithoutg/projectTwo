@@ -541,7 +541,11 @@ module.exports = (io) => {
       socket.data.username = result.username || null;
       next();
     } catch (e) {
-      next(new Error('Invalid token'));
+      // Not the token's fault (validateToken never throws): a server-side
+      // error must not read as a dead session, which the client now answers
+      // with a logout (js/home-socket.js SESSION_ERRORS).
+      console.error('[world-socket] handshake error', e && e.message);
+      next(new Error('Server error'));
     }
   });
 

@@ -88,13 +88,29 @@
   function isStatus(s) { return REPORT_STATUSES.includes(s); }
   function isRequestType(t) { return REQUEST_TYPES.includes(t); }
 
-  // Same rule as register (routes/auth.js): 3–30 letters, digits, _ or -.
-  // → null when fine, else the message to show.
+  // Names nobody may pick at sign-up or in a rename request (SRV3-01): they
+  // would read like the system "Admin" thread or staff in the inbox. The name
+  // is lowercased with _ and - removed, then rejected if it STARTS with a
+  // prefix ("Admin-1", "_admin", "SystemBot", "Systemic" too) or EQUALS an
+  // exact name ("mod", so "modern" stays allowed). Only new names are checked:
+  // login, profiles and sockets never call usernameError, so existing
+  // accounts with such names keep working.
+  const RESERVED_PREFIXES = ['admin', 'administrator', 'moderator', 'system', 'staff', 'support', 'official', 'mcutracker'];
+  const RESERVED_EXACT = ['mod', 'mods'];
+  const RESERVED_MSG = 'That username is reserved';
+  function isReservedUsername(u) {
+    const n = str(u).trim().toLowerCase().replace(/[_-]/g, '');
+    return RESERVED_EXACT.includes(n) || RESERVED_PREFIXES.some(p => n.startsWith(p));
+  }
+
+  // Same rule as register (routes/auth.js): 3–30 letters, digits, _ or -,
+  // and not reserved. → null when fine, else the message to show.
   function usernameError(u) {
     if (typeof u !== 'string') return 'Username must be a string';
     const t = u.trim();
     if (t.length < 3 || t.length > 30) return 'Username must be 3–30 characters';
     if (!/^[a-zA-Z0-9_-]+$/.test(t)) return 'Username can only contain letters, numbers, _ or -';
+    if (isReservedUsername(t)) return RESERVED_MSG;
     return null;
   }
 
@@ -165,7 +181,8 @@
       if (t.length > C.SUGGEST_TITLE_MAX) return { ok: false, error: 'title-too-long', field: 'title' };
       request.title = t;
     } else if (type === 'rename') {
-      if (usernameError(r.newUsername)) return { ok: false, error: 'bad-username', field: 'newUsername' };
+      const nameErr = usernameError(r.newUsername);
+      if (nameErr) return { ok: false, error: nameErr === RESERVED_MSG ? 'reserved-username' : 'bad-username', field: 'newUsername' };
       request.newUsername = r.newUsername.trim();
     } else if (type === 'delete-account') {
       if (r.confirm !== true) return { ok: false, error: 'no-confirm', field: 'confirm' };
@@ -247,6 +264,7 @@
       case 'bad-count':            return `Enter a whole number from 1 to ${C.WATCH_COUNT_MAX}.`;
       case 'no-suggest-title':     return 'Enter the title you’d like added.';
       case 'bad-username':         return 'Usernames are 3–30 letters, numbers, _ or -.';
+      case 'reserved-username':    return 'That username is reserved — pick another.';
       case 'no-confirm':           return 'Tick the box to confirm.';
       default:                     return 'Something went wrong — please try again.';
     }
@@ -254,7 +272,7 @@
 
   return {
     C, REPORT_KINDS, REPORT_STATUSES, REQUEST_TYPES, REQUEST_LABEL, SYSTEM_ADMIN,
-    pairKey, adminPairKey, isKind, isStatus, isRequestType, usernameError,
+    pairKey, adminPairKey, isKind, isStatus, isRequestType, usernameError, isReservedUsername,
     normalizeDm, validateReport, validateRequest, requestTitle, kindLabel, validateReply, preview, errorText
   };
 });

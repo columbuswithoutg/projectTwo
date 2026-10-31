@@ -518,12 +518,19 @@ function createCore(spec) {
   }
 
   // world:join — the same user back on a new socket takes their seat again.
+  // Only on the game's island are they present: a fresh socket's zone is
+  // usually not known yet (world:join runs before its first world:pos), so
+  // anyone else gets the zone grace from now, and onZone onto the island
+  // clears it — otherwise a reload onto another island kept the seat (and
+  // held up every round) for good.
   function resume(socket) {
     const g = gameOfUser(socket.data.userId);
     if (!g) return;
     const userId = String(socket.data.userId);
     g.sockets.set(userId, socket.id);
-    g.awayUntil.delete(userId);
+    const p = world && world.players.get(socket.id);
+    if (p && p.projectId === g.state.projectId) g.awayUntil.delete(userId);
+    else g.awayUntil.set(userId, now() + L.C.ZONE_GRACE_MS);
     broadcast(g);
     sendState(socket, g);
     schedule(g);

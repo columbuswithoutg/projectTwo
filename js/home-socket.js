@@ -73,6 +73,11 @@ const Multiplayer = (() => {
   const YAW_EPSILON = 0.02;
   const CHAT_LOG_MAX = 20;
 
+  // Handshake refusals meaning "this token is no good" — the exact strings
+  // middleware/auth.js validateToken returns, plus routes/world-socket.js's
+  // 'Unauthorized' fallback ('Invalid token' is also its catch-all).
+  const SESSION_ERRORS = new Set(['No token', 'Invalid token', 'Session expired, please log in again', 'Unauthorized']);
+
   // Re-joins after a 'slow-down' / 'error' join-refused (an 'error' is the
   // DB being down: each retry costs the server a lookup). At most
   // JOIN_RETRY_MAX per sequence, doubling from JOIN_RETRY_BASE_MS (never
@@ -109,7 +114,13 @@ const Multiplayer = (() => {
       return { stop() {}, getSocket: () => null, sendSnap() {}, getProjectId: () => null, postSystem() {} };
     }
 
-    const socket = io({ auth: { token: Auth.getToken() } });
+    // Function form: socket.io calls it on EVERY (re)connect, so a token
+    // rotated in another tab (password change / rename bump tokenVersion and
+    // the server drops this socket) is picked up from storage instead of
+    // resending the JWT read at start(). sentToken = what the last handshake
+    // carried, for the session-error retry in connect_error.
+    let sentToken = null;
+    const socket = io({ auth: (cb) => { sentToken = Auth.getToken(); cb({ token: sentToken }); } });
     let posTimer = null;
     let lastPosSent = { x: 0, y: 0, z: 0, yaw: 0, walking: false, backward: false, pose: null };
     let chatLog = [];
@@ -359,6 +370,7 @@ const Multiplayer = (() => {
     let joinRetries = 0;          // re-joins sent this sequence (joinRetryDelay); > MAX = gave up
     let serverDropAt = 0;         // last 'io server disconnect' we reconnected after
     let kicked = false;           // retired / removed: this tab is leaving, never reconnect
+    let sessionRetriedFor = null; // newer stored token already retried after a session refusal
     socket.on('connect', () => {
       if (joined) {
         if (Playground3D.clearRemotePlayers) Playground3D.clearRemotePlayers();
@@ -626,19 +638,34 @@ const Multiplayer = (() => {
 
     socket.on('connect_error', (err) => {
       console.warn('[Multiplayer] connect_error', err && err.message);
+      const m = err && err.message;
+      // The handshake's token was refused (middleware/auth.js validateToken).
+      // If storage now holds a DIFFERENT token (another tab signed in again
+      // while this handshake was in flight), retry once with it, quietly.
+      // Otherwise the session really is dead: same path as an HTTP 401
+      // (Auth.endSession → log out once, /login?next=here).
+      const sessionDead = SESSION_ERRORS.has(m);
+      if (sessionDead) {
+        const now = Auth.getToken();
+        if (now && now !== sentToken && now !== sessionRetriedFor) {
+          sessionRetriedFor = now;
+          if (!stopped && !socket.connected) socket.connect();
+          return;
+        }
+      }
       // Toast once per outage. A handshake rejection ('Invalid token',
       // 'Account suspended') won't auto-recover, so the user needs to know.
       if (!errToasted && typeof toast === 'function') {
         errToasted = true;
-        const m = err && err.message;
         toast(
           (m === 'Account suspended') ? 'Your account has been suspended.'
-          : (m === 'Invalid token') ? 'Session expired — please log in again.'
+          : sessionDead ? 'Session expired — please log in again.'
           : (m === 'Too many connections') ? 'Too many connections — retrying in a moment…'
           : 'Can’t reach the world server.',
           (m === 'Too many connections') ? 'warn' : 'error'
         );
       }
+      if (sessionDead && !stopped && typeof Auth.endSession === 'function') Auth.endSession();
       // The server refused the handshake for rate reasons; socket.io won't
       // try again by itself, so schedule one retry after the floor passes.
       if (err && err.message === 'Too many connections' && !retryTimer) {

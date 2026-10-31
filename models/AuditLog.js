@@ -18,7 +18,11 @@ const AuditLogSchema = new mongoose.Schema({
       'scoreReset',  // Scene Guess / Quote Guess: one score removed / an island board reset
       'quoteModerate', // Quote Guess: a player's suggested line approved / rejected
       'quoteImport',   // Quote Guess: a bulk import of lines committed / undone
-      'markWatched'  // projects marked watched for a user (timer skipped)
+      'markWatched',   // projects marked watched for a user (timer skipped)
+      'undoWatch',     // user request: one watched title removed
+      'setWatchCount', // user request: a title's watch count set
+      'renameUser',    // user request: username changed across collections
+      'resolveRequest' // user request ("Ask the admin") approved / declined
     ]
   },
   // target is intentionally Mixed — userId for user-actions, {userId,

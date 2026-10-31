@@ -75,6 +75,38 @@ test('approving mark-watched adds only ticked titles that were asked for', async
   assert.equal(String(inbox[0].reportId), RID);
 });
 
+test('approving mark-watched the user already finished themselves still approves, saying nothing needed changing (REQ-02)', async () => {
+  reset({ type: 'mark-watched', projectIds: ['ironman1'] });
+  const r = await resolve({ outcome: 'approved' });
+  assert.equal(r.status, 200);
+  assert.equal(userWrites.length, 0);
+  assert.equal(report.status, 'fixed');
+  assert.equal(report.request.resolution.outcome, 'approved');
+  assert.deepEqual(report.request.resolution.added, []);
+  const text = 'Approved: you’d already watched the requested title, so nothing needed changing.';
+  assert.equal(report.replies[0].text, text);
+  await new Promise(r => setImmediate(r));
+  assert.equal(inbox[0].text, text);
+});
+
+test('approving mark-watched with some already watched names both groups', async () => {
+  reset({ type: 'mark-watched', projectIds: ['ironman1', 'thor'] });
+  const r = await resolve({ outcome: 'approved' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(userWrites[0].$push.watchedProjects.$each.map(e => e.projectId), ['thor']);
+  assert.equal(report.replies[0].text, 'Approved: a title is now on your watched list — Thor. Already on your list: Iron Man.');
+});
+
+test('approving mark-watched with a title that no longer exists returns which one (REQ-08)', async () => {
+  reset({ type: 'mark-watched', projectIds: ['thor', 'gone'] });
+  const r = await resolve({ outcome: 'approved' });
+  assert.equal(r.status, 400);
+  assert.deepEqual(r.body.unknown, ['gone']);
+  assert.match(r.body.error, /gone/);
+  assert.equal(userWrites.length, 0);
+  assert.equal(report.status, 'open');
+});
+
 test('rejecting changes nothing on the account and sends the reason', async () => {
   reset({ type: 'mark-watched', projectIds: ['thor'] });
   const r = await resolve({ outcome: 'rejected', text: 'Please use the timer' });

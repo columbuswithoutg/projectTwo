@@ -127,3 +127,22 @@ test('inboxText says what changed, or why not', () => {
     'Your request “Change username to robert” wasn’t approved: name is reserved');
   assert.equal(R.inboxText({ type: 'add-title', title: 'Echo' }, 'rejected', {}), 'Your request “Add a missing title: Echo” wasn’t approved.');
 });
+
+test('inboxText mark-watched: all added, some already watched, none needed (REQ-02)', () => {
+  const mw = { type: 'mark-watched', projectIds: ['thor', 'endgame', 'ironman1'] };
+  assert.equal(R.inboxText(mw, 'approved', { titleOf, added: ['thor', 'endgame', 'ironman1'], skipped: [] }),
+    'Approved: 3 titles are now on your watched list — Thor, Avengers: Endgame, Iron Man.');
+  assert.equal(R.inboxText(mw, 'approved', { titleOf, added: ['thor'], skipped: ['endgame', 'ironman1'] }),
+    'Approved: a title is now on your watched list — Thor. Already on your list: Avengers: Endgame, Iron Man.');
+  assert.equal(R.inboxText(mw, 'approved', { titleOf, added: [], skipped: ['thor', 'endgame', 'ironman1'] }),
+    'Approved: you’d already watched all of the requested titles, so nothing needed changing.');
+  // Admin unticked one, the user had already watched the other two.
+  assert.equal(R.inboxText(mw, 'approved', { titleOf, added: [], skipped: ['thor', 'endgame'] }),
+    'Approved: you’d already watched the approved titles, so nothing needed changing. 1 wasn’t approved.');
+  assert.doesNotMatch(R.inboxText(mw, 'approved', { titleOf, added: [], skipped: ['thor'] }), /0 titles|— \./);
+  // One title: singular.
+  assert.equal(R.inboxText({ type: 'mark-watched', projectIds: ['thor'] }, 'approved', { titleOf, added: [], skipped: ['thor'] }),
+    'Approved: you’d already watched the requested title, so nothing needed changing.');
+  assert.equal(R.inboxText(mw, 'approved', { titleOf, added: [], skipped: ['thor'] }),
+    'Approved: you’d already watched the approved title, so nothing needed changing. 2 weren’t approved.');
+});

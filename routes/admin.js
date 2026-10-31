@@ -646,7 +646,8 @@ router.post('/reports/:id/resolve', async (req, res) => {
         const pick = Array.isArray(body.projectIds) ? asked.filter(id => body.projectIds.includes(id)) : asked;
         if (!pick.length) return res.status(400).json({ error: 'Tick at least one title, or reject the request' });
         const out = await markWatchedFor(req, userId, pick);
-        if (out.error) return res.status(out.status).json({ error: out.error });
+        // unknown: the titles that no longer exist, so the admin knows which to untick.
+        if (out.error) return res.status(out.status).json({ error: out.error, ...(out.unknown ? { unknown: out.unknown } : {}) });
         added = out.added;
         skipped = out.skipped;
         break;

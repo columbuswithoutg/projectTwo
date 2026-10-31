@@ -143,10 +143,18 @@ function inboxText(request, outcome, { titleOf, added, skipped, reason } = {}) {
   switch (request.type) {
     case 'mark-watched': {
       const a = (added || []).map(name);
-      const shown = a.slice(0, 10).join(', ') + (a.length > 10 ? ` and ${a.length - 10} more` : '');
-      const left = (request.projectIds || []).length - a.length - (skipped || []).length;
-      return `Approved: ${a.length === 1 ? 'a title is' : `${a.length} titles are`} now on your watched list — ${shown}.`
-        + (left > 0 ? ` ${left} ${left === 1 ? 'wasn’t' : 'weren’t'} approved.` : '');
+      const s = (skipped || []).map(name);
+      const list = (xs) => xs.slice(0, 10).join(', ') + (xs.length > 10 ? ` and ${xs.length - 10} more` : '');
+      const left = (request.projectIds || []).length - a.length - s.length;
+      const notApproved = left > 0 ? ` ${left} ${left === 1 ? 'wasn’t' : 'weren’t'} approved.` : '';
+      // The user may have watched them all themselves before the admin acted.
+      if (!a.length) {
+        const which = s.length === 1 ? (left > 0 ? 'the approved title' : 'the requested title')
+          : (left > 0 ? 'the approved titles' : 'all of the requested titles');
+        return `Approved: you’d already watched ${which}, so nothing needed changing.` + notApproved;
+      }
+      return `Approved: ${a.length === 1 ? 'a title is' : `${a.length} titles are`} now on your watched list — ${list(a)}.`
+        + (s.length ? ` Already on your list: ${list(s)}.` : '') + notApproved;
     }
     case 'undo-watch': return `Approved: ${name(request.projectId)} is off your watched list.`;
     case 'fix-count':  return `Approved: ${name(request.projectId)} now shows ${request.count} watch${request.count === 1 ? '' : 'es'}.`;

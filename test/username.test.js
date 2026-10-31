@@ -157,3 +157,48 @@ test('refreshReady counts an empty usernameLower as NOT backfilled', async () =>
   assert.deepEqual(filter.usernameLowerConflict, { $ne: true });
   U.setReady(false);
 });
+
+// ---- reserved usernames (SRV3-01, js/messaging-logic.js usernameError) ----
+const L = require('../js/messaging-logic');
+const RESERVED = 'That username is reserved';
+
+test('usernameError rejects reserved names and trivial variants', () => {
+  for (const n of ['admin', 'Admin', 'ADMIN', 'Administrator', 'admin_', '_admin', 'Admin-1', 'a-d-m-i-n',
+    'admin2', 'AdminTeam', 'Moderator', 'moderator_99', 'mod', 'MOD', 'm_o_d', 'mods', 'System', 'system_bot',
+    'Staff', 'staff-1', 'Support', 'supportdesk', 'Official', 'official_mcu', 'mcutracker', 'MCU-Tracker', 'mcu_tracker_hq']) {
+    assert.equal(L.usernameError(n), RESERVED, n);
+    assert.equal(L.isReservedUsername(n), true, n);
+  }
+  // Whitespace is trimmed before the check, like the rest of the rule.
+  assert.equal(L.usernameError('  admin  '), RESERVED);
+});
+
+test('usernameError still allows ordinary names near the reserved list', () => {
+  // "mod" is exact-only, so words that merely start with it are fine;
+  // "admiral" starts with "adm", not "admin"; reserved words in the middle
+  // of a name ("theadmin", "tony_staff") are not caught (prefix-only, by design).
+  for (const n of ['modern', 'Modest', 'model_t', 'admiral', 'Adam', 'theadmin', 'tony_staff', 'ironman1',
+    'good_name-1', 'sys', 'supper', 'officer', 'mcu_fan']) {
+    assert.equal(L.usernameError(n), null, n);
+  }
+});
+
+test('reserved check is prefix-based: "Systemic" / "Supporter" are rejected (documented choice)', () => {
+  assert.equal(L.usernameError('Systemic'), RESERVED);
+  assert.equal(L.usernameError('Supporter'), RESERVED);
+  assert.equal(L.usernameError('Staffordshire'), RESERVED);
+});
+
+test('format errors still win over the reserved check', () => {
+  assert.equal(L.usernameError('ad'), 'Username must be 3–30 characters');
+  assert.equal(L.usernameError('admin!'), 'Username can only contain letters, numbers, _ or -');
+  assert.equal(L.usernameError(42), 'Username must be a string');
+});
+
+test('rename request to a reserved name gets its own error code and copy', () => {
+  const v = L.validateRequest({ type: 'rename', newUsername: 'Admin_' });
+  assert.deepEqual([v.ok, v.error, v.field], [false, 'reserved-username', 'newUsername']);
+  assert.match(L.errorText('reserved-username'), /reserved/);
+  assert.equal(L.validateRequest({ type: 'rename', newUsername: 'bad name' }).error, 'bad-username');
+  assert.equal(L.validateRequest({ type: 'rename', newUsername: 'modern_tony' }).ok, true);
+});

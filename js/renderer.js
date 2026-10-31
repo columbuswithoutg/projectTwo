@@ -98,8 +98,12 @@ class MapRenderer {
 
       const isReadonly = !!state.readonly;   // a friend's map (FriendView)
 
-      if (isReadonly && !state.isWatched(project.id)) return;
-      if (!isReadonly && !isUnlocked(project)) return;
+      // A watched title always opens, even when a prerequisite added later
+      // isn't watched — NodeFactory never marks it locked, so it must not be
+      // a dead button (same rule as the chart and routes/progress.js).
+      const isWatched = state.isWatched(project.id);
+      if (isReadonly && !isWatched) return;
+      if (!isReadonly && !isWatched && !isUnlocked(project)) return;
 
       showPopup(project);
     };
