@@ -316,6 +316,15 @@ Brief summary of what changed and why.
 
 ---
 
+### 2026-10-31 — Posters for the eight new titles; 27 new characters (Eternals, Werewolf by Night, Wonder Man, Born Again S2, One Last Kill, Brand New Day, VisionQuest)
+
+- `assets/images/` — official posters for Werewolf by Night, I Am Groot S1/S2, Wonder Man, Daredevil: Born Again S2, The Punisher: One Last Kill, Spider-Man: Brand New Day and VisionQuest (540x800, like the others).
+- `characters.js` — the ten Eternals; Werewolf by Night (Jack Russell), Elsa and Verussa Bloodstone, Man-Thing; Wonder Man (Simon Williams), Trevor Slattery (debut Iron Man 3, plus his Wonder Man look); Bullseye (debut Daredevil S3, plus his Born Again S2 suit), Vanessa Fisk, Mr. Charles, Curtis Hoyle, Ma Gnucci; Fox Quicksilver (Peter Maximoff, DoFP and Apocalypse); Scorpion (debut Homecoming, plus his Brand New Day armour), Tombstone; Tommy Maximoff (WandaVision, grown up in VisionQuest), Paladin, Jocasta. New looks: Daredevil (Born Again S2), Punisher (One Last Kill), Spider-Man (Brand New Day), Vision and Ultron (VisionQuest). Summaries are spoiler-safe; titles/real names are in CHARACTER_ALIASES ("eternal" finds all ten).
+- Chosen as the wiki's main cast / main villains; pictures are labelled stills from the episode or film, each checked by a separate agent. Not added: the animated-only shows' casts, Avengers: Doomsday (unreleased), and Brand New Day's Jean Grey (the MCU Jean is not the Fox Jean card).
+- Live site: the new characters and looks must be added to the Mongo copy (insert missing characters, append missing looks); `scripts/seed-content.js` alone cannot add looks.
+
+---
+
 ### 2026-10-30 — Every character picture is a still from the film or episode of that look; new looks; shared-body portraits
 
 All 222 portrait slots (every character's first look and every later look, including the page-only shared-body characters) were re-sourced from stills of the actual film or episode, taken from the Marvel Cinematic Universe Wiki and the X-Men Movies Wiki on Fandom, where each file is labelled with the character and the film/episode. Who and which era was decided from those labels plus costume/setting cues, never from faces. Each was cropped to 540x614 JPEG q82 so the head sits inside the circular avatar. An independent checker reviewed every image (label, look/era, real still, framing); 218 passed first time and the 4 it failed were re-sourced and passed on recheck. Only Jake Lockley uses an official promo still (no usable episode still).

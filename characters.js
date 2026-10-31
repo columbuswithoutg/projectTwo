@@ -136,9 +136,13 @@ var characters = [
   { id: "quicksilver",    name: "Quicksilver",                debut: "ageofultron",   image: "quicksilver.jpg" },
   { id: "vision",         name: "Vision",                     debut: "ageofultron",   image: "vision.jpg",
     stages: [
-      { after: "wandavision", image: "vision_white.jpg", look: "White Vision, WandaVision" }
+      { after: "wandavision", image: "vision_white.jpg", look: "White Vision, WandaVision" },
+      { after: "visionquest", image: "vision_vq.jpg", look: "Human-form Vision, VisionQuest" }
     ] },
-  { id: "ultron",         name: "Ultron",                     debut: "ageofultron",   image: "ultron.jpg" },
+  { id: "ultron",         name: "Ultron",                     debut: "ageofultron",   image: "ultron.jpg",
+    stages: [
+      { after: "visionquest", image: "ultron_vq.jpg", look: "Human-form Ultron (top hat, grey beard), VisionQuest" }
+    ] },
   { id: "antman",         name: "Ant-Man",                    debut: "antman",        image: "antman.jpg",
     stages: [
       { after: "antman3", image: "antman_quantumania.jpg", look: "Quantumania suit" }
@@ -154,7 +158,8 @@ var characters = [
     stages: [
       { after: "spiderman1",  image: "spiderman_stark.jpg",      look: "Red/blue Stark suit, Homecoming" },
       { after: "infinitywar", image: "spiderman_iron.jpg",       look: "Iron Spider, Infinity War" },
-      { after: "nowayhome",   image: "spiderman_integrated.jpg", look: "Black/gold integrated suit, No Way Home" }
+      { after: "nowayhome",   image: "spiderman_integrated.jpg", look: "Black/gold integrated suit, No Way Home" },
+      { after: "brandnewday", image: "spiderman_bnd.jpg", look: "Classic red/blue homemade suit with raised webbing, Brand New Day" }
     ] },
   { id: "blackpanther",   name: "Black Panther",              debut: "civilwar",      image: "blackpanther.jpg" },
   { id: "zemo",           name: "Baron Zemo",                 debut: "civilwar",      image: "zemo.jpg",
@@ -266,7 +271,8 @@ var characters = [
   { id: "daredevil",      name: "Daredevil",                  debut: "daredevil1",    image: "daredevil.jpg",
     stages: [
       { after: "shehulk",            image: "daredevil_yellow.jpg", look: "Yellow suit, She-Hulk" },
-      { after: "daredevilbornagain", image: "daredevil_ba.jpg",     look: "Born Again suit" }
+      { after: "daredevilbornagain", image: "daredevil_ba.jpg",     look: "Born Again suit" },
+      { after: "daredevilbornagain2", image: "daredevil_ddba2.jpg", look: "Black suit with red DD, Born Again S2" }
     ] },
   { id: "foggy",          name: "Foggy Nelson",               debut: "daredevil1",    image: "foggy.jpg" },
   { id: "karen",          name: "Karen Page",                 debut: "daredevil1",    image: "karen.jpg" },
@@ -276,7 +282,10 @@ var characters = [
       { after: "daredevilbornagain", image: "fisk_mayor.jpg", look: "Mayor Fisk, Born Again" }
     ] },
   { id: "elektra",        name: "Elektra",                    debut: "daredevil2",    image: "elektra.jpg" },
-  { id: "punisher",       name: "Punisher",                   debut: "daredevil2",    image: "punisher.jpg" },
+  { id: "punisher",       name: "Punisher",                   debut: "daredevil2",    image: "punisher.jpg",
+    stages: [
+      { after: "punisheronelastkill", image: "punisher_olk.jpg", look: "Full beard and new skull vest, One Last Kill" }
+    ] },
   { id: "jessicajones",   name: "Jessica Jones",              debut: "jessicajones1", image: "jessicajones.jpg" },
   { id: "lukecage",       name: "Luke Cage",                  debut: "jessicajones1", image: "lukecage.jpg" },
   { id: "trish",          name: "Trish Walker",               debut: "jessicajones1", image: "trish.jpg" },
@@ -345,6 +354,56 @@ var characters = [
       { after: "deadpool3", image: "deadpool_dw.jpg", look: "Deadpool & Wolverine suit" }
     ] },
   { id: "cable",          name: "Cable",                      debut: "deadpool2",     image: "cable.jpg" },
+
+  // ─── ETERNALS ───────────────────────────────
+  { id: "sersi",        name: "Sersi",                    debut: "eternals",     image: "sersi.jpg" },
+  { id: "ikaris",       name: "Ikaris",                   debut: "eternals",     image: "ikaris.jpg" },
+  { id: "thena",        name: "Thena",                    debut: "eternals",     image: "thena.jpg" },
+  { id: "ajak",         name: "Ajak",                     debut: "eternals",     image: "ajak.jpg" },
+  { id: "kingo",        name: "Kingo",                    debut: "eternals",     image: "kingo.jpg" },
+  { id: "sprite",       name: "Sprite",                   debut: "eternals",     image: "sprite.jpg" },
+  { id: "phastos",      name: "Phastos",                  debut: "eternals",     image: "phastos.jpg" },
+  { id: "makkari",      name: "Makkari",                  debut: "eternals",     image: "makkari.jpg" },
+  { id: "druig",        name: "Druig",                    debut: "eternals",     image: "druig.jpg" },
+  { id: "gilgamesh",    name: "Gilgamesh",                debut: "eternals",     image: "gilgamesh.jpg" },
+
+  // ─── WEREWOLF BY NIGHT / WONDER MAN ───────────────────────────────
+  { id: "jack_russell", name: "Werewolf by Night",        debut: "werewolfbynight", image: "jack_russell.jpg" },
+  { id: "elsa",         name: "Elsa Bloodstone",          debut: "werewolfbynight", image: "elsa.jpg" },
+  { id: "verussa",      name: "Verussa Bloodstone",       debut: "werewolfbynight", image: "verussa.jpg" },
+  { id: "manthing",     name: "Man-Thing",                debut: "werewolfbynight", image: "manthing.jpg" },
+  { id: "simonwilliams", name: "Wonder Man",               debut: "wonderman",    image: "simonwilliams.jpg" },
+  { id: "trevor",       name: "Trevor Slattery",          debut: "ironman3",     image: "trevor.jpg",
+    stages: [
+      { after: "wonderman", image: "trevor_wonderman.jpg", look: "Wonder Man: long grey hair, plain clothes, a working actor again" }
+    ] },
+
+  // ─── STREET LEVEL (Netflix, Born Again, Punisher) + FOX QUICKSILVER ───────────────────────────────
+  { id: "bullseye",     name: "Bullseye",                 debut: "daredevil3",   image: "bullseye.jpg",
+    stages: [
+      { after: "daredevilbornagain2", image: "bullseye_ddba2.jpg", look: "Masked Bullseye suit with target mark, Born Again S2" }
+    ] },
+  { id: "mr_charles",   name: "Mr. Charles",              debut: "daredevilbornagain2", image: "mr_charles.jpg" },
+  { id: "vanessa",      name: "Vanessa Fisk",             debut: "daredevil1",   image: "vanessa.jpg" },
+  { id: "ma_gnucci",    name: "Ma Gnucci",                debut: "punisheronelastkill", image: "ma_gnucci.jpg" },
+  { id: "curtis_hoyle", name: "Curtis Hoyle",             debut: "punisher1",    image: "curtis_hoyle.jpg" },
+  { id: "peter_maximoff", name: "Quicksilver (Peter Maximoff)", debut: "dofp",         image: "peter_maximoff.jpg",
+    stages: [
+      { after: "apocalypse", image: "peter_maximoff_apocalypse.jpg", look: "X-Men team suit with goggles, Apocalypse" }
+    ] },
+
+  // ─── BRAND NEW DAY / VISIONQUEST ───────────────────────────────
+  { id: "scorpion",     name: "Scorpion",                 debut: "spiderman1",   image: "scorpion.jpg",
+    stages: [
+      { after: "brandnewday", image: "scorpion_bnd.jpg", look: "Scorpion armour with mechanical tail, Brand New Day" }
+    ] },
+  { id: "tombstone",    name: "Tombstone",                debut: "brandnewday",  image: "tombstone.jpg" },
+  { id: "tommy",        name: "Tommy Maximoff",           debut: "wandavision",  image: "tommy.jpg",
+    stages: [
+      { after: "visionquest", image: "tommy_vq.jpg", look: "Grown-up Tommy, VisionQuest" }
+    ] },
+  { id: "paladin",      name: "Paladin",                  debut: "visionquest",  image: "paladin.jpg" },
+  { id: "jocasta",      name: "Jocasta",                  debut: "visionquest",  image: "jocasta.jpg" },
 
 ];
 
@@ -505,7 +564,34 @@ const CHARACTER_SUMMARIES = {
   apocalypse: "En Sabah Nur, the world's first and most powerful mutant, awakened after thousands of years.",
   laura: "Laura, a young mutant with claws and healing powers, much like Logan's.",
   deadpool: "Wade Wilson, a wisecracking mercenary with a healing factor who knows he is in a movie.",
-  cable: "Cable, a battle-hardened soldier from the future with a cybernetic arm."
+  cable: "Cable, a battle-hardened soldier from the future with a cybernetic arm.",
+  sersi: "An Eternal who can transmute matter, living quietly in London as a museum worker and teacher until the Deviants return.",
+  ikaris: "The most powerful of the Eternals, able to fly and fire cosmic beams from his eyes, and Sersi's former partner.",
+  thena: "A fierce Eternal warrior who forms weapons out of cosmic energy, looked after by Gilgamesh.",
+  ajak: "The Prime Eternal and leader of the team, a healer who communicates with the Celestial Arishem.",
+  kingo: "An Eternal who fires cosmic energy projectiles and has spent the last century as a Bollywood movie star.",
+  sprite: "An ancient Eternal stuck in the body of a child, who casts lifelike illusions.",
+  phastos: "The Eternals' brilliant inventor, who helped humanity's technology advance through the ages.",
+  makkari: "A super-fast Eternal who is deaf and talks in sign language, and who loves collecting artifacts.",
+  druig: "An Eternal who can control human minds and resents the rule against stepping in when people fight wars.",
+  gilgamesh: "The Eternals' strongest fighter, a cheerful cook who protects and cares for Thena.",
+  jack_russell: "Jack Russell is a quiet, mysterious monster hunter who arrives at Bloodstone Manor to join the hunt for the Bloodstone, while keeping a secret of his own.",
+  elsa: "Elsa Bloodstone is the estranged daughter of the late monster hunter Ulysses Bloodstone. She comes home to compete for the family's powerful relic.",
+  verussa: "Verussa Bloodstone is Ulysses Bloodstone's widow. She hosts the monster hunt at Bloodstone Manor and guards the family legacy.",
+  manthing: "Man-Thing is a hulking swamp creature called Ted, who is being held as the quarry of the Bloodstone hunt.",
+  simonwilliams: "Simon Williams is a struggling Los Angeles actor who is chasing the lead role in a remake of the superhero film 'Wonder Man'.",
+  trevor: "Trevor Slattery, a British actor with a big personality and a gift for the dramatic.",
+  bullseye: "Benjamin 'Dex' Poindexter is an FBI agent and expert marksman who can turn almost any object into a deadly projectile, assigned to guard Wilson Fisk.",
+  mr_charles: "A smug CIA logistics operative who arrives in New York from Washington to handle the Agency's dealings with Mayor Fisk.",
+  vanessa: "Vanessa Marianna is a Hell's Kitchen art gallery owner who catches the eye of Wilson Fisk.",
+  ma_gnucci: "The ruthless matriarch of the Gnucci crime family in Queens, who sets her sights on Frank Castle.",
+  curtis_hoyle: "A former Navy corpsman and Frank Castle's trusted friend, who runs a support group for veterans.",
+  peter_maximoff: "Peter Maximoff is a cocky teenage mutant with super-speed who is recruited to help break someone out of the Pentagon in 1973.",
+  scorpion: "Mac Gargan is a career criminal who tries to buy illegal alien-tech weapons on the Staten Island Ferry and gets caught in Spider-Man's web.",
+  tombstone: "Lonnie Lincoln, known as Tombstone, is a pale, white-haired New York crime boss who clashes with Spider-Man.",
+  tommy: "Tommy is one of Wanda and Vision's twin sons, born in Westview, and has super-speed.",
+  paladin: "Paul Denning, known as Paladin, is a mercenary hired to hunt the reactivated Vision.",
+  jocasta: "Jocasta is a deadly, chrome-faced artificial intelligence who targets Vision."
 };
 
 /************************************************
@@ -599,7 +685,29 @@ const CHARACTER_ALIASES = {
   profx: ["Charles Xavier"], magneto: ["Erik Lehnsherr"], cyclops: ["Scott Summers"],
   storm: ["Ororo Munroe"], nightcrawler: ["Kurt Wagner"], beast: ["Hank McCoy"],
   sabretooth: ["Victor Creed"], gambit: ["Remy LeBeau"], laura: ["Laura Kinney"],
-  deadpool: ["Wade Wilson"], cable: ["Nathan Summers"]
+  deadpool: ["Wade Wilson"], cable: ["Nathan Summers"],
+  sersi: ["Eternal"],
+  ikaris: ["Eternal"],
+  thena: ["Eternal"],
+  ajak: ["Prime Eternal"],
+  kingo: ["Kingo Sunen", "Eternal"],
+  sprite: ["Eternal"],
+  phastos: ["Eternal"],
+  makkari: ["Eternal"],
+  druig: ["Eternal"],
+  gilgamesh: ["Eternal"],
+  jack_russell: ["Jack Russell"],
+  manthing: ["Ted Sallis", "Ted"],
+  simonwilliams: ["Simon Williams"],
+  trevor: ["The Mandarin"],
+  bullseye: ["Benjamin Poindexter", "Dex", "Ben Poindexter"],
+  vanessa: ["Vanessa Marianna", "Vanessa Marianna-Fisk"],
+  ma_gnucci: ["Isabella Gnucci"],
+  peter_maximoff: ["Peter Maximoff", "Quicksilver", "Peter"],
+  scorpion: ["Mac Gargan", "MacDonald Gargan"],
+  tombstone: ["Lonnie Lincoln"],
+  tommy: ["Speed"],
+  paladin: ["Paul Denning"]
 };
 
 // The /characters page's list: copies of every character plus the page-only
