@@ -3082,8 +3082,9 @@ const Playground3D = (() => {
         const wins = (glassWall ? []
           : houseWindows ? picked.filter(p => p.c - p.w / 2 >= s + WM && p.c + p.w / 2 <= e - WM)
           : (len >= WORLD.WINDOW_MIN_SEG ? [{ c: (s + e) / 2, w: WW, n: 1 }] : []))
-          // No window behind a live island's Scene Guess screen.
-          .filter(p => !_sgCovers(node, sideName, p.c, p.w));
+          // No window behind a live island's Scene Guess screen, nor where a
+          // padlock marks a still-locked road (the decal sat on the glass).
+          .filter(p => !_sgCovers(node, sideName, p.c, p.w) && !_lockCovers(node, sideName, p.c, p.w));
 
         if (!wins.length) {
           addWallPanel(s, e, 0, H);                       // plain solid segment
@@ -5457,6 +5458,12 @@ const Playground3D = (() => {
     if (!node || !_gs.islands.has(node.project.id)) return false;
     const s = _sgSpot(node);
     return !!s && s.side === side && c + w / 2 > s.from - 0.15 && c - w / 2 < s.to + 0.15;
+  }
+  // Does a padlock decal (_buildSideRest: a still-locked neighbour's road
+  // port, 1.2 wide) cover [c − w/2, c + w/2] along wall `side`?
+  function _lockCovers(node, side, c, w) {
+    return _roadPorts(node).some(p => p.side === side && !_worldNodes.has(p.otherId)
+      && Math.abs(p.coord - c) < w / 2 + 0.6 + 0.15);
   }
   // Hide frames (anything hung on a wall) behind the screen.
   function _sgHideHung(node) {

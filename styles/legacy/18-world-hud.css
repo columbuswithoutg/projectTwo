@@ -620,7 +620,12 @@
   padding: 1px 7px;
   border-radius: 999px;
   color: #fff;
-  background: linear-gradient(90deg, rgba(255, 215, 64, 0.38) calc(var(--pct, 0) * 100%), rgba(255, 255, 255, 0.08) 0);
+  /* The fill is a thin bar under the text, inside the pill's straight run: a
+     full-height fill met the rounded left end first and a few percent of it
+     read as a stray gold crescent before "you". */
+  background:
+    linear-gradient(rgba(255, 215, 64, 0.9), rgba(255, 215, 64, 0.9)) no-repeat 7px calc(100% - 1px) / calc((100% - 14px) * var(--pct, 0)) 2px,
+    rgba(255, 255, 255, 0.08);
 }
 /* Phones: the header also holds Back / World / stone chip — keep the chip
    short so the row never overflows. */
@@ -1447,6 +1452,19 @@ body:has(#nav-drawer.open) .pg-punch,
 body:has(#nav-drawer.open) .pg-fullscreen,
 body:has(#nav-drawer.open) .world-chat-row {
   display: none;
+}
+
+/* ── Any touch screen held sideways (tablets too) ──
+   The joystick moves under the left thumb. Gated on the phone rule's
+   max-height alone, a tablet in landscape (~800px tall) kept it bottom-
+   centre, out of reach of a two-handed grip. The phone rule below still
+   wins on size and offsets. */
+@media (orientation: landscape) and (pointer: coarse) {
+  .pg-joy {
+    left: max(40px, env(safe-area-inset-left));
+    bottom: max(36px, env(safe-area-inset-bottom));
+    transform: none;
+  }
 }
 
 /* ── Phone held sideways ──

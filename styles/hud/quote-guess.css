@@ -15,6 +15,12 @@
 [data-theme="comic"] .pg3d-keeper-game[data-kind="quote"]:not(.live) { color: #2c7a35; }
 
 /* ── The round ── */
+/* A round taller than the screen (a phone held upright: card, four stacked
+   choices, the players) scrolls the frame. Without this the stage shrank to
+   fit and the card — overflow: hidden, so no minimum height — was squeezed
+   until the line itself was clipped away, and the players were cut off. */
+.sg-overlay.is-quote .sg-frame { overflow-y: auto; overscroll-behavior: contain; }
+.sg-overlay.is-quote .sg-stage { flex-shrink: 0; }
 .qg-stage {
   display: flex;
   flex-direction: column;
@@ -22,6 +28,7 @@
   width: 100%;
   min-height: 0;
 }
+.qg-stage > * { flex-shrink: 0; }
 .ig-stage { width: 100%; min-height: 0; display: flex; }
 .ig-stage[hidden] { display: none; }
 
@@ -372,10 +379,16 @@
   .ig-tile { min-height: 96px; padding: 10px; }
 }
 @media (max-width: 560px) and (orientation: portrait) {
-  .qg-options { grid-template-columns: 1fr; }
-  .qg-quote.qg-len-s { font-size: 26px; }
-  .qg-quote.qg-len-m { font-size: 22px; }
-  .qg-card { padding: 14px 16px 16px; }
+  .qg-stage { gap: 8px; }
+  .qg-options { grid-template-columns: 1fr; gap: 8px; }
+  .qg-opt { min-height: 52px; padding: 8px 12px; }
+  .qg-options.is-reply .qg-opt-label { font-size: 15px; }
+  .qg-quote.qg-len-s { font-size: 24px; }
+  .qg-quote.qg-len-m { font-size: 20px; }
+  .qg-quote.qg-len-l { font-size: 17px; }
+  .qg-quote.qg-len-xl { font-size: 15px; }
+  .qg-card { padding: 12px 16px 14px; gap: 8px; }
+  .qg-card::before { font-size: 110px; top: -24px; left: 6px; }
   .ig-picker-tiles { grid-template-columns: 1fr; }
   .ig-tile { min-height: 88px; }
 }

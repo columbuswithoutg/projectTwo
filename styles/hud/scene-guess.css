@@ -554,6 +554,11 @@ body.pg-input-suspended :is(.pg-joy, .pg-jump, .pg-punch, .pg-sit, .pg-fullscree
   .sg-tick:nth-child(even) em { display: none; }
 }
 @media (max-width: 560px) and (orientation: portrait) {
+  /* The film title gets its own line under the brand: squeezed beside it
+     (brand + round + timer + close) it shrank to a one-letter sliver. */
+  .sg-title { flex-direction: column; align-items: flex-start; gap: 0; }
+  .sg-film { max-width: 100%; }
+  .sg-film:empty { display: none; }
   .sg-controls { gap: 6px; }
   .sg-readout { order: -1; width: 100%; }
   .sg-ranking li { grid-template-columns: 30px minmax(0, 1fr) auto; }
