@@ -42,5 +42,14 @@ jobs:
             node --check "$f"
           done
 
+      # TAP output is kept in a file so failing test names can be surfaced as
+      # workflow annotations (scripts/ci-annotate-tests.js): visible in the
+      # Checks UI and through the public API even when the raw log is not.
+      # TODO tests are not failures.
       - name: Unit tests
-        run: npm test
+        run: |
+          status=0
+          node --test --test-reporter=tap > test.tap 2>&1 || status=$?
+          node scripts/ci-annotate-tests.js test.tap
+          tail -c 3000 test.tap
+          exit $status
