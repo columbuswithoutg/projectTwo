@@ -1,0 +1,245 @@
+/* ======================
+   HELP CENTRE — the "?" header button (js/help.js) and its "How to use" panel
+====================== */
+
+/* ── The "?" button ── */
+.help-btn {
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  margin-left: auto;          /* #header is space-between: sit next to the avatar */
+  margin-right: 8px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(var(--highlight-rgb), 0.7);
+  background: transparent;
+  color: var(--hdr-fg);
+  font-family: var(--font-ui);
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color var(--dur-fast), transform var(--dur-fast);
+}
+.help-btn:hover { background: var(--hdr-btn-hover); }
+.help-btn:active { transform: scale(0.94); }
+.help-btn:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.world-header .help-btn,
+.pg-header .help-btn { margin-left: 6px; margin-right: 0; }
+
+/* Red "not viewed yet" dot; goes away once the guide is opened. */
+.help-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #ff2d3f;
+  box-shadow: 0 0 0 2px var(--hdr-bg, #111);
+  animation: help-dot-pulse 1.8s ease-in-out infinite;
+}
+.help-dot[hidden] { display: none; }
+@keyframes help-dot-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.25); }
+}
+@media (prefers-reduced-motion: reduce) { .help-dot { animation: none; } }
+
+/* Phones: the header has ~4px to spare at 360px (see header.css' 480px
+   block), so the button shrinks and drops its margin there. */
+@media (max-width: 480px) {
+  .help-btn { width: 32px; height: 32px; margin: 0; font-size: 16px; }
+  .world-header .help-btn,
+  .pg-header .help-btn { margin-left: 4px; }
+}
+
+/* ── The panel ── */
+.help-panel {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-sheet);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--scrim-heavy);
+  padding: 16px;
+}
+.help-box {
+  position: relative;
+  width: min(1080px, 100%);
+  height: min(860px, 100%);
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  grid-template-rows: auto 1fr;
+  grid-template-areas: "head head" "nav list";
+  background: var(--modal-bg);
+  color: var(--text-1);
+  border: 1px solid var(--gold-03);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--modal-box-shadow);
+  overflow: hidden;
+}
+.help-head {
+  grid-area: head;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-1);
+}
+.help-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.help-search {
+  flex: 1;
+  min-width: 0;
+  max-width: 420px;
+  margin-left: auto;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-2);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font: inherit;
+}
+.help-head .popup-close { position: static; flex-shrink: 0; }
+
+.help-nav {
+  grid-area: nav;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border-1);
+}
+.help-nav button {
+  text-align: left;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font: 600 14px var(--font-ui);
+  cursor: pointer;
+}
+.help-nav button:hover { background: var(--surface-2); color: var(--text-1); }
+.help-nav button.is-active { background: var(--surface-2); color: var(--text-1); box-shadow: inset 3px 0 0 var(--color-primary); }
+
+.help-list {
+  grid-area: list;
+  overflow-y: auto;
+  padding: 8px 20px 40px;
+  scroll-padding-top: 8px;
+}
+.help-section h3 {
+  margin: 20px 0 12px;
+  font-family: var(--font-ui);
+  font-size: 1.1rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-1);
+}
+.help-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+.help-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.help-shot {
+  display: block;
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid var(--border-1);
+  background: #0b0d12;
+  cursor: zoom-in;
+  aspect-ratio: 16 / 10;
+}
+.help-shot img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.help-card-body { padding: 12px 14px 14px; }
+.help-card h4 { margin: 0 0 6px; font: 700 15px var(--font-ui); color: var(--text-1); }
+.help-note {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--accent-text);
+}
+.help-steps { margin: 0; padding-left: 20px; color: var(--text-2); font-size: 13.5px; line-height: 1.5; }
+.help-steps li + li { margin-top: 3px; }
+.help-keys { margin: 10px 0 0; display: grid; gap: 4px; font-size: 12.5px; }
+.help-keys div { display: flex; gap: 8px; align-items: baseline; }
+.help-keys dt { flex: 0 0 auto; }
+.help-keys dd { margin: 0; color: var(--text-2); }
+.help-keys kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border-2);
+  border-bottom-width: 2px;
+  background: var(--surface-2);
+  font: 600 11.5px var(--font-ui);
+  color: var(--text-1);
+}
+.help-empty { margin: 32px 0; color: var(--text-2); text-align: center; }
+
+/* Tap a picture → it fills the panel. */
+.help-zoom {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--scrim-photo);
+  padding: 24px;
+  cursor: zoom-out;
+}
+.help-zoom[hidden] { display: none; }
+.help-zoom img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: var(--modal-box-shadow); }
+.help-zoom .popup-close { position: absolute; top: 12px; right: 12px; }
+
+/* Phones: full screen, areas become a row of chips above the cards. */
+@media (max-width: 720px) {
+  .help-panel { padding: 0; }
+  .help-box {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    border: none;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr;
+    grid-template-areas: "head" "nav" "list";
+  }
+  .help-head { flex-wrap: wrap; padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); }
+  .help-head h2 { font-size: 1.5rem; }
+  .help-search { order: 3; flex-basis: 100%; max-width: none; margin: 0; }
+  .help-head .popup-close { margin-left: auto; }
+  .help-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px 12px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-1);
+    scrollbar-width: none;
+  }
+  .help-nav button { flex: 0 0 auto; white-space: nowrap; padding: 7px 12px; border: 1px solid var(--border-1); border-radius: 999px; font-size: 13px; }
+  .help-nav button.is-active { box-shadow: none; border-color: var(--color-primary); }
+  .help-list { padding: 4px 12px 32px; }
+  .help-cards { grid-template-columns: 1fr; }
+}

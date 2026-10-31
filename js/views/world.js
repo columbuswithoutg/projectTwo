@@ -92,6 +92,7 @@ const WorldView = (() => {
                   title="Snap! (G)">✊ SNAP</button>
           <button class="world-stone-chip" id="world-stone-chip" type="button" hidden
                   title="Infinity Stones you hold — tap for the snap leaderboard">💎 0/6</button>
+          ${HelpCentre.buttonHtml('world')}
         </div>
       </header>
       <div id="pg-stage" class="pg-stage">

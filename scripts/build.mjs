@@ -72,6 +72,8 @@ export const CHUNKS = {
     'js/messages.js', 'js/reports.js',
     'js/memory.js', 'js/walker-dialogues.js', 'js/walkerView.js', 'js/walkers.js',
     'js/chunk-loader.js', 'js/router.js', 'js/nav-drawer.js', 'js/humanoid-prefetch.js',
+    // help-logic: the "?" guide's content + red-dot rule; help: its header button and panel
+    'js/help-logic.js', 'js/help.js',
     'js/views/login.js', 'js/views/app.js', 'js/views/watchorder.js', 'js/views/board.js',
     'js/views/profile.js', 'js/views/feed.js', 'js/views/characters.js',
     'js/views/messages.js', 'js/views/reports.js',
@@ -120,7 +122,7 @@ export const EXPECT_GLOBALS = {
   core: ['Router', 'Auth', 'state', 'Chunks', 'CONFIG', 'API', 'Walkers', 'WALKER_DIALOGUES',
          'FriendView', 'WatchOrderView', 'AppView', 'LoginView', 'HomeEditView', 'esc', 'toast',
          'MessagesView', 'ReportsView', 'Messages', 'MessagesBadge', 'Reports', 'showReportDialog', 'PanZoom', 'PosterArt', 'NavDrawer',
-         'ShareProgress', 'SharedView', 'SharedOrderView'],
+         'ShareProgress', 'SharedView', 'SharedOrderView', 'HelpCentre'],
   world: ['Playground', 'Playground3D', 'Multiplayer', 'VoiceManager', 'PG3DProps', 'HouseEditor', 'SceneGuess',
           'IslandGameHud', 'QuoteGuess', 'IslandGames',
           'HomeView', 'CustomizeView', 'WorldView', 'FriendHomeView'],
@@ -129,7 +131,7 @@ export const EXPECT_GLOBALS = {
 // Globals attached as properties (`root.PG3DPhysics = api` in the UMD-style
 // files) rather than declared — checked for a `root.Name =` assignment instead.
 export const EXPECT_ATTACHED = {
-  core: ['MessagingLogic', 'HumanoidPrefetch', 'SceneGuessLogic', 'QuoteGuessLogic', 'PanZoomLogic', 'UxLogic', 'ShareLogic'],
+  core: ['MessagingLogic', 'HumanoidPrefetch', 'SceneGuessLogic', 'QuoteGuessLogic', 'PanZoomLogic', 'UxLogic', 'ShareLogic', 'HelpLogic'],
   admin: ['ProjectLogic', 'AdminUsersLogic'],
   world: ['PG3DPhysics', 'WorldNetLogic', 'PG3DInputLogic', 'WorldNpcLogic', 'WorldChatLogic', 'WorldHouseLogic', 'PG3DHouse', 'PG3DHumanoidLogic', 'PG3DHumanoid', 'PG3DGearLogic',
           'PG3DAvatar', 'PG3DGear', 'PG3DInput', 'PG3DOcclusion', 'PGOrientation', 'PG3DScene', 'PG3DQuote']

@@ -21,6 +21,7 @@ const HomeView = {
         ${NavDrawer.toggleHtml()}
         <h1 class="pg-title">Home</h1>
         <button id="pg-customize-btn" type="button" title="Edit" aria-label="Edit home or character" aria-haspopup="menu">✎</button>
+        ${HelpCentre.buttonHtml('home')}
 
         ${NavDrawer.html('home')}
       </header>

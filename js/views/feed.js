@@ -652,6 +652,7 @@ const FeedView = (() => {
           <button class="view-tab" data-route="/world" role="tab" aria-selected="false">World</button>
         </div>
         ${NavDrawer.html('lite')}
+        ${HelpCentre.buttonHtml()}
         <button id="header-profile-btn" title="Profile" aria-label="Profile">
           <img id="header-avatar" src="" alt="" style="display:none" />
           <span id="header-avatar-initials">👤</span>
