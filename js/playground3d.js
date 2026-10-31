@@ -504,10 +504,58 @@ const Playground3D = (() => {
         setTimeout(() => { if (cover.el.parentNode) cover.el.parentNode.removeChild(cover.el); }, 350);
       }));
     };
-    const warm = (_renderer && _renderer.compileAsync && _scene && _camera)
-      ? _renderer.compileAsync(_scene, _camera).catch(() => {})
-      : Promise.resolve();
-    Promise.race([warm, new Promise((r) => setTimeout(r, WARMUP_MS))]).then(go);
+    const live = () => _running && gen === _mountGen;
+    const r = _renderer, s = _scene, c = _camera;
+    _whenWarm(() => ((r && r.compile && s && c) ? _compileWarm(r, s, c, live) : null), WARMUP_MS, live, go, (err) => {
+      if (_warmFailLogged) return;
+      _warmFailLogged = true;
+      console.debug('[pg3d] shader warm-up failed, starting anyway', err);
+    });
+  }
+  let _warmFailLogged = false;
+
+  // Calls done() once: when the warm-up start() returns settles, resolved or
+  // rejected (a failed warm-up only costs a first-frame hitch), or after
+  // timeoutMs if it hangs; never if isLive() says its mount has gone.
+  function _whenWarm(start, timeoutMs, isLive, done, onFail) {
+    let fired = false;
+    const fire = () => {
+      if (fired) return;
+      fired = true;
+      clearTimeout(timer);
+      if (isLive()) done();
+    };
+    const timer = setTimeout(fire, timeoutMs);
+    let warm;
+    try { warm = Promise.resolve(start()); } catch (err) { warm = Promise.reject(err); }
+    warm.then(fire, (err) => { if (onFail) onFail(err); fire(); });
+  }
+
+  // Compile every material in the scene, then poll until the GPU has linked
+  // them. Not three r160's compileAsync: its timer poll reads
+  // properties.get(m).currentProgram.isReady(), so a material disposed while
+  // it waits (the island rebuild ~200 ms into a mount tears down lock icons,
+  // decor and stand-in rigs) throws an uncaught TypeError there and the
+  // promise never settles, holding the cover for the whole WARMUP_MS. Here a
+  // material with no program left counts as done, the poll stops once the
+  // mount is gone, and an error rejects instead of escaping. → Promise
+  function _compileWarm(renderer, scene, camera, isLive) {
+    const mats = renderer.compile(scene, camera);
+    if (!mats || typeof mats.forEach !== 'function' || !renderer.properties) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        try {
+          if (!isLive()) { resolve(); return; }
+          for (const m of mats) {
+            const prog = renderer.properties.get(m).currentProgram;
+            if (!prog || typeof prog.isReady !== 'function' || prog.isReady()) mats.delete(m);
+          }
+          if (mats.size === 0) resolve();
+          else setTimeout(check, 10);
+        } catch (err) { reject(err); }
+      };
+      check();
+    });
   }
 
   function _waitForCharacters(container) {
