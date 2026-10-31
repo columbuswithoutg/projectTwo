@@ -64,7 +64,7 @@ const HelpCentre = (() => {
     if (!sections.length) return '<p class="help-empty">Nothing matches that. Try another word, like "chat" or "friends".</p>';
     return sections.map(s => `
       <section class="help-section" id="help-sec-${esc(s.id)}" aria-labelledby="help-sec-h-${esc(s.id)}">
-        <h3 id="help-sec-h-${esc(s.id)}"><span aria-hidden="true">${s.icon}</span> ${esc(s.title)}</h3>
+        <h3 id="help-sec-h-${esc(s.id)}">${esc(s.title)}</h3>
         <div class="help-cards">${s.cards.map(c => _cardHtml(s.id, c)).join('')}</div>
       </section>`).join('');
   }
@@ -86,7 +86,7 @@ const HelpCentre = (() => {
           <button class="popup-close" type="button" aria-label="Close">✕</button>
         </header>
         <nav class="help-nav" aria-label="Feature areas">
-          ${all.map(s => `<button type="button" data-help-sec="${esc(s.id)}"><span aria-hidden="true">${s.icon}</span> ${esc(s.title)}</button>`).join('')}
+          ${all.map(s => `<button type="button" data-help-sec="${esc(s.id)}">${esc(s.title)}</button>`).join('')}
         </nav>
         <div class="help-list">${_listHtml(all)}</div>
         <div class="help-zoom" hidden>

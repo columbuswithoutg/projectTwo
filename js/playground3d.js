@@ -51,6 +51,9 @@ const Playground3D = (() => {
     MAX_ELEV: 1.30,
     WORLD_DEFAULT_ELEV: 0.70,     // ~40°: more top-down so room walls don't block
     WORLD_MIN_ELEV: 0.40,         // ~23°: floor so you can't tilt under the walls
+    // Dragging down past the floor tilts the view UP instead (PG3DPhysics.orbitView),
+    // to at most this far above the horizon (~52°) — enough to see the sky.
+    LOOK_UP_MAX: 0.9,
     ROTATE_SPEED: 0.005,          // radians per pixel
     ZOOM_SPEED: 0.0015,           // distance per wheel delta
     // Exponential auto-follow rate (1/s, PG3DPhysics.turnToward). 4.14 is the
@@ -869,7 +872,8 @@ const Playground3D = (() => {
     };
 
     // Input.
-    _input = PG3DInput.makeInput(_viewport, { orbit: _orbit, CAMERA, minElev: _minElev });
+    // The orbit may go below the camera floor: that part is look-up tilt (_updateCamera).
+    _input = PG3DInput.makeInput(_viewport, { orbit: _orbit, CAMERA, minElev: () => -CAMERA.LOOK_UP_MAX });
     if (_inputSuspended && _input.setSuspended) _input.setSuspended(true);
     // Landscape affordances (shared by /home, /world, friend homes). Attached
     // to the container, after the innerHTML wipe above, so its hint survives.
@@ -2585,7 +2589,9 @@ const Playground3D = (() => {
     const targetY = _player.position.y + (lying ? 0.45 : 1.15) * (_player.scale.y || 1);
     const targetZ = _player.position.z;
     const d = _orbit.distance;
-    const e = _orbit.elevation;
+    // Below the floor the camera holds its spot and the view tilts up.
+    const view = PG3DPhysics.orbitView(_orbit.elevation, _minElev(), CAMERA.LOOK_UP_MAX);
+    const e = view.camElev;
     const a = _orbit.azimuth;
     // Camera sits BEHIND the character: when a equals the player's yaw,
     // the camera is directly behind looking toward the character's back
@@ -2594,7 +2600,9 @@ const Playground3D = (() => {
     const cz = targetZ - Math.cos(a) * Math.cos(e) * d;
     const cy = targetY + Math.sin(e) * d;
     _camera.position.set(cx, cy, cz);
-    _camera.lookAt(targetX, targetY, targetZ);
+    // Aim over the player at the view's pitch; with no tilt (pitch = -e)
+    // this is exactly the player's chest.
+    _camera.lookAt(targetX, cy + Math.tan(view.pitch) * Math.cos(e) * d, targetZ);
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -3968,6 +3976,9 @@ const Playground3D = (() => {
     if (!_camera || !_viewport) return null;
     v.project(_camera);
     if (v.z > 1) return null;            // behind camera
+    // Anchor off the screen (e.g. looking up at the sky, signs below the
+    // frame): hide the label rather than leave it floating at the edge.
+    if (v.x < -1.05 || v.x > 1.05 || v.y < -1.05 || v.y > 1.05) return null;
     return {
       x: (v.x * 0.5 + 0.5) * _viewport.clientWidth,
       y: (-v.y * 0.5 + 0.5) * _viewport.clientHeight,

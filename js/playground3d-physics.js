@@ -362,6 +362,18 @@
     return lerpAngle(yaw, target, k);
   }
 
+  // Follow-camera view for an orbit elevation. At or above `floor` the camera
+  // orbits as usual, looking down at the player (pitch = -elevation). Dragging
+  // past the floor no longer stops: the camera stays at the floor and the view
+  // tilts UP by the extra amount, so you can look up at the sky. `maxUp` caps
+  // that upward pitch (radians above the horizon); the orbit's lowest useful
+  // elevation is therefore -maxUp.
+  function orbitView(elevation, floor, maxUp) {
+    const camElev = Math.max(elevation, floor);
+    const tilt = Math.max(0, floor - elevation);
+    return { camElev, pitch: Math.min(maxUp, tilt - camElev) };
+  }
+
   // ── Horizontal movement ──
   // One axis step of the local player against collision boxes, other actors
   // and (in /world) the walkable region. The engine calls it twice a frame —
@@ -559,6 +571,6 @@
     isWalkable, STEP, groundAt, blocksAt, stepVertical, shouldRespawn, airtime, pickPunchTarget,
     actorRadius, spawnIslands, PUNCH_COOLDOWN_MS, punchCooldown, hash01, npcPatrol, npcPathPoint,
     pinchZoom, fovForAspect, wallBetween,
-    wrapAngle, lerpAngle, turnToward, moveWithCollision, LINTEL_DROP, ceilingCap, SPAWN_RINGS, spreadSpawn, KNOCKDOWN, punchCheck, STONE_RING, stoneSlot, seatOccupied, snapShadowCenter
+    wrapAngle, lerpAngle, turnToward, orbitView, moveWithCollision, LINTEL_DROP, ceilingCap, SPAWN_RINGS, spreadSpawn, KNOCKDOWN, punchCheck, STONE_RING, stoneSlot, seatOccupied, snapShadowCenter
   };
 });

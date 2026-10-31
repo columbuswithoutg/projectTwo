@@ -653,3 +653,20 @@ test('turn rates: the exponential rates match the old linear lerps at 60 fps', (
     assert.ok(Math.abs(frac(k) - old / 60) < 0.002, `${k}/s vs linear ${old}/s: ${frac(k)} vs ${old / 60}`);
   }
 });
+
+test('orbitView: above the floor it orbits; below it the view tilts up, capped', () => {
+  const floor = 0.4, maxUp = 0.9;
+  // Normal orbit: camera at the elevation, looking down at the player.
+  assert.deepEqual(P.orbitView(0.7, floor, maxUp), { camElev: 0.7, pitch: -0.7 });
+  // Exactly at the floor: still looking down at the player.
+  assert.deepEqual(P.orbitView(floor, floor, maxUp), { camElev: floor, pitch: -floor });
+  // Past the floor: the camera holds, the view tilts by the overshoot.
+  const v = P.orbitView(0, floor, maxUp);
+  assert.equal(v.camElev, floor);
+  assert.ok(Math.abs(v.pitch - 0) < 1e-12, 'level with the horizon');
+  const up = P.orbitView(-0.5, floor, maxUp);
+  assert.ok(up.pitch > 0.49 && up.pitch < 0.51, 'looking up');
+  // The orbit's lowest value -maxUp gives exactly maxUp, and never more.
+  assert.ok(Math.abs(P.orbitView(-maxUp, floor, maxUp).pitch - maxUp) < 1e-12);
+  assert.equal(P.orbitView(-5, floor, maxUp).pitch, maxUp);
+});
