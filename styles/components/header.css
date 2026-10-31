@@ -162,6 +162,30 @@
   .view-tab.active::after { left: 10px; right: 10px; }
   [data-theme="comic"] .view-tab { font-size: 16px; }
 }
+/* Phones: the centred tabs ran under ☰ and the avatar. Put them back in the
+   bar's flex row between the two, and shrink them to the space left. */
+@media (max-width: 480px) {
+  #header { padding-left: max(6px, env(safe-area-inset-left)); padding-right: max(10px, env(safe-area-inset-right)); }
+  #header #nav-toggle { width: 44px; }
+  #header .view-tabs {
+    position: static;
+    transform: none;
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: space-evenly;
+    margin: 0 4px;
+    padding: 0;
+  }
+  .view-tab {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 8px clamp(3px, 1.2vw, 8px);
+    font-size: clamp(10px, 3vw, 12px);
+    letter-spacing: 0.06em;
+  }
+  .view-tab.active::after { left: 4px; right: 4px; }
+  [data-theme="comic"] .view-tab { font-size: clamp(13px, 4vw, 16px); letter-spacing: 0.02em; }
+}
 
 /* ── Nav drawer ── */
 #nav-drawer-content {

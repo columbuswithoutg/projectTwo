@@ -43,6 +43,8 @@
 
 /* Cards */
 .kb-title { font: 700 15px/1.25 var(--font-ui); }
+/* Long titles wrapped under the absolute drag grip (top-right of the card). */
+.kb-card:has(.kb-grip) .kb-title { padding-right: 26px; }
 [data-theme="cinematic"] .kb-card {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.07);

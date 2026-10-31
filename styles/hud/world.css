@@ -125,6 +125,25 @@
   font-family: var(--font-ui);
 }
 [data-theme="comic"] :is(.world-stone-chip, .world-house-btn, .world-house-keeper) { background: #ffffff; color: #111111; box-shadow: 2px 2px 0 #111111; }
+/* The game chip + keeper chip ran past the right edge on phones (keeper
+   ended at x=450 on a 360px screen): let the group shrink and the two chips
+   ellipsise instead of overflowing. */
+.world-header-spacer { flex: 0 1 auto; min-width: 0; }
+.world-sg-slot { display: flex; min-width: 0; flex: 0 1 auto; }
+.world-sg-slot .world-sg-chip { max-width: 100%; min-width: 0; }
+.world-house-keeper { flex: 0 1 auto; min-width: 0; }
+@media (max-width: 480px) {
+  .world-header-spacer { gap: 6px; }
+  .world-sg-slot .world-sg-chip { padding: 5px 9px; font-size: 0.75rem; }
+  .world-house-keeper-name { min-width: 3.5em; }
+}
+/* Small phones: "WORLD" next to "← Back" is the one thing the row can lose;
+   without it the game chip and the keeper's name were cut to "Qu…" / nothing.
+   The spacer then takes the title's flex:1 so the chips stay right-aligned. */
+@media (max-width: 420px) {
+  .world-title { display: none; }
+  .world-header-spacer { flex: 1 1 auto; }
+}
 [data-theme="comic"] .world-snap-btn {
   background: var(--highlight);
   color: #111111;

@@ -110,8 +110,12 @@
 #profile-share .profile-support-btn[hidden] { display: none; }
 
 /* ── Public page ── */
+/* html/body never scroll (legacy/01-global.css), so the page scrolls itself. */
 .share-page {
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--page-deco), var(--surface-0);
   color: var(--text-1);
 }
@@ -301,4 +305,6 @@
   color: var(--text-2);
 }
 .share-order-banner .btn { min-height: 36px; padding: 0 14px; font-size: var(--font-size-sm); }
-.share-order .flow-wrapper { flex: 1; min-height: 0; }
+/* The legacy .flow-wrapper is absolute under #header; here it fills what the
+   topbar and banner leave instead of sliding under the banner. */
+.share-order .flow-wrapper { position: relative; top: auto; flex: 1; min-height: 0; }
