@@ -130,7 +130,10 @@ async function world(t) {
   console.error = (...a) => { errors.push(a); };
   t.after(() => {
     console.error = orig;
-    assert.deepEqual(errors.map(a => String(a[0])), [], 'nothing logged by guard()');
+    // Node 22 prints an ExperimentalWarning for MockTimers through console.error
+    // on the first enable(); that is not a guard() log (Node 24 no longer warns).
+    const logged = errors.map(a => String(a[0])).filter(m => !/ExperimentalWarning/.test(m));
+    assert.deepEqual(logged, [], 'nothing logged by guard()');
   });
   games.length = 0;
   bulkWrites.length = 0;
