@@ -1,6 +1,58 @@
 /************************************************
  * PROJECT POPUP
  ************************************************/
+// How many cast chips show before "+N more" — one row, so the popup still
+// fits a short desktop window (Endgame alone lists 38).
+const POPUP_CAST_PREVIEW = 6;
+
+// The cast of a title from project-details.js, each in the look they wear
+// in that title (not the newest look the user has unlocked). Ids the live
+// character list doesn't have (renamed or removed in the CMS) are skipped.
+function projectCast(projectId) {
+  const d = (typeof projectDetails !== 'undefined') && projectDetails[projectId];
+  if (!d || !Array.isArray(d.cast) || !Array.isArray(characters)) return [];
+  const merged = (typeof MERGED_CHARACTER_IDS !== 'undefined') ? MERGED_CHARACTER_IDS : {};
+  const seen = new Set();
+  return d.cast.map(([id, look]) => {
+    const ch = characters.find(c => c.id === (merged[id] || id));
+    if (!ch || seen.has(ch.id)) return null;
+    seen.add(ch.id);
+    const stage = look !== 'base' && (ch.stages || []).find(s => s.after === look);
+    return { ch, image: stage ? stage.image : ch.image, label: stage ? stage.look : '' };
+  }).filter(Boolean);
+}
+
+// Spoiler-free synopsis for everyone; the cast only once the title is
+// watched (it gives away who turns up). Hidden on a friend's read-only map:
+// their progress isn't the viewer's, so it can't tell what's a spoiler.
+function popupDetailsHtml(project, showCast) {
+  const d = (typeof projectDetails !== 'undefined') && projectDetails[project.id];
+  if (!d) return '';
+  const cast = showCast ? projectCast(project.id) : [];
+  const chip = ({ ch, image, label }) => `
+        <li class="popup-cast-chip" title="${esc(label ? `${ch.name} — ${label}` : ch.name)}">
+          <span class="character-avatar">${PosterArt.charHtml(ch, image, { alt: '' })}</span>
+          <span class="popup-cast-name">${esc(ch.name)}</span>
+        </li>`;
+  return `
+  ${d.synopsis ? `
+  <div class="popup-synopsis">
+    <p>${esc(d.synopsis)}</p>
+  </div>` : ''}
+  ${cast.length ? `
+  <section class="popup-cast" aria-label="Characters in this title">
+    <p class="popup-cast-label">Characters in this</p>
+    <ul class="popup-cast-list">
+      ${cast.slice(0, POPUP_CAST_PREVIEW).map(chip).join('')}
+    </ul>
+    ${cast.length > POPUP_CAST_PREVIEW ? `
+    <ul class="popup-cast-list popup-cast-more" hidden>
+      ${cast.slice(POPUP_CAST_PREVIEW).map(chip).join('')}
+    </ul>
+    <button type="button" class="popup-cast-toggle">+${cast.length - POPUP_CAST_PREVIEW} more</button>` : ''}
+  </section>` : ''}`;
+}
+
 function showPopup(project) {
   $('.node-popup')?.remove();
 
@@ -21,6 +73,7 @@ function showPopup(project) {
   popup.innerHTML = `
   <button class="popup-close" aria-label="Close">✕</button>
   <h3>${esc(project.title)}</h3>
+  ${popupDetailsHtml(project, isWatched && !isReadonly)}
 
   ${isWatched ? `
     <p class="watch-count">${FriendView.getActive()?.shareToken
@@ -92,6 +145,13 @@ ${!isReadonly ? `
     initialFocus: popup.querySelector('.popup-close')
   });
   popup.querySelector('.popup-close').onclick = close;
+
+  popup.querySelector('.popup-cast-toggle')?.addEventListener('click', (e) => {
+    const more = popup.querySelector('.popup-cast-more');
+    more.hidden = !more.hidden;
+    e.currentTarget.textContent = more.hidden
+      ? `+${more.children.length} more` : 'Show fewer';
+  });
 
   if (!isReadonly) {
     // Start watching → timer → Mark as watched (js/watch-controls.js). The

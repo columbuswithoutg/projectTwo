@@ -60,6 +60,8 @@ export const CHUNKS = {
     // display geometry, then the static content fallbacks (var-declared so
     // boot.js can reassign window.projects etc. after the live fetch)
     'js/world-config.js', 'projects.js', 'characters.js', 'locations.js',
+    // project-details: synopsis + cast per title (repo-only, not in the DB / CMS)
+    'project-details.js',
     'js/config.js', 'js/theme.js', 'js/auth.js', 'js/state.js', 'js/layout.js',
     // scene-guess-logic: Scene Guess rules, used by the /world HUD and the admin stills tab;
     // quote-guess-logic (after it — it reuses its time parsing): Quote Guess rules, /world HUD + admin quotes tab
@@ -401,7 +403,7 @@ async function main() {
     const trigger = () => { clearTimeout(timer); timer = setTimeout(run, 150); };
     fs.watch(path.join(ROOT, 'js'), { recursive: true }, trigger);
     fs.watch(path.join(ROOT, 'styles'), { recursive: true }, trigger);
-    for (const f of ['projects.js', 'characters.js', 'locations.js', 'spa.html', 'sw.js']) {
+    for (const f of ['projects.js', 'characters.js', 'locations.js', 'project-details.js', 'spa.html', 'sw.js']) {
       fs.watch(path.join(ROOT, f), trigger);
     }
     console.log('[build] watching js/, styles/, spa.html, sw.js and the content files');

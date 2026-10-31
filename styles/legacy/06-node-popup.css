@@ -138,3 +138,86 @@
   color: var(--accent-text);
   font-weight: 700;
 }
+
+/* Synopsis (always) and "Characters in this" (once watched) — js/popup.js.
+   The popup itself must not scroll on desktop: its transform makes the
+   fixed ::before scrim part of the scroll box. The expanded cast scrolls
+   instead (on phones the bottom sheet scrolls, 13-mobile.css). */
+.popup-synopsis {
+  max-width: 440px;
+  margin: -8px auto 18px;
+}
+
+.popup-synopsis p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.popup-cast {
+  max-width: 440px;
+  margin: 0 auto 16px;
+}
+
+.popup-cast-label {
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.popup-cast-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
+  gap: 10px 6px;
+}
+
+.popup-cast-more {
+  margin-top: 10px;
+  max-height: 20vh;
+  overflow-y: auto;
+}
+.popup-cast-more[hidden] { display: none; }
+
+.popup-cast-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.popup-cast-chip .character-avatar {
+  display: block;
+  width: 48px;
+  height: 48px;
+  border-width: 1px;
+  box-shadow: none;
+}
+
+.popup-cast-name {
+  max-width: 100%;
+  font-size: 0.7rem;
+  line-height: 1.25;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.popup-cast-toggle {
+  margin-top: 10px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  color: var(--text-2);
+  background: none;
+  border: 1px solid var(--gold-02);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.popup-cast-toggle:hover { color: var(--text-1); border-color: var(--gold-04); }
