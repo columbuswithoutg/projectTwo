@@ -28,9 +28,13 @@
  ************************************************/
 const PosterArt = (() => {
   const yearOf = (p) => (p && p.release ? String(p.release).slice(0, 4) : '');
+  const NAMED_PHASES = { 'x-men': 7, 'defenders': 8 };
+  const PHASE_LABELS = { 7: 'X-Men', 8: 'Defenders' };
   const phaseOf = (p) => {
-    const m = String((p && p.phase) || '').match(/\d+/);
-    return Math.min(6, Math.max(1, m ? +m[0] : 1));
+    const raw = String((p && p.phase) || '').toLowerCase();
+    if (NAMED_PHASES[raw]) return NAMED_PHASES[raw];
+    const m = raw.match(/\d+/);
+    return Math.min(8, Math.max(1, m ? +m[0] : 1));
   };
 
   function url(p) {
@@ -42,7 +46,7 @@ const PosterArt = (() => {
     const title = (p && (p.title || p.id)) || '';
     const year = yearOf(p);
     return `<span class="poster-card poster-phase-${n}" aria-hidden="true">` +
-      `<span class="poster-card-eyebrow">Phase ${n}</span>` +
+      `<span class="poster-card-eyebrow">${PHASE_LABELS[n] || 'Phase ' + n}</span>` +
       `<span class="poster-card-title">${esc(title)}</span>` +
       (year ? `<span class="poster-card-year">${esc(year)}</span>` : '') +
       `</span>`;

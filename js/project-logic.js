@@ -40,6 +40,9 @@
 
   function parsePhase(phase) {
     if (typeof phase === 'number') return phase;
+    const NAMED_PHASES = { 'x-men': 7, 'defenders': 8 };
+    const named = NAMED_PHASES[String(phase || '').toLowerCase()];
+    if (named) return named;
     const m = String(phase || '').match(/\d+/);
     return m ? +m[0] : 1;
   }

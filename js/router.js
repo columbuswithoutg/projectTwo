@@ -138,6 +138,13 @@ const Router = (() => {
   // Position of the current entry in this tab's in-app history (see init).
   let _idx = 0;
 
+  // View crossfade: after the first view mounts, subsequent route changes
+  // fade out → swap → fade in.  The timer id lets a rapid navigate cancel an
+  // in-flight fade so the container never gets stuck at opacity 0.
+  let _pastFirstMount = false;
+  let _fadeTimer = 0;
+  const _FADE_MS = 130;   // slightly above --dur-fast (120ms) for safety
+
   // Loading state while a lazy route downloads its chunk: #app[aria-busy]
   // plus the thin top bar (#route-progress, spa.html), shown only after
   // 150 ms so a cached chunk never flashes it.
@@ -171,6 +178,13 @@ const Router = (() => {
   // opts.force skips the leave guard (a view leaving after its own save).
   async function navigate(path, pushState = true, opts = {}) {
     const seq = ++navSeq;
+    // Cancel any in-flight crossfade so a rapid navigate never leaves
+    // the container stuck at opacity 0.
+    clearTimeout(_fadeTimer);
+    if (appContainer && appContainer.classList) {
+      appContainer.classList.remove('view-fade');
+      appContainer.style.opacity = '';
+    }
     // Route on the bare path, but keep the query + hash for the address bar:
     // views read location.search (/messages?with=…, /reports?report=…), and
     // pushing the stripped path used to drop it on every in-app link.
@@ -281,6 +295,22 @@ const Router = (() => {
     // by Back used to stay on screen).
     if (typeof closeAllModals === 'function') closeAllModals();
 
+    // Crossfade: fade out the current view, then mount the new one and
+    // fade it in.  Skipped on the initial page load and when the user
+    // prefers reduced motion.  Rapid route changes are safe: the navSeq
+    // guard bails if a newer navigate started during the fade-out, and
+    // every navigate() clears leftover fade state up front.
+    const shouldFade = _pastFirstMount
+      && appContainer && appContainer.classList
+      && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+    if (shouldFade) {
+      appContainer.classList.add('view-fade');
+      appContainer.style.opacity = '0';
+      await new Promise(resolve => { _fadeTimer = setTimeout(resolve, _FADE_MS); });
+      if (seq !== navSeq) return;
+    }
+
     // Unmount current view
     if (currentView && currentView.unmount) {
       currentView.unmount();
@@ -297,6 +327,21 @@ const Router = (() => {
     document.title = view.title || 'MCU Tracker';
     view.mount(appContainer, params);
     _firstDone();
+    _pastFirstMount = true;
+
+    // Fade the freshly-mounted view in.
+    if (shouldFade) {
+      const mySeq = seq;
+      requestAnimationFrame(() => {
+        if (mySeq !== navSeq) return;
+        appContainer.style.opacity = '1';
+        _fadeTimer = setTimeout(() => {
+          if (mySeq !== navSeq) return;
+          appContainer.classList.remove('view-fade');
+          appContainer.style.opacity = '';
+        }, _FADE_MS);
+      });
+    }
   }
 
   // A chunk URL that fails to load usually means a deploy happened while

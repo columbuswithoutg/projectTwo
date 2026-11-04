@@ -86,6 +86,9 @@ const ProfileView = {
           </div>
         </div>
 
+        <div id="profile-progress" class="profile-progress" hidden></div>
+        <div id="profile-phases" class="profile-phases" hidden></div>
+
         <div id="profile-champion" class="profile-champion" hidden></div>
 
         <div id="profile-cowatcher" style="display:none">
@@ -336,6 +339,73 @@ const ProfileView = {
         );
         statChars.textContent = ProfileView.charactersUnlocked(watchedIds);
         buildAvatarPicker(watchedIds, data.profilePicture);
+
+        // Progress ring and per-phase completion tiles
+        const allProjects = Array.isArray(window.projects) ? window.projects : [];
+        const totalProjects = allProjects.length;
+        const watchedTotal = watchedIds.size;
+        if (totalProjects > 0) {
+          const phaseMap = {};
+          for (const p of allProjects) {
+            const ph = p.phaseNum || state.parsePhase(p.phase);
+            if (!phaseMap[ph]) phaseMap[ph] = { total: 0, watched: 0 };
+            phaseMap[ph].total++;
+            if (watchedIds.has(p.id)) phaseMap[ph].watched++;
+          }
+          const wantsMotion = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+          // Overall progress ring
+          const progressEl = document.getElementById('profile-progress');
+          if (progressEl && progressEl.isConnected) {
+            const R = 54, C = 2 * Math.PI * R;
+            const dashOff = C * (1 - watchedTotal / totalProjects);
+            progressEl.innerHTML = `
+              <svg class="progress-ring" width="130" height="130" viewBox="0 0 130 130" role="img" aria-label="${watchedTotal} of ${totalProjects} projects watched">
+                <circle class="progress-ring__outline" cx="65" cy="65" r="54" />
+                <circle class="progress-ring__track" cx="65" cy="65" r="54" />
+                <circle class="progress-ring__fill" cx="65" cy="65" r="54"
+                  stroke-dasharray="${C.toFixed(2)}" stroke-dashoffset="${dashOff.toFixed(2)}"
+                  transform="rotate(-90 65 65)" />
+                <text class="progress-ring__count" x="65" y="57" text-anchor="middle" dominant-baseline="central">${watchedTotal}/${totalProjects}</text>
+                <text class="progress-ring__label" x="65" y="78" text-anchor="middle" dominant-baseline="central">watched</text>
+              </svg>`;
+            progressEl.hidden = false;
+            if (wantsMotion) {
+              const fill = progressEl.querySelector('.progress-ring__fill');
+              if (fill) {
+                fill.style.strokeDashoffset = C.toFixed(2);
+                requestAnimationFrame(() => { requestAnimationFrame(() => {
+                  fill.style.strokeDashoffset = dashOff.toFixed(2);
+                }); });
+              }
+            }
+          }
+
+          // Per-phase completion tiles
+          const phasesEl = document.getElementById('profile-phases');
+          if (phasesEl && phasesEl.isConnected) {
+            const phaseNums = Object.keys(phaseMap).map(Number).sort((a, b) => a - b);
+            phasesEl.innerHTML = `
+              <p class="profile-section-label">By phase</p>
+              <div class="phase-tiles">
+                ${phaseNums.map(ph => {
+                  const d = phaseMap[ph];
+                  const pct = d.total ? Math.round(d.watched / d.total * 100) : 0;
+                  return `<div class="phase-tile" style="--phase-color: var(--phase-${ph})">
+                      <span class="phase-tile__name">${({ 7: 'X-Men', 8: 'Defenders' })[ph] || 'Phase ' + ph}</span>
+                      <span class="phase-tile__count">${d.watched}/${d.total}</span>
+                      <div class="phase-tile__bar">
+                        <div class="phase-tile__fill" data-pct="${pct}"></div>
+                      </div>
+                    </div>`;
+                }).join('')}
+              </div>`;
+            phasesEl.hidden = false;
+            const setBars = () => phasesEl.querySelectorAll('.phase-tile__fill').forEach(b => { b.style.width = b.dataset.pct + '%'; });
+            if (wantsMotion) requestAnimationFrame(() => { requestAnimationFrame(setBars); });
+            else setBars();
+          }
+        }
       } catch {
         statChars.textContent = '?';
       }

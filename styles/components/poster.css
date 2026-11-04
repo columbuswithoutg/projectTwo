@@ -33,6 +33,8 @@
 .poster-phase-4 { --pc: var(--phase-4); }
 .poster-phase-5 { --pc: var(--phase-5); }
 .poster-phase-6 { --pc: var(--phase-6); }
+.poster-phase-7 { --pc: var(--phase-7); }
+.poster-phase-8 { --pc: var(--phase-8); }
 
 .poster-card-eyebrow,
 .poster-card-year {
@@ -171,6 +173,113 @@
   box-shadow: var(--shadow-1);
 }
 .feed-poster-frame .feed-poster { width: 100%; height: 100%; box-shadow: none; border-radius: 0; }
+
+/* ══ Flowchart poster interactions ══════════════════════════════════════
+   Hover transforms, title overlay and watched-status pill for poster
+   tiles on the watch-order flowchart.  Scoped to .flow-cell so the map
+   pins and other contexts are not affected.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Hover: scale / translate + transition ───────────────────────────── */
+.flow-cell .node {
+  overflow: hidden;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+[data-theme="cinematic"] .flow-cell .node:not(.locked):hover,
+:root:not([data-theme]) .flow-cell .node:not(.locked):hover {
+  transform: scale(1.05);
+}
+[data-theme="comic"] .flow-cell .node:not(.locked):hover {
+  transform: translate(-2px, -2px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-cell .node { transition: none; }
+  .flow-cell .node:not(.locked):hover { transform: none; }
+}
+
+/* ── Hover title overlay ─────────────────────────────────────────────── */
+.poster-hover-title { display: none; }
+.flow-cell .poster-hover-title {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  padding: 6px 8px;
+  font: 600 var(--font-size-xs)/var(--line-height-tight) var(--font-ui);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+  pointer-events: none;
+}
+.flow-cell .node:not(.locked):hover .poster-hover-title { opacity: 1; }
+
+/* Cinematic: frosted-glass strip. */
+[data-theme="cinematic"] .flow-cell .poster-hover-title,
+:root:not([data-theme]) .flow-cell .poster-hover-title {
+  background: var(--surface-glass);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  color: var(--text-1);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+/* Comic: white caption box with ink border. */
+[data-theme="comic"] .flow-cell .poster-hover-title {
+  background: #ffffff;
+  border-top: 2px solid #111111;
+  color: #111111;
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-cell .poster-hover-title { transition: none; }
+}
+
+/* ── Watched-status pill ─────────────────────────────────────────────── */
+.watched-pill { display: none; }
+.flow-cell .node.watched .watched-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* Cinematic: frosted-glass pill with gold check. */
+[data-theme="cinematic"] .flow-cell .node.watched .watched-pill,
+:root:not([data-theme]) .flow-cell .node.watched .watched-pill {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  background: rgba(18, 21, 30, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(214, 178, 94, 0.55);
+  color: var(--highlight);
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+/* Comic: bold ink-stamp checkmark. */
+[data-theme="comic"] .flow-cell .node.watched .watched-pill {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  background: var(--highlight);
+  border: 2.5px solid #111111;
+  color: #111111;
+  font-size: 14px;
+  font-weight: 900;
+  box-shadow: 2px 2px 0 #111111;
+  transform: rotate(-8deg);
+}
 
 /* /home/edit room lists (js/views/home-edit.js). */
 .pg-thumb {

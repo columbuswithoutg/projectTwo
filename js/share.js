@@ -28,7 +28,7 @@ const ShareProgress = (() => {
   };
   // Same hues as --phase-1..6 (styles/tokens/primitives.css), for posters
   // that have no image file.
-  const PHASE = ['#b5563f', '#6478a6', '#6f8f5a', '#8a5a86', '#3f8f8f', '#b98a3f'];
+  const PHASE = ['#b5563f', '#6478a6', '#6f8f5a', '#8a5a86', '#3f8f8f', '#b98a3f', '#4f6dbf', '#8f4040'];
 
   function urlFor(token) { return `${location.origin}/s/${token}`; }
 

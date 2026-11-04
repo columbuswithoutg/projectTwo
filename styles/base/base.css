@@ -46,6 +46,19 @@ body {
   line-height: 1.05;
 }
 
+/* View crossfade — router.js adds/removes during route changes.
+   .theme-switching's `transition: none !important` below automatically
+   blocks this during theme flips; no extra rule needed. */
+#app.view-fade {
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #app.view-fade {
+    transition: none !important;
+  }
+}
+
 /* One frame without transitions while the theme flips (js/theme.js). */
 .theme-switching,
 .theme-switching *,

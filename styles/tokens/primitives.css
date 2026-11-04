@@ -59,6 +59,8 @@
   --phase-4: #8a5a86;   /* plum */
   --phase-5: #3f8f8f;   /* teal */
   --phase-6: #b98a3f;   /* amber */
+  --phase-7: #4f6dbf;   /* cobalt — X-Men */
+  --phase-8: #8f4040;   /* brick red — Defenders */
 
   /* Stacking order — one scale instead of ad-hoc numbers */
   --z-hud: 50;

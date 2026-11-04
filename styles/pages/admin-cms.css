@@ -136,6 +136,8 @@ button.prq-chip-title:hover { text-decoration: underline; }
 .prq-dot-4 { background: var(--phase-4); }
 .prq-dot-5 { background: var(--phase-5); }
 .prq-dot-6 { background: var(--phase-6); }
+.prq-dot-7 { background: var(--phase-7); }
+.prq-dot-8 { background: var(--phase-8); }
 
 .prq-add { position: relative; }
 .prq-input { width: 100%; box-sizing: border-box; }

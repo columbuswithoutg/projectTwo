@@ -71,3 +71,114 @@
 [data-theme="comic"] .profile-champion-badge b { color: #111111; }
 .profile-champion-badge.is-lines { border-color: rgba(96, 165, 250, 0.55); background: rgba(96, 165, 250, 0.12); }
 [data-theme="comic"] .profile-champion-badge.is-lines { background: #e3efff; }
+
+/* ---------- Overall progress ring ---------- */
+.profile-progress { display: flex; justify-content: center; margin: 20px 0 8px; }
+.profile-progress[hidden] { display: none; }
+
+.progress-ring__outline,
+.progress-ring__track,
+.progress-ring__fill { fill: none; }
+
+.progress-ring__outline { stroke: none; }
+.progress-ring__track   { stroke: var(--border-1); stroke-width: 10; }
+.progress-ring__fill    { stroke-width: 10; stroke-linecap: round; }
+
+/* Cinematic: gold arc with subtle glow */
+[data-theme="cinematic"] .progress-ring__fill {
+  stroke: var(--highlight);
+  filter: drop-shadow(0 0 6px rgba(var(--highlight-rgb), 0.5));
+}
+/* Comic: bold red arc, ink outline ring */
+[data-theme="comic"] .progress-ring__outline { stroke: #111111; stroke-width: 16; }
+[data-theme="comic"] .progress-ring__track   { stroke: var(--border-1); stroke-width: 10; }
+[data-theme="comic"] .progress-ring__fill    { stroke: var(--color-primary); stroke-width: 10; }
+
+.progress-ring__count {
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  font-size: calc(22px * var(--display-scale));
+  fill: var(--text-1);
+}
+.progress-ring__label {
+  font: 700 10px var(--font-ui);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  fill: var(--text-3);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .progress-ring__fill { transition: stroke-dashoffset 1s var(--ease-out); }
+}
+
+/* ---------- Per-phase completion tiles ---------- */
+.profile-phases { margin: 16px 0 0; }
+.profile-phases[hidden] { display: none; }
+
+.phase-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+@media (min-width: 420px)  { .phase-tiles { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 640px)  { .phase-tiles { grid-template-columns: repeat(6, 1fr); } }
+
+.phase-tile {
+  padding: 10px 8px 8px;
+  border-radius: var(--radius-card);
+  text-align: center;
+}
+[data-theme="cinematic"] .phase-tile {
+  background: var(--surface-glass);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-1);
+}
+[data-theme="comic"] .phase-tile {
+  background: var(--surface-1);
+  border: var(--border-w) solid var(--border-ink);
+  box-shadow: var(--shadow-hard-sm);
+}
+
+.phase-tile__name {
+  display: block;
+  font: 700 10px/1 var(--font-ui);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--phase-color);
+  margin-bottom: 4px;
+}
+.phase-tile__count {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  letter-spacing: 0.02em;
+  font-size: calc(20px * var(--display-scale));
+  line-height: 1.2;
+  color: var(--text-1);
+}
+
+.phase-tile__bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-1);
+  margin-top: 6px;
+  overflow: hidden;
+}
+[data-theme="comic"] .phase-tile__bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border-2);
+}
+
+.phase-tile__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--phase-color);
+  width: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .phase-tile__fill { transition: width 0.6s var(--ease-out) 0.3s; }
+}

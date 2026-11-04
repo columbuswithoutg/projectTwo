@@ -62,11 +62,19 @@ const CharactersView = {
         return filtered;
       }
 
-      grid.innerHTML = filtered.map(c => `
-          <button type="button" class="character-card" data-id="${esc(c.id)}" aria-haspopup="dialog">
+      grid.innerHTML = filtered.map(c => {
+        // Unlock tier: how many stages has the user unlocked vs total?
+        const unlockedStages = getCharStages(c, watchedIds).length;
+        const totalStages = (c.stages || []).length + 1; // base look + stage entries
+        const tier = (totalStages > 1 && unlockedStages >= totalStages) ? 'gold'
+                   : (unlockedStages >= 2) ? 'silver'
+                   : 'base';
+        return `
+          <button type="button" class="character-card char-tier-${tier}" data-id="${esc(c.id)}" aria-haspopup="dialog">
             <span class="character-avatar">${PosterArt.charHtml(c, getCharImage(c, watchedIds), { alt: '' })}</span>
             <span class="character-name">${esc(c.name)}</span>
-          </button>`).join('');
+          </button>`;
+      }).join('');
       return filtered;
     };
 

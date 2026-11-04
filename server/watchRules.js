@@ -19,6 +19,9 @@ const MAX_EPISODES = 60;
 
 function parsePhase(phase) {
   if (typeof phase === 'number') return phase;
+  const NAMED_PHASES = { 'x-men': 7, 'defenders': 8 };
+  const named = NAMED_PHASES[String(phase || '').toLowerCase()];
+  if (named) return named;
   const m = String(phase || '').match(/\d+/);
   return m ? +m[0] : 1;
 }
@@ -76,10 +79,8 @@ function lockingPrereqs(p) {
 // recommendedPrerequisites are advisory only and never gate availability.
 function isAvailable(p, watched) {
   const phase = parsePhase(p.phase);
-  if (phase !== 1) {
-    const unlocker = PHASE_UNLOCKERS[phase];
-    if (!unlocker || !watched.has(unlocker)) return false;
-  }
+  const unlocker = PHASE_UNLOCKERS[phase];
+  if (unlocker && !watched.has(unlocker)) return false;
   return lockingPrereqs(p).every(id => watched.has(id));
 }
 
@@ -88,7 +89,8 @@ function isAvailable(p, watched) {
 function lockedReason(p, watched, titleOf = (id) => (_cache && _cache.get(id)?.title) || id) {
   const phase = parsePhase(p.phase);
   const unlocker = PHASE_UNLOCKERS[phase];
-  if (phase !== 1 && unlocker && !watched.has(unlocker)) return `Watch ${titleOf(unlocker)} first to unlock Phase ${phase}`;
+  const PHASE_LABELS = { 7: 'X-Men', 8: 'Defenders' };
+  if (unlocker && !watched.has(unlocker)) return `Watch ${titleOf(unlocker)} first to unlock ${PHASE_LABELS[phase] || 'Phase ' + phase}`;
   const missing = lockingPrereqs(p).find(id => !watched.has(id));
   return missing ? `Watch ${titleOf(missing)} first` : 'Not available yet';
 }

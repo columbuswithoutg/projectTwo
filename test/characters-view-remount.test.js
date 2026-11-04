@@ -52,6 +52,7 @@ function setup() {
     isCharUnlocked: (c, ids) => ids.has(c.debut),
     characterSearch: (list, q) => list.filter(c => !q || c.name.toLowerCase().includes(q.toLowerCase())),
     getCharImage: () => '',
+    getCharStages: (c, ids) => ids.has(c.debut) ? [c] : [],
     PosterArt: { charHtml: () => '' },
     esc: (s) => String(s),
     // A page that still queries `document` would get the CURRENT mount's

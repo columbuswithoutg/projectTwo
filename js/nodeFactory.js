@@ -34,6 +34,20 @@ const NodeFactory = (() => {
     watching.textContent = "▶ Watching";
     node.appendChild(watching);
 
+    // Hover title overlay — visible on the flowchart when hovering
+    // the poster tile (styled in poster.css, hidden elsewhere).
+    const hoverTitle = document.createElement("span");
+    hoverTitle.className = "poster-hover-title";
+    hoverTitle.textContent = project.title || project.id;
+    node.appendChild(hoverTitle);
+
+    // Watched-status pill — a frosted-glass (cinematic) or ink-stamp
+    // (comic) badge on flowchart posters; styled in poster.css.
+    const pill = document.createElement("span");
+    pill.className = "watched-pill";
+    pill.textContent = "✓";
+    node.appendChild(pill);
+
     updateState(node, project);
     return node;
   }

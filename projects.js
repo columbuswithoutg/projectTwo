@@ -84,47 +84,47 @@ var projects = [
   // ROAD TO DOOMSDAY — Marvel's official "watch before Avengers: Doomsday"
   // list. The Fox X-Men films have no prerequisites (always available); the
   // whole list is Doomsday's required prerequisites.
-  { id: "xmen1", title: "X-Men", release: "2000-07-14", runtime: 104, prerequisites: [], phase: "Phase 1", gridX: -5, gridY: 3, location: "multiverse", watched: false, image: "xmen1.png" },
-  { id: "xmen2", title: "X2", release: "2003-05-02", runtime: 133, prerequisites: ["xmen1"], phase: "Phase 1", gridX: -4, gridY: 4, location: "multiverse", watched: false, image: "xmen2.png" },
+  { id: "xmen1", title: "X-Men", release: "2000-07-14", runtime: 104, prerequisites: [], phase: "X-Men", gridX: -5, gridY: 3, location: "multiverse", watched: false, image: "xmen1.png" },
+  { id: "xmen2", title: "X2", release: "2003-05-02", runtime: 133, prerequisites: ["xmen1"], phase: "X-Men", gridX: -4, gridY: 4, location: "multiverse", watched: false, image: "xmen2.png" },
   { id: "doomsday", title: "Avengers: Doomsday", release: "2026-12-18", runtime: 165, prerequisites: ["xmen2", "shangchi", "blackpanther2", "cap4", "deadpool3", "drstrange2", "thunderbolts", "fantasticfour"], recommendedPrerequisites: ["darkphoenix", "logan", "deadpool2"], phase: "Phase 6", gridX: 0, gridY: 32, location: "multiverse", watched: false, image: "doomsday.png" },
 
   // THE REST OF THE FOX X-SAGA — optional side-watches (not on the official
   // list, so never required for Doomsday; each chain's last film is only a
   // recommended road into it). The New Mutants is left out on purpose.
   // Main line (x −4), Wolverine (x −5), Deadpool (x −6), in release order.
-  { id: "xmen3", title: "X-Men: The Last Stand", release: "2006-05-26", runtime: 104, prerequisites: ["xmen2"], phase: "Phase 1", gridX: -4, gridY: 5, location: "multiverse", watched: false, image: "xmen3.png" },
-  { id: "firstclass", title: "X-Men: First Class", release: "2011-06-03", runtime: 132, prerequisites: ["xmen3"], phase: "Phase 1", gridX: -4, gridY: 7, location: "multiverse", watched: false, image: "firstclass.png" },
-  { id: "dofp", title: "X-Men: Days of Future Past", release: "2014-05-23", runtime: 132, prerequisites: ["firstclass"], phase: "Phase 1", gridX: -4, gridY: 12, location: "multiverse", watched: false, image: "dofp.png" },
-  { id: "apocalypse", title: "X-Men: Apocalypse", release: "2016-05-27", runtime: 144, prerequisites: ["dofp"], phase: "Phase 1", gridX: -4, gridY: 14, location: "multiverse", watched: false, image: "apocalypse.png" },
-  { id: "darkphoenix", title: "Dark Phoenix", release: "2019-06-07", runtime: 113, prerequisites: ["apocalypse"], phase: "Phase 1", gridX: -4, gridY: 19, location: "multiverse", watched: false, image: "darkphoenix.png" },
-  { id: "wolverineorigins", title: "X-Men Origins: Wolverine", release: "2009-05-01", runtime: 107, prerequisites: ["xmen3"], phase: "Phase 1", gridX: -6, gridY: 6, location: "multiverse", watched: false, image: "wolverineorigins.png" },
-  { id: "thewolverine", title: "The Wolverine", release: "2013-07-26", runtime: 126, prerequisites: ["wolverineorigins"], phase: "Phase 1", gridX: -5, gridY: 10, location: "multiverse", watched: false, image: "thewolverine.png" },
-  { id: "logan", title: "Logan", release: "2017-03-03", runtime: 137, prerequisites: ["thewolverine"], phase: "Phase 1", gridX: -5, gridY: 13, location: "multiverse", watched: false, image: "logan.png" },
-  { id: "deadpool1", title: "Deadpool", release: "2016-02-12", runtime: 108, prerequisites: ["wolverineorigins"], phase: "Phase 1", gridX: -5, gridY: 14, location: "multiverse", watched: false, image: "deadpool1.png" },
-  { id: "deadpool2", title: "Deadpool 2", release: "2018-05-18", runtime: 119, prerequisites: ["deadpool1"], phase: "Phase 1", gridX: -5, gridY: 17, location: "multiverse", watched: false, image: "deadpool2.png" },
+  { id: "xmen3", title: "X-Men: The Last Stand", release: "2006-05-26", runtime: 104, prerequisites: ["xmen2"], phase: "X-Men", gridX: -4, gridY: 5, location: "multiverse", watched: false, image: "xmen3.png" },
+  { id: "firstclass", title: "X-Men: First Class", release: "2011-06-03", runtime: 132, prerequisites: ["xmen3"], phase: "X-Men", gridX: -4, gridY: 7, location: "multiverse", watched: false, image: "firstclass.png" },
+  { id: "dofp", title: "X-Men: Days of Future Past", release: "2014-05-23", runtime: 132, prerequisites: ["firstclass"], phase: "X-Men", gridX: -4, gridY: 12, location: "multiverse", watched: false, image: "dofp.png" },
+  { id: "apocalypse", title: "X-Men: Apocalypse", release: "2016-05-27", runtime: 144, prerequisites: ["dofp"], phase: "X-Men", gridX: -4, gridY: 14, location: "multiverse", watched: false, image: "apocalypse.png" },
+  { id: "darkphoenix", title: "Dark Phoenix", release: "2019-06-07", runtime: 113, prerequisites: ["apocalypse"], phase: "X-Men", gridX: -4, gridY: 19, location: "multiverse", watched: false, image: "darkphoenix.png" },
+  { id: "wolverineorigins", title: "X-Men Origins: Wolverine", release: "2009-05-01", runtime: 107, prerequisites: ["xmen3"], phase: "X-Men", gridX: -6, gridY: 6, location: "multiverse", watched: false, image: "wolverineorigins.png" },
+  { id: "thewolverine", title: "The Wolverine", release: "2013-07-26", runtime: 126, prerequisites: ["wolverineorigins"], phase: "X-Men", gridX: -5, gridY: 10, location: "multiverse", watched: false, image: "thewolverine.png" },
+  { id: "logan", title: "Logan", release: "2017-03-03", runtime: 137, prerequisites: ["thewolverine"], phase: "X-Men", gridX: -5, gridY: 13, location: "multiverse", watched: false, image: "logan.png" },
+  { id: "deadpool1", title: "Deadpool", release: "2016-02-12", runtime: 108, prerequisites: ["wolverineorigins"], phase: "X-Men", gridX: -5, gridY: 14, location: "multiverse", watched: false, image: "deadpool1.png" },
+  { id: "deadpool2", title: "Deadpool 2", release: "2018-05-18", runtime: 119, prerequisites: ["deadpool1"], phase: "X-Men", gridX: -5, gridY: 17, location: "multiverse", watched: false, image: "deadpool2.png" },
 
   // NETFLIX SAGA (MCU STREET-LEVEL ERA) — anchored in the five NYC boroughs.
   // Hell's Kitchen: Daredevil / Jessica Jones (Alias Investigations is on
   // 46th St) / Iron Fist (Rand HQ operates street-level here) / Defenders
   // (team-up base) / Punisher. Harlem: Luke Cage (Pop's, Harlem's Paradise).
   // DAREDEVIL — Matt Murdock's firm is in Hell's Kitchen
-  { id: "daredevil1", title: "Daredevil", release: "2015-04-10", episodes: [53, 55, 51, 55, 54, 54, 57, 55, 52, 57, 58, 56, 58], prerequisites: [], hiddenPrerequisites: ["ironman1"], phase: "Phase 1", gridX: 6, gridY: 11, location: "hells-kitchen", watched: false, image: "daredevil1.png" },
-  { id: "daredevil2", title: "Daredevil | Season 2", release: "2016-03-18", episodes: [49, 52, 55, 48, 56, 50, 53, 55, 55, 54, 54, 55, 59], prerequisites: ["daredevil1"], phase: "Phase 1", gridX: 4, gridY: 13, location: "hells-kitchen", watched: false, image: "daredevils2.png" },
-  { id: "daredevil3", title: "Daredevil | Season 3", release: "2018-10-19", episodes: [59, 52, 53, 58, 60, 55, 58, 56, 59, 53, 59, 55, 63], prerequisites: ["defenders"], phase: "Phase 1", gridX: 7, gridY: 17, location: "hells-kitchen", watched: false, image: "daredevils3.png" },
+  { id: "daredevil1", title: "Daredevil", release: "2015-04-10", episodes: [53, 55, 51, 55, 54, 54, 57, 55, 52, 57, 58, 56, 58], prerequisites: [], hiddenPrerequisites: ["ironman1"], phase: "Defenders", gridX: 6, gridY: 11, location: "hells-kitchen", watched: false, image: "daredevil1.png" },
+  { id: "daredevil2", title: "Daredevil | Season 2", release: "2016-03-18", episodes: [49, 52, 55, 48, 56, 50, 53, 55, 55, 54, 54, 55, 59], prerequisites: ["daredevil1"], phase: "Defenders", gridX: 4, gridY: 13, location: "hells-kitchen", watched: false, image: "daredevils2.png" },
+  { id: "daredevil3", title: "Daredevil | Season 3", release: "2018-10-19", episodes: [59, 52, 53, 58, 60, 55, 58, 56, 59, 53, 59, 55, 63], prerequisites: ["defenders"], phase: "Defenders", gridX: 7, gridY: 17, location: "hells-kitchen", watched: false, image: "daredevils3.png" },
   // JESSICA JONES — Alias Investigations at 485 W 46th St (Hell's Kitchen)
-  { id: "jessicajones1", title: "Jessica Jones", release: "2015-11-20", episodes: [53, 52, 51, 50, 51, 55, 49, 51, 52, 51, 52, 54, 53], prerequisites: ["daredevil1"], phase: "Phase 1", gridX: 7, gridY: 12, location: "hells-kitchen", watched: false, image: "jessicajones.png" },
-  { id: "jessicajones2", title: "Jessica Jones | Season 2", release: "2018-03-08", episodes: [54, 54, 49, 52, 52, 54, 53, 53, 53, 52, 52, 55, 58], prerequisites: ["defenders"], phase: "Phase 1", gridX: 8, gridY: 18, location: "hells-kitchen", watched: false, image: "jessicajoness2.png" },
-  { id: "jessicajones3", title: "Jessica Jones | Season 3", release: "2019-06-14", episodes: [53, 55, 52, 52, 52, 53, 53, 52, 53, 53, 53, 52, 56], prerequisites: ["jessicajones2"], phase: "Phase 1", gridX: 4, gridY: 19, location: "hells-kitchen", watched: false, image: "jessicajoness3.png" },
+  { id: "jessicajones1", title: "Jessica Jones", release: "2015-11-20", episodes: [53, 52, 51, 50, 51, 55, 49, 51, 52, 51, 52, 54, 53], prerequisites: ["daredevil1"], phase: "Defenders", gridX: 7, gridY: 12, location: "hells-kitchen", watched: false, image: "jessicajones.png" },
+  { id: "jessicajones2", title: "Jessica Jones | Season 2", release: "2018-03-08", episodes: [54, 54, 49, 52, 52, 54, 53, 53, 53, 52, 52, 55, 58], prerequisites: ["defenders"], phase: "Defenders", gridX: 8, gridY: 18, location: "hells-kitchen", watched: false, image: "jessicajoness2.png" },
+  { id: "jessicajones3", title: "Jessica Jones | Season 3", release: "2019-06-14", episodes: [53, 55, 52, 52, 52, 53, 53, 52, 53, 53, 53, 52, 56], prerequisites: ["jessicajones2"], phase: "Defenders", gridX: 4, gridY: 19, location: "hells-kitchen", watched: false, image: "jessicajoness3.png" },
   // LUKE CAGE — Harlem is his whole beat
-  { id: "lukecage1", title: "Luke Cage", release: "2016-09-30", episodes: [55, 57, 54, 53, 52, 54, 52, 55, 53, 55, 56, 56, 55], prerequisites: ["jessicajones1"], phase: "Phase 1", gridX: 6, gridY: 13, location: "harlem", watched: false, image: "lukecage1.png" },
-  { id: "lukecage2", title: "Luke Cage | Season 2", release: "2018-06-22", episodes: [55, 55, 54, 55, 52, 57, 54, 54, 60, 57, 55, 56, 63], prerequisites: ["defenders"], phase: "Phase 1", gridX: 6, gridY: 17, location: "harlem", watched: false, image: "lukecage2.png" },
+  { id: "lukecage1", title: "Luke Cage", release: "2016-09-30", episodes: [55, 57, 54, 53, 52, 54, 52, 55, 53, 55, 56, 56, 55], prerequisites: ["jessicajones1"], phase: "Defenders", gridX: 6, gridY: 13, location: "harlem", watched: false, image: "lukecage1.png" },
+  { id: "lukecage2", title: "Luke Cage | Season 2", release: "2018-06-22", episodes: [55, 55, 54, 55, 52, 57, 54, 54, 60, 57, 55, 56, 63], prerequisites: ["defenders"], phase: "Defenders", gridX: 6, gridY: 17, location: "harlem", watched: false, image: "lukecage2.png" },
   // IRON FIST
-  { id: "ironfist1", title: "Iron Fist", release: "2017-03-17", episodes: [58, 55, 51, 52, 56, 56, 53, 53, 54, 50, 56, 54, 57], prerequisites: ["daredevil2"], phase: "Phase 1", gridX: 4, gridY: 14, location: "hells-kitchen", watched: false, image: "ironfist1.png" },
-  { id: "ironfist2", title: "Iron Fist | Season 2", release: "2018-09-07", episodes: [54, 50, 51, 51, 51, 55, 51, 47, 51, 57], prerequisites: ["defenders"], phase: "Phase 1", gridX: 5, gridY: 18, location: "hells-kitchen", watched: false, image: "ironfist2.png" },
+  { id: "ironfist1", title: "Iron Fist", release: "2017-03-17", episodes: [58, 55, 51, 52, 56, 56, 53, 53, 54, 50, 56, 54, 57], prerequisites: ["daredevil2"], phase: "Defenders", gridX: 4, gridY: 14, location: "hells-kitchen", watched: false, image: "ironfist1.png" },
+  { id: "ironfist2", title: "Iron Fist | Season 2", release: "2018-09-07", episodes: [54, 50, 51, 51, 51, 55, 51, 47, 51, 57], prerequisites: ["defenders"], phase: "Defenders", gridX: 5, gridY: 18, location: "hells-kitchen", watched: false, image: "ironfist2.png" },
   // THE DEFENDERS (CROSSOVER EVENT) — team-up meets in Hell's Kitchen
-  { id: "defenders", title: "The Defenders", release: "2017-08-18", episodes: [54, 49, 46, 51, 49, 46, 50, 48], prerequisites: ["lukecage1", "ironfist1"], phase: "Phase 1", gridX: 6, gridY: 16, location: "hells-kitchen", watched: false, image: "defenders.png" },
+  { id: "defenders", title: "The Defenders", release: "2017-08-18", episodes: [54, 49, 46, 51, 49, 46, 50, 48], prerequisites: ["lukecage1", "ironfist1"], phase: "Defenders", gridX: 6, gridY: 16, location: "hells-kitchen", watched: false, image: "defenders.png" },
   // THE PUNISHER — Frank Castle operates out of Hell's Kitchen
-  { id: "punisher1", title: "The Punisher", release: "2017-11-17", episodes: [53, 52, 54, 50, 55, 49, 53, 57, 49, 55, 46, 57, 53], prerequisites: ["daredevil2"], phase: "Phase 1", gridX: 4, gridY: 15, location: "hells-kitchen", watched: false, image: "punisher.png" },
-  { id: "punisher2", title: "The Punisher | Season 2", release: "2019-01-18", episodes: [53, 54, 51, 57, 51, 56, 51, 48, 57, 47, 54, 49, 57], prerequisites: ["punisher1"], phase: "Phase 1", gridX: 5, gridY: 20, location: "hells-kitchen", watched: false, image: "punisher2.png" }
+  { id: "punisher1", title: "The Punisher", release: "2017-11-17", episodes: [53, 52, 54, 50, 55, 49, 53, 57, 49, 55, 46, 57, 53], prerequisites: ["daredevil2"], phase: "Defenders", gridX: 4, gridY: 15, location: "hells-kitchen", watched: false, image: "punisher.png" },
+  { id: "punisher2", title: "The Punisher | Season 2", release: "2019-01-18", episodes: [53, 54, 51, 57, 51, 56, 51, 48, 57, 47, 54, 49, 57], prerequisites: ["punisher1"], phase: "Defenders", gridX: 5, gridY: 20, location: "hells-kitchen", watched: false, image: "punisher2.png" }
 
 ];

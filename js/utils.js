@@ -455,7 +455,7 @@ function initHeaderAvatar() {
  * VISIBILITY & UNLOCK LOGIC
  ************************************************/
 const isPhaseUnlocked = (p) => {
-  if (p.phaseNum === 1) return true;
+  if (!PHASE_UNLOCKERS[p.phaseNum]) return true;
   const unlockerId = PHASE_UNLOCKERS[p.phaseNum];
   return unlockerId && state.isWatched(unlockerId);
 };

@@ -29,7 +29,7 @@
 
   const norm = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
   const yearOf = (p) => (p && p.release ? String(p.release).slice(0, 4) : '');
-  const phaseOf = (p) => Math.min(6, Math.max(1, L.parsePhase(p && p.phase)));
+  const phaseOf = (p) => Math.min(8, Math.max(1, L.parsePhase(p && p.phase)));
 
   // Lower is better; Infinity = no match. Exact > title prefix > word prefix
   // > id prefix > substring > year.
