@@ -103,25 +103,42 @@ const SharedView = {
     const title = g.target ? g.target.title : 'Avengers: Doomsday';
     const days = ShareLogic.daysUntil(g.target && g.target.release);
     const countdown = ShareLogic.countdownText(days, title);
-    const pct = g.total ? g.met / g.total : 0;
     const isOwner = Auth.isLoggedIn() && (Auth.getUsername() || '').toLowerCase() === sharer.username.toLowerCase();
     const name = esc(sharer.username);
     const pic = profilePicUrl(sharer.profilePicture);
     document.title = `${sharer.username}'s road to ${title}`;
 
-    // Ring: r = 54 → circumference 339.3.
+    // Ring: r = 54 → circumference 339.3. `key` keeps the two gradients apart.
     const C = 2 * Math.PI * 54;
-    const ring = `
-      <svg class="share-ring" viewBox="0 0 132 132" role="img" aria-label="${g.met} of ${g.total} watched">
-        <defs><linearGradient id="share-ring-grad" x1="0" y1="0" x2="1" y2="1">
+    const ringSvg = (met, total, key) => {
+      const frac = total ? met / total : 0;
+      return `
+      <svg class="share-ring" viewBox="0 0 132 132" role="img" aria-label="${met} of ${total} watched">
+        <defs><linearGradient id="share-ring-grad-${key}" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stop-color="var(--accent-text)"/><stop offset="1" stop-color="var(--highlight)"/>
         </linearGradient></defs>
         <circle cx="66" cy="66" r="54" class="share-ring-track"/>
-        ${pct > 0 ? `<circle cx="66" cy="66" r="54" class="share-ring-fill" stroke="url(#share-ring-grad)"
-                stroke-dasharray="${(C * pct).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 66 66)"/>` : ''}
-        <text x="66" y="70" class="share-ring-count">${g.met}/${g.total}</text>
+        ${frac > 0 ? `<circle cx="66" cy="66" r="54" class="share-ring-fill" stroke="url(#share-ring-grad-${key})"
+                stroke-dasharray="${(C * frac).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 66 66)"/>` : ''}
+        <text x="66" y="70" class="share-ring-count">${met}/${total}</text>
         <text x="66" y="92" class="share-ring-label">WATCHED</text>
       </svg>`;
+    };
+    const ring = ringSvg(g.met, g.total, 'dd');
+
+    // "All Marvel": every title on the tracker, oldest release first.
+    const all = projects.slice().sort((a, b) => String(a.release || '').localeCompare(String(b.release || '')) || String(a.title).localeCompare(String(b.title)));
+    const allMet = all.filter(p => state.isWatched(p.id)).length;
+    const posterList = (items) => `
+            <ul class="share-posters">
+              ${items.map(({ p, title: t, watched }) => `
+                <li class="share-poster${watched ? ' is-watched' : ''}">
+                  <span class="share-poster-art">${PosterArt.html(p, { alt: '' })}</span>
+                  ${watched ? '<span class="share-poster-check" aria-hidden="true">✓</span>' : ''}
+                  <span class="share-poster-title">${esc(t)}</span>
+                  <span class="visually-hidden">${watched ? 'watched' : 'not watched yet'}</span>
+                </li>`).join('')}
+            </ul>`;
 
     const cta = isOwner
       ? `<button type="button" class="btn btn--primary" data-share-act="share">Share to story</button>`
@@ -138,10 +155,21 @@ const SharedView = {
               ${pic ? `<img src="${esc(pic)}" alt="" />` : ''}
               <span>${esc((sharer.username || '?')[0].toUpperCase())}</span>
             </div>
-            <p class="share-eyebrow">${name}’s road to</p>
-            <h1 class="share-title">${esc(title)}</h1>
-            ${ring}
-            ${countdown ? `<p class="share-countdown">${esc(countdown)}</p>` : ''}
+            <div class="share-mode-toggle" role="group" aria-label="Which progress to show">
+              <button type="button" class="share-mode-btn is-on" data-share-mode="dd" aria-pressed="true">Doomsday</button>
+              <button type="button" class="share-mode-btn" data-share-mode="all" aria-pressed="false">All Marvel</button>
+            </div>
+            <div data-share-pane="dd">
+              <p class="share-eyebrow">${name}’s road to</p>
+              <h1 class="share-title">${esc(title)}</h1>
+              ${ring}
+              ${countdown ? `<p class="share-countdown">${esc(countdown)}</p>` : ''}
+            </div>
+            <div data-share-pane="all" hidden>
+              <p class="share-eyebrow">${name}’s progress on</p>
+              <h2 class="share-title">All Marvel</h2>
+              ${ringSvg(allMet, all.length, 'all')}
+            </div>
             ${isOwner ? `<p class="share-owner-note">This is your share page — it’s what people see from your story.</p>` : ''}
             <div class="share-hero-actions">
               <button type="button" class="btn btn--primary" data-share-act="map">See ${isOwner ? 'your' : 'their'} full watch order</button>
@@ -149,20 +177,14 @@ const SharedView = {
             </div>
           </section>
 
-          <section class="share-card">
-            <h2 class="share-section-title">Marvel’s list before ${esc(title)}</h2>
-            <ul class="share-posters">
-              ${g.items.map(i => {
-                const p = state.byId.get(i.id);
-                return `
-                <li class="share-poster${i.watched ? ' is-watched' : ''}">
-                  <span class="share-poster-art">${PosterArt.html(p, { alt: '' })}</span>
-                  ${i.watched ? '<span class="share-poster-check" aria-hidden="true">✓</span>' : ''}
-                  <span class="share-poster-title">${esc(i.title)}</span>
-                  <span class="visually-hidden">${i.watched ? 'watched' : 'not watched yet'}</span>
-                </li>`;
-              }).join('')}
-            </ul>
+          <section class="share-card" data-share-pane="dd">
+            <h2 class="share-section-title">Marvel’s list before ${esc(title)}, in order</h2>
+            ${posterList(g.items.map(i => ({ p: state.byId.get(i.id), title: i.title, watched: i.watched })))}
+          </section>
+
+          <section class="share-card" data-share-pane="all" hidden>
+            <h2 class="share-section-title">Every title, oldest first</h2>
+            ${posterList(all.map(p => ({ p, title: p.title, watched: state.isWatched(p.id) })))}
           </section>
 
           ${!Auth.isLoggedIn() ? `
@@ -178,6 +200,19 @@ const SharedView = {
     const img = container.querySelector('.share-avatar img');
     if (img) img.addEventListener('error', () => img.remove(), { once: true });
     SharedView.wire(container, token);
+
+    // Doomsday ⇄ All Marvel: swaps the ring and the poster list.
+    container.querySelectorAll('[data-share-mode]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.shareMode;
+        container.querySelectorAll('[data-share-mode]').forEach(b => {
+          const on = b.dataset.shareMode === mode;
+          b.classList.toggle('is-on', on);
+          b.setAttribute('aria-pressed', String(on));
+        });
+        container.querySelectorAll('[data-share-pane]').forEach(el => { el.hidden = el.dataset.sharePane !== mode; });
+      });
+    });
   },
 
   unmount() {

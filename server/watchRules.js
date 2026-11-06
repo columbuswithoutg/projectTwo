@@ -1,5 +1,6 @@
 const Project = require('../models/Project');
 const contentLoader = require('./contentLoader');
+const ShareLogic = require('../js/share-logic');
 
 // Server-side rules for the Start watching → In progress → Mark as watched
 // flow. The client shows the same timers, but only these checks decide:
@@ -80,8 +81,10 @@ function lockingPrereqs(p) {
 function isAvailable(p, watched) {
   const phase = parsePhase(p.phase);
   const unlocker = PHASE_UNLOCKERS[phase];
-  if (unlocker && !watched.has(unlocker)) return false;
-  return lockingPrereqs(p).every(id => watched.has(id));
+  if ((!unlocker || watched.has(unlocker)) && lockingPrereqs(p).every(id => watched.has(id))) return true;
+  // Or reached along Marvel's Doomsday list (js/share-logic.js).
+  return ShareLogic.doomsdayPathOpen(p.id, id => watched.has(id),
+    _cache && _cache.size ? id => _cache.has(id) : null);
 }
 
 // Why a project isn't startable, for the error toast: names the phase

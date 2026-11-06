@@ -101,3 +101,44 @@
   -webkit-backdrop-filter: blur(var(--hud-blur));
 }
 .flow-zoom-ui button { color: var(--hud-text); }
+
+/* ── "Doomsday only" switch (in the zoom cluster) and the numbered path ── */
+.flow-zoom-ui .flow-mode-btn {
+  height: 40px;
+  padding: 0 14px;
+  margin-right: 2px;
+  font: 700 var(--font-size-xs) var(--font-ui);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.flow-zoom-ui .flow-mode-btn.is-on,
+.flow-zoom-ui .flow-mode-btn.is-on:hover {
+  background: var(--color-primary);
+  color: var(--text-on-accent);
+}
+.flow-step-num {
+  position: absolute;
+  top: -10px;
+  left: 0;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  display: grid;
+  place-items: center;
+  background: var(--color-primary);
+  color: var(--text-on-accent);
+  font: 700 var(--font-size-sm) var(--font-ui);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  z-index: 2;
+  pointer-events: none;
+}
+/* Locked cards are hidden on the full chart; on the path they show greyed. */
+.flow-nodes.is-doomsday-path .node.locked {
+  display: block;
+  opacity: 0.38;
+  filter: grayscale(1);
+  cursor: not-allowed;
+}
+.flow-nodes.is-doomsday-path .flow-cell:has(.node.locked) .flow-label { opacity: 0.5; }

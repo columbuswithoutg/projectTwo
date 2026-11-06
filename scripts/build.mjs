@@ -68,7 +68,7 @@ export const CHUNKS = {
     'js/utils.js', 'js/pan-zoom-logic.js', 'js/ux-logic.js', 'js/share-logic.js', 'js/pan-zoom.js', 'js/messaging-logic.js', 'js/scene-guess-logic.js', 'js/quote-guess-logic.js', 'js/poster-art.js', 'js/nodeFactory.js', 'js/renderer.js',
     // road-router: rook-style roads shared by the chart, walkers, the admin board and /world
     'js/road-router.js', 'js/orderRenderer.js',
-    'js/watch-controls.js', 'js/post-composer.js', 'js/popup.js', 'js/goals.js', 'js/share.js', 'js/friend-view.js', 'js/friends.js',
+    'js/watch-controls.js', 'js/post-composer.js', 'js/popup.js', 'js/goals.js', 'node_modules/qrcode-generator/dist/qrcode.js', 'js/share.js', 'js/friend-view.js', 'js/friends.js',
     'js/messages.js', 'js/reports.js',
     'js/memory.js', 'js/walker-dialogues.js', 'js/walkerView.js', 'js/walkers.js',
     'js/chunk-loader.js', 'js/router.js', 'js/nav-drawer.js', 'js/humanoid-prefetch.js',

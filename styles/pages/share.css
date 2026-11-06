@@ -70,18 +70,6 @@
 }
 .share-steps strong { color: var(--text-1); }
 
-.share-link-row { display: flex; gap: 8px; }
-.share-link-row input {
-  flex: 1;
-  min-width: 0;
-  min-height: var(--touch-target-min);
-  padding: 0 12px;
-  border-radius: var(--radius-control);
-  border: 1px solid var(--border-2);
-  background: var(--surface-2);
-  color: var(--text-1);
-  font: 500 var(--font-size-sm) var(--font-ui);
-}
 .share-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .share-actions .btn { flex: 1 1 160px; }
 .share-actions .btn[hidden] { display: none; }
@@ -308,3 +296,28 @@
 /* The legacy .flow-wrapper is absolute under #header; here it fills what the
    topbar and banner leave instead of sliding under the banner. */
 .share-order .flow-wrapper { position: relative; top: auto; flex: 1; min-height: 0; }
+
+/* Doomsday ⇄ All Marvel switch on the shared page (js/views/shared.js). */
+.share-mode-toggle {
+  display: inline-flex;
+  margin-top: 14px;
+  padding: 3px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-2);
+  background: var(--surface-2);
+}
+.share-mode-btn {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-2);
+  font: 700 var(--font-size-xs) var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.share-mode-btn.is-on { background: var(--color-primary); color: var(--text-on-accent); }
+[data-share-pane] { width: 100%; }
+[data-share-pane][hidden] { display: none; }

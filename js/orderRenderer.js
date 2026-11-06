@@ -46,6 +46,9 @@ class OrderRenderer {
 
     this._ensureZoomLayer();
     this.zoom = this._loadZoom();
+    this.doomsdayOnly = this._loadDoomsdayOnly();
+    this._pathCols = this._fitPathCols();
+    this._bounds = null;
 
     this.setupEventDelegation();
     this.setupPanControls();
@@ -81,7 +84,11 @@ class OrderRenderer {
       const id = cell.dataset.id;
       const project = state.byId.get(id);
       if (!project) return;
-      if (!isUnlocked(project) && !state.isWatched(project.id)) return;
+      if (!isUnlocked(project) && !state.isWatched(project.id)) {
+        // Doomsday only shows locked titles greyed: say what opens them.
+        if (this.doomsdayOnly) toast('Watch the one before it first.', 'info');
+        return;
+      }
       showPopup(project);
     };
     this.nodesContainer.addEventListener("click", onClick);
@@ -113,6 +120,11 @@ class OrderRenderer {
   // gridX may be negative — we shift by minX so the leftmost column is 0.
   _getBounds() {
     if (this._bounds) return this._bounds;
+    if (this.doomsdayOnly) {
+      const cols = this._pathCols, n = this._pathIds().length;
+      this._bounds = { minX: 0, maxX: cols - 1, minY: 0, maxY: Math.max(0, Math.ceil(n / cols) - 1) };
+      return this._bounds;
+    }
     const xs = projects.map(p => p.gridX ?? 0);
     const ys = projects.map(p => p.gridY ?? 0);
     this._bounds = {
@@ -128,9 +140,87 @@ class OrderRenderer {
     const b = this._getBounds();
     const cw = ORDER_CELL.width;
     const ch = ORDER_CELL.height;
-    const x = ((project.gridX ?? 0) - b.minX) * cw + cw / 2;
-    const y = ((project.gridY ?? 0) - b.minY) * ch + ch / 2;
+    const slot = this.doomsdayOnly ? this._pathSlot(project.id) : null;
+    const gx = slot ? slot.gx : (project.gridX ?? 0);
+    const gy = slot ? slot.gy : (project.gridY ?? 0);
+    const x = (gx - b.minX) * cw + cw / 2;
+    const y = (gy - b.minY) * ch + ch / 2;
     return { x, y };
+  }
+
+  /* ── Doomsday only ──────────────────────────────────────────────────────
+   * The floating switch shows only Marvel's list (ShareLogic.DOOMSDAY_WATCHLIST,
+   * Marvel's order) and then Doomsday, numbered and laid out as a snake path
+   * 1 → N with one road from each title to the next. Locked ones show greyed;
+   * the Doomsday path rule (ShareLogic.doomsdayPathOpen) unlocks each once the
+   * one before it is watched. Remembered per device. */
+
+  _loadDoomsdayOnly() {
+    try { return localStorage.getItem(DOOMSDAY_ONLY_KEY) === '1'; } catch (_) { return false; }
+  }
+
+  // Ids on the path, in order: the list titles the content has, then Doomsday.
+  _pathIds() {
+    const by = state.byId;
+    if (!by || typeof ShareLogic === 'undefined') return [];
+    const ids = ShareLogic.DOOMSDAY_WATCHLIST.filter(id => by.has(id));
+    if (by.has(ShareLogic.DOOMSDAY_ID)) ids.push(ShareLogic.DOOMSDAY_ID);
+    return ids;
+  }
+
+  // Path columns that fit the screen at the current zoom (2–5), fixed while
+  // the mode is on so cards don't jump around.
+  _fitPathCols() {
+    const w = (this.wrapper && this.wrapper.clientWidth) || 900;
+    return Math.max(2, Math.min(5, Math.floor(w / (ORDER_CELL.width * (this.zoom || 1)))));
+  }
+
+  // Grid slot of path title `id`: rows run left → right, then right → left.
+  _pathSlot(id) {
+    const i = this._pathIds().indexOf(id);
+    if (i < 0) return null;
+    const cols = this._pathCols;
+    const row = Math.floor(i / cols), k = i % cols;
+    return { i, gx: row % 2 ? cols - 1 - k : k, gy: row };
+  }
+
+  // One road per step. Same row: a straight run between the posters. Row
+  // change (the two sit one above the other): a U-turn out of the side.
+  _pathRoads() {
+    const ids = this._pathIds();
+    const hw = ORDER_CELL.nodeWidth / 2, out = hw + 40;
+    const roads = [];
+    for (let i = 0; i + 1 < ids.length; i++) {
+      const a = state.byId.get(ids[i]), b = state.byId.get(ids[i + 1]);
+      const pa = this._cellPos(a), pb = this._cellPos(b);
+      let points;
+      if (pa.y === pb.y) {
+        const s = Math.sign(pb.x - pa.x) || 1;
+        points = [{ x: pa.x + s * hw, y: pa.y }, { x: pb.x - s * hw, y: pb.y }];
+      } else {
+        const s = this._pathSlot(ids[i]).gx === 0 ? -1 : 1;
+        points = [{ x: pa.x + s * hw, y: pa.y }, { x: pa.x + s * out, y: pa.y },
+                  { x: pb.x + s * out, y: pb.y }, { x: pb.x + s * hw, y: pb.y }];
+      }
+      roads.push({ road: { key: `dd:${ids[i]}>${ids[i + 1]}`, fromId: ids[i], toId: ids[i + 1], required: true }, points });
+    }
+    return roads;
+  }
+
+  setDoomsdayOnly(on) {
+    this.doomsdayOnly = !!on;
+    try { localStorage.setItem(DOOMSDAY_ONLY_KEY, on ? '1' : '0'); } catch (_) {}
+    // Every card moves: rebuild them all.
+    this.nodeElements.forEach(cell => cell.remove());
+    this.nodeElements = new Map();
+    this._pathCols = this._fitPathCols();
+    this._bounds = null;
+    this._flowRoadCache = null;
+    this._syncZoomUi();
+    this.render();
+    this.centerOnLastWatched();
+    // Walkers walk the drawn roads; send them out again on the new ones.
+    if (typeof Walkers !== 'undefined' && Walkers.deploy) Walkers.deploy();
   }
 
   _sizeCanvas() {
@@ -265,13 +355,16 @@ class OrderRenderer {
     const ui = document.createElement('div');
     ui.className = 'flow-zoom-ui';
     ui.innerHTML = `
+      <button type="button" class="flow-mode-btn" data-act="doomsday" aria-pressed="false"
+              title="Show only Marvel’s must-watch list before Avengers: Doomsday">Doomsday only</button>
       <button type="button" class="flow-zoom-btn" data-act="out" aria-label="Zoom out" title="Zoom out (−)">−</button>
       <button type="button" class="flow-zoom-btn" data-act="in" aria-label="Zoom in" title="Zoom in (+)">+</button>
     `;
     const onClick = (e) => {
       const btn = e.target.closest('[data-act]');
       if (!btn) return;
-      if (btn.dataset.act === 'in') this.zoomBy(ORDER_ZOOM.step);
+      if (btn.dataset.act === 'doomsday') this.setDoomsdayOnly(!this.doomsdayOnly);
+      else if (btn.dataset.act === 'in') this.zoomBy(ORDER_ZOOM.step);
       else this.zoomBy(1 / ORDER_ZOOM.step);
     };
     ui.addEventListener('click', onClick);
@@ -286,6 +379,11 @@ class OrderRenderer {
     if (!this._zoomUi) return;
     const out = this._zoomUi.querySelector('[data-act="out"]');
     const inn = this._zoomUi.querySelector('[data-act="in"]');
+    const mode = this._zoomUi.querySelector('[data-act="doomsday"]');
+    if (mode) {
+      mode.setAttribute('aria-pressed', String(!!this.doomsdayOnly));
+      mode.classList.toggle('is-on', !!this.doomsdayOnly);
+    }
     if (out) out.disabled = this.zoom <= ORDER_ZOOM.min + 0.0005;
     if (inn) inn.disabled = this.zoom >= ORDER_ZOOM.max - 0.0005;
   }
@@ -305,6 +403,7 @@ class OrderRenderer {
   // unlocked (prereqs met) and waiting to be watched. Locked projects stay
   // hidden — same model as the map, where unwatched-but-locked never appears.
   _isShown(project) {
+    if (this.doomsdayOnly) return this._pathIds().includes(project.id);
     return state.isWatched(project.id) || isUnlocked(project);
   }
 
@@ -318,6 +417,7 @@ class OrderRenderer {
     const halfCellW = ORDER_CELL.cellWidth / 2;
     const halfH = ORDER_CELL.nodeHeight / 2;
 
+    this.nodesContainer.classList.toggle("is-doomsday-path", !!this.doomsdayOnly);
     const shownIds = new Set();
     projects.forEach(p => { if (this._isShown(p)) shownIds.add(p.id); });
 
@@ -349,6 +449,16 @@ class OrderRenderer {
         label.className = "flow-label";
         label.textContent = project.title || project.id;
         cell.appendChild(label);
+
+        // Step number on the Doomsday path (Doomsday itself is the goal, no number).
+        const slot = this.doomsdayOnly && project.id !== ShareLogic.DOOMSDAY_ID ? this._pathSlot(project.id) : null;
+        if (slot) {
+          const num = document.createElement("span");
+          num.className = "flow-step-num";
+          num.setAttribute("aria-hidden", "true");
+          num.textContent = String(slot.i + 1);
+          cell.appendChild(num);
+        }
 
         const pos = this._cellPos(project);
         cell.style.left = `${pos.x - halfCellW}px`;
@@ -409,6 +519,7 @@ class OrderRenderer {
   // filter runs per call. Callers must not mutate the returned points.
   flowRoads() {
     if (typeof RoadRouter === "undefined") return [];
+    if (this.doomsdayOnly) return this._pathRoads();
     const version = typeof getLayoutVersion === "function" ? getLayoutVersion() : 0;
     const bounds = this._getBounds();
     let cache = this._flowRoadCache;
@@ -518,7 +629,9 @@ class OrderRenderer {
   }
 
   centerOnLastWatched() {
-    const id = state.getLastWatchedId();
+    // On the Doomsday path: the next title to watch (or Doomsday at the end).
+    const path = this.doomsdayOnly ? this._pathIds() : null;
+    const id = path ? (path.find(i => !state.isWatched(i)) || path[path.length - 1]) : state.getLastWatchedId();
     const project = state.byId?.get(id);
     if (!project || !this.wrapper) return;
     const pos = this._cellPos(project);
@@ -553,6 +666,9 @@ class OrderRenderer {
     this._didInitialCenter = false;
   }
 }
+
+// localStorage: '1' while the board shows only the Doomsday path.
+const DOOMSDAY_ONLY_KEY = 'mcu_doomsday_only';
 
 const ORDER_CELL = {
   width: 220,        // cell pitch X — wider gap so roads have breathing room and don't visually crowd nodes

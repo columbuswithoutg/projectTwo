@@ -61,6 +61,20 @@
     return { items, met: items.filter(i => i.watched).length, total: items.length };
   }
 
+  // The Doomsday path: an extra way to unlock, on top of the normal rules
+  // (js/utils.js isUnlocked, server/watchRules.js isAvailable). Along
+  // Marvel's list, the first title is always open and each next one opens
+  // once the one before it is watched; Doomsday opens once the whole list is.
+  // Lets someone watch only the essentials. isWatched(id) → bool; has(id)
+  // says whether the live content has the title (missing ones are skipped).
+  function doomsdayPathOpen(id, isWatched, has) {
+    const list = has ? DOOMSDAY_WATCHLIST.filter(has) : DOOMSDAY_WATCHLIST;
+    if (id === DOOMSDAY_ID) return list.length > 0 && list.every(isWatched);
+    const i = list.indexOf(id);
+    if (i < 0) return false;
+    return i === 0 || !!isWatched(list[i - 1]);
+  }
+
   // Whole days from `now` until the ISO date (local midnight), 0 on the day,
   // negative once it has passed, null for a missing / bad date.
   function daysUntil(iso, now) {
@@ -114,6 +128,6 @@
 
   return {
     DOOMSDAY_ID, DOOMSDAY_WATCHLIST, TOKEN_LEN, REF_TTL_MS,
-    isToken, newToken, doomsdayProgress, daysUntil, countdownText, previewText, refFromStorage
+    isToken, newToken, doomsdayProgress, doomsdayPathOpen, daysUntil, countdownText, previewText, refFromStorage
   };
 });

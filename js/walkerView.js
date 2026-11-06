@@ -179,6 +179,8 @@ const FlowWalkerAdapter = {
   // single node (the cluster) and walk along prerequisite edges to other
   // nodes. Phase-grouped clusters didn't model walker locomotion well.
   clusterOf: (id) => id,
+  // Only cards on the chart host walkers ("Doomsday only" hides the rest).
+  isShown: (p) => orderRenderer._isShown(p),
   clusterRect: (clusterId) => buildFlowClusterRects().get(clusterId),
   allClusterRects: () => buildFlowClusterRects(),
   // Walkers traverse straight roads between nodes. The visible arrows in

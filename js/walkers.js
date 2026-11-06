@@ -278,7 +278,8 @@ const Walkers = (() => {
   }
 
   function getVisibleNodes() {
-    return projects.filter(isVisible);
+    const view = typeof WalkerView !== 'undefined' ? WalkerView.get() : null;
+    return projects.filter(p => isVisible(p) && (!view || !view.isShown || view.isShown(p)));
   }
 
   // Node geometry — delegated to WalkerView so the same walker code works

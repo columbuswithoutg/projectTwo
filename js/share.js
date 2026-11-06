@@ -4,12 +4,12 @@
  * Instagram and Facebook give websites no way to post into a story, so the
  * share works the way story apps expect from the web:
  *   1. we draw a 1080×1920 story card (progress ring, poster grid, avatar,
- *      countdown) on a canvas,
+ *      countdown, and a QR code of their share link) on a canvas,
  *   2. "Share to story" hands the image to the phone's share sheet (Web
  *      Share API with files), where the user picks Instagram / Facebook,
- *   3. the same tap copies their share link, which they paste into a Link
- *      sticker. Friends who tap it land on /s/<token> (js/views/shared.js).
- * Without file sharing (desktop) the card downloads and the link is copied.
+ *   3. friends scan the QR and land on /s/<token> (js/views/shared.js) —
+ *      nothing to copy or paste.
+ * Without file sharing (desktop) the card downloads instead.
  *
  *   ShareProgress.open(opts)    the share dialog (turns the link on first);
  *                               opts.onChange(info) after it turns the link on / off
@@ -115,12 +115,15 @@ const ShareProgress = (() => {
     return lines.slice(0, maxLines);
   }
 
-  // Poster grid box: from under the countdown pill to above the footer
-  // text (baseline 1580), so the bottom of the frame stays free for the
-  // Link sticker. The rows / columns split that gives the biggest posters
-  // wins (14 titles → 7 × 2 at 128 px, 16 → 8 × 2, 20 → 7 × 3); posters
-  // never grow past 128 × 192.
-  const GRID = { top: 1110, bottom: 1530, width: 980, gap: 12, maxW: 128 };
+  // Poster grid box: from under the countdown pill to above the QR block
+  // (QR below), which itself stays above the story's reply bar at the
+  // bottom of the frame. The rows / columns split that gives the biggest
+  // posters wins (14 and 16 titles → two rows, 20 → three); posters never
+  // grow past 128 × 192.
+  const GRID = { top: 1100, bottom: 1450, width: 980, gap: 12, maxW: 128 };
+  // The QR to the share page: a label, then a white square (its own quiet
+  // zone) centred under the posters.
+  const QR = { label: 1508, top: 1532, size: 236, host: 1814 };
   function posterGrid(n) {
     const { top, bottom, width, gap, maxW } = GRID;
     let best = { cols: 1, rows: 1, pw: 0 };
@@ -143,8 +146,29 @@ const ShareProgress = (() => {
     return { cols, rows, pw, ph, gap, at };
   }
 
+  // The share link as a QR code, drawn as dark squares on a white tile.
+  // qrcode is qrcode-generator (node_modules, bundled into core). Returns
+  // false (draws nothing) without a url or the library.
+  function drawQr(ctx, url, x, y, size) {
+    if (!url || typeof qrcode === 'undefined') return false;
+    let qr;
+    try { qr = qrcode(0, 'M'); qr.addData(url); qr.make(); } catch (_) { return false; }
+    const n = qr.getModuleCount();
+    const cell = Math.floor(size / (n + 6));        // ≥ 3 modules of white all round
+    const off = Math.floor((size - n * cell) / 2);
+    roundRect(ctx, x, y, size, size, 18);
+    ctx.fillStyle = '#ffffff'; ctx.fill();
+    ctx.fillStyle = '#0b0d13';
+    for (let r = 0; r < n; r++) {
+      for (let col = 0; col < n; col++) {
+        if (qr.isDark(r, col)) ctx.fillRect(x + off + col * cell, y + off + r * cell, cell, cell);
+      }
+    }
+    return true;
+  }
+
   // d: { username, avatar (img|null), items: [{ project, watched, img }], met, total,
-  //      title, countdown, host }
+  //      title, countdown, host, url }
   function drawCard(d) {
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
@@ -277,20 +301,22 @@ const ShareProgress = (() => {
       }
     });
 
-    // Footer — leaves the bottom of the frame free for the Link sticker.
+    // Footer: the QR to the share page — friends scan it, no link to paste.
+    // The bottom of the frame stays clear for the story's reply bar.
     spaced(ctx, 4);
     ctx.fillStyle = COLORS.gold;
     ctx.font = '700 28px Inter, system-ui, sans-serif';
-    ctx.fillText('TAP THE LINK TO SEE MY WATCH ORDER', 540, 1580);
+    ctx.fillText('SCAN TO SEE MY WATCH ORDER', 540, QR.label);
     spaced(ctx, 0);
+    drawQr(ctx, d.url, (W - QR.size) / 2, QR.top, QR.size);
     ctx.fillStyle = COLORS.text3;
     ctx.font = '500 28px Inter, system-ui, sans-serif';
-    ctx.fillText(d.host || '', 540, 1630);
+    ctx.fillText(d.host || '', 540, QR.host);
     return c;
   }
 
   // Everything the card shows, from the signed-in user's own state.
-  async function cardData(username, profilePicture) {
+  async function cardData(username, profilePicture, url) {
     const goal = computeDoomsdayGoal();
     const days = ShareLogic.daysUntil(goal.target && goal.target.release);
     const pic = profilePicUrl(profilePicture);
@@ -308,7 +334,8 @@ const ShareProgress = (() => {
       total: goal.total,
       title: goal.target ? goal.target.title : 'Avengers: Doomsday',
       countdown: ShareLogic.countdownText(days, 'Doomsday'),
-      host: location.host
+      host: location.host,
+      url
     };
   }
 
@@ -328,13 +355,6 @@ const ShareProgress = (() => {
 
   function canShareFiles(file) {
     try { return !!(navigator.canShare && navigator.share && navigator.canShare({ files: [file] })); } catch (_) { return false; }
-  }
-
-  function copy(url) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      return navigator.clipboard.writeText(url).then(() => true, () => false);
-    }
-    return Promise.resolve(false);
   }
 
   // Readonly means someone else's data is swapped in — except on your own
@@ -365,19 +385,14 @@ const ShareProgress = (() => {
         </div>
         <ol class="share-steps">
           <li>Tap <strong>Share to story</strong> and pick Instagram or Facebook.</li>
-          <li>Add a <strong>Link</strong> sticker and paste your link — we copy it for you.</li>
+          <li>Friends scan the <strong>QR code</strong> on your card to see your watch order.</li>
         </ol>
-        <div class="share-link-row">
-          <label class="visually-hidden" for="share-link-input">Your share link</label>
-          <input id="share-link-input" type="text" readonly value="Getting your link…" />
-          <button type="button" class="btn btn--secondary" data-act="copy" disabled>Copy</button>
-        </div>
         <div class="share-actions">
           <button type="button" class="btn btn--primary" data-act="share" disabled>Share to story</button>
           <button type="button" class="btn btn--secondary" data-act="download" disabled>Download image</button>
         </div>
         <p class="share-note">
-          Anyone with the link sees your Doomsday checklist and watch order — nothing else.
+          Anyone who scans your code sees your Doomsday checklist and watch order — nothing else.
           <span class="share-joins" hidden></span>
           <button type="button" class="share-off" data-act="off" hidden>Turn off link</button>
         </p>
@@ -392,7 +407,6 @@ const ShareProgress = (() => {
     panel.querySelector('.popup-close').addEventListener('click', close);
 
     const $in = (sel) => panel.querySelector(sel);
-    const input = $in('#share-link-input');
     const btn = (act) => $in(`[data-act="${act}"]`);
 
     // 1. The link (sharing turns it on).
@@ -408,8 +422,6 @@ const ShareProgress = (() => {
     changed(linkInfo);
     if (!panel.isConnected) return;
     const url = urlFor(linkInfo.token);
-    input.value = url;
-    btn('copy').disabled = false;
     btn('off').hidden = false;
     if (linkInfo.joins > 0) {
       const j = $in('.share-joins');
@@ -427,10 +439,10 @@ const ShareProgress = (() => {
     } catch (_) { /* initial instead */ }
     let blob;
     try {
-      blob = await renderBlob(await cardData(username, profilePicture));
+      blob = await renderBlob(await cardData(username, profilePicture, url));
     } catch (_) {
       if (!panel.isConnected) return;
-      $in('.share-preview-wait').textContent = 'Couldn’t draw the card. You can still copy your link.';
+      $in('.share-preview-wait').textContent = 'Couldn’t draw the card — try again.';
       $in('.share-preview').removeAttribute('aria-busy');
       return;
     }
@@ -450,20 +462,14 @@ const ShareProgress = (() => {
       btn('download').classList.replace('btn--secondary', 'btn--primary');
       $in('.share-steps').innerHTML = `
         <li>Download the image and post it to your Instagram or Facebook story from your phone.</li>
-        <li>Add a <strong>Link</strong> sticker with your link below.</li>`;
+        <li>Friends scan the <strong>QR code</strong> on your card to see your watch order.</li>`;
     }
 
-    btn('copy').addEventListener('click', async () => {
-      if (await copy(url)) toast('Link copied — paste it into a Link sticker.', 'success');
-      else { input.focus(); input.select(); toast('Select the link and copy it.', 'info'); }
-    });
-
     btn('share').addEventListener('click', () => {
-      // Both calls start inside the tap: Safari refuses navigator.share once
-      // an await has passed.
-      copy(url);
-      navigator.share({ files: [file], text: url }).then(() => {
-        toast('Now add a Link sticker and paste your link.', 'success');
+      // Starts inside the tap: Safari refuses navigator.share once an await
+      // has passed.
+      navigator.share({ files: [file] }).then(() => {
+        toast('Shared — friends can scan the code on your card.', 'success');
       }).catch((e) => {
         if (e && e.name === 'AbortError') return;   // closed the share sheet
         toast('Sharing didn’t work — download the image instead.', 'error');
@@ -477,7 +483,7 @@ const ShareProgress = (() => {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      copy(url).then(ok => { if (ok) toast('Image saved and link copied.', 'success'); });
+      toast('Image saved.', 'success');
     });
 
     btn('off').addEventListener('click', async () => {

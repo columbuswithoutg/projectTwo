@@ -479,8 +479,10 @@ const allPrereqs = (p) => {
 };
 
 const isUnlocked = (p) => {
-  if (!isPhaseUnlocked(p)) return false;
-  return allPrereqs(p).every(id => state.isWatched(id));
+  if (isPhaseUnlocked(p) && allPrereqs(p).every(id => state.isWatched(id))) return true;
+  // Or reached along Marvel's Doomsday list (same rule as the server).
+  return typeof ShareLogic !== 'undefined' && !!state.byId &&
+    ShareLogic.doomsdayPathOpen(p.id, id => state.isWatched(id), id => state.byId.has(id));
 };
 
 // Only watched projects sit on the world map. Unlocked-but-unwatched pins

@@ -99,6 +99,8 @@ function loadShare(over = {}) {
     ...over
   };
   vm.createContext(ctx);
+  // The QR library is concatenated just before share.js in the core chunk.
+  vm.runInContext(fs.readFileSync(require.resolve('qrcode-generator'), 'utf8'), ctx);
   vm.runInContext(read('share.js') + '\nthis.ShareProgress = ShareProgress;', ctx);
   return { ...ctx, calls, appended };
 }
@@ -114,24 +116,29 @@ function drawWith(n) {
   const items = Array.from({ length: n }, (_, i) => ({
     project: { id: 'p' + i, title: 'Title number ' + i }, watched: i % 3 === 0, img: i % 2 ? poster : null
   }));
-  ctx.ShareProgress.drawCard({ username: 'kevin', avatar: null, items, met: 5, total: n, title: 'Avengers: Doomsday', countdown: '230 days to Doomsday', host: 'mcu.test' });
-  const posters = [...log.rects.filter(r => r.w < 1080), ...log.images];
-  const tap = log.texts.find(t => t.text === 'TAP THE LINK TO SEE MY WATCH ORDER');
-  return { posters, tap };
+  ctx.ShareProgress.drawCard({ username: 'kevin', avatar: null, items, met: 5, total: n, title: 'Avengers: Doomsday', countdown: '230 days to Doomsday', host: 'mcu.test', url: 'https://mcu.test/s/abcDEF123_-x' });
+  // Poster rects are big; the QR's modules are a few px square.
+  const qrCells = log.rects.filter(r => r.w < 20);
+  const posters = [...log.rects.filter(r => r.w < 1080 && r.w >= 20), ...log.images];
+  const tap = log.texts.find(t => t.text === 'SCAN TO SEE MY WATCH ORDER');
+  return { posters, tap, qrCells };
 }
 
 for (const n of [14, 16, 20]) {
-  test(`drawCard: ${n} posters all drawn, none overlapping each other, the footer text or the Link-sticker strip`, () => {
-    const { posters, tap } = drawWith(n);
+  test(`drawCard: ${n} posters all drawn, none overlapping each other, the "scan" label or the QR code`, () => {
+    const { posters, tap, qrCells } = drawWith(n);
     assert.equal(posters.length, n);
     assert.ok(tap, 'footer line drawn');
+    assert.ok(qrCells.length > 100, 'QR code drawn');
     const footerTop = tap.y - parseFloat(/(\d+)px/.exec(tap.font)[1]);   // the caps sit above the baseline
-    const STICKER_TOP = 1660;                                             // under the host line: Link sticker + reply bar
+    const qrTop = Math.min(...qrCells.map(r => r.y));
+    const qrBottom = Math.max(...qrCells.map(r => r.y + r.h));
+    assert.ok(qrTop > tap.y, 'QR sits under its label');
+    assert.ok(qrBottom <= 1780, `QR bottom ${qrBottom} stays above the story's reply bar`);
     for (const p of posters) {
       assert.ok(p.x >= 0 && p.x + p.w <= 1080, `poster inside the frame (x ${p.x}..${p.x + p.w})`);
       assert.ok(p.y >= 1064, `poster below the countdown pill (top ${p.y})`);
       assert.ok(p.y + p.h <= footerTop - 8, `poster bottom ${p.y + p.h} clears the footer text at ${footerTop}`);
-      assert.ok(p.y + p.h <= STICKER_TOP, 'poster above the Link-sticker strip');
     }
     for (let i = 0; i < posters.length; i++) {
       for (let j = i + 1; j < posters.length; j++) {
@@ -143,16 +150,17 @@ for (const n of [14, 16, 20]) {
   });
 }
 
-test('posterGrid: 14 titles keep the original 7 × 2 at 128 px; 16 → 8 × 2; 20 → three rows', () => {
+test('posterGrid: 14 titles → 7 × 2; 16 → 8 × 2; 20 still fit', () => {
   const { ShareProgress } = loadShare();
   const g = (n) => ShareProgress._debug.posterGrid(n);
-  assert.deepEqual([g(14).cols, g(14).rows, g(14).pw, g(14).ph], [7, 2, 128, 192]);
-  assert.equal(g(14).at(0).x, 56);
+  assert.deepEqual([g(14).cols, g(14).rows], [7, 2]);
+  assert.ok(g(14).pw >= 100, 'posters stay readable');
   assert.deepEqual([g(16).cols, g(16).rows], [8, 2]);
-  assert.equal(g(20).rows, 3);
+  assert.ok(g(20).pw >= 80);
   // A short last row is centred.
-  const g15 = g(15), last = g15.at(14), firstOfRow = g15.at(8);
-  const rowW = 7 * g15.pw + 6 * g15.gap;
+  const g15 = g(15), last = g15.at(14), firstOfRow = g15.at(g15.cols);
+  const k = 15 - g15.cols;
+  const rowW = k * g15.pw + (k - 1) * g15.gap;
   assert.equal(firstOfRow.x, (1080 - rowW) / 2);
   assert.equal(last.x + g15.pw, (1080 + rowW) / 2);
 });

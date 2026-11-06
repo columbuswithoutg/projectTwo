@@ -39,6 +39,7 @@
     "mongoose": "^9.2.1",
     "multer": "^2.0.2",
     "multer-storage-cloudinary": "^4.0.0",
+    "qrcode-generator": "^2.0.4",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {

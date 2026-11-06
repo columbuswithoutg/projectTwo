@@ -69,7 +69,7 @@ function loadClient() {
     toast: () => {}
   };
   vm.createContext(ctx);
-  for (const f of ['config.js', 'state.js', 'utils.js']) {
+  for (const f of ['config.js', 'state.js', 'utils.js', 'share-logic.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), ctx, { filename: f });
   }
   vm.runInContext(`
@@ -199,4 +199,28 @@ test('spot checks: the table really exercises each rule', async () => {
   assert.equal(W.isAvailable(by('advisory'), fresh), true);         // recommended never locks
   const c = client([]);
   assert.deepEqual([...c.allPrereqs(c.state.byId.get('ghostdep'))], ['ironman1']);
+});
+
+test('Doomsday path: each title on Marvel’s list opens once the one before it is watched', async () => {
+  const S = require('../js/share-logic');
+  const L = S.DOOMSDAY_WATCHLIST;
+  const cat = [...L, S.DOOMSDAY_ID].map((id, i) => ({ id, title: id, phase: 'Phase 6', runtime: 100, prerequisites: i ? ['notonlist'] : [] }))
+    .concat([{ id: 'notonlist', title: 'Off list', phase: 'Phase 1', runtime: 100, prerequisites: [] }]);
+  Project.find = () => ({ select: () => ({ lean: async () => JSON.parse(JSON.stringify(cat)) }) });
+  W.invalidate();
+  await W.allProjects();
+  const by = (id) => cat.find(p => p.id === id);
+  assert.equal(W.isAvailable(by(L[0]), new Set()), true);            // first is always open
+  assert.equal(W.isAvailable(by(L[1]), new Set()), false);
+  assert.equal(W.isAvailable(by(L[1]), new Set([L[0]])), true);      // previous watched opens it
+  assert.equal(W.isAvailable(by(S.DOOMSDAY_ID), new Set(L.slice(1))), false);
+  assert.equal(W.isAvailable(by(S.DOOMSDAY_ID), new Set(L)), true);  // whole list opens Doomsday
+  assert.equal(W.isAvailable(by('notonlist'), new Set()), true);      // normal rules untouched
+  // The client agrees on every title for a few watch states.
+  for (const watched of [[], [L[0]], L.slice(0, 5), L]) {
+    const c = loadClient();
+    c.state.initProjects(JSON.parse(JSON.stringify(cat)));
+    c.state._applyServer({ watchedProjects: watched.map(projectId => ({ projectId, count: 1 })), watchSessions: [], serverNow: NOW });
+    for (const p of cat) assert.equal(c.isUnlocked(c.state.byId.get(p.id)), W.isAvailable(p, new Set(watched)), p.id + ' / ' + watched.length);
+  }
 });
