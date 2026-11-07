@@ -66,6 +66,7 @@ const WorldView = (() => {
   let _houseEditing = null;        // projectId whose editor is open (its preview survives the poll)
   let _houseMaxProps = null;       // admin cap from GET /houses (else public config, else the shared default)
   const SPAWN_PREF_KEY = 'world_spawn_pref';   // last "start at" choice (project id)
+  const GO_TO_KEY = 'world_go_to';             // one-shot spawn from a popup's "Go to its room"
   // Daily Infinity Stone hunt state.
   let _snapKeyHandler = null;      // 'G' → snap when holding all six
   // Pending spawn-picker resolver, so unmount() can settle the awaited promise
@@ -189,10 +190,10 @@ const WorldView = (() => {
     // …and a keeper can start at one of their own houses.
     const houseData = await housesP;
     if (myMount !== _mountSeq) return;
-    let chosenSpawnId = null;
+    let chosenSpawnId = _takeGoTo();
     const islands = _spawnIslands();
     const myHouses = _myHouses(islands);
-    if (islands.length > 1 || myHouses.length) {
+    if (!chosenSpawnId && (islands.length > 1 || myHouses.length)) {
       chosenSpawnId = await _openSpawnPicker(islands, 'enter', { houses: myHouses });
       if (myMount !== _mountSeq) return;   // unmounted while the picker was open
     }
@@ -725,6 +726,21 @@ const WorldView = (() => {
       ? Playground3D.isProjectUnlocked
       : (p) => typeof state !== 'undefined' && state.isWatched && state.isWatched(p.id);
     return PG3DPhysics.spawnIslands(projects, isUnlocked);
+  }
+
+  // One-shot "go to its room" hand-off from a project popup (js/popup.js):
+  // the project id to spawn at, skipping the picker. Read once and cleared so
+  // a later visit to /world asks as usual. Only a project the world actually
+  // builds counts — anything else falls back to the normal start.
+  function _takeGoTo() {
+    let id = null;
+    try { id = sessionStorage.getItem(GO_TO_KEY); sessionStorage.removeItem(GO_TO_KEY); } catch (_) {}
+    if (!id || typeof projects === 'undefined' || !Array.isArray(projects)) return null;
+    const p = projects.find(q => q.id === id);
+    const built = (typeof Playground3D !== 'undefined' && Playground3D.isProjectUnlocked)
+      ? Playground3D.isProjectUnlocked(p)
+      : !!(p && state.isWatched(p.id));
+    return built ? id : null;
   }
 
   // Show the island picker. `mode` is 'enter' (before the world builds — resolves

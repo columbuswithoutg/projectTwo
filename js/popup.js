@@ -53,6 +53,19 @@ function popupDetailsHtml(project, showCast) {
   </section>` : ''}`;
 }
 
+// Take the player to a watched project's room (its island) in /world, where
+// the road-scoped chat and voice put them with whoever else is there. From
+// another page: hand the id to WorldView (js/views/world.js reads it once and
+// spawns there, skipping the picker). Already in /world: teleport.
+function goToWorldRoom(project) {
+  if (location.pathname === '/world' && typeof Playground3D !== 'undefined' && Playground3D.teleportToNode) {
+    Playground3D.teleportToNode(project.id);
+    return;
+  }
+  try { sessionStorage.setItem('world_go_to', project.id); } catch (_) {}
+  Router.go('/world');
+}
+
 function showPopup(project) {
   $('.node-popup')?.remove();
 
@@ -113,6 +126,7 @@ ${(() => {
 ${!isReadonly ? `
   <div class="popup-watch-controls"></div>
   ${isWatched ? `
+    <button class="popup-action" id="go-to-room-btn">Go to its room in World</button>
     <button class="popup-action secondary" id="watched-with-friend-btn">Watched with a Friend</button>
     <button class="popup-action secondary" id="add-memory-btn">Add Memory</button>
   ` : ''}
@@ -164,8 +178,20 @@ ${!isReadonly ? `
           // Map view: re-center camera on the project. Flow view: no camera.
           renderer.setCenterTarget?.(project.id);
           close();
+          // Its room in /world exists from now on — offer the way there.
+          if (location.pathname !== '/world') {
+            toast(`${project.title}'s room is open in World`, {
+              type: 'success', duration: 8000,
+              action: { label: 'Go there', onClick: () => goToWorldRoom(project) }
+            });
+          }
         }
       }
+    });
+
+    popup.querySelector('#go-to-room-btn')?.addEventListener('click', () => {
+      close();
+      goToWorldRoom(project);
     });
 
     popup.querySelector('#watched-with-friend-btn')?.addEventListener('click', () => {
