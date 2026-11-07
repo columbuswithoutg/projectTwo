@@ -138,6 +138,7 @@
   color: var(--tab-fg);
   border-radius: var(--tab-radius);
   padding: 10px 16px;
+  white-space: nowrap;   /* the centred tab row shrinks to fit; never wrap "Watch Order" */
 }
 .view-tab:hover { color: var(--tab-fg-hover); background: var(--hdr-btn-hover); }
 .view-tab.active {

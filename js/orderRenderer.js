@@ -190,6 +190,7 @@ class OrderRenderer {
   }
 
   setDoomsdayOnly(on) {
+    if (!!on === !!this.doomsdayOnly) return;
     this.doomsdayOnly = !!on;
     try { localStorage.setItem(DOOMSDAY_ONLY_KEY, on ? '1' : '0'); } catch (_) {}
     // Every card moves: rebuild them all.
@@ -327,6 +328,19 @@ class OrderRenderer {
     });
   }
 
+  // The All Marvel ⇄ Doomsday switch. The Watch Order view puts it in its
+  // header beside the Order tab; views without tabs (a friend's board, the
+  // shared full order) get it in the zoom cluster instead (_buildZoomUi).
+  static modeToggleHtml() {
+    return `
+      <div class="order-mode-toggle" role="group" aria-label="Which watch order">
+        <button type="button" class="order-mode-btn" data-order-mode="all" aria-pressed="true"
+                aria-label="All Marvel" title="Every Marvel title">All<span class="om-long"> Marvel</span></button>
+        <button type="button" class="order-mode-btn" data-order-mode="dd" aria-pressed="false"
+                aria-label="Doomsday" title="Only Marvel’s must-watch list before Avengers: Doomsday">Doom<span class="om-long">sday</span></button>
+      </div>`;
+  }
+
   // Floating − / + buttons (no percentage readout; the 0 key still resets).
   // Built here (not in the view markup) so every view that mounts the
   // flowchart gets them, and torn down in destroy().
@@ -336,17 +350,16 @@ class OrderRenderer {
 
     const ui = document.createElement('div');
     ui.className = 'flow-zoom-ui';
+    const inHeader = !!document.querySelector('#header .order-mode-toggle');
     ui.innerHTML = `
-      <button type="button" class="flow-mode-btn" data-act="doomsday" aria-pressed="false"
-              title="Show only Marvel’s must-watch list before Avengers: Doomsday">Doomsday only</button>
+      ${inHeader ? '' : OrderRenderer.modeToggleHtml()}
       <button type="button" class="flow-zoom-btn" data-act="out" aria-label="Zoom out" title="Zoom out (−)">−</button>
       <button type="button" class="flow-zoom-btn" data-act="in" aria-label="Zoom in" title="Zoom in (+)">+</button>
     `;
     const onClick = (e) => {
       const btn = e.target.closest('[data-act]');
       if (!btn) return;
-      if (btn.dataset.act === 'doomsday') this.setDoomsdayOnly(!this.doomsdayOnly);
-      else if (btn.dataset.act === 'in') this.zoomBy(ORDER_ZOOM.step);
+      if (btn.dataset.act === 'in') this.zoomBy(ORDER_ZOOM.step);
       else this.zoomBy(1 / ORDER_ZOOM.step);
     };
     ui.addEventListener('click', onClick);
@@ -354,18 +367,28 @@ class OrderRenderer {
 
     this.wrapper.parentNode.appendChild(ui);
     this._zoomUi = ui;
+
+    // Wherever the switch landed (header or zoom cluster), wire it here.
+    document.querySelectorAll('.order-mode-toggle').forEach(group => {
+      const onMode = (e) => {
+        const btn = e.target.closest('[data-order-mode]');
+        if (btn) this.setDoomsdayOnly(btn.dataset.orderMode === 'dd');
+      };
+      group.addEventListener('click', onMode);
+      this._listeners.push({ target: group, event: 'click', handler: onMode });
+    });
     this._syncZoomUi();
   }
 
   _syncZoomUi() {
+    document.querySelectorAll('[data-order-mode]').forEach(btn => {
+      const on = (btn.dataset.orderMode === 'dd') === !!this.doomsdayOnly;
+      btn.setAttribute('aria-pressed', String(on));
+      btn.classList.toggle('is-on', on);
+    });
     if (!this._zoomUi) return;
     const out = this._zoomUi.querySelector('[data-act="out"]');
     const inn = this._zoomUi.querySelector('[data-act="in"]');
-    const mode = this._zoomUi.querySelector('[data-act="doomsday"]');
-    if (mode) {
-      mode.setAttribute('aria-pressed', String(!!this.doomsdayOnly));
-      mode.classList.toggle('is-on', !!this.doomsdayOnly);
-    }
     if (out) out.disabled = this.zoom <= ORDER_ZOOM.min + 0.0005;
     if (inn) inn.disabled = this.zoom >= ORDER_ZOOM.max - 0.0005;
   }
