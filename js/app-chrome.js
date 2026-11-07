@@ -46,7 +46,7 @@ const AppChrome = (() => {
       <button type="button" class="hdr-icon-btn hdr-theme" data-theme-toggle
               title="${comic ? 'Switch to the Cinematic look' : 'Switch to the Comic look'}"
               aria-label="${comic ? 'Switch to the Cinematic look' : 'Switch to the Comic look'}">
-        <span aria-hidden="true">${comic ? '🎬' : '💥'}</span>
+        ${iconSvg(comic ? 'moon' : 'sun', 19)}
       </button>
       <button type="button" class="hdr-icon-btn hdr-bell" data-bell aria-haspopup="menu" aria-expanded="false"
               aria-label="Notifications${n ? ` (${n} new)` : ''}" title="Notifications">
@@ -89,8 +89,8 @@ const AppChrome = (() => {
       </button>`;
     menu.innerHTML = `
       <p class="hdr-bell-head">${total() ? 'You have new things' : 'You\'re all caught up'}</p>
-      ${row('messages', '💬', 'Messages', _messages)}
-      ${row('friends', '👋', 'Friend requests', _friends)}`;
+      ${row('messages', iconSvg('chat', 20), 'Messages', _messages)}
+      ${row('friends', iconSvg('user-plus', 20), 'Friend requests', _friends)}`;
   }
 
   function _closeMenu() {
@@ -134,7 +134,7 @@ const AppChrome = (() => {
     document.querySelectorAll('[data-theme-toggle]').forEach(b => {
       b.title = label;
       b.setAttribute('aria-label', label);
-      b.querySelector('span').textContent = comic ? '🎬' : '💥';
+      b.innerHTML = iconSvg(comic ? 'moon' : 'sun', 19);
     });
   }
 

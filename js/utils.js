@@ -19,15 +19,33 @@ function esc(str) {
     .replace(/'/g, '&#39;');
 }
 
-// A themed "nothing here yet" panel: icon, title, a line of text and an
-// optional action — cta.route renders an in-app link, cta.id a button the
+// Small line icons (24×24, stroke = currentColor) used instead of emoji in
+// the app chrome and empty states. iconSvg(name, size) → '' for an unknown name.
+const ICON_PATHS = {
+  play: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l5.5-3.5z"/>',
+  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9.5 2.5h5"/>',
+  flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
+  people: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.3-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.8a3.3 3.3 0 0 1 0 6.4M18 14.8c1.8.7 3 2.4 3.5 5.2"/>',
+  chat: '<path d="M4 5h16v11H9l-5 4z"/>',
+  'user-plus': '<circle cx="10" cy="8" r="3.5"/><path d="M3.5 20c.8-3.6 3.3-5.5 6.5-5.5s5.7 1.9 6.5 5.5M19 8v6M16 11h6"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>'
+};
+function iconSvg(name, size = 24) {
+  const p = ICON_PATHS[name];
+  return p ? `<svg class="ui-icon" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${p}</svg>` : '';
+}
+
+// A themed "nothing here yet" panel: icon (an iconSvg name), title, a line
+// of text and an optional action — cta.route renders an in-app link, cta.id a button the
 // view wires itself. compact: the small version for a board column.
 function emptyStateHtml({ icon = '', title = '', text = '', cta = null, compact = false } = {}) {
   const action = !cta ? ''
     : cta.route ? `<a class="btn btn--secondary empty-state-cta" href="${esc(cta.route)}" data-link>${esc(cta.label)}</a>`
     : `<button type="button" class="btn btn--secondary empty-state-cta" id="${esc(cta.id)}">${esc(cta.label)}</button>`;
   return `<div class="empty-state${compact ? ' empty-state--compact' : ''}">
-      ${icon ? `<span class="empty-state-icon" aria-hidden="true">${icon}</span>` : ''}
+      ${icon ? `<span class="empty-state-icon" aria-hidden="true">${iconSvg(icon, compact ? 22 : 32)}</span>` : ''}
       ${title ? `<p class="empty-state-title">${esc(title)}</p>` : ''}
       ${text ? `<p class="empty-state-text">${esc(text)}</p>` : ''}
       ${action}

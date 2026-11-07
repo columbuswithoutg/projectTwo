@@ -57,8 +57,8 @@ const CharactersView = {
 
       if (!filtered.length) {
         grid.innerHTML = `<div class="characters-empty">${filter
-          ? emptyStateHtml({ icon: '🔎', title: 'No match', text: 'No unlocked character matches that. Try another name.' })
-          : emptyStateHtml({ icon: '🦸', title: 'No characters yet', text: 'Every title you finish unlocks the heroes in it. Start one from the Watch Order.', cta: { label: 'Go to Watch Order', route: '/' } })}</div>`;
+          ? emptyStateHtml({ icon: 'search', title: 'No match', text: 'No unlocked character matches that. Try another name.' })
+          : emptyStateHtml({ icon: 'people', title: 'No characters yet', text: 'Every title you finish unlocks the heroes in it. Start one from the Watch Order.', cta: { label: 'Go to Watch Order', route: '/' } })}</div>`;
         return filtered;
       }
 

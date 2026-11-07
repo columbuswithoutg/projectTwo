@@ -98,7 +98,7 @@ const MessagesView = (() => {
     const list = q('#msg-list');
     list.removeAttribute('aria-busy');
     if (!convs.length) {
-      list.innerHTML = emptyStateHtml({ icon: '💬', title: 'No conversations yet', text: 'Whisper someone in the World, or start a new message.', cta: { label: 'New message', id: 'msg-empty-new' } });
+      list.innerHTML = emptyStateHtml({ icon: 'chat', title: 'No conversations yet', text: 'Whisper someone in the World, or start a new message.', cta: { label: 'New message', id: 'msg-empty-new' } });
       q('#msg-empty-new').addEventListener('click', () => q('#msg-new-btn').click());
       return;
     }

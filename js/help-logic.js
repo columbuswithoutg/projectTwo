@@ -282,7 +282,7 @@
           'Tap it to see what’s new, then tap a row to open Messages or your friend requests.'
         ] },
         { id: 'look', title: 'Switch the look', img: null, steps: [
-          'Tap the 💥 / 🎬 button at the top right to swap between the Comic and Cinematic looks.',
+          'Tap the sun / moon button at the top right: the sun switches to the bright Comic look, the moon to the dark Cinematic look.',
           'Your choice is remembered on this device.'
         ] },
         { id: 'phone-bar', title: 'On a phone', img: null, steps: [

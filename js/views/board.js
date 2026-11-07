@@ -15,9 +15,9 @@ const BoardView = (() => {
   let _drag = null;
 
   const COLUMNS = [
-    { key: 'todo', title: 'Not started', hint: 'Ready to watch', icon: '🍿', empty: 'Nothing new unlocked — finish something in progress.' },
-    { key: 'progress', title: 'In progress', hint: 'Timer running', icon: '⏱️', empty: 'Press Start watching on a card, or drag one here.' },
-    { key: 'done', title: 'Done', hint: 'Watched', icon: '🏁', empty: 'Finished projects land here.' }
+    { key: 'todo', title: 'Not started', hint: 'Ready to watch', icon: 'play', empty: 'Nothing new unlocked — finish something in progress.' },
+    { key: 'progress', title: 'In progress', hint: 'Timer running', icon: 'timer', empty: 'Press Start watching on a card, or drag one here.' },
+    { key: 'done', title: 'Done', hint: 'Watched', icon: 'flag', empty: 'Finished projects land here.' }
   ];
 
   const byRelease = (a, b) => String(a.release || '').localeCompare(String(b.release || ''));

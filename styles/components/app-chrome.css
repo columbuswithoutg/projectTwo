@@ -80,7 +80,7 @@
 }
 .hdr-bell-row:hover,
 .hdr-bell-row:focus-visible { background: var(--surface-2); outline: none; }
-.hdr-bell-icon { font-size: 18px; }
+.hdr-bell-icon { display: inline-flex; color: var(--text-2); }
 .hdr-bell-label { flex: 1; }
 .hdr-bell-count { color: var(--text-3); font-size: 12px; font-weight: 600; }
 .hdr-bell-count.is-new { color: #fff; background: #ff2d3f; padding: 2px 8px; border-radius: 999px; }
