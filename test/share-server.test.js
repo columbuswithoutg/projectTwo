@@ -24,6 +24,8 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const express = require('express');
+const jwt = require('jsonwebtoken');
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'share-server-test-secret';
 
 const authPath = require.resolve('../middleware/auth');
 const fakeAuth = (req, res, next) => { req.user = { id: 'nobody' }; next(); };
@@ -124,6 +126,8 @@ function request(method, p, body) {
   });
 }
 const register = (body) => request('POST', '/api/auth/register', body);
+// The sign-up outcome without the session fields (token etc.), checked on their own below.
+const signupOutcome = (b) => ({ message: b.message, referredBy: b.referredBy });
 const quiet = async (fn) => {
   const orig = console.error;
   console.error = () => {};
@@ -135,7 +139,7 @@ const quiet = async (fn) => {
 test('register with a live ref: 200, referredBy is the sharer, one friend request to them, their join counted', async () => {
   const r = await register({ username: 'newfan', password: 'longenough1', ref: TOKEN });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body, { message: 'User created', referredBy: 'elsid' });
+  assert.deepEqual(signupOutcome(r.body), { message: 'User created', referredBy: 'elsid' });
   const created = users.find(u => u.username === 'newfan');
   assert.ok(created);
   assert.deepEqual(friendCreates, [{ requester: created._id, recipient: 's1' }]);
@@ -147,7 +151,7 @@ test('register with a bad, unknown or banned ref still signs up: 200, referredBy
   for (let i = 0; i < refs.length; i++) {
     const r = await register({ username: 'fan' + i, password: 'longenough1', ref: refs[i] });
     assert.equal(r.status, 200, JSON.stringify(refs[i]));
-    assert.deepEqual(r.body, { message: 'User created', referredBy: null }, JSON.stringify(refs[i]));
+    assert.deepEqual(signupOutcome(r.body), { message: 'User created', referredBy: null }, JSON.stringify(refs[i]));
     assert.ok(users.some(u => u.username === 'fan' + i), 'the account exists');
   }
   assert.deepEqual(friendCreates, []);
@@ -158,8 +162,21 @@ test('register without a ref: referredBy null and the referral code is never cal
   let called = 0;
   Share.creditReferral = async () => { called++; return 'x'; };
   const r = await register({ username: 'plainfan', password: 'longenough1' });
-  assert.deepEqual(r.body, { message: 'User created', referredBy: null });
+  assert.deepEqual(signupOutcome(r.body), { message: 'User created', referredBy: null });
   assert.equal(called, 0);
+});
+
+test('register signs the new account straight in and opens its first-run welcome', async () => {
+  const r = await register({ username: 'newfan', password: 'longenough1' });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.username, 'newfan');
+  assert.equal(r.body.isAdmin, false);
+  assert.deepEqual(r.body.watchedProjects, []);
+  const claims = jwt.verify(r.body.token, process.env.JWT_SECRET);
+  const u = users.find(x => x.username === 'newfan');
+  assert.equal(String(claims.id), String(u._id));
+  assert.equal(claims.tv, 0);
+  assert.equal(u.onboardingOpen, true);
 });
 
 test('a throwing creditReferral never fails sign-up', async () => {
@@ -167,7 +184,7 @@ test('a throwing creditReferral never fails sign-up', async () => {
   failFriend = new Error('mongo down');
   let r = await quiet(() => register({ username: 'fanA', password: 'longenough1', ref: TOKEN }));
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body, { message: 'User created', referredBy: null });
+  assert.deepEqual(signupOutcome(r.body), { message: 'User created', referredBy: null });
   // …with the sharer lookup down…
   failFriend = null;
   failShareLookup = new Error('timeout');

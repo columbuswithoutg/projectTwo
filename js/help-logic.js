@@ -18,7 +18,7 @@
   if (root) root.HelpLogic = api;
 })(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
-  const GUIDE_VERSION = 1;
+  const GUIDE_VERSION = 2;
 
   // card: { id, title, img (file in /assets/help/, or null), steps[], keys?: [[key, what]], note? }
   // Labels in quotes are the exact button text, so people can match them on screen.
@@ -276,6 +276,22 @@
         { id: 'password', title: 'Change your password', img: null, steps: [
           'On your Profile, tap "Change password".',
           'Enter your current password and the new one twice.'
+        ] },
+        { id: 'bell', title: 'Notifications', img: null, steps: [
+          'The bell at the top right shows a red number when you have unread messages or friend requests.',
+          'Tap it to see what’s new, then tap a row to open Messages or your friend requests.'
+        ] },
+        { id: 'look', title: 'Switch the look', img: null, steps: [
+          'Tap the 💥 / 🎬 button at the top right to swap between the Comic and Cinematic looks.',
+          'Your choice is remembered on this device.'
+        ] },
+        { id: 'phone-bar', title: 'On a phone', img: null, steps: [
+          'The tabs move to a bar at the bottom of the screen: Order, Board, Feed, World and Profile.',
+          'The All / Doom switch stays at the top of the Watch Order.'
+        ] },
+        { id: 'tips', title: 'First-visit tips', img: null, steps: [
+          'The first time you open a main page, a few quick tips point out its buttons. Tap Next to go on, or Skip tips.',
+          'They show once per page. Everything they cover is also in this guide.'
         ] },
         { id: 'logout', title: 'Log out', img: null, steps: [
           'Open the menu → "Log out". This signs you out on every device.'

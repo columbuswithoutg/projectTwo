@@ -68,6 +68,11 @@ const UserSchema = new mongoose.Schema({
   bannedAt: { type: Date, default: null },
   banReason: { type: String, default: '', maxlength: 280 },
   tokenVersion: { type: Number, default: 0 },
+  // True from sign-up until the first-run welcome is finished or skipped
+  // (POST /api/progress/onboarding). While it is open the welcome may mark
+  // titles the user says they've already seen as watched, ONCE — accounts
+  // that predate the field never get it.
+  onboardingOpen: { type: Boolean, default: false },
   // Last time this user made an authed request. Updated by the auth
   // middleware at most once per minute per user (throttled in-memory) so
   // the "online" badge in the admin Users tab doesn't 2x our DB writes.

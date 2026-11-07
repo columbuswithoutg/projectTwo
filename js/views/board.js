@@ -15,9 +15,9 @@ const BoardView = (() => {
   let _drag = null;
 
   const COLUMNS = [
-    { key: 'todo', title: 'Not started', hint: 'Ready to watch', empty: 'Nothing new unlocked — finish something in progress.' },
-    { key: 'progress', title: 'In progress', hint: 'Timer running', empty: 'Press Start watching on a card, or drag one here.' },
-    { key: 'done', title: 'Done', hint: 'Watched', empty: 'Finished projects land here.' }
+    { key: 'todo', title: 'Not started', hint: 'Ready to watch', icon: '🍿', empty: 'Nothing new unlocked — finish something in progress.' },
+    { key: 'progress', title: 'In progress', hint: 'Timer running', icon: '⏱️', empty: 'Press Start watching on a card, or drag one here.' },
+    { key: 'done', title: 'Done', hint: 'Watched', icon: '🏁', empty: 'Finished projects land here.' }
   ];
 
   const byRelease = (a, b) => String(a.release || '').localeCompare(String(b.release || ''));
@@ -135,6 +135,7 @@ const BoardView = (() => {
     if (!board) return;
     // Don't yank the DOM out from under an active drag; it re-renders on drop.
     if (_drag) { _drag.stale = true; return; }
+    board.removeAttribute('aria-busy');
 
     const groups = { todo: [], progress: [], done: [] };
     for (const p of projects) {
@@ -174,7 +175,7 @@ const BoardView = (() => {
           ${control}
         </header>
         <div class="kb-list">
-          ${list.length ? list.map(p => cardHtml(p, { showWatchedAt: c.key === 'done' && showWatchedAt })).join('') : `<p class="kb-empty">${c.empty}</p>`}
+          ${list.length ? list.map(p => cardHtml(p, { showWatchedAt: c.key === 'done' && showWatchedAt })).join('') : `<div class="kb-empty">${emptyStateHtml({ icon: c.icon, text: c.empty, compact: true })}</div>`}
         </div>
       </section>`;
     }).join('');
@@ -360,6 +361,7 @@ const BoardView = (() => {
         ${NavDrawer.toggleHtml()}
         ${tabBar()}
         ${NavDrawer.html('lite')}
+        ${AppChrome.headerHtml()}
         ${HelpCentre.buttonHtml()}
         <button id="header-profile-btn" title="Profile" aria-label="Profile">
           <img id="header-avatar" src="" alt="" style="display:none" />
@@ -367,7 +369,14 @@ const BoardView = (() => {
         </button>
       </header>
       <main id="board-wrapper">
-        <div class="kb-board"><div class="kb-loading">Loading your board…</div></div>
+        <div class="kb-board" aria-busy="true">
+          <p class="visually-hidden kb-loading-text" role="status">Loading your board…</p>
+          ${['Not started', 'In progress', 'Done'].map(t => `
+            <section class="kb-col kb-col--skeleton" aria-hidden="true">
+              <header class="kb-col-head"><h2>${t}</h2></header>
+              <div class="kb-list">${skeletonHtml('card', t === 'In progress' ? 1 : 3)}</div>
+            </section>`).join('')}
+        </div>
       </main>
     `;
 

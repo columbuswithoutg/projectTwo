@@ -23,6 +23,7 @@ const AppView = {
         </div>
 
         ${NavDrawer.html('full')}
+        ${AppChrome.headerHtml()}
         ${HelpCentre.buttonHtml()}
         <button id="header-profile-btn" title="Profile" aria-label="Profile">
           <img id="header-avatar" src="" alt="" style="display:none" />

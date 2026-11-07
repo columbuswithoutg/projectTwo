@@ -71,9 +71,11 @@ export const CHUNKS = {
     'js/watch-controls.js', 'js/post-composer.js', 'js/popup.js', 'js/goals.js', 'node_modules/qrcode-generator/dist/qrcode.js', 'js/share.js', 'js/friend-view.js', 'js/friends.js',
     'js/messages.js', 'js/reports.js',
     'js/memory.js', 'js/walker-dialogues.js', 'js/walkerView.js', 'js/walkers.js',
-    'js/chunk-loader.js', 'js/router.js', 'js/nav-drawer.js', 'js/humanoid-prefetch.js',
+    'js/chunk-loader.js', 'js/router.js', 'js/nav-drawer.js', 'js/app-chrome.js', 'js/humanoid-prefetch.js',
     // help-logic: the "?" guide's content + red-dot rule; help: its header button and panel
     'js/help-logic.js', 'js/help.js',
+    // onboarding-logic: first-run welcome + first-visit tips content; onboarding: their UI
+    'js/onboarding-logic.js', 'js/onboarding.js',
     'js/views/login.js', 'js/views/app.js', 'js/views/watchorder.js', 'js/views/board.js',
     'js/views/profile.js', 'js/views/feed.js', 'js/views/characters.js',
     'js/views/messages.js', 'js/views/reports.js',

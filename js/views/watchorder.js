@@ -26,6 +26,7 @@ const WatchOrderView = {
 
         ${NavDrawer.html('full')}
 
+        ${AppChrome.headerHtml()}
         ${HelpCentre.buttonHtml()}
         <button id="header-profile-btn" title="Profile" aria-label="Profile">
           <img id="header-avatar" src="" alt="" style="display:none" />
@@ -83,6 +84,8 @@ const WatchOrderView = {
 
     // Render the flowchart
     orderRenderer.render();
+    // A brand-new account: the first-run welcome opens over the chart.
+    if (typeof Onboarding !== 'undefined') Onboarding.maybeStart();
 
     // Walkers run on the flow adapter while this view is active.
     WalkerView.set(FlowWalkerAdapter);

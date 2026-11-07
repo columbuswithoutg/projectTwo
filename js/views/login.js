@@ -6,9 +6,8 @@
  * immediately hid the "Account created!" message it had just shown,
  * leaving the user staring at a blank form with zero feedback. Now a
  * success step plays first (checkmark + toast), then the view lands back
- * on Login with the username prefilled and the password field focused —
- * the user still authenticates themselves; the server keeps returning no
- * token from /register.
+ * signs straight in: /register returns the same session as /login, and a
+ * new account lands on the first-run welcome (js/onboarding.js).
  ************************************************/
 const LoginView = {
   title: 'MCU Tracker — Login',
@@ -57,7 +56,7 @@ const LoginView = {
           <div class="auth-success-panel" id="auth-success-panel" hidden>
             <div class="auth-success-check" aria-hidden="true">✓</div>
             <h2 class="auth-success-title">Account created</h2>
-            <p class="auth-success-sub">Welcome, <strong id="auth-success-name"></strong> — sign in to continue.</p>
+            <p class="auth-success-sub">Welcome, <strong id="auth-success-name"></strong> — setting things up…</p>
           </div>
         </div>
       </div>
@@ -114,30 +113,17 @@ const LoginView = {
       passwordEl.removeAttribute('aria-invalid');
     }
 
-    // Animated success beat: fade the form out, show a checkmark panel with
-    // the new username, hold briefly, fade back to the Login tab with the
-    // username prefilled and the password field focused. Respects
-    // prefers-reduced-motion by skipping straight to the end state with a
-    // persistent inline success line instead of the animated panel.
+    // Animated success beat after sign-up: fade the form out, show a
+    // checkmark panel with the new username and hold briefly — then the
+    // caller signs straight in. Reduced motion skips the animation.
     async function playSuccessTransition(name) {
-      toast(`Account created — welcome, ${name}. Sign in to continue.`, 'success');
-
       const prefersReduced = window.matchMedia
         && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-      if (prefersReduced) {
-        setMode('login', { preserveError: true });
-        showError(`Account created — welcome, ${name}. Sign in to continue.`, 'success');
-        usernameEl.value = name;
-        passwordEl.value = '';
-        passwordEl.focus();
-        return;
-      }
+      if (prefersReduced) return;
 
       box.classList.add('is-transitioning');
       usernameEl.disabled = true;
       passwordEl.disabled = true;
-
       successNameEl.textContent = name;
 
       formPanel.classList.add('is-fading');
@@ -149,25 +135,6 @@ const LoginView = {
       successPanel.classList.add('is-entering');
       requestAnimationFrame(() => successPanel.classList.remove('is-entering'));
       await wait(FADE_MS + HOLD_MS);
-
-      successPanel.classList.add('is-fading');
-      await wait(FADE_MS);
-      successPanel.hidden = true;
-      successPanel.classList.remove('is-fading');
-
-      usernameEl.value = name;
-      passwordEl.value = '';
-      setMode('login');
-
-      formPanel.hidden = false;
-      formPanel.classList.add('is-entering');
-      requestAnimationFrame(() => formPanel.classList.remove('is-entering'));
-      await wait(FADE_MS);
-
-      usernameEl.disabled = false;
-      passwordEl.disabled = false;
-      box.classList.remove('is-transitioning');
-      passwordEl.focus();
     }
 
     const doSubmit = async () => {
@@ -210,20 +177,21 @@ const LoginView = {
           return;
         }
 
-        if (currentMode === 'login') {
-          // Clean slate before this account's token lands (a different
-          // account's leftovers may still be in memory in this tab).
-          Auth.resetClientState();
-          Auth.setToken(data.token);
-          // Start fetching the 3D character models in the background.
-          if (window.HumanoidPrefetch) HumanoidPrefetch.warm();
-          localStorage.setItem('mcu_username', data.username);
-          Router.go(nextUrl, { replace: true });
-        } else {
+        if (currentMode === 'register') {
           try { localStorage.removeItem(SHARE_REF_KEY); } catch (_) {}
           if (data.referredBy) toast(`Friend request sent to ${data.referredBy}.`, 'success');
-          await playSuccessTransition(username);
+          await playSuccessTransition(data.username || username);
         }
+        // Signed in (sign-up returns a session too — a new account goes on
+        // to the first-run welcome on the watch order).
+        // Clean slate before this account's token lands (a different
+        // account's leftovers may still be in memory in this tab).
+        Auth.resetClientState();
+        Auth.setToken(data.token);
+        // Start fetching the 3D character models in the background.
+        if (window.HumanoidPrefetch) HumanoidPrefetch.warm();
+        localStorage.setItem('mcu_username', data.username);
+        Router.go(currentMode === 'register' ? '/' : nextUrl, { replace: true });
       } catch (e) {
         showError(UxLogic.friendlyAuthError(null, 0));
       } finally {

@@ -28,7 +28,7 @@ const CharactersView = {
           <input id="search-input" type="search" placeholder="Search characters…" autocomplete="off" />
           <p id="unlocked-count"></p>
         </div>
-        <div id="characters-grid"></div>
+        <div id="characters-grid">${skeletonHtml('tile', 12)}</div>
       </div>
     `;
 
@@ -56,9 +56,9 @@ const CharactersView = {
       const filtered = characterSearch(unlocked, filter);
 
       if (!filtered.length) {
-        grid.innerHTML = `<p class="characters-empty">
-          ${filter ? 'No characters match your search.' : 'No characters unlocked yet. Start watching!'}
-        </p>`;
+        grid.innerHTML = `<div class="characters-empty">${filter
+          ? emptyStateHtml({ icon: '🔎', title: 'No match', text: 'No unlocked character matches that. Try another name.' })
+          : emptyStateHtml({ icon: '🦸', title: 'No characters yet', text: 'Every title you finish unlocks the heroes in it. Start one from the Watch Order.', cta: { label: 'Go to Watch Order', route: '/' } })}</div>`;
         return filtered;
       }
 

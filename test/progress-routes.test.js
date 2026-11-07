@@ -37,6 +37,7 @@ const PROJECTS = new Map([
   ['avengers1', { id: 'avengers1', title: 'The Avengers', phase: 1, runtime: 143, prerequisites: ['ironman1', 'thor1'] }]
 ]);
 watchRules.getProject = async (id) => PROJECTS.get(id) || null;
+watchRules.allProjects = async () => PROJECTS;
 
 const feed = require('../server/feed');
 let posts = [];
@@ -87,8 +88,10 @@ function evalFilter(f) {
       pos = i;
       continue;
     }
+    if (!k.includes('.')) { if (!same(doc[k], v)) return { ok: false }; continue; }   // a plain field
     const [arr, field] = k.split('.');
     const list = doc[arr] || [];
+    if (v && typeof v === 'object' && '$nin' in v) { if (list.some(x => v.$nin.includes(x[field]))) return { ok: false }; continue; }
     if (v && typeof v === 'object' && '$ne' in v) { if (list.some(x => same(x[field], v.$ne))) return { ok: false }; continue; }
     const i = list.findIndex(x => same(x[field], v));
     if (i < 0) return { ok: false };
@@ -112,7 +115,8 @@ function applyUpdate(u, pos, arrayFilters) {
   for (const [p, v] of Object.entries(u.$set || {})) target(p, (o, k) => { o[k] = clone(v); });
   for (const [p, v] of Object.entries(u.$inc || {})) target(p, (o, k) => { o[k] = (o[k] || 0) + v; });
   for (const [p, v] of Object.entries(u.$pull || {})) {
-    doc[p] = (doc[p] || []).filter(x => !Object.entries(v).every(([k, want]) => same(x[k], want)));
+    doc[p] = (doc[p] || []).filter(x => !Object.entries(v).every(([k, want]) =>
+      (want && typeof want === 'object' && '$in' in want) ? want.$in.includes(x[k]) : same(x[k], want)));
   }
   for (const [p, v] of Object.entries(u.$push || {})) {
     target(p, (o, k) => {
@@ -384,3 +388,61 @@ test('cancel removes the session; a deleted user is 404', async () => {
   assert.equal(r.status, 404);
 });
 
+
+// ── /onboarding: the first-run welcome's one-time "already watched" ──
+
+test('onboarding marks the ticked titles watched once, skipping locks and the timer, and closes the welcome', async () => {
+  doc.onboardingOpen = true;
+  doc.watchSessions = [{ projectId: 'thor1', episode: 0, startedAt: hoursAgo(0.1) }];
+  let r = await get('/load');
+  assert.equal(r.body.onboarding, true);
+
+  r = await post('/onboarding', { projectIds: ['avengers1', 'thor1', 'thor1'] });   // avengers1 is still locked
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.added.sort(), ['avengers1', 'thor1']);
+  assert.deepEqual(doc.watchedProjects.map(e => e.projectId).sort(), ['avengers1', 'thor1']);
+  assert.equal(doc.watchedProjects[0].count, 1);
+  assert.equal(doc.watchSessions.length, 0, 'the running timer on a ticked title is dropped');
+  assert.equal(doc.onboardingOpen, false);
+  assert.equal(posts.length, 0, 'no feed posts');
+
+  r = await post('/onboarding', { projectIds: ['ironman1'] });
+  assert.equal(r.status, 409, 'only once per account');
+  assert.equal(doc.watchedProjects.length, 2);
+  assert.equal((await get('/load')).body.onboarding, false);
+});
+
+test('onboarding with nothing ticked just closes it; accounts that never had it are refused', async () => {
+  doc.onboardingOpen = true;
+  let r = await post('/onboarding', { projectIds: [] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.added, []);
+  assert.equal(doc.onboardingOpen, false);
+
+  doc = { _id: ME, watchedProjects: [], watchSessions: [] };   // an older account: no flag at all
+  r = await post('/onboarding', { projectIds: ['ironman1'] });
+  assert.equal(r.status, 409);
+  assert.equal(doc.watchedProjects.length, 0);
+});
+
+test('onboarding rejects unknown or malformed ids without closing the welcome', async () => {
+  doc.onboardingOpen = true;
+  let r = await post('/onboarding', { projectIds: ['nope'] });
+  assert.equal(r.status, 400);
+  r = await post('/onboarding', { projectIds: 'ironman1' });
+  assert.equal(r.status, 400);
+  assert.equal(doc.onboardingOpen, true);
+  assert.equal(doc.watchedProjects.length, 0);
+});
+
+test('onboarding from two tabs at once marks the titles once', async () => {
+  doc.onboardingOpen = true;
+  holdReads(2);
+  const [a, b] = await Promise.all([
+    post('/onboarding', { projectIds: ['ironman1'] }),
+    post('/onboarding', { projectIds: ['ironman1', 'hulk'] })
+  ]);
+  assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+  assert.equal(doc.onboardingOpen, false);
+  assert.equal(new Set(doc.watchedProjects.map(e => e.projectId)).size, doc.watchedProjects.length, 'no duplicate entries');
+});

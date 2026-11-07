@@ -1,0 +1,168 @@
+/* ======================
+   APP CHROME — the header's theme switch + notification bell, and the
+   phone bottom bar (js/app-chrome.js)
+====================== */
+
+/* ── Header buttons (sit just left of the "?") ── */
+.hdr-icon-btn {
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  margin-right: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-2);
+  background: transparent;
+  color: var(--hdr-fg);
+  font-size: 17px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color var(--dur-fast), transform var(--dur-fast);
+}
+.hdr-icon-btn:hover { background: var(--hdr-btn-hover); }
+.hdr-icon-btn:active { transform: scale(0.92); }
+.hdr-icon-btn:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+[data-theme="comic"] .hdr-icon-btn { border: 2px solid var(--ink); }
+/* #header is space-between: the first of the right-hand group takes the
+   push the "?" used to have. */
+#header .hdr-theme { margin-left: auto; }
+#header .hdr-bell ~ .help-btn { margin-left: 0; }
+
+.hdr-bell-badge {
+  position: absolute;
+  top: -5px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #ff2d3f;
+  color: #fff;
+  font: 700 11px/18px var(--font-ui);
+  text-align: center;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+  animation: hdr-badge-pop 360ms var(--ease-spring);
+}
+.hdr-bell-badge[hidden] { display: none; }
+@keyframes hdr-badge-pop { from { transform: scale(0.3); } }
+
+.hdr-bell-menu {
+  position: fixed;
+  z-index: var(--z-popover);
+  padding: 8px;
+  border-radius: var(--radius-card);
+  background: var(--modal-bg);
+  color: var(--text-1);
+  border: 1px solid var(--gold-03);
+  box-shadow: var(--modal-box-shadow);
+  animation: hdr-menu-in var(--dur-fast) var(--ease-out);
+}
+[data-theme="comic"] .hdr-bell-menu { border: 3px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); }
+@keyframes hdr-menu-in { from { opacity: 0; transform: translateY(-6px); } }
+.hdr-bell-head { margin: 4px 8px 8px; color: var(--text-3); font: 600 12px var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
+.hdr-bell-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: var(--touch-target-min);
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-1);
+  font: 600 14px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.hdr-bell-row:hover,
+.hdr-bell-row:focus-visible { background: var(--surface-2); outline: none; }
+.hdr-bell-icon { font-size: 18px; }
+.hdr-bell-label { flex: 1; }
+.hdr-bell-count { color: var(--text-3); font-size: 12px; font-weight: 600; }
+.hdr-bell-count.is-new { color: #fff; background: #ff2d3f; padding: 2px 8px; border-radius: 999px; }
+
+/* ── Phone bottom bar ── */
+.bottom-nav { display: none; }
+
+@media (max-width: 640px) {
+  body.has-bottom-nav { --bottom-nav-h: calc(58px + env(safe-area-inset-bottom)); }
+
+  .bottom-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: var(--z-bottom-nav);
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    height: var(--bottom-nav-h);
+    padding: 0 max(4px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(4px, env(safe-area-inset-left));
+    background: var(--hdr-bg, var(--surface-1));
+    border-top: 1px solid var(--border-1);
+    backdrop-filter: blur(14px) saturate(150%);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+  }
+  .bottom-nav[hidden] { display: none; }
+  [data-theme="comic"] .bottom-nav { border-top: 3px solid var(--ink); }
+
+  .bottom-nav-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-width: 0;
+    padding: 6px 0 4px;
+    border: none;
+    background: transparent;
+    color: var(--hdr-fg);
+    opacity: 0.68;
+    font: 600 11px var(--font-ui);
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: opacity var(--dur-fast);
+  }
+  .bottom-nav-btn svg { transition: transform var(--dur-fast) var(--ease-spring); }
+  .bottom-nav-btn:active svg { transform: scale(0.85); }
+  .bottom-nav-btn.is-active { opacity: 1; }
+  [data-theme="comic"] .bottom-nav-btn { font-family: var(--font-display); font-size: 14px; letter-spacing: 0.04em; }
+  .bottom-nav-btn.is-active svg { transform: translateY(-1px) scale(1.08); }
+  .bottom-nav-btn.is-active::before {
+    content: "";
+    position: absolute;
+    width: 28px;
+    height: 3px;
+    margin-top: -48px;
+    border-radius: 0 0 3px 3px;
+    background: currentColor;
+  }
+  .bottom-nav-btn { position: relative; }
+  .bottom-nav-btn:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -4px; border-radius: 10px; }
+
+  /* The bar replaces the header's route tabs (the All / Doom switch stays). */
+  body.has-bottom-nav #header .view-tab { display: none; }
+
+  /* Pages end above the bar. */
+  body.has-bottom-nav .flow-wrapper,
+  body.has-bottom-nav #board-wrapper,
+  body.has-bottom-nav #feed-wrapper,
+  body.has-bottom-nav #profile-wrapper,
+  body.has-bottom-nav #characters-wrapper,
+  body.has-bottom-nav #messages-wrapper,
+  body.has-bottom-nav #reports-wrapper { bottom: var(--bottom-nav-h); }
+  /* /map: the Up next shelf sits on the bar, the map above both. */
+  body.has-bottom-nav #up-next-shelf { bottom: var(--bottom-nav-h); padding-bottom: 8px; }
+  body.has-bottom-nav #map-wrapper { bottom: calc(var(--shelf-height, 88px) + var(--bottom-nav-h)); }
+  body.has-bottom-nav .flow-zoom-ui { bottom: calc(var(--bottom-nav-h) + 12px); }
+  body.has-bottom-nav #app-toast-region { bottom: calc(var(--bottom-nav-h) + 8px); }
+}
+
+/* Phones: the header has little room left (see header.css' 480px block). */
+@media (max-width: 480px) {
+  .hdr-icon-btn { width: 32px; height: 32px; margin-right: 4px; font-size: 15px; }
+}

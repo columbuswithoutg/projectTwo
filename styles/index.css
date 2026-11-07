@@ -62,6 +62,8 @@
 @import "./components/route-progress.css" layer(components);
 @import "./components/poster.css" layer(components);
 @import "./components/help.css" layer(components);
+@import "./components/onboarding.css" layer(components);
+@import "./components/app-chrome.css" layer(components);
 
 @import "./pages/login.css" layer(pages);
 @import "./pages/profile.css" layer(pages);

@@ -38,6 +38,8 @@ class WatchState {
       return;
     }
     this._fillFromServer(payload, this.data, this.sessions);
+    // A new account's first-run welcome is still owed (js/onboarding.js).
+    if ('onboarding' in payload) this.onboarding = !!payload.onboarding;
     if (Number.isFinite(payload.serverNow)) this.clockOffset = payload.serverNow - Date.now();
     this.byId.forEach(p => { p.watched = this.isWatched(p.id); });
     if (notify) this.listeners.forEach(fn => fn(this.data));
@@ -212,6 +214,7 @@ class WatchState {
     // The next account loads its own progress (ensureLoaded is per user).
     this._loadedFor = undefined;
     this.loadFailed = false;
+    this.onboarding = false;
     // Forget an in-flight load: after a dead session it never settles
     // (Auth.endSession), and the same user signing back in must not wait on it.
     this._loading = null;

@@ -19,6 +19,33 @@ function esc(str) {
     .replace(/'/g, '&#39;');
 }
 
+// A themed "nothing here yet" panel: icon, title, a line of text and an
+// optional action — cta.route renders an in-app link, cta.id a button the
+// view wires itself. compact: the small version for a board column.
+function emptyStateHtml({ icon = '', title = '', text = '', cta = null, compact = false } = {}) {
+  const action = !cta ? ''
+    : cta.route ? `<a class="btn btn--secondary empty-state-cta" href="${esc(cta.route)}" data-link>${esc(cta.label)}</a>`
+    : `<button type="button" class="btn btn--secondary empty-state-cta" id="${esc(cta.id)}">${esc(cta.label)}</button>`;
+  return `<div class="empty-state${compact ? ' empty-state--compact' : ''}">
+      ${icon ? `<span class="empty-state-icon" aria-hidden="true">${icon}</span>` : ''}
+      ${title ? `<p class="empty-state-title">${esc(title)}</p>` : ''}
+      ${text ? `<p class="empty-state-text">${esc(text)}</p>` : ''}
+      ${action}
+    </div>`;
+}
+
+// Shimmering placeholders shaped like what's loading: 'card' (a board
+// card), 'tile' (a portrait grid tile) or 'row' (a list row). Hidden from
+// screen readers; the caller keeps its own aria-busy / status text.
+function skeletonHtml(kind, n = 3) {
+  const one = {
+    card: '<div class="sk sk-card"><span class="sk-poster"></span><span class="sk-lines"><span class="sk-line"></span><span class="sk-line sk-short"></span></span></div>',
+    tile: '<div class="sk sk-tile"><span class="sk-portrait"></span><span class="sk-line"></span></div>',
+    row: '<div class="sk sk-row"><span class="sk-avatar"></span><span class="sk-lines"><span class="sk-line"></span><span class="sk-line sk-short"></span></span></div>'
+  }[kind] || '';
+  return `<div class="sk-group sk-group--${kind}" aria-hidden="true">${one.repeat(n)}</div>`;
+}
+
 /************************************************
  * GLOBAL TOAST — branded, SPA-wide ephemeral status
  *

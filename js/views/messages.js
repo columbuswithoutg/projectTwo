@@ -66,7 +66,7 @@ const MessagesView = (() => {
           <button type="submit" class="msg-btn">Send</button>
         </div>
       </form>
-      <div class="msg-list" id="msg-list"><div class="msg-empty">Loading…</div></div>
+      <div class="msg-list" id="msg-list" aria-busy="true">${skeletonHtml('row', 4)}</div>
     `;
 
     const compose = q('#msg-compose');
@@ -89,14 +89,17 @@ const MessagesView = (() => {
       renderList(data.conversations || []);
     } catch (err) {
       if (seq !== _seq) return;
+      q('#msg-list').removeAttribute('aria-busy');
       q('#msg-list').innerHTML = `<div class="msg-empty">${esc(err.message)}</div>`;
     }
   }
 
   function renderList(convs) {
     const list = q('#msg-list');
+    list.removeAttribute('aria-busy');
     if (!convs.length) {
-      list.innerHTML = `<div class="msg-empty">No conversations yet. Whisper someone in the World, or start a new message.</div>`;
+      list.innerHTML = emptyStateHtml({ icon: '💬', title: 'No conversations yet', text: 'Whisper someone in the World, or start a new message.', cta: { label: 'New message', id: 'msg-empty-new' } });
+      q('#msg-empty-new').addEventListener('click', () => q('#msg-new-btn').click());
       return;
     }
     list.innerHTML = convs.map(c => {

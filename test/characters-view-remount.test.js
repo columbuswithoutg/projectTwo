@@ -55,6 +55,8 @@ function setup() {
     getCharStages: (c, ids) => ids.has(c.debut) ? [c] : [],
     PosterArt: { charHtml: () => '' },
     esc: (s) => String(s),
+    skeletonHtml: () => '',
+    emptyStateHtml: () => '',
     // A page that still queries `document` would get the CURRENT mount's
     // nodes here, which is exactly the double-wiring bug.
     document: { getElementById: (id) => current && current.els[id] }

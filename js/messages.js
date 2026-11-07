@@ -45,6 +45,8 @@ const MessagesBadge = (() => {
       el.textContent = _count > 99 ? '99+' : String(_count);
       el.hidden = _count <= 0;
     });
+    // The header bell adds it to the friend-request count (js/app-chrome.js).
+    if (typeof AppChrome !== 'undefined') AppChrome.setMessages(_count);
   }
 
   function onPublicPage() {

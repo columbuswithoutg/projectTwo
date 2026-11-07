@@ -21,6 +21,27 @@ function validateCredentials(username, password) {
   return MessagingLogic.usernameError(username) || passwordError(password);
 }
 
+// The signed-in session both /login and /register answer with.
+// tokenVersion is bumped on ban; auth middleware rejects mismatched JWTs
+// so a banned user's existing browser tabs lose access on the next call.
+// isAdmin is included so the SPA can render the /admin link without a
+// round trip; the actual admin gate is enforced server-side by
+// requireAdmin (which re-fetches the user — a JWT claim alone can be
+// stale up to 7 days after demotion).
+function sessionFor(user) {
+  const token = jwt.sign(
+    { id: user._id, isAdmin: !!user.isAdmin, tv: user.tokenVersion || 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+  return {
+    token,
+    username: user.username,
+    watchedProjects: user.watchedProjects || [],
+    isAdmin: !!user.isAdmin
+  };
+}
+
 router.post('/register', async (req, res) => {
   const { username, password } = req.body || {};
   const err = validateCredentials(username, password);
@@ -33,7 +54,7 @@ router.post('/register', async (req, res) => {
     const clean = username.trim();
     if (await Username.exists(clean)) return res.status(400).json({ error: 'Username already exists' });
     const hashed = await hashPassword(password);
-    const created = await User.create({ username: clean, password: hashed });   // the model fills usernameLower
+    const created = await User.create({ username: clean, password: hashed, onboardingOpen: true });   // the model fills usernameLower
     // Signed up from someone's Doomsday share page ("Start your own"): ask
     // them to be friends. Best effort — the account exists either way.
     let referredBy = null;
@@ -43,7 +64,9 @@ router.post('/register', async (req, res) => {
         return null;
       });
     }
-    res.json({ message: 'User created', referredBy });
+    // Signed straight in: the new account goes on to the welcome flow
+    // instead of typing the same password a second time.
+    res.json({ message: 'User created', referredBy, ...sessionFor(created) });
   } catch (e) {
     // Distinguish duplicate-key from real errors — previously every failure
     // was reported as "username exists", which masked server-side outages.
@@ -85,23 +108,7 @@ router.post('/login', async (req, res) => {
       .catch(() => {});
   }
 
-  // tokenVersion is bumped on ban; auth middleware rejects mismatched JWTs
-  // so a banned user's existing browser tabs lose access on the next call.
-  // isAdmin is included so the SPA can render the /admin link without a
-  // round trip; the actual admin gate is enforced server-side by
-  // requireAdmin (which re-fetches the user — a JWT claim alone can be
-  // stale up to 7 days after demotion).
-  const token = jwt.sign(
-    { id: user._id, isAdmin: !!user.isAdmin, tv: user.tokenVersion || 0 },
-    process.env.JWT_SECRET,
-    { expiresIn: '7d' }
-  );
-  res.json({
-    token,
-    username: user.username,
-    watchedProjects: user.watchedProjects,
-    isAdmin: !!user.isAdmin
-  });
+  res.json(sessionFor(user));
 });
 
 // Change your own password while signed in: the current one is required.

@@ -327,6 +327,10 @@ const Router = (() => {
     document.title = view.title || 'MCU Tracker';
     view.mount(appContainer, params);
     _firstDone();
+    // First visit to a main page: its feature tips (js/onboarding.js).
+    if (typeof FeatureTips !== 'undefined' && !redirectedToLogin) FeatureTips.maybeShow(path);
+    // Phone bottom bar + the bell's friend-request poll (js/app-chrome.js).
+    if (typeof AppChrome !== 'undefined') AppChrome.onRoute(redirectedToLogin ? '/login' : path);
     _pastFirstMount = true;
 
     // Fade the freshly-mounted view in.

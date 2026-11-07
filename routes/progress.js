@@ -5,13 +5,52 @@ const auth = require('../middleware/auth');
 const feed = require('../server/feed');
 const watchRules = require('../server/watchRules');
 const watchTags = require('../server/watchTags');
+const AdminWatch = require('../server/admin-watch');
 const { sanitizeWalkers } = require('../server/walkers');
 
 // Load progress
 router.get('/load', auth, async (req, res) => {
-  const user = await User.findById(req.user.id, SESSION_PROJECTION).lean();
+  const user = await User.findById(req.user.id, { ...SESSION_PROJECTION, onboardingOpen: 1 }).lean();
   if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json(sessionPayload(user));
+  // onboarding: the first-run welcome is still owed (js/onboarding.js).
+  res.json({ ...sessionPayload(user), onboarding: !!user.onboardingOpen });
+});
+
+// First-run welcome finished or skipped: closes it for good. On the way out
+// it may mark the titles the user ticked as "already watched" — once per
+// account, only while onboardingOpen is set (new sign-ups). Like the admin
+// Mark watched (server/admin-watch.js) it skips the timer and the locks,
+// adds no feed posts, and never touches a title already on the list.
+router.post('/onboarding', auth, async (req, res) => {
+  const raw = (req.body && req.body.projectIds) || [];
+  if (!Array.isArray(raw)) return res.status(400).json({ error: 'Invalid projectIds' });
+  const user = await User.findById(req.user.id, { ...SESSION_PROJECTION, onboardingOpen: 1 }).lean();
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!user.onboardingOpen) return res.status(409).json({ error: 'Welcome already finished', ...sessionPayload(user) });
+
+  let add = [];
+  if (raw.length) {
+    const watched = new Set((user.watchedProjects || []).map(e => e.projectId));
+    const plan = AdminWatch.planMarkWatched(raw, watched, await watchRules.allProjects());
+    if (plan.error) return res.status(400).json({ error: plan.error });
+    add = plan.add;
+  }
+  const update = { $set: { onboardingOpen: false } };
+  if (add.length) {
+    update.$push = { watchedProjects: { $each: AdminWatch.newEntries(add) } };
+    update.$pull = { watchSessions: { projectId: { $in: add } } };
+  }
+  // onboardingOpen in the filter: two tabs finishing at once mark once.
+  const updated = await User.findOneAndUpdate(
+    { _id: req.user.id, onboardingOpen: true, ...(add.length ? { 'watchedProjects.projectId': { $nin: add } } : {}) },
+    update,
+    { returnDocument: 'after', projection: SESSION_PROJECTION }
+  ).lean();
+  if (!updated) {
+    const now = await User.findById(req.user.id, SESSION_PROJECTION).lean();
+    return res.status(409).json({ error: 'Your progress just changed. Try again.', ...(now ? sessionPayload(now) : {}) });
+  }
+  res.json({ ...sessionPayload(updated), added: add });
 });
 
 // Caps on a user's watched list and on the memories kept per entry.
