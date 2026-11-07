@@ -2102,6 +2102,7 @@ const Walkers = (() => {
     if (!mountedIn || !mountedIn.isConnected) return;
     // Remove old walkers
     destroy();
+    if (view.hostsWalkers && !view.hostsWalkers()) return;
 
     const entries = getSelectedEntries();
     if (entries.length === 0) return;

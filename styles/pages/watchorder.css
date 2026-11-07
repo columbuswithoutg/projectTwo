@@ -142,3 +142,5 @@
   cursor: not-allowed;
 }
 .flow-nodes.is-doomsday-path .flow-cell:has(.node.locked) .flow-label { opacity: 0.5; }
+/* The path is one column: centred while it's narrower than the screen. */
+.flow-canvas.is-doomsday-path { margin-inline: auto; }

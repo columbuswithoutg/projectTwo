@@ -181,6 +181,8 @@ const FlowWalkerAdapter = {
   clusterOf: (id) => id,
   // Only cards on the chart host walkers ("Doomsday only" hides the rest).
   isShown: (p) => orderRenderer._isShown(p),
+  // The Doomsday path is a plain checklist: no walkers on it.
+  hostsWalkers: () => !orderRenderer.doomsdayOnly,
   clusterRect: (clusterId) => buildFlowClusterRects().get(clusterId),
   allClusterRects: () => buildFlowClusterRects(),
   // Walkers traverse straight roads between nodes. The visible arrows in

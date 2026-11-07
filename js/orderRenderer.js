@@ -47,7 +47,6 @@ class OrderRenderer {
     this._ensureZoomLayer();
     this.zoom = this._loadZoom();
     this.doomsdayOnly = this._loadDoomsdayOnly();
-    this._pathCols = this._fitPathCols();
     this._bounds = null;
 
     this.setupEventDelegation();
@@ -121,8 +120,8 @@ class OrderRenderer {
   _getBounds() {
     if (this._bounds) return this._bounds;
     if (this.doomsdayOnly) {
-      const cols = this._pathCols, n = this._pathIds().length;
-      this._bounds = { minX: 0, maxX: cols - 1, minY: 0, maxY: Math.max(0, Math.ceil(n / cols) - 1) };
+      const n = this._pathIds().length;
+      this._bounds = { minX: 0, maxX: 0, minY: 0, maxY: Math.max(0, n - 1) };
       return this._bounds;
     }
     const xs = projects.map(p => p.gridX ?? 0);
@@ -150,8 +149,9 @@ class OrderRenderer {
 
   /* ── Doomsday only ──────────────────────────────────────────────────────
    * The floating switch shows only Marvel's list (ShareLogic.DOOMSDAY_WATCHLIST,
-   * Marvel's order) and then Doomsday, numbered and laid out as a snake path
-   * 1 → N with one road from each title to the next. Locked ones show greyed;
+   * Marvel's order) and then Doomsday, numbered and laid out as one straight
+   * column 1 → N — the same shape on every screen — with a road down from
+   * each title to the next. No walkers on it. Locked ones show greyed;
    * the Doomsday path rule (ShareLogic.doomsdayPathOpen) unlocks each once the
    * one before it is watched. Remembered per device. */
 
@@ -168,40 +168,22 @@ class OrderRenderer {
     return ids;
   }
 
-  // Path columns that fit the screen at the current zoom (2–5), fixed while
-  // the mode is on so cards don't jump around.
-  _fitPathCols() {
-    const w = (this.wrapper && this.wrapper.clientWidth) || 900;
-    return Math.max(2, Math.min(5, Math.floor(w / (ORDER_CELL.width * (this.zoom || 1)))));
-  }
-
-  // Grid slot of path title `id`: rows run left → right, then right → left.
+  // Grid slot of path title `id`: one per row, top to bottom.
   _pathSlot(id) {
     const i = this._pathIds().indexOf(id);
-    if (i < 0) return null;
-    const cols = this._pathCols;
-    const row = Math.floor(i / cols), k = i % cols;
-    return { i, gx: row % 2 ? cols - 1 - k : k, gy: row };
+    return i < 0 ? null : { i, gx: 0, gy: i };
   }
 
-  // One road per step. Same row: a straight run between the posters. Row
-  // change (the two sit one above the other): a U-turn out of the side.
+  // One road per step: straight down from under a card's label to the top
+  // of the next poster.
   _pathRoads() {
     const ids = this._pathIds();
-    const hw = ORDER_CELL.nodeWidth / 2, out = hw + 40;
+    const hh = ORDER_CELL.nodeHeight / 2, label = 45;
     const roads = [];
     for (let i = 0; i + 1 < ids.length; i++) {
       const a = state.byId.get(ids[i]), b = state.byId.get(ids[i + 1]);
       const pa = this._cellPos(a), pb = this._cellPos(b);
-      let points;
-      if (pa.y === pb.y) {
-        const s = Math.sign(pb.x - pa.x) || 1;
-        points = [{ x: pa.x + s * hw, y: pa.y }, { x: pb.x - s * hw, y: pb.y }];
-      } else {
-        const s = this._pathSlot(ids[i]).gx === 0 ? -1 : 1;
-        points = [{ x: pa.x + s * hw, y: pa.y }, { x: pa.x + s * out, y: pa.y },
-                  { x: pb.x + s * out, y: pb.y }, { x: pb.x + s * hw, y: pb.y }];
-      }
+      const points = [{ x: pa.x, y: pa.y + hh + label }, { x: pb.x, y: pb.y - hh }];
       roads.push({ road: { key: `dd:${ids[i]}>${ids[i + 1]}`, fromId: ids[i], toId: ids[i + 1], required: true }, points });
     }
     return roads;
@@ -213,13 +195,13 @@ class OrderRenderer {
     // Every card moves: rebuild them all.
     this.nodeElements.forEach(cell => cell.remove());
     this.nodeElements = new Map();
-    this._pathCols = this._fitPathCols();
     this._bounds = null;
     this._flowRoadCache = null;
     this._syncZoomUi();
     this.render();
     this.centerOnLastWatched();
-    // Walkers walk the drawn roads; send them out again on the new ones.
+    // Walkers stay off the path (deploy clears them and stops) and come
+    // back on the full board's roads when the mode is switched off.
     if (typeof Walkers !== 'undefined' && Walkers.deploy) Walkers.deploy();
   }
 
@@ -418,6 +400,7 @@ class OrderRenderer {
     const halfH = ORDER_CELL.nodeHeight / 2;
 
     this.nodesContainer.classList.toggle("is-doomsday-path", !!this.doomsdayOnly);
+    this.canvas.classList.toggle("is-doomsday-path", !!this.doomsdayOnly);
     const shownIds = new Set();
     projects.forEach(p => { if (this._isShown(p)) shownIds.add(p.id); });
 
