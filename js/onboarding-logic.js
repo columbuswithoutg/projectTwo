@@ -56,13 +56,13 @@
       { sel: '#pg-stage', title: 'Walk around',
         text: 'WASD or the arrow keys walk (on a phone, the stick in the corner). Each island is a title you\'ve unlocked.' },
       { sel: '.world-chat-row', title: 'Chat and voice',
-        text: 'Talk to everyone in the world, to the people on your island, or whisper to one player. 🎙️ turns voice on.' },
+        text: 'Talk to everyone in the world, to the people on your island, or whisper to one player. The microphone button turns voice on.' },
       { sel: '#world-sg-slot, .world-header .help-btn', title: 'Minigames',
         text: 'Some islands run Scene Guess and Quote Guess rounds. The ? has the rules.' }
     ] },
     '/profile': { help: 'me', steps: [
       { sel: '#profile-hero', title: 'Your profile',
-        text: 'Tap ✎ to change your picture. Friends see this page when they open your name.' },
+        text: 'Tap the pencil on your picture to change it. Friends see this page when they open your name.' },
       { sel: '#profile-stats', title: 'Your stats',
         text: 'Watched titles, watch sessions and unlocked characters add up here as you go.' }
     ] }

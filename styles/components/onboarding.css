@@ -127,7 +127,6 @@
 .onb-path.is-picked { border-color: var(--highlight); box-shadow: 0 0 0 3px rgba(var(--highlight-rgb), 0.25); }
 [data-theme="comic"] .onb-path { border: 3px solid var(--ink); }
 [data-theme="comic"] .onb-path.is-picked { box-shadow: 5px 5px 0 var(--ink); background: var(--surface-2); }
-.onb-path-icon { font-size: 2rem; line-height: 1; }
 .onb-path-name { font-family: var(--font-display); font-size: 1.6rem; letter-spacing: var(--display-tracking); text-transform: var(--display-transform); }
 .onb-path-desc { color: var(--text-2); font-size: var(--font-size-sm); line-height: 1.4; }
 

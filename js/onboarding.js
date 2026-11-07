@@ -278,12 +278,10 @@ const Onboarding = (() => {
         <p class="onb-lead">Track every Marvel title in story order, unlock characters as you go, and explore it all with friends. First, pick your path:</p>
         <div class="onb-paths">
           <button type="button" class="onb-path${mode === 'all' ? ' is-picked' : ''}" data-mode="all" aria-pressed="${mode === 'all'}">
-            <span class="onb-path-icon" aria-hidden="true">🌌</span>
             <span class="onb-path-name">All Marvel</span>
             <span class="onb-path-desc">Every movie and series, from Iron Man to today. The full journey.</span>
           </button>
           <button type="button" class="onb-path${mode === 'dd' ? ' is-picked' : ''}" data-mode="dd" aria-pressed="${mode === 'dd'}">
-            <span class="onb-path-icon" aria-hidden="true">💥</span>
             <span class="onb-path-name">Doomsday</span>
             <span class="onb-path-desc">Only Marvel's must-watch list before Avengers: Doomsday. Quick and focused.</span>
           </button>
