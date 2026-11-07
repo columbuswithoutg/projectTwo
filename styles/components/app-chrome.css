@@ -166,3 +166,21 @@
 @media (max-width: 480px) {
   .hdr-icon-btn { width: 32px; height: 32px; margin-right: 4px; font-size: 15px; }
 }
+
+/* 641–1023px: centred tabs plus the right-hand group (theme, bell, ?,
+   avatar) no longer fit side by side — the tabs collided with them up to
+   ~950px in the Comic look. Put the tabs back in the bar's row between ☰
+   and the right group, shortened ("Order", "All" / "Doom"). */
+@media (min-width: 641px) and (max-width: 1023px) {
+  #header .view-tabs {
+    position: static;
+    transform: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    margin: 0 auto 0 8px;
+  }
+  #header .view-tabs .vt-long,
+  #header .order-mode-toggle .om-long { display: none; }
+  #header .view-tab { padding-inline: clamp(6px, 1.2vw, 12px); }
+  #header .hdr-theme { margin-left: 8px; }
+}

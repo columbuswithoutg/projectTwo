@@ -116,6 +116,11 @@ const FeatureTips = (() => {
         </div>
       </div>`;
     document.body.appendChild(layer);
+    // In the 3D views the tips must not leak WASD / Space / Enter into the
+    // game, and a locked (hidden) mouse couldn't press Next — let it go.
+    const engine = typeof Playground3D !== 'undefined' ? Playground3D : null;
+    if (engine && engine.setInputSuspended) engine.setInputSuspended(true, 'tips');
+    if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
     const spot = layer.querySelector('.onb-spot');
     const tip = layer.querySelector('.onb-tip');
     const next = layer.querySelector('.onb-tip-next');
@@ -182,6 +187,7 @@ const FeatureTips = (() => {
 
     const close = wireModalDismiss(layer, () => {
       clearInterval(watch);
+      if (engine && engine.setInputSuspended) engine.setInputSuspended(false, 'tips');
       removeEventListener('resize', onResize);
       removeEventListener('scroll', onResize, true);
       _markSeen(page);
@@ -232,6 +238,8 @@ const Onboarding = (() => {
     let mode = orderRenderer && orderRenderer.doomsdayOnly ? 'dd' : 'all';
     const picked = new Set();
     let finished = false;
+    let saving = null;       // the ticks' save while it's in flight
+    let skipped = false;     // closed by Skip / Esc (not by leaving the page)
 
     const el = document.createElement('div');
     el.className = 'onb-welcome';
@@ -302,6 +310,11 @@ const Onboarding = (() => {
       setStep(1);
       const list = OnboardingLogic.candidates(projects, mode, pathIds(), today())
         .filter(p => !state.isWatched(p.id));
+      // Ticks from the other path that this list doesn't show are dropped —
+      // "Continue with 1" with nothing visibly ticked would save a title
+      // the user can't see.
+      const ids = new Set(list.map(p => p.id));
+      [...picked].forEach(id => { if (!ids.has(id)) picked.delete(id); });
       body.innerHTML = `
         <h2 id="onb-heading" class="onb-title">Seen any already?</h2>
         <p class="onb-lead">Tap the ones you've watched — they count straight away, just this once. New to Marvel? Skip ahead.</p>
@@ -351,7 +364,12 @@ const Onboarding = (() => {
       go.addEventListener('click', async () => {
         go.disabled = true;
         go.textContent = 'Saving…';
-        const ok = await _finish([...picked], body.querySelector('.onb-error'));
+        skipBtn.disabled = true;
+        saving = _finish([...picked], body.querySelector('.onb-error'));
+        const ok = await saving;
+        saving = null;
+        skipBtn.disabled = false;
+        if (!el.isConnected) return;   // left the page meanwhile; the save still counted
         if (ok) step3(); else { go.disabled = false; label(); }
       });
       go.focus();
@@ -398,6 +416,8 @@ const Onboarding = (() => {
         if (res.ok || res.status === 409) {
           finished = true;
           state.onboarding = false;
+          // Another tab finished the welcome first: these ticks weren't saved.
+          if (res.status === 409 && ids.length) toast('Your welcome was already finished in another tab, so those picks weren’t saved. Use Start watching on each title instead.', { type: 'error', duration: 7000 });
           if (data && data.added && data.added.length) toast(`${data.added.length} title${data.added.length === 1 ? '' : 's'} marked as watched.`, 'success');
           return true;
         }
@@ -411,12 +431,22 @@ const Onboarding = (() => {
     const close = wireModalDismiss(el, () => {
       el.remove();
       _active = false;
-      // Skipped (✕ / Esc / Skip) before step 2 saved: close it on the server
-      // too, so it doesn't come back on every visit.
-      if (!finished) { state.onboarding = false; _finish([], null); }
+      // Skipped (Skip / Esc) before step 2 saved: close it on the server too,
+      // so it doesn't come back on every visit. Closed by leaving the page
+      // (the back button, a link): nothing is decided — the welcome comes
+      // back on the next visit to the watch order.
+      if (!finished && skipped && !saving) { state.onboarding = false; _finish([], null); }
+      if (!finished && !skipped) return;
       FeatureTips.maybeShow('/');
-    }, { backdrop: false });
-    el.querySelector('.onb-skip').addEventListener('click', () => close());
+    }, {
+      backdrop: false,
+      // Esc counts as Skip — but never while the ticks are saving (closing
+      // then sent a second, empty save that could win the race).
+      onEscape: () => { if (saving) return true; skipped = true; return false; },
+      canClose: () => !saving
+    });
+    const skipBtn = el.querySelector('.onb-skip');
+    skipBtn.addEventListener('click', () => { if (saving) return; skipped = true; close(); });
     step1();
   }
 

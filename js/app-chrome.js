@@ -33,6 +33,7 @@ const AppChrome = (() => {
   let _friends = 0;
   let _nav = null;
   let _timer = null;
+  let _who = null;      // the account the counts belong to
 
   const svg = (path) => `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">${path}</svg>`;
   const total = () => _messages + _friends;
@@ -180,7 +181,25 @@ const AppChrome = (() => {
       b.classList.toggle('is-active', on);
       if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
     });
-    if (show) start();
+    if (show) { _checkAccount(); start(); }
+  }
+
+  // Another account signed in in this tab (log out → log in): its counts
+  // start from zero and load now, instead of showing the last account's
+  // until the next poll.
+  function _checkAccount() {
+    let id = null;
+    try { id = decodeJwtPayload(Auth.getToken())?.id || null; } catch (_) { /* logged out */ }
+    if (id === _who) return;
+    const first = _who === null;
+    _who = id;
+    if (first) return;            // start() does the first load
+    _messages = 0;
+    _friends = 0;
+    _paint();
+    refreshFriends();
+    // Zero the shared cache too, so a drawer repaint can't bring the old count back.
+    if (typeof MessagesBadge !== 'undefined') { MessagesBadge.apply(0); MessagesBadge.refresh(); }
   }
 
   return { headerHtml, onRoute, setMessages, refreshFriends };

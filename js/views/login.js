@@ -137,6 +137,21 @@ const LoginView = {
       await wait(FADE_MS + HOLD_MS);
     }
 
+    // The account exists but there's no session: the form again, on Log in,
+    // name filled in, with the success line.
+    function backToLogin(name) {
+      successPanel.hidden = true;
+      formPanel.hidden = false;
+      box.classList.remove('is-transitioning');
+      usernameEl.disabled = false;
+      passwordEl.disabled = false;
+      setMode('login');
+      usernameEl.value = name;
+      passwordEl.value = '';
+      showError(`Account created — welcome, ${name}. Sign in to continue.`, 'success');
+      passwordEl.focus();
+    }
+
     const doSubmit = async () => {
       if (inFlight) return;
       const username = usernameEl.value.trim();
@@ -181,6 +196,13 @@ const LoginView = {
           try { localStorage.removeItem(SHARE_REF_KEY); } catch (_) {}
           if (data.referredBy) toast(`Friend request sent to ${data.referredBy}.`, 'success');
           await playSuccessTransition(data.username || username);
+          // A server still on the old code creates the account but signs no
+          // one in: send them to Log in instead of storing a missing token
+          // (which bounced back here with no word of what happened).
+          if (!data.token) {
+            backToLogin(username);
+            return;
+          }
         }
         // Signed in (sign-up returns a session too — a new account goes on
         // to the first-run welcome on the watch order).
