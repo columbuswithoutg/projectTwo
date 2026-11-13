@@ -34,8 +34,12 @@ const HouseEditor = (() => {
     // A stored house that no longer validates (e.g. a portrait URL the rules
     // now reject) must not break the editor: drop the offending field, and as
     // a last resort start from defaults.
-    const v0 = L.validateHouse(saved);
-    const v1 = v0.ok ? v0 : L.validateHouse({ ...saved, portrait: '' });
+    // Validated against the live prop cap (or the house's own count if the
+    // cap was lowered since): with the built-in 40 a house saved under a
+    // raised cap failed here, opened empty, and one save then wiped it.
+    const cap = { maxProps: Math.max(opts.maxProps(), Array.isArray(saved.props) ? saved.props.length : 0) };
+    const v0 = L.validateHouse(saved, cap);
+    const v1 = v0.ok ? v0 : L.validateHouse({ ...saved, portrait: '' }, cap);
     const draft = v1.ok ? v1.house : L.defaultHouse();
     if (sharedRoof) {
       const r = pickRoof(savedRoof || {});
