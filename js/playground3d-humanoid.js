@@ -1875,6 +1875,19 @@
     // Wrist turn that points the grip channel along the arm (set by attachSlot
     // when a prop is mounted), re-applied after every mixer update.
     const grips = { L: null, R: null };
+    // The hand's animation-only rotation, put back before the next mixer
+    // update. The mixer only rewrites a bone whose value changed, so once a
+    // clip held still (a knocked-out hero on its clamped last frame) the grip
+    // was multiplied onto its own result every frame and the wrist spun.
+    const gripClean = { L: new (T().Quaternion)(), R: new (T().Quaternion)() };
+    const gripOn = { L: false, R: false };
+    function _restoreGrips() {
+      for (const side of ['L', 'R']) {
+        if (!gripOn[side]) continue;
+        anchors['hand.' + side].quaternion.copy(gripClean[side]);
+        gripOn[side] = false;
+      }
+    }
     function setFist(side, amount) {
       if (!anchors['hand.' + side]) return;
       fists[side] = Math.max(0, Math.min(1, amount == null ? 1 : amount));
@@ -1890,7 +1903,12 @@
     }
     function _applyFists() {
       for (const side of ['L', 'R']) {
-        if (grips[side]) anchors['hand.' + side].quaternion.multiply(grips[side]);
+        if (grips[side]) {
+          const hand = anchors['hand.' + side];
+          gripClean[side].copy(hand.quaternion);
+          gripOn[side] = true;
+          hand.quaternion.multiply(grips[side]);
+        }
         const a = fists[side];
         if (!a || !fistBones[side]) continue;
         for (const f of fistBones[side]) f.bone.rotation.x = f.bend * a;
@@ -2195,7 +2213,11 @@
           ? hand.parent.getWorldQuaternion(new THREE.Quaternion())
           : new THREE.Quaternion();
         const targetLocal = parentQ.invert().multiply(twist).multiply(hand.getWorldQuaternion(new THREE.Quaternion()));
-        grips[side] = hand.quaternion.clone().invert().multiply(targetLocal);
+        // Measured from the animation-only rotation, which update() restores
+        // before each mixer step (the hand may already wear an older grip).
+        if (!gripOn[side]) gripClean[side].copy(hand.quaternion);
+        gripOn[side] = true;
+        grips[side] = gripClean[side].clone().invert().multiply(targetLocal);
         hand.quaternion.copy(targetLocal);
         hand.updateMatrixWorld(true);
         yA.copy(along);
@@ -2263,6 +2285,7 @@
           for (const p of posture) p.bone.quaternion.copy(p.clean);
           postureOn = false;
         }
+        _restoreGrips();
         mixer.update(dt);
         _applyFists();
         _applyPosture(dt);
