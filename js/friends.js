@@ -226,6 +226,8 @@ function showFriendsPanel() {
         return null;
       }
       row.remove();
+      // The header bell counts pending requests: recount now, not at its next poll.
+      if (typeof AppChrome !== 'undefined') AppChrome.refreshFriends();
       const list = panel.querySelector('#friend-pending-list');
       if (!list.querySelector('.friend-row')) {
         list.innerHTML = '<p class="friends-empty">No pending requests</p>';
