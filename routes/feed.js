@@ -209,8 +209,13 @@ router.put('/:postId', auth, async (req, res) => {
     if (b.memories !== undefined) {
         if (!Array.isArray(b.memories)) return res.status(400).json({ error: 'Invalid memories' });
         const existing = new Map(post.memories.map(m => [m.url, m]));
+        // A post can already hold more than the cap (each memory added from
+        // the project popup lands on the same session post). Cutting the list
+        // at the cap read the rest as "removed" and deleted them from the post
+        // AND from the project's Memories — so the cap only limits NEW photos.
+        if (b.memories.length > post.memories.length + MAX_POST_MEMORIES) return res.status(400).json({ error: 'Invalid memories' });
         const next = [];
-        for (const raw of b.memories.slice(0, MAX_POST_MEMORIES)) {
+        for (const raw of b.memories) {
             const url = raw && raw.url;
             if (existing.has(url)) {
                 const m = existing.get(url).toObject();
@@ -220,6 +225,7 @@ router.put('/:postId', auth, async (req, res) => {
             }
             const clean = sanitizeMemory(raw);
             if (!clean) return res.status(400).json({ error: 'Photos and videos must be uploaded through the app' });
+            if (next.length >= MAX_POST_MEMORIES) return res.status(400).json({ error: `A post can hold ${MAX_POST_MEMORIES} photos and videos` });
             const m = { ...clean, by: req.user.id };
             next.push(m);
             added.push(m);
