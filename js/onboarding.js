@@ -440,11 +440,44 @@ const Onboarding = (() => {
       backdrop: false,
       // Esc counts as Skip — but never while the ticks are saving (closing
       // then sent a second, empty save that could win the race).
-      onEscape: () => { if (saving) return true; skipped = true; return false; },
+      // Esc in the search box with text in it only clears the box.
+      onEscape: (e) => {
+        if (saving) return true;
+        const t = e && e.target;
+        if (t && t.classList && t.classList.contains('onb-search') && t.value) {
+          t.value = '';
+          t.dispatchEvent(new Event('input'));
+          return true;
+        }
+        if (picked.size && !finished) { skip(); return true; }
+        skipped = true;
+        return false;
+      },
       canClose: () => !saving
     });
+    // The welcome is one-time, so skipping with titles ticked would lose them
+    // for good: ask first.
+    let asking = false;
+    async function skip() {
+      if (saving || asking) return;
+      if (picked.size && !finished) {
+        asking = true;
+        const n = picked.size;
+        const ok = await confirmDialog({
+          title: 'Skip without saving?',
+          message: `You ticked ${n} title${n === 1 ? '' : 's'}. Skipping won't mark ${n === 1 ? 'it' : 'them'} as watched, and this welcome won't come back.`,
+          confirmLabel: 'Skip anyway',
+          cancelLabel: 'Keep my ticks',
+          danger: true
+        });
+        asking = false;
+        if (!ok || saving || !el.isConnected) return;
+      }
+      skipped = true;
+      close();
+    }
     const skipBtn = el.querySelector('.onb-skip');
-    skipBtn.addEventListener('click', () => { if (saving) return; skipped = true; close(); });
+    skipBtn.addEventListener('click', () => skip());
     step1();
   }
 
