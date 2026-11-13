@@ -265,6 +265,25 @@ test('voice: on a zone change every peer-left goes out before any peer-joined', 
   assert.deepEqual([...T.voiceLinks.get(b.id)], [c.id]);
 });
 
+test('punch: a player in an island game can neither be hit nor hit others', async (t) => {
+  const { io, T, join } = await world(t);
+  const a = await join('u1', ON_A);
+  const b = await join('u2', { x: 1, z: 0 });
+  const punch = (s, target) => { let r; s.fire('world:punch', { target }, (x) => { r = x; }); return r; };
+  t.after(() => { gamesStub.isPlaying = () => false; });
+
+  gamesStub.isPlaying = (sid) => sid === a.id;          // a sits in a lobby
+  assert.deepEqual(punch(b, a.id), { ok: false, reason: 'busy' }, 'a cannot be hit');
+  await t.mock.timers.tick(5000);
+  assert.deepEqual(punch(a, b.id), { ok: false, reason: 'busy' }, 'and a cannot hit');
+  assert.equal(T.worldPlayers.get(b.id).downAt || 0, 0, 'b was not knocked down');
+
+  gamesStub.isPlaying = () => false;                    // nobody in a game: a normal hit
+  await t.mock.timers.tick(5000);
+  assert.deepEqual(punch(a, b.id), { ok: true });
+  assert.ok(T.worldPlayers.get(b.id).downAt > 0);
+});
+
 test('second tab: takes over the seat; the old socket\'s late disconnect does nothing', async (t) => {
   const { io, T, tick, join, move, now } = await world(t);
   const old = await join('u1', ON_A);

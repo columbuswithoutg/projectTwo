@@ -918,7 +918,9 @@ module.exports = (io) => {
         const victim = worldPlayers.get(target);
         // Mid Scene Guess the player can't move or dodge — a knockdown (or a
         // shove off the island, which would drop them from the game) is griefing.
-        if (IslandGames.isPlaying(target)) {
+        // It cuts both ways: a player in a game (the lobby included, where
+        // they can still walk) can't be hit, so they can't hit or rob either.
+        if (IslandGames.isPlaying(target) || IslandGames.isPlaying(socket.id)) {
           socket.to('world').emit('world:punch', { id: socket.id, target: null });
           return reply({ ok: false, reason: 'busy' });
         }
