@@ -1,0 +1,4 @@
+# Check out text files with LF on every OS. Several tests cut functions out of
+# source files with patterns that contain a newline, and they miss on a CRLF
+# (Windows autocrlf) checkout.
+* text=auto eol=lf
