@@ -104,6 +104,13 @@ function createCore(spec) {
   function broadcast(g) { emitTo(targets(g), EV.state, payload(g)); }
   function sendState(socket, g) { socket.emit(EV.state, payload(g)); }
   function idlePayload(projectId, reason) { return { projectId, phase: 'idle', reason: reason || null, serverTime: now() }; }
+  // A player who was just removed while standing somewhere else is in nobody's
+  // target list any more, so tell their socket directly that their game is
+  // over. Without this their HUD keeps a game the server no longer has.
+  function tellDropped(g, sids) {
+    const still = new Set(targets(g));
+    emitTo(sids.filter(sid => sid && !still.has(sid)), EV.state, idlePayload(g.state.projectId, 'dropped'));
+  }
   function hostName(g) { const h = g.state.players[g.state.host]; return h ? h.username : null; }
   function announceLive(g, isLive) {
     if (io) io.to('world').emit(EV.live, { projectId: g.state.projectId, live: isLive, host: isLive ? hostName(g) : null });
@@ -133,13 +140,16 @@ function createCore(spec) {
     const t = now();
     if (!live(g.state.projectId)) return end(g, 'disabled');
     let dropped = false;
+    const droppedSids = [];
     for (const [userId, until] of [...g.awayUntil]) {
       if (until > t) continue;
+      droppedSids.push(g.sockets.get(userId));
       g.awayUntil.delete(userId);
       g.sockets.delete(userId);
       g.state = L.leave(g.state, userId);
       dropped = true;
     }
+    if (dropped) tellDropped(g, droppedSids);
     if (g.state.phase === 'over') return end(g, 'empty');
     const s = g.state;
     if (s.phase === 'lobby' && t >= s.deadline) return begin(g);
@@ -276,9 +286,11 @@ function createCore(spec) {
 
   // Someone leaves for good (Quit, or their grace ran out elsewhere).
   function dropPlayer(g, userId) {
+    const sid = g.sockets.get(userId);
     g.sockets.delete(userId);
     g.awayUntil.delete(userId);
     g.state = L.leave(g.state, userId);
+    tellDropped(g, [sid]);
     if (g.state.phase === 'over') return end(g, 'empty');
     if (maybeEarlyReveal(g)) return;
     broadcast(g);

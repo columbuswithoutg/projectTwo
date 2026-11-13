@@ -252,6 +252,48 @@ test('a dropped player keeps their seat for the grace, then is dropped; away pla
   assert.equal(h.mgr.isPlaying('sb2'), false);
 });
 
+test('a player dropped while off the island is told their game is over (zone grace, and Leave from elsewhere)', async () => {
+  const toSocket = (h, sid, from) => h.sent.slice(from).filter(s =>
+    s.event === 'world:sg-state' && (s.to === sid || (Array.isArray(s.to) && s.to.includes(sid))));
+
+  // Alone in the lobby, walks off: the game ends 'empty' for an island they are not on.
+  let h = harness();
+  let a = h.join('sa', 'u1', 'alex');
+  await a.call('world:sg-start', { projectId: PID });
+  let pa = h.players.get('sa');
+  pa.projectId = null;
+  h.mgr.onZone(a, pa, PID, null);
+  let from = h.sent.length;
+  await h.advance(L.C.ZONE_GRACE_MS);
+  assert.equal(h.mgr.isPlaying('sa'), false);
+  assert.equal(toSocket(h, 'sa', from).pop()?.payload.phase, 'idle', 'the dropped socket hears the game is gone');
+
+  // Two players: the one who walked off is told, the one who stayed keeps playing.
+  h = harness();
+  a = h.join('sa', 'u1', 'alex');
+  const b = h.join('sb', 'u2', 'sam');
+  await a.call('world:sg-start', { projectId: PID });
+  await b.call('world:sg-join', { projectId: PID });
+  const pb = h.players.get('sb');
+  pb.projectId = null;
+  h.mgr.onZone(b, pb, PID, null);
+  from = h.sent.length;
+  await h.advance(L.C.ZONE_GRACE_MS);
+  assert.equal(toSocket(h, 'sb', from).pop()?.payload.phase, 'idle');
+  assert.equal(toSocket(h, 'sa', from).pop()?.payload.phase, 'lobby', 'alex still has the game');
+
+  // Leave pressed while off the island.
+  h = harness();
+  a = h.join('sa', 'u1', 'alex');
+  await a.call('world:sg-start', { projectId: PID });
+  pa = h.players.get('sa');
+  pa.projectId = null;
+  h.mgr.onZone(a, pa, PID, null);
+  from = h.sent.length;
+  assert.equal((await a.call('world:sg-leave', { projectId: PID })).ok, true);
+  assert.equal(toSocket(h, 'sa', from).pop()?.payload.phase, 'idle');
+});
+
 test('a newer tab retires the old one: the old HUD is told, the seat moves over', async () => {
   const h = harness();
   const a = h.join('sa', 'u1', 'alex');
