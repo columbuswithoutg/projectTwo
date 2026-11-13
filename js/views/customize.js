@@ -520,6 +520,7 @@ const CustomizeView = {
 
   // ── toolbar actions ──
   _randomize() {
+    if (!CustomizeView._current) return;   // the saved character hasn't loaded yet
     (CHARACTER_SCHEMA || []).forEach(e => {
       if (e.noRandom) return;
       const n = characterSchemaCount(e);
@@ -530,6 +531,7 @@ const CustomizeView = {
   },
 
   _reset() {
+    if (!CustomizeView._current) return;
     CustomizeView._current = { ...CustomizeView._initial };
     CustomizeView._renderPanel();
     CustomizeView._updatePreview();
@@ -562,6 +564,10 @@ const CustomizeView = {
     const btn = document.getElementById('cz-save');
     const err = document.getElementById('cz-error');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    // Left the page while the save was in flight: the save still counts, but
+    // don't navigate (or show its error) from whatever page is open now.
+    const root = CustomizeView._overlayRoot;
+    const gone = () => CustomizeView._overlayRoot !== root;
     try {
       const res = await fetch(`${API}/profile/home-character`, {
         method: 'PUT',
@@ -573,11 +579,13 @@ const CustomizeView = {
       });
       let data = {};
       try { data = await res.json(); } catch (_) { /* an HTML error page */ }
+      if (gone()) return;
       if (!res.ok) throw new Error(data.error || `Couldn't save (HTTP ${res.status})`);
       // Saved: nothing left to lose, so leaving doesn't ask.
       CustomizeView._initial = { ...CustomizeView._current };
       CustomizeView._leave();
     } catch (e) {
+      if (gone()) return;
       const msg = (e && e.message && !/fetch|network/i.test(e.message)) ? e.message : "Couldn't save — check your connection and try again.";
       if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
       if (err) { err.hidden = false; err.textContent = msg; }
