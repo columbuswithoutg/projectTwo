@@ -69,7 +69,7 @@ const FeatureTips = (() => {
       let last = null;
       const tick = () => {
         if (location.pathname !== page) return resolve(false);
-        const loading = [...document.querySelectorAll('.world-loading, .kb-loading')].some(_visible);
+        const loading = [...document.querySelectorAll('.world-loading, .kb-board[aria-busy="true"], .feed-skeleton')].some(_visible);
         const el = !isModalOpen() && !loading && _find(firstSel);
         // …and settled: the chart glides to the last-watched poster on open.
         const at = el ? JSON.stringify(el.getBoundingClientRect()) : null;
