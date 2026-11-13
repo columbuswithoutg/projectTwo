@@ -71,11 +71,16 @@ const HomeView = {
     let houses = {};
     let homeRoof = null;
     let houseMaxProps = null;
+    // A failed load is not "a new user with no rooms": that showed someone
+    // with a furnished home the "you've watched 0" card, or sent them to the
+    // character builder.
+    let failed = false;
     try {
       const [charRes, layoutRes] = await Promise.all([
-        fetch(`${API}/profile/home-character`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } }),
-        fetch(`${API}/profile/home-layout`,    { headers: { Authorization: `Bearer ${Auth.getToken()}` } })
+        Auth.fetch(`${API}/profile/home-character`),
+        Auth.fetch(`${API}/profile/home-layout`)
       ]);
+      if (!charRes.ok || !layoutRes.ok) failed = true;
       if (charRes.ok) {
         const data = await charRes.json();
         character = data.homeCharacter;
@@ -89,11 +94,23 @@ const HomeView = {
         homeRoof = data.homeRoof || null;
         houseMaxProps = Number.isFinite(data.houseMaxProps) ? data.houseMaxProps : null;
       }
-    } catch (_) {
-      // Network/server issue — fall through with empty layout and defaults
-      // so the user still sees a reasonable page rather than a blank.
-    }
+    } catch (_) { failed = true; }
     if (seq !== HomeView._loadSeq || !HomeView._stage) return;
+    if (failed) {
+      HomeView._stage.innerHTML = `
+        <div class="pg-empty">
+          <div class="pg-empty-card">
+            <h2>Couldn’t load your home</h2>
+            <p>Your rooms are safe. Check your connection and try again.</p>
+            <button class="pg-empty-cta" type="button" id="pg-home-retry">Retry</button>
+          </div>
+        </div>`;
+      document.getElementById('pg-home-retry').addEventListener('click', () => {
+        HomeView._stage.innerHTML = '';
+        HomeView._loadAndStart();
+      });
+      return;
+    }
 
     const isFresh = !character || character.skin == null;
     HomeView._character = character && character.skin != null ? character : null;
