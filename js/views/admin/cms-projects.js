@@ -421,9 +421,10 @@
         .map(p => p.title || p.id);
       const ok = await confirmDialog({
         title: `Permanently delete project "${item.id}"?`,
-        message: linked.length
+        message: (linked.length
           ? `It is removed from the prerequisites of: ${linked.join(', ')} — they no longer wait on it.`
-          : 'No other project lists it as a prerequisite.',
+          : 'No other project lists it as a prerequisite.')
+          + ' Its Scene Guess stills, Quote Guess lines, both scoreboards and its island house are deleted too. This cannot be undone.',
         confirmLabel: 'Delete',
         danger: true
       });
