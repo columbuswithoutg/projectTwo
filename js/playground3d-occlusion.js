@@ -88,7 +88,9 @@
     }
 
     function _setFadeOpacity(state, a) {
-      for (const m of state.clones) m.opacity = a;
+      // Never above the material's own opacity: a glass wall (0.32) used to
+      // jump to solid at the start of the fade and climb back to it at the end.
+      state.clones.forEach((m, i) => { m.opacity = Math.min(state.base[i], a); });
     }
 
     // Put the mesh's own material back — but only if the fade clone is still
@@ -196,7 +198,7 @@
         });
         // The box comes with the hit (it used to be a linear find over
         // every occluder per newly faded mesh).
-        _faded.set(mesh, { orig, clones, alpha: 1, box });
+        _faded.set(mesh, { orig, clones, base: clones.map(c => c.opacity), alpha: 1, box });
         mesh.material = Array.isArray(orig) ? clones : clones[0];
       }
       for (const [mesh, state] of _faded) {
