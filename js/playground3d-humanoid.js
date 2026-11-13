@@ -140,10 +140,18 @@
   // A failed load clears _ready and is NOT restarted by every caller (that
   // would hammer the network once per character built); it retries once by
   // itself after 2 s, and whenever retry() is called (the Retry toast).
+  const RETRY_COOLDOWN_MS = 15000;
+  let _failedAt = 0;
   function preload(opts) {
     if (_ready) return _ready;
     opts = opts || {};
-    if (_status === 'failed' && !opts.retry) return Promise.reject(_lastError || new Error('humanoid load failed'));
+    if (_status === 'failed' && !opts.retry) {
+      // Two failed tries used to mean stand-in bodies until a full page
+      // reload (nothing calls retry()). A later caller may try again, at most
+      // once per cooldown, so a dead network still isn't hammered.
+      if (Date.now() - _failedAt >= RETRY_COOLDOWN_MS) return retry();
+      return Promise.reject(_lastError || new Error('humanoid load failed'));
+    }
     const base = opts.base || L.ASSET_BASE;
     const src = (k, file) => (opts.buffers && opts.buffers[k]) || base + file;
     _status = 'loading';
@@ -182,6 +190,7 @@
       _emitStatus();
     }, (err) => {
       _status = 'failed';
+      _failedAt = Date.now();
       _lastError = err;
       _ready = null;
       console.warn('[PG3DHumanoid] load failed — characters stay procedural', err);
