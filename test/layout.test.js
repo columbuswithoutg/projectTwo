@@ -154,6 +154,22 @@ test('buildRoadGeometry: one road per cluster pair, none inside a cluster, bent 
   assert.ok(half.t > 0.3 && half.t < 0.7);
 });
 
+test('buildRoadGeometry: two linked locations on the same spot draw no road and do not throw', () => {
+  const { LS } = loadStub([
+    { id: 'a', worldX: 0, worldY: 0, width: 400, height: 280 },
+    { id: 'b', worldX: 0, worldY: 0, width: 400, height: 280 },
+    { id: 'c', worldX: 3000, worldY: 0, width: 400, height: 280 }
+  ]);
+  const list = withUnlocks([
+    { id: 'a1', location: 'a', release: '1', prerequisites: [] },
+    { id: 'b1', location: 'b', release: '2', prerequisites: ['a1'] },
+    { id: 'c1', location: 'c', release: '3', prerequisites: ['a1'] }
+  ]);
+  const lay = LS.computeLayout(list, () => true);
+  const roads = LS.buildRoadGeometry(list, lay, LS.computeClusterRects(lay));
+  assert.deepEqual([...roads.keys()], ['a|c'], 'the a–b road is skipped, the others still draw');
+});
+
 test('buildRoadGeometry: a link to a hidden or unmapped project draws nothing', () => {
   const { LS } = loadStub(LOCS);
   const list = withUnlocks([

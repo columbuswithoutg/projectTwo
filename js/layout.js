@@ -308,7 +308,11 @@ const LayoutSystem = (() => {
       // AABB edge so the road emerges from the cluster's boundary, not its center.
       const dx = toRect.cx - fromRect.cx;
       const dy = toRect.cy - fromRect.cy;
-      const dist = Math.hypot(dx, dy) || 1;
+      const dist = Math.hypot(dx, dy);
+      // Two locations on the same spot (the admin form defaults X and Y to 0)
+      // have no direction to draw a road along; going on made the endpoints
+      // NaN and the whole map throw.
+      if (!(dist >= 1)) return;
       const ux = dx / dist, uy = dy / dist;
       const aExit = rayExitAABB(fromRect.cx, fromRect.cy, ux, uy, fromRect);
       const bExit = rayExitAABB(toRect.cx, toRect.cy, -ux, -uy, toRect);
@@ -332,7 +336,7 @@ const LayoutSystem = (() => {
       x2 = toNudge.x;   y2 = toNudge.y;
 
       const segLen = Math.hypot(x2 - x1, y2 - y1);
-      if (segLen < 1) return; // clusters abutting — skip degenerate road
+      if (!(segLen >= 1)) return; // clusters abutting (or NaN) — skip degenerate road
 
       const crossCosmos = pair.fromIsCosmic !== pair.toIsCosmic;
       const baseSign = stableBendSign(pair.fromClusterId, pair.toClusterId);
