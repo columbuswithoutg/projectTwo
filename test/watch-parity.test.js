@@ -191,7 +191,7 @@ test('spot checks: the table really exercises each rule', async () => {
   const by = (id) => PROJECTS.find(p => p.id === id);
   assert.equal(W.isAvailable(by('p2'), fresh), false);              // phase 2 locked
   assert.equal(W.isAvailable(by('p2'), new Set(['avengers1'])), true);
-  assert.equal(W.isAvailable(by('p7'), all), false);                // no unlocker ⇒ never
+  assert.equal(W.isAvailable(by('p7'), fresh), true);               // no unlocker ⇒ always open (X-Men, Defenders)
   assert.equal(W.isAvailable(by('ghostdep'), partial), true);       // deleted prereq ignored
   assert.equal(W.isAvailable(by('ghostdep'), fresh), false);        // live prereq still counts
   assert.equal(W.isAvailable(by('hidden'), fresh), false);          // hidden prereq locks
