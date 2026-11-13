@@ -80,7 +80,7 @@ async function showRequestDialog(opts = {}) {
             ${phaseOrder.map(n => `
               <fieldset class="request-phase" data-phase="${n}">
                 <legend>
-                  <span>Phase ${n}</span>
+                  <span>${({ 7: 'X-Men', 8: 'Defenders' })[n] || 'Phase ' + n}</span>
                   <button type="button" class="request-phase-all">Select all</button>
                 </legend>
                 ${phases.get(n).map(p => `
