@@ -13,6 +13,8 @@
  *       sits in the same spot for everyone and an unlocked road can never
  *       open a doorway under it. Bottom 1.9 (over 1.8-tall bookshelves),
  *       0.3 below the wall top and from each end; 16:10 = picture + marquee.
+ *       No stretch wide enough (doorways on every wall)? It lies face-up
+ *       in the middle of the floor instead (floorSpot, side 'floor').
  *   makeScreen(THREE, spot)        the screen: a canvas texture + slim bezel
  *   screenEvictions(list, now)     which built screens to free (out of reach)
  *   drawScreen(ctx, view, imgOf)   paints one Scene Guess frame of it
@@ -27,6 +29,9 @@
  ************************************************/
 (function (root) {
   const SCREEN = { BOTTOM: 1.9, TOP_GAP: 0.3, SIDE_GAP: 0.3, ASPECT: 1.6, OFF_WALL: 0.06, MIN_W: 1.2 };
+  // A screen laid on the floor (floorSpot): its width, the gap it keeps from
+  // the inner walls, and its height above the floor (the bezel rests on it).
+  const FLOOR = { W: 4.4, EDGE: 1.2, Y: 0.07 };
   const CW = 1280, CH = 800, PIC = 720;          // canvas: 1280×720 picture + an 80px marquee
   const COLORS = ['#e3243f', '#3b82f6', '#22a861', '#a855f7', '#f97316', '#0ea5b7'];
   const DISPLAY = '"Bebas Neue", "Oswald", Impact, "Arial Narrow", sans-serif';
@@ -113,7 +118,9 @@
         if (!best || score > best.score + 1e-9) best = { side: s, a, b, score };
       }
     }
-    if (!best) return null;
+    // Not enough door-free wall for even the smallest screen: lay it on the
+    // floor instead (floorSpot) rather than hang it over a doorway.
+    if (!best || (best.b - best.a) - 2 * SCREEN.SIDE_GAP < SCREEN.MIN_W) return floorSpot(cx, cz, HALF - T, opens);
     const H = wallHeight || W.WALL_HEIGHT;
     const w = Math.max(SCREEN.MIN_W, Math.min((best.b - best.a) - 2 * SCREEN.SIDE_GAP, (H - SCREEN.BOTTOM - SCREEN.TOP_GAP) * SCREEN.ASPECT));
     const h = w / SCREEN.ASPECT;
@@ -127,6 +134,23 @@
       default:  x = cx + inner; z = mid; rotY = -Math.PI / 2; break;
     }
     return { side: best.side, from: mid - w / 2, to: mid + w / 2, x, y: SCREEN.BOTTOM + h / 2, z, w, h, rotY };
+  }
+
+  // The floor fallback: the screen lies face-up in the middle of the room,
+  // FLOOR.W wide (less if the room is small). It reads the right way up from
+  // the side with the most doorway — where most players walk in; a tie goes
+  // to S, then N, W, E. rotY turns it like a wall screen on the opposite wall
+  // (makeScreen lays it flat first, then turns it), so `side` is 'floor' and
+  // `facing` is the side its bottom edge points at.
+  //   inner: half the room's inner width.
+  function floorSpot(cx, cz, inner, opens) {
+    const w = Math.max(SCREEN.MIN_W, Math.min(FLOOR.W, 2 * (inner - FLOOR.EDGE)));
+    const h = w / SCREEN.ASPECT;
+    const len = (s) => (opens[s] || []).reduce((t, [a, b]) => t + (b - a), 0);
+    let facing = 'S';
+    for (const s of ['N', 'W', 'E']) if (len(s) > len(facing) + 1e-9) facing = s;
+    const rotY = { S: 0, N: Math.PI, E: Math.PI / 2, W: -Math.PI / 2 }[facing];
+    return { side: 'floor', floor: true, facing, x: cx, y: FLOOR.Y, z: cz, w, h, rotY };
   }
 
   // ── the screen ──
@@ -158,6 +182,12 @@
       group.add(m);
     }
     group.position.set(spot.x, spot.y, spot.z);
+    if (spot.floor) {
+      // Lie it face-up (X first: the picture's top edge points north), then
+      // turn it to its reading side. 'YXZ' applies the X tilt before the turn.
+      group.rotation.order = 'YXZ';
+      group.rotation.x = -Math.PI / 2;
+    }
     group.rotation.y = spot.rotY;
     group.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
     return { group, canvas, ctx, tex, mat, plane, spot };
@@ -570,7 +600,7 @@
   }
 
   const api = {
-    SCREEN, CW, CH, SWAP_MS, roadRoutes, roadView, roadPorts, openingsFromPorts, allOpenings, screenSpot,
+    SCREEN, FLOOR, CW, CH, SWAP_MS, roadRoutes, roadView, roadPorts, openingsFromPorts, allOpenings, screenSpot,
     makeScreen, drawScreen, paint, SCREEN_EVICT, screenEvictions, liveScreenKind, pickScreenKind, crownLayout, makeCrown, makeConfetti, makeSpotlight, dispose, disposeGpu
   };
   // Node (test/scene-geometry.test.js) gets the same object; the placement

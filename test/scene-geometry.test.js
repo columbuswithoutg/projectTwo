@@ -96,12 +96,10 @@ test('openingsFromPorts: doorways clip at the corners, and an all-but-gone one i
   }
 });
 
-// Islands whose every wall is nearly all doorway: the longest door-free
-// stretch is shorter than SCREEN.MIN_W, so the MIN_W screen pokes past the
-// wall end and over a door. Found by this test (2026-10-27); left as is
-// because the fix (no screen there, or a different placement) changes what
-// players see — tracked by the todo test below. Remove an id once fixed.
-const KNOWN_NO_ROOM = new Set(['endgame']);
+// Islands whose every wall is nearly all doorway (no door-free stretch
+// fits even a MIN_W screen) get the screen laid face-up on the floor instead.
+// Endgame is the one on the bundled map (found 2026-10-27, floor since 2026-11-24).
+const FLOOR_ISLANDS = new Set(['endgame']);
 
 // Every check for one project's screen at one wall height → list of problems.
 function screenProblems(p, wh) {
@@ -110,24 +108,34 @@ function screenProblems(p, wh) {
   const opens = S.allOpenings(p, projects, W);
   const spot = S.screenSpot(p, projects, W, wh);
   if (!spot) return [p.id + ': no screen spot'];
+  if (!(spot.w > 0 && spot.h > 0)) out.push(p.id + ': bad screen size');
+  if (spot.floor) {
+    // Flat in the room, clear of the walls by FLOOR.EDGE on every side.
+    const cx = p.gridX * W.SCALE, cz = p.gridY * W.SCALE;
+    const across = spot.facing === 'E' || spot.facing === 'W';
+    const hx = (across ? spot.h : spot.w) / 2, hz = (across ? spot.w : spot.h) / 2;
+    const room = HALF - T - S.FLOOR.EDGE + 1e-9;
+    if (Math.abs(spot.x - cx) + hx > room || Math.abs(spot.z - cz) + hz > room) out.push(p.id + ': floor screen too close to a wall');
+    if (!(spot.y > 0 && spot.y < 0.2)) out.push(p.id + ': floor screen not on the floor');
+    return out;
+  }
   const along = (spot.side === 'N' || spot.side === 'S') ? p.gridX * W.SCALE : p.gridY * W.SCALE;
   if (!(spot.from >= along - HALF + T - 1e-9 && spot.to <= along + HALF - T + 1e-9)) out.push(p.id + ': screen runs past the inner wall');
   for (const [a, b] of opens[spot.side]) {
     const overlap = Math.min(b, spot.to) - Math.max(a, spot.from);
     if (overlap > 1e-9) out.push(`${p.id}: screen [${spot.from}, ${spot.to}] on ${spot.side} overlaps doorway [${a}, ${b}]`);
   }
-  if (!(close(spot.to - spot.from, spot.w) && spot.w > 0 && spot.h > 0)) out.push(p.id + ': bad screen size');
+  if (!close(spot.to - spot.from, spot.w)) out.push(p.id + ': bad screen size');
   return out;
 }
 // The engine jitters wall heights per house (WORLD.HEIGHT_VAR_MIN … MAX); the
 // placement must hold across that range, not just at the default.
 const HEIGHTS = [num('HEIGHT_VAR_MIN'), 1, num('HEIGHT_VAR_MAX')].map((k) => W.WALL_HEIGHT * k);
 
-test('screenSpot: never over a doorway, on the wall, for every bundled project', () => {
+test('screenSpot: never over a doorway, on the wall or the floor, for every bundled project', () => {
   let checked = 0;
   for (const p of projects) {
     if (typeof p.gridX !== 'number' || typeof p.gridY !== 'number') continue;
-    if (KNOWN_NO_ROOM.has(p.id)) continue;
     for (const wh of HEIGHTS) {
       assert.deepEqual(screenProblems(p, wh), []);
       checked++;
@@ -136,19 +144,40 @@ test('screenSpot: never over a doorway, on the wall, for every bundled project',
   assert.ok(checked >= 3 * 50, 'covered the bundled map (' + checked + ')');
 });
 
-test('screenSpot: islands with no door-free stretch wide enough for a screen', { todo: 'screen overlaps a doorway on ' + [...KNOWN_NO_ROOM].join(', ') }, () => {
-  for (const id of KNOWN_NO_ROOM) {
-    const p = projects.find((q) => q.id === id);
-    assert.ok(p, id + ' is still a bundled project');
-    assert.deepEqual(screenProblems(p, W.WALL_HEIGHT), []);
-  }
+test('screenSpot: only islands with no wall to spare get a floor screen', () => {
+  const floors = projects.filter((p) => typeof p.gridX === 'number' && typeof p.gridY === 'number')
+    .filter((p) => S.screenSpot(p, projects, W, W.WALL_HEIGHT).floor).map((p) => p.id);
+  assert.deepEqual(new Set(floors), FLOOR_ISLANDS);
 });
 
-test('screenSpot: KNOWN_NO_ROOM lists only islands that really have no room', () => {
-  for (const id of KNOWN_NO_ROOM) {
-    const p = projects.find((q) => q.id === id);
-    if (p) assert.notDeepEqual(screenProblems(p, W.WALL_HEIGHT), [], id + ' now fits a screen — drop it from KNOWN_NO_ROOM');
+test('screenSpot: a doorway on every wall → face-up in the middle of the floor, read from the busiest door', () => {
+  // A lone island whose fake neighbours put roads into all four walls.
+  const me = { id: 'me', gridX: 10, gridY: 10 };
+  const ports = [];
+  const cx = 10 * W.SCALE, cz = 10 * W.SCALE;
+  for (const side of ['N', 'S', 'E', 'W']) {
+    const c = (side === 'N' || side === 'S') ? cx : cz;
+    for (const off of [-3.5, 0, 3.5]) ports.push({ side, coord: c + off });
   }
+  ports.push({ side: 'E', coord: cz + 5.6 });   // E has a little more doorway
+  const opens = S.openingsFromPorts(me, ports, W);
+  for (const side of ['N', 'S', 'E', 'W']) assert.ok(opens[side].length, side + ' has a doorway');
+  // screenSpot reads openings via allOpenings; feed it a stub router for this one.
+  const real = globalThis.RoadRouter;
+  globalThis.RoadRouter = {
+    route: () => ({ roads: [], byKey: new Map(), overCapacity: [] }),
+    portsView: () => ports.map((p) => ({ side: p.side, along: p.coord - ((p.side === 'N' || p.side === 'S') ? cx : cz), otherId: 'x' }))
+  };
+  try {
+    const spot = S.screenSpot(me, [me], W, W.WALL_HEIGHT);
+    assert.equal(spot.side, 'floor');
+    assert.equal(spot.floor, true);
+    assert.equal(spot.x, cx);
+    assert.equal(spot.z, cz);
+    assert.equal(spot.facing, 'E');
+    assert.ok(Math.abs(spot.rotY - Math.PI / 2) < 1e-12);
+    assert.ok(Math.abs(spot.w / spot.h - S.SCREEN.ASPECT) < 1e-9);
+  } finally { globalThis.RoadRouter = real; }
 });
 
 test('screenSpot: no grid position → null', () => {
