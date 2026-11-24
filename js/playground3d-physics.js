@@ -362,16 +362,27 @@
     return lerpAngle(yaw, target, k);
   }
 
-  // Follow-camera view for an orbit elevation. At or above `floor` the camera
-  // orbits as usual, looking down at the player (pitch = -elevation). Dragging
-  // past the floor no longer stops: the camera stays at the floor and the view
-  // tilts UP by the extra amount, so you can look up at the sky. `maxUp` caps
-  // that upward pitch (radians above the horizon); the orbit's lowest useful
-  // elevation is therefore -maxUp.
-  function orbitView(elevation, floor, maxUp) {
-    const camElev = Math.max(elevation, floor);
-    const tilt = Math.max(0, floor - elevation);
-    return { camElev, pitch: Math.min(maxUp, tilt - camElev) };
+  // Roblox-style follow camera. The camera orbits the focus point (the
+  // player's head) `distance` away at `elevation` (radians above the
+  // horizon; negative = below the head, looking up), aimed at the head, so
+  // the view's pitch is always -elevation. When that would put the camera
+  // under the floor it slides in along the same line until it sits `margin`
+  // above the floor — looking up swings the camera down behind the player
+  // and you see the sky past them, never through the ground. It never slides
+  // closer than `minHoriz` (horizontally) to the player: from there it stays
+  // on the floor and keeps tilting up, so the player sinks to the bottom of
+  // the frame instead of filling it.
+  //   → { horiz, y, pitch }: horizontal distance behind the player, camera
+  //     height, view pitch (radians above the horizon).
+  function followCamera(elevation, distance, focusY, floorY, margin, minHoriz) {
+    const s = Math.sin(elevation), c = Math.cos(elevation);
+    const lowest = floorY + (margin || 0);
+    const pitch = -elevation;
+    if (!(s < 0 && focusY + s * distance < lowest)) return { horiz: c * distance, y: focusY + s * distance, pitch };
+    // Where the orbit line meets the floor margin (the whole line is under
+    // it when the head is: then the camera just sits on the margin).
+    const touch = focusY > lowest ? (focusY - lowest) / -s : 0;
+    return { horiz: Math.max(minHoriz || 0, c * touch), y: lowest, pitch };
   }
 
   // ── Horizontal movement ──
@@ -571,6 +582,6 @@
     isWalkable, STEP, groundAt, blocksAt, stepVertical, shouldRespawn, airtime, pickPunchTarget,
     actorRadius, spawnIslands, PUNCH_COOLDOWN_MS, punchCooldown, hash01, npcPatrol, npcPathPoint,
     pinchZoom, fovForAspect, wallBetween,
-    wrapAngle, lerpAngle, turnToward, orbitView, moveWithCollision, LINTEL_DROP, ceilingCap, SPAWN_RINGS, spreadSpawn, KNOCKDOWN, punchCheck, STONE_RING, stoneSlot, seatOccupied, snapShadowCenter
+    wrapAngle, lerpAngle, turnToward, followCamera, moveWithCollision, LINTEL_DROP, ceilingCap, SPAWN_RINGS, spreadSpawn, KNOCKDOWN, punchCheck, STONE_RING, stoneSlot, seatOccupied, snapShadowCenter
   };
 });

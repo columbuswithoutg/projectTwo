@@ -654,19 +654,28 @@ test('turn rates: the exponential rates match the old linear lerps at 60 fps', (
   }
 });
 
-test('orbitView: above the floor it orbits; below it the view tilts up, capped', () => {
-  const floor = 0.4, maxUp = 0.9;
-  // Normal orbit: camera at the elevation, looking down at the player.
-  assert.deepEqual(P.orbitView(0.7, floor, maxUp), { camElev: 0.7, pitch: -0.7 });
-  // Exactly at the floor: still looking down at the player.
-  assert.deepEqual(P.orbitView(floor, floor, maxUp), { camElev: floor, pitch: -floor });
-  // Past the floor: the camera holds, the view tilts by the overshoot.
-  const v = P.orbitView(0, floor, maxUp);
-  assert.equal(v.camElev, floor);
-  assert.ok(Math.abs(v.pitch - 0) < 1e-12, 'level with the horizon');
-  const up = P.orbitView(-0.5, floor, maxUp);
-  assert.ok(up.pitch > 0.49 && up.pitch < 0.51, 'looking up');
-  // The orbit's lowest value -maxUp gives exactly maxUp, and never more.
-  assert.ok(Math.abs(P.orbitView(-maxUp, floor, maxUp).pitch - maxUp) < 1e-12);
-  assert.equal(P.orbitView(-5, floor, maxUp).pitch, maxUp);
+test('followCamera: orbits freely above the floor; below it slides in on the floor, then tilts up', () => {
+  const focus = 1.45, floor = 0, margin = 0.3, minH = 2.2;
+  const near = (x, y) => Math.abs(x - y) < 1e-9;
+  // Above the head: full distance, aimed at the head.
+  const hi = P.followCamera(0.7, 6.5, focus, floor, margin, minH);
+  assert.ok(near(hi.horiz, Math.cos(0.7) * 6.5) && near(hi.y, focus + Math.sin(0.7) * 6.5) && near(hi.pitch, -0.7));
+  // Level with the head: full distance, level view.
+  const lvl = P.followCamera(0, 6.5, focus, floor, margin, minH);
+  assert.ok(near(lvl.horiz, 6.5) && near(lvl.y, focus) && near(lvl.pitch, 0));
+  // A little below the head, still above the floor: plain orbit, looking up at the head.
+  const low = P.followCamera(-0.1, 6.5, focus, floor, margin, minH);
+  assert.ok(near(low.horiz, Math.cos(-0.1) * 6.5) && low.y > floor + margin && near(low.pitch, 0.1));
+  // Lower: slides in along the orbit line and rests on the floor margin, still aimed at the head.
+  const mid = P.followCamera(-0.3, 6.5, focus, floor, margin, minH);
+  assert.ok(near(mid.y, floor + margin) && mid.horiz < Math.cos(-0.3) * 6.5 && mid.horiz > minH);
+  assert.ok(near(Math.atan2(focus - mid.y, mid.horiz), mid.pitch), 'the head is dead centre');
+  // Steep: holds minHoriz behind the player on the floor and tilts up past the head.
+  const up = P.followCamera(-1.0, 6.5, focus, floor, margin, minH);
+  assert.ok(near(up.horiz, minH) && near(up.y, floor + margin) && near(up.pitch, 1.0));
+  assert.ok(Math.atan2(focus - up.y, up.horiz) < up.pitch, 'the head sits below the centre of the view');
+  // Never through the floor at any elevation.
+  for (let e = -1.5; e <= 1.5; e += 0.05) assert.ok(P.followCamera(e, 6.5, focus, floor, margin, minH).y >= floor + margin - 1e-9);
+  // A raised floor (standing on a table) moves the limit with it.
+  assert.ok(near(P.followCamera(-0.9, 6.5, focus + 1, floor + 1, margin, minH).y, floor + 1 + margin));
 });

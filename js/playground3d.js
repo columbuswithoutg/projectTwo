@@ -47,13 +47,15 @@ const Playground3D = (() => {
     MIN_DIST: 3.0,
     MAX_DIST: 14.0,
     DEFAULT_ELEV: 0.45,           // radians above horizon (home mode)
-    MIN_ELEV: 0.05,
-    MAX_ELEV: 1.30,
     WORLD_DEFAULT_ELEV: 0.70,     // ~40°: more top-down so room walls don't block
-    WORLD_MIN_ELEV: 0.40,         // ~23°: floor so you can't tilt under the walls
-    // Dragging down past the floor tilts the view UP instead (PG3DPhysics.orbitView),
-    // to at most this far above the horizon (~52°) — enough to see the sky.
-    LOOK_UP_MAX: 0.9,
+    // Roblox-style orbit (PG3DPhysics.followCamera): the camera always aims at
+    // the head and swings from high above (looking down) to below it (looking
+    // up at the sky). Below the head it slides in rather than enter the floor.
+    MIN_ELEV: -1.0,               // ~57° below the head: looking well up at the sky
+    MAX_ELEV: 1.30,               // ~75° above: looking down at the player
+    FOCUS_Y: 1.45,                // aim point above the feet (head), × player scale
+    FLOOR_MARGIN: 0.3,            // camera never gets closer than this to the floor
+    NEAR_HORIZ: 2.2,              // never slides in closer than this (horizontally), × player scale
     ROTATE_SPEED: 0.005,          // radians per pixel
     ZOOM_SPEED: 0.0015,           // distance per wheel delta
     // Exponential auto-follow rate (1/s, PG3DPhysics.turnToward). 4.14 is the
@@ -873,7 +875,7 @@ const Playground3D = (() => {
 
     // Input.
     // The orbit may go below the camera floor: that part is look-up tilt (_updateCamera).
-    _input = PG3DInput.makeInput(_viewport, { orbit: _orbit, CAMERA, minElev: () => -CAMERA.LOOK_UP_MAX });
+    _input = PG3DInput.makeInput(_viewport, { orbit: _orbit, CAMERA, minElev: () => CAMERA.MIN_ELEV });
     if (_inputSuspended && _input.setSuspended) _input.setSuspended(true);
     // Landscape affordances (shared by /home, /world, friend homes). Attached
     // to the container, after the innerHTML wipe above, so its hint survives.
@@ -2523,11 +2525,6 @@ const Playground3D = (() => {
     return PG3DPhysics.ceilingCap(x, z, _worldNodes.values(), WORLD.PLATFORM_W / 2, 0.5, headTop, WORLD.WALL_HEIGHT);
   }
 
-  // Minimum camera elevation — higher in /world so you can't tilt under the
-  // tall room walls; normal floor everywhere else.
-  function _minElev() {
-    return _mode === 'world' ? CAMERA.WORLD_MIN_ELEV : CAMERA.MIN_ELEV;
-  }
 
   // House showcase (the keeper's editor is open): instead of following the
   // player — who is standing INSIDE the house, under a roof that is hidden
@@ -2584,25 +2581,28 @@ const Playground3D = (() => {
       }
     }
     const targetX = _player.position.x;
-    // Chest level — lower while lying down so the bed stays in frame.
+    // Aim at the head (chest level while lying down so the bed stays in frame).
     const lying = _seat && _seat.kind === 'bed';
-    const targetY = _player.position.y + (lying ? 0.45 : 1.15) * (_player.scale.y || 1);
+    const sc = _player.scale.y || 1;
+    const targetY = _player.position.y + (lying ? 0.45 : CAMERA.FOCUS_Y) * sc;
     const targetZ = _player.position.z;
-    const d = _orbit.distance;
-    // Below the floor the camera holds its spot and the view tilts up.
-    const view = PG3DPhysics.orbitView(_orbit.elevation, _minElev(), CAMERA.LOOK_UP_MAX);
-    const e = view.camElev;
+    // Roblox-style: orbit the head at the chosen elevation; below the head the
+    // camera slides in instead of sinking into the floor (or the table /
+    // bed the player stands on), so looking up shows the sky past the player.
+    const floorY = _groundAt(targetX, targetZ);
+    const fc = PG3DPhysics.followCamera(_orbit.elevation, _orbit.distance, targetY, floorY, CAMERA.FLOOR_MARGIN, CAMERA.NEAR_HORIZ * sc);
     const a = _orbit.azimuth;
     // Camera sits BEHIND the character: when a equals the player's yaw,
     // the camera is directly behind looking toward the character's back
     // (and beyond). Minus signs put the camera opposite the facing dir.
-    const cx = targetX - Math.sin(a) * Math.cos(e) * d;
-    const cz = targetZ - Math.cos(a) * Math.cos(e) * d;
-    const cy = targetY + Math.sin(e) * d;
-    _camera.position.set(cx, cy, cz);
-    // Aim over the player at the view's pitch; with no tilt (pitch = -e)
-    // this is exactly the player's chest.
-    _camera.lookAt(targetX, cy + Math.tan(view.pitch) * Math.cos(e) * d, targetZ);
+    const fx = Math.sin(a), fz = Math.cos(a);
+    const cx = targetX - fx * fc.horiz;
+    const cz = targetZ - fz * fc.horiz;
+    _camera.position.set(cx, fc.y, cz);
+    // Look along the orbit's pitch: at the head, or — pressed to the floor
+    // close behind the player — up past it at the sky.
+    const cp = Math.cos(fc.pitch);
+    _camera.lookAt(cx + fx * cp, fc.y + Math.sin(fc.pitch), cz + fz * cp);
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -3194,7 +3194,7 @@ const Playground3D = (() => {
     // A live island's game screen, same units: the editor keeps windows and
     // frames off that stretch of wall.
     const sg = _gs.islands.has(projectId) ? _sgSpot(node) : null;
-    if (sg) {
+    if (sg && !sg.floor) {
       const start = (sg.side === 'N' || sg.side === 'S') ? cx - HALF : cz - HALF;
       out.screen = { side: sg.side, from: sg.from - start, to: sg.to - start };
     }
@@ -4159,7 +4159,8 @@ const Playground3D = (() => {
       // The island's game screen — the prompt sits under it.
       const sp = _gs.candidate.spot;
       label = _gs.candidate.label;
-      target = { x: sp.x, z: sp.z, sgY: sp.y - sp.h / 2 - 0.05, glyph: _gs.candidate.glyph };
+      // A floor screen's prompt floats at waist height over its middle.
+      target = { x: sp.x, z: sp.z, sgY: sp.floor ? 1.1 : sp.y - sp.h / 2 - 0.05, glyph: _gs.candidate.glyph };
     }
     if (target && _hudLayer) {
       if (!_seatPromptEl) {
@@ -5877,9 +5878,16 @@ const Playground3D = (() => {
     if (!id || !_gs.islands.has(id)) return;
     const s = _sgSpot(_worldNodes.get(id));
     if (!s) return;
-    const along = (s.side === 'N' || s.side === 'S') ? px : pz;
-    const depth = s.side === 'N' ? pz - s.z : s.side === 'S' ? s.z - pz : s.side === 'W' ? px - s.x : s.x - px;
-    if (along < s.from - 0.6 || along > s.to + 0.6 || depth < 0 || depth > 4.2) return;
+    if (s.floor) {
+      // A floor screen: standing on it or within ~2 m of its edge.
+      const across = s.facing === 'E' || s.facing === 'W';
+      const hx = (across ? s.h : s.w) / 2 + 2, hz = (across ? s.w : s.h) / 2 + 2;
+      if (Math.abs(px - s.x) > hx || Math.abs(pz - s.z) > hz) return;
+    } else {
+      const along = (s.side === 'N' || s.side === 'S') ? px : pz;
+      const depth = s.side === 'N' ? pz - s.z : s.side === 'S' ? s.z - pz : s.side === 'W' ? px - s.x : s.x - px;
+      if (along < s.from - 0.6 || along > s.to + 0.6 || depth < 0 || depth > 4.2) return;
+    }
     const entries = _gsEntries(id, k => !!k.handler);
     if (!entries.length) return;
     const kinds = entries.map(e => e.kind);
@@ -5953,10 +5961,12 @@ const Playground3D = (() => {
     const node = _worldNodes.get(projectId);
     if (!node || !_scene || typeof PG3DScene === 'undefined' || !window.THREE) return;
     const s = _sgSpot(node);
-    const n = s ? { N: [0, 1], S: [0, -1], W: [1, 0], E: [-1, 0] }[s.side] : [0, 0];
+    const n = (s && { N: [0, 1], S: [0, -1], W: [1, 0], E: [-1, 0] }[s.side]) || [0, 0];
     const x = s ? s.x + n[0] * 1.2 : node.mesh.position.x;
     const z = s ? s.z + n[1] * 1.2 : node.mesh.position.z;
-    const fx = PG3DScene.makeConfetti(window.THREE, x, s ? s.y - s.h / 2 : 2.2, z);
+    // A floor screen bursts from just above it.
+    const y = s ? (s.floor ? s.y + 0.4 : s.y - s.h / 2) : 2.2;
+    const fx = PG3DScene.makeConfetti(window.THREE, x, y, z);
     _scene.add(fx.mesh);
     _gs.fx.push({ update: fx.update, dispose: () => { PG3DScene.dispose(fx.mesh); if (fx.mesh.dispose) fx.mesh.dispose(); } });
   }
@@ -6060,7 +6070,7 @@ const Playground3D = (() => {
       player() { return _player; },
       localDownUntil() { return _localDownUntil; },
       orbit() { return _orbit ? { distance: _orbit.distance, azimuth: _orbit.azimuth, elevation: _orbit.elevation } : null; },
-      camera() { return _camera ? { fov: _camera.fov, aspect: _camera.aspect } : null; },
+      camera() { return _camera ? { fov: _camera.fov, aspect: _camera.aspect, pos: _camera.position.toArray(), obj: _camera } : null; },
       vicinity() { if (!_player) return null; const v = _computeVicinity(_player.position.x, _player.position.z); return { inside: v.inside, near: [...v.near], roads: v.roads.length }; },
       teleport(x, z) { if (_player) { _seat = null; _player.rotation.x = 0; _player.position.set(x, _groundAt(x, z), z); _lastSafe.x = x; _lastSafe.z = z; } },
       seat() { return _seat; },

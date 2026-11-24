@@ -102,7 +102,7 @@
       lastMouse.y = e.clientY;
       _orbit.azimuth -= dx * CAMERA.ROTATE_SPEED;
       _orbit.elevation = Math.max(_minElev(),
-        Math.min(CAMERA.MAX_ELEV, _orbit.elevation - dy * CAMERA.ROTATE_SPEED));
+        Math.min(CAMERA.MAX_ELEV, _orbit.elevation + dy * CAMERA.ROTATE_SPEED));
     }
     function onMouseUp() { mouseDragging = false; }
     // The browser's native context menu (Save image as / Inspect) has no
@@ -307,7 +307,7 @@
         if (pinching()) return;
         _orbit.azimuth -= dx * CAMERA.ROTATE_SPEED;
         _orbit.elevation = Math.max(_minElev(),
-          Math.min(CAMERA.MAX_ELEV, _orbit.elevation - dy * CAMERA.ROTATE_SPEED));
+          Math.min(CAMERA.MAX_ELEV, _orbit.elevation + dy * CAMERA.ROTATE_SPEED));
       }
     };
     const onPointerUp = (e) => {
@@ -440,7 +440,7 @@
           if (activeCamPointerId !== null || pinching()) continue;
           _orbit.azimuth -= dx * CAMERA.ROTATE_SPEED;
           _orbit.elevation = Math.max(_minElev(),
-            Math.min(CAMERA.MAX_ELEV, _orbit.elevation - dy * CAMERA.ROTATE_SPEED));
+            Math.min(CAMERA.MAX_ELEV, _orbit.elevation + dy * CAMERA.ROTATE_SPEED));
         }
       }
       if (pinchMoved && pinching() && _orbit) {

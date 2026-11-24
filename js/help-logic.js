@@ -131,10 +131,10 @@
           'Walk, jump and explore. Other players are walking around too.',
           'Fall off the edge and you come back where you last stood.',
           'If you have islands in different places, you pick where to start.'
-        ], keys: [['W A S D / arrows', 'Walk'], ['Space', 'Jump'], ['Drag the mouse', 'Turn the camera (drag down to look up at the sky)'], ['Scroll', 'Zoom'], ['F', 'Punch'], ['E', 'Sit, lie down, use things, play games']] },
+        ], keys: [['W A S D / arrows', 'Walk'], ['Space', 'Jump'], ['Drag the mouse', 'Turn the camera (drag up to look up at the sky)'], ['Scroll', 'Zoom'], ['F', 'Punch'], ['E', 'Sit, lie down, use things, play games']] },
         { id: 'touch', title: 'Playing on a phone or tablet', img: 'world-touch.jpg', steps: [
           'Turn your phone sideways for the best view.',
-          'Use the joystick at the bottom left to walk. Drag anywhere else to turn the camera (drag down to look up); pinch to zoom.',
+          'Use the joystick at the bottom left to walk. Drag anywhere else to turn the camera (drag up to look up); pinch to zoom.',
           'Buttons on the right: jump, punch, and sit (it appears when you are next to a seat).',
           'On Android, the full-screen button at the top right fills the screen.'
         ] },
