@@ -149,7 +149,7 @@
     const v = view || { mode: 'idle' };
     const st = v.state || null;
     const secs = v.deadline ? Math.max(0, Math.ceil((v.deadline - Date.now()) / 1000)) : 0;
-    const recText = v.record ? `🏆 Record ${fmt(v.record.score)} · ${v.record.username}` : 'No record yet — be the first champion';
+    const recText = v.record ? `Record ${fmt(v.record.score)} · ${v.record.username}` : 'No record yet — be the first champion';
     ctx.save();
     ctx.clearRect(0, 0, W, H);
     backdrop(ctx);
@@ -163,7 +163,7 @@
       const roundW = ctx.measureText(`ROUND ${Math.min(st.of, st.round + 1)}/${st.of}`).width + 36;
       pill(ctx, 24 + roundW + 12, 22, t.text, t.bg, t.fg, `800 28px ${UI}`);
       if (mode === 'round') {
-        pill(ctx, W - 24, 22, `⏱ ${secs}s`, secs <= 5 ? 'rgba(200,16,46,0.9)' : 'rgba(0,0,0,0.72)', '#ffffff', `800 28px ${UI}`, true);
+        pill(ctx, W - 24, 22, `TIME ${secs}s`, secs <= 5 ? 'rgba(200,16,46,0.9)' : 'rgba(0,0,0,0.72)', '#ffffff', `800 28px ${UI}`, true);
       }
       const hist = mode === 'reveal' ? (st.history || [])[st.round] : null;
       drawQuote(ctx, cur.prompt.text, cur.type === 'reply' && cur.prompt.speaker ? cur.prompt.speaker.name : null, 96, 380);
@@ -202,7 +202,7 @@
       ctx.textBaseline = 'alphabetic';
       ctx.fillStyle = st.record ? '#ffd23f' : '#d6b25e';
       ctx.font = `400 104px ${DISPLAY}`;
-      ctx.fillText(st.record ? '🌿 NEW ISLAND RECORD' : 'FINAL SCORES', W / 2, 130);
+      ctx.fillText(st.record ? 'NEW ISLAND RECORD' : 'FINAL SCORES', W / 2, 130);
       (st.ranking || []).slice(0, 5).forEach((r, i) => {
         const y = 210 + i * 98;
         ctx.fillStyle = i === 0 ? 'rgba(255,210,63,0.16)' : 'rgba(255,255,255,0.06)';
@@ -228,7 +228,7 @@
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(fit(ctx, `— ${v.pick.speaker || ''}`, W - 200), W / 2, 590);
-        if (v.record) pill(ctx, 24, 22, `🌿 Champion's line · ${v.record.username}`, 'rgba(0,0,0,0.72)', '#9fe0a6', `800 30px ${UI}`);
+        if (v.record) pill(ctx, 24, 22, `Champion's line · ${v.record.username}`, 'rgba(0,0,0,0.72)', '#9fe0a6', `800 30px ${UI}`);
       } else {
         headline(ctx, 'QUOTE GUESS', v.title || '', 330);
         ctx.fillStyle = 'rgba(236,238,243,0.7)';

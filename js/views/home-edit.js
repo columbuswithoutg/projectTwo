@@ -32,6 +32,7 @@ const HomeEditView = (() => {
   // working copy would wipe every room the player had placed.
   let _loadFailed = false;
   let _mountSeq = 0;   // bumped by mount/unmount; a stale _load() bails (see friend-home.js)
+  let _selected = null;  // "gx,gy" of the room the floating bar acts on
 
   // ── public API ──
 
@@ -54,6 +55,7 @@ const HomeEditView = (() => {
       </div>
     `;
     document.getElementById('pg-edit-back').addEventListener('click', () => Router.back('/home'));
+    if (typeof window !== 'undefined') window.addEventListener('resize', _placeFloat);
     _load();
   }
 
@@ -67,6 +69,8 @@ const HomeEditView = (() => {
     _watchedIds = [];
     _saving = false;
     _loadFailed = false;
+    _selected = null;
+    if (typeof window !== 'undefined') window.removeEventListener('resize', _placeFloat);
   }
 
   // ── data load ──
@@ -216,15 +220,15 @@ const HomeEditView = (() => {
 
     let svg = `<svg class="pg-edit-grid" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">`;
 
-    // Background grid lines (subtle).
-    svg += `<rect x="0" y="0" width="${w}" height="${h}" fill="#0c0e18" />`;
+    // Background + faint grid lines (colours in styles/components/house-editor.css).
+    svg += `<rect class="pg-edit-bg" data-action="bg" x="0" y="0" width="${w}" height="${h}" />`;
     for (let gx = padX0; gx <= padX1 + 1; gx++) {
       const x = xOf(gx);
-      svg += `<line x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="rgba(255,255,255,0.04)" stroke-width="1" />`;
+      svg += `<line class="pg-edit-line" x1="${x}" y1="0" x2="${x}" y2="${h}" />`;
     }
     for (let gy = padY0; gy <= padY1 + 1; gy++) {
       const y = yOf(gy);
-      svg += `<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="rgba(255,255,255,0.04)" stroke-width="1" />`;
+      svg += `<line class="pg-edit-line" x1="0" y1="${y}" x2="${w}" y2="${y}" />`;
     }
 
     // Placed rooms.
@@ -233,15 +237,17 @@ const HomeEditView = (() => {
       const url = _imageUrl(project);
       const x = xOf(r.gx), y = yOf(r.gy);
       const title = project ? (project.title || r.projectId) : r.projectId;
-      svg += `<g class="pg-edit-room" data-action="room" data-gx="${r.gx}" data-gy="${r.gy}" tabindex="0" role="button" aria-label="Room: ${_escape(title)}">`;
-      svg += `<rect x="${x + 4}" y="${y + 4}" width="${CELL - 8}" height="${CELL - 8}" rx="6" fill="#1a1d2c" stroke="rgba(255,255,255,0.18)" stroke-width="1.5" />`;
+      const sel = _selected === _cellKey(r) ? ' selected' : '';
+      svg += `<g class="pg-edit-room${sel}" data-action="room" data-gx="${r.gx}" data-gy="${r.gy}" tabindex="0" role="button" aria-pressed="${!!sel}" aria-label="Room: ${_escape(title)}">`;
+      svg += `<rect class="pg-edit-roombox" x="${x + 4}" y="${y + 4}" width="${CELL - 8}" height="${CELL - 8}" rx="8" />`;
       if (url) {
         svg += `<image href="${url}" x="${x + 6}" y="${y + 6}" width="${CELL - 12}" height="${CELL - 12}" preserveAspectRatio="xMidYMid slice" />`;
       }
       // Title chip at the bottom.
       const chipH = 18;
-      svg += `<rect x="${x + 6}" y="${y + CELL - chipH - 6}" width="${CELL - 12}" height="${chipH}" fill="rgba(0,0,0,0.7)" />`;
-      svg += `<text x="${x + CELL / 2}" y="${y + CELL - 12}" text-anchor="middle" fill="#fff" font-size="10" font-family="system-ui, sans-serif">${_escape(_shorten(title, 18))}</text>`;
+      svg += `<rect class="pg-edit-roomchip" x="${x + 6}" y="${y + CELL - chipH - 6}" width="${CELL - 12}" height="${chipH}" />`;
+      svg += `<text class="pg-edit-roomname" x="${x + CELL / 2}" y="${y + CELL - 12}" text-anchor="middle" font-size="10">${_escape(_shorten(title, 18))}</text>`;
+      svg += `<rect class="pg-edit-roomring" x="${x + 3}" y="${y + 3}" width="${CELL - 6}" height="${CELL - 6}" rx="9" />`;
       svg += `</g>`;
     }
 
@@ -249,17 +255,60 @@ const HomeEditView = (() => {
     for (const c of _slotCells()) {
       const x = xOf(c.gx), y = yOf(c.gy);
       svg += `<g class="pg-edit-slot" data-action="slot" data-gx="${c.gx}" data-gy="${c.gy}" tabindex="0" role="button" aria-label="Add a room here">`;
-      svg += `<rect x="${x + 8}" y="${y + 8}" width="${CELL - 16}" height="${CELL - 16}" rx="10" fill="rgba(201,162,39,0.08)" stroke="rgba(201,162,39,0.55)" stroke-width="2" stroke-dasharray="6 6" />`;
-      svg += `<text x="${x + CELL / 2}" y="${y + CELL / 2 + 12}" text-anchor="middle" fill="#dca960" font-size="36" font-family="system-ui, sans-serif">+</text>`;
+      svg += `<rect class="pg-edit-slotbox" x="${x + 8}" y="${y + 8}" width="${CELL - 16}" height="${CELL - 16}" rx="10" />`;
+      svg += `<path class="pg-edit-slotplus" d="M${x + CELL / 2 - 12},${y + CELL / 2} h24 M${x + CELL / 2},${y + CELL / 2 - 12} v24" />`;
       svg += `</g>`;
     }
 
     svg += `</svg>`;
-    main.innerHTML = svg;
+    // Remove (or why not) floats next to the selected room, like the house editor's bar.
+    main.innerHTML = svg + `
+      <div class="he-float pg-edit-float" id="pg-edit-float" hidden>
+        <span class="he-floatname" id="pg-edit-floatname"></span>
+        <button type="button" class="world-house-tool he-danger" id="pg-edit-remove">${iconSvg('trash', 15)}<span>Remove</span></button>
+      </div>`;
+    main.querySelector('#pg-edit-remove').addEventListener('click', _removeSelected);
 
     // Event delegation on the grid.
     main.querySelector('.pg-edit-grid').addEventListener('click', _onGridClick);
     activateOnKey(main.querySelector('.pg-edit-grid'), '[data-action]');   // Enter / Space on a room or slot
+    _placeFloat();
+  }
+
+  function _selectedIndex() {
+    return _selected == null ? -1 : _layout.findIndex(r => _cellKey(r) === _selected);
+  }
+
+  // Next to the selected room: its name and Remove, or why it can't go.
+  function _placeFloat() {
+    const main = document.getElementById('pg-edit-main');
+    const bar = main && main.querySelector('#pg-edit-float');
+    if (!bar) return;
+    const idx = _selectedIndex();
+    const el = idx >= 0 && main.querySelector('.pg-edit-room.selected');
+    if (!el) { bar.hidden = true; return; }
+    const project = _lookupProject(_layout[idx].projectId);
+    const removable = _isConnected(_layout.filter((_, i) => i !== idx));
+    bar.querySelector('#pg-edit-floatname').textContent = project ? (project.title || _layout[idx].projectId) : _layout[idx].projectId;
+    const rm = bar.querySelector('#pg-edit-remove');
+    rm.disabled = !removable;
+    rm.title = removable ? 'Remove this room' : 'Other rooms connect through this one, so it can’t be removed';
+    bar.hidden = false;
+    const mr = main.getBoundingClientRect(), r = el.getBoundingClientRect();
+    const fw = bar.offsetWidth, fh = bar.offsetHeight;
+    let top = r.top - mr.top + main.scrollTop - fh - 6;
+    if (top < main.scrollTop) top = r.bottom - mr.top + main.scrollTop + 6;
+    const left = Math.max(4, Math.min(main.scrollWidth - fw - 4, r.left - mr.left + main.scrollLeft + r.width / 2 - fw / 2));
+    bar.style.top = top + 'px';
+    bar.style.left = left + 'px';
+  }
+
+  function _removeSelected() {
+    const idx = _selectedIndex();
+    if (idx < 0 || !_isConnected(_layout.filter((_, i) => i !== idx))) return;
+    _layout.splice(idx, 1);
+    _selected = null;
+    _render();
   }
 
   function _renderPanel() {
@@ -273,13 +322,26 @@ const HomeEditView = (() => {
     const nextUnlockAt = (_maxRooms + 1) * 2;
     const watchesToNext = Math.max(0, nextUnlockAt - watchedNow);
 
-    let html = '';
-    html += `<div class="pg-edit-summary">`;
-    html += `<div><strong>${_layout.length}</strong> placed / <strong>${_maxRooms}</strong> unlocked</div>`;
-    html += `<div class="pg-edit-sub">${watchedNow} watched • next room at ${nextUnlockAt}</div>`;
-    html += `</div>`;
+    // Progress toward the next room slot (every 2 watches unlock one).
+    const pct = Math.max(0, Math.min(100, Math.round(((watchedNow - _maxRooms * 2) / 2) * 100)));
+    const hint = _selected != null && _selectedIndex() >= 0
+      ? 'Remove it with the bar on the plan, or tap another room.'
+      : remaining > 0 && available.length
+        ? 'Tap a + on the plan to add a room, or tap a room to select it.'
+        : 'Tap a room on the plan to select it.';
 
-    html += `<h3>Available projects</h3>`;
+    let html = '';
+    html += `<div class="pg-edit-head">`;
+    html += `<h2 class="pg-edit-title">${iconSvg('house', 18)}<span>Your rooms</span></h2>`;
+    html += `<span class="he-tabcount pg-edit-count" title="Rooms placed / unlocked">${_layout.length}/${_maxRooms}</span>`;
+    html += `</div>`;
+    html += `<p class="he-hint">${hint}</p>`;
+
+    html += `<h3 class="he-label">Next room</h3>`;
+    html += `<div class="pg-edit-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Progress to the next room"><span style="width:${pct}%"></span></div>`;
+    html += `<p class="pg-edit-sub">${watchedNow} watched · next room at ${nextUnlockAt}${watchesToNext > 0 ? ` (${watchesToNext} to go)` : ''}</p>`;
+
+    html += `<h3 class="he-label">Available projects</h3>`;
     if (available.length === 0) {
       if (remaining === 0) {
         html += `<p class="pg-edit-empty">All your unlocked rooms are placed. Watch ${watchesToNext} more project${watchesToNext === 1 ? '' : 's'} to unlock another.</p>`;
@@ -292,7 +354,7 @@ const HomeEditView = (() => {
         const project = _lookupProject(id);
         if (!project) continue;
         const disabled = remaining === 0;
-        html += `<li class="pg-edit-avail-item${disabled ? ' is-disabled' : ''}" data-action="hint-avail">`;
+        html += `<li class="pg-edit-avail-item${disabled ? ' is-disabled' : ''}" data-action="hint-avail" title="${disabled ? 'No free room slot yet' : 'Tap a + on the plan to place it'}">`;
         html += `<div class="pg-thumb pg-thumb--sq">${PosterArt.html(project)}</div>`;
         html += `<span>${_escape(project.title || id)}</span>`;
         html += `</li>`;
@@ -300,14 +362,9 @@ const HomeEditView = (() => {
       html += `</ul>`;
     }
 
-    if (watchesToNext > 0) {
-      html += `<h3>Locked</h3>`;
-      html += `<p class="pg-edit-empty">🔒 Watch ${watchesToNext} more project${watchesToNext === 1 ? '' : 's'} to unlock the next room slot.</p>`;
-    }
-
     html += `<div class="pg-edit-actions">`;
-    html += `<button class="pg-btn pg-btn-cancel" type="button" id="pg-edit-cancel">Cancel</button>`;
-    html += `<button class="pg-btn pg-btn-save" type="button" id="pg-edit-save"${_saving || _loadFailed ? ' disabled' : ''}>${_saving ? 'Saving…' : 'Save'}</button>`;
+    html += `<button class="btn btn--secondary pg-btn-cancel" type="button" id="pg-edit-cancel">Cancel</button>`;
+    html += `<button class="btn btn--primary pg-btn-save" type="button" id="pg-edit-save"${_saving || _loadFailed ? ' disabled' : ''}>${_saving ? 'Saving…' : 'Save'}</button>`;
     html += `</div>`;
     html += _loadFailed
       ? `<div class="pg-edit-error" id="pg-edit-error">Couldn’t load your saved home, so saving is off (it would replace your rooms). <button class="pg-btn" type="button" id="pg-edit-retry">Retry</button></div>`
@@ -329,9 +386,15 @@ const HomeEditView = (() => {
     const gx = parseInt(target.dataset.gx, 10);
     const gy = parseInt(target.dataset.gy, 10);
     if (action === 'slot') {
+      _selected = null;
       _openPicker(gx, gy);
     } else if (action === 'room') {
-      _openRoomMenu(gx, gy);
+      const key = `${gx},${gy}`;
+      _selected = _selected === key ? null : key;
+      _render();
+    } else if (action === 'bg' && _selected != null) {
+      _selected = null;
+      _render();
     }
   }
 
@@ -343,7 +406,7 @@ const HomeEditView = (() => {
     overlay.innerHTML = `
       <div class="pg-modal pg-picker">
         <header class="pg-modal-head">
-          <h2>Pick a project for this room</h2>
+          <h2>Pick a room</h2>
           <button class="pg-modal-close" type="button" aria-label="Close">✕</button>
         </header>
         <div class="pg-modal-body">
@@ -376,45 +439,6 @@ const HomeEditView = (() => {
         _render();
       });
     });
-  }
-
-  function _openRoomMenu(gx, gy) {
-    const idx = _layout.findIndex(r => r.gx === gx && r.gy === gy);
-    if (idx === -1) return;
-    const project = _lookupProject(_layout[idx].projectId);
-    const wouldRemain = _layout.filter((_, i) => i !== idx);
-    const removable = _isConnected(wouldRemain);
-
-    const overlay = document.createElement('div');
-    overlay.className = 'pg-modal-overlay pg-roommenu-overlay';
-    overlay.innerHTML = `
-      <div class="pg-modal pg-roommenu">
-        <header class="pg-modal-head">
-          <h2>${_escape(project ? (project.title || _layout[idx].projectId) : _layout[idx].projectId)}</h2>
-          <button class="pg-modal-close" type="button" aria-label="Close">✕</button>
-        </header>
-        <div class="pg-modal-body">
-          ${removable
-            ? `<button class="pg-btn pg-btn-danger" type="button" id="pg-room-remove">Remove room</button>`
-            : `<button class="pg-btn" type="button" disabled title="Removing this room would orphan others">Remove room (would orphan)</button>`}
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    // Esc + backdrop dismiss + focus restore via the shared helper.
-    const close = wireModalDismiss(
-      overlay,
-      () => overlay.parentNode && overlay.parentNode.removeChild(overlay),
-      { initialFocus: overlay.querySelector('.pg-modal-close') }
-    );
-    overlay.querySelector('.pg-modal-close').addEventListener('click', close);
-    if (removable) {
-      overlay.querySelector('#pg-room-remove').addEventListener('click', () => {
-        _layout.splice(idx, 1);
-        close();
-        _render();
-      });
-    }
   }
 
   async function _save() {

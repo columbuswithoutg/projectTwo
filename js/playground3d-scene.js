@@ -277,7 +277,7 @@
     const v = view || { mode: 'idle' };
     const st = v.state || null;
     const secs = v.deadline ? Math.max(0, Math.ceil((v.deadline - Date.now()) / 1000)) : 0;
-    const recText = v.record ? `🏆 Record ${fmt(v.record.score)} · ${v.record.username}` : 'No record yet — be the first champion';
+    const recText = v.record ? `Record ${fmt(v.record.score)} · ${v.record.username}` : 'No record yet — be the first champion';
     ctx.save();
     ctx.clearRect(0, 0, CW, CH);
     backdrop(ctx);
@@ -292,7 +292,7 @@
       else headline(ctx, '…', 'Loading the screenshot', 400);
       pill(ctx, 24, 22, `ROUND ${Math.min(st.of, st.round + 1)}/${st.of}`, 'rgba(0,0,0,0.72)', '#ffffff', `800 30px ${UI}`);
       if (mode === 'round') {
-        pill(ctx, CW - 24, 22, `⏱ ${secs}s`, secs <= 5 ? 'rgba(200,16,46,0.9)' : 'rgba(0,0,0,0.72)', '#ffffff', `800 30px ${UI}`, true);
+        pill(ctx, CW - 24, 22, `TIME ${secs}s`, secs <= 5 ? 'rgba(200,16,46,0.9)' : 'rgba(0,0,0,0.72)', '#ffffff', `800 30px ${UI}`, true);
         // Who has locked in.
         let x = 24;
         (st.players || []).forEach((p, i) => {
@@ -336,7 +336,7 @@
       ctx.textBaseline = 'alphabetic';
       ctx.fillStyle = st.record ? '#ffd23f' : '#d6b25e';
       ctx.font = `400 104px ${DISPLAY}`;
-      ctx.fillText(st.record ? '👑 NEW ISLAND RECORD' : 'FINAL SCORES', CW / 2, 130);
+      ctx.fillText(st.record ? 'NEW ISLAND RECORD' : 'FINAL SCORES', CW / 2, 130);
       (st.ranking || []).slice(0, 5).forEach((r, i) => {
         const y = 210 + i * 98;
         ctx.fillStyle = i === 0 ? 'rgba(255,210,63,0.16)' : 'rgba(255,255,255,0.06)';
@@ -360,7 +360,7 @@
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, CW, PIC);
         contain(ctx, pick, 0, 0, CW, PIC);
-        if (v.record) pill(ctx, 24, 22, `👑 Champion's pick · ${v.record.username}`, 'rgba(0,0,0,0.72)', '#ffd23f', `800 30px ${UI}`);
+        if (v.record) pill(ctx, 24, 22, `Champion's pick · ${v.record.username}`, 'rgba(0,0,0,0.72)', '#ffd23f', `800 30px ${UI}`);
       } else {
         headline(ctx, 'SCENE GUESS', v.title || '', 330);
         ctx.fillStyle = 'rgba(236,238,243,0.7)';

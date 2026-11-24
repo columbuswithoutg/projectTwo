@@ -578,7 +578,7 @@
         <div class="admin-list">
           ${Editor._board.map(r => `
             <div class="admin-row" data-user="${esc(r.userId || '')}">
-              <span class="scn-rank">${r.rank === 1 ? '👑' : '#' + r.rank}</span>
+              <span class="scn-rank">${r.rank === 1 ? iconSvg('crown', 16) + '<span class="visually-hidden">#1</span>' : '#' + r.rank}</span>
               <div class="admin-row-main">
                 <span class="admin-username">${esc(r.username)}</span>
                 <span class="admin-row-meta">${esc(r.best.toLocaleString())} pts · ${esc(AdminView.formatDate(r.achievedAt))} · ${esc(r.plays)} game${r.plays === 1 ? '' : 's'}</span>

@@ -289,7 +289,7 @@
               ? `<button type="button" class="prq-chip-title" title="Open ${esc(t)}">${esc(t)}</button>
                  <span class="prq-chip-year">${esc(yearOf(p))}</span>
                  <button type="button" class="prq-chip-move" aria-label="Move ${esc(t)} to ${moveTo}" title="Move to ${moveTo}">⇄</button>`
-              : `<span class="prq-chip-title">⚠ ${esc(id)} — no such project</span>`}
+              : `<span class="prq-chip-title">${iconSvg('warning', 14)} ${esc(id)} — no such project</span>`}
             <button type="button" class="prq-chip-remove" aria-label="Remove ${esc(t)}" title="Remove">✕</button>
           </li>`;
       }).join('');

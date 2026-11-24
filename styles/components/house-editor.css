@@ -1,0 +1,414 @@
+/* ======================
+   HOUSE EDITOR — layout (js/house-editor.js), shared by /world houses and
+   /home rooms. Exterior / Interior tabs, light section labels, paint-chip
+   swatches, icon room tabs, a one-line hint and a Rotate / Remove bar that
+   floats next to the selected piece on the floor plan.
+   Themed with the app tokens (dark glass in Cinematic, ink + paper in
+   Comic). Base rules: legacy/18-world-hud.css; catalogue tiles + plan
+   icons: house-editor-catalog.css. This file loads after both.
+====================== */
+
+.he-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(88vh, 860px);
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--radius-panel, 14px);
+  border: 1px solid var(--border-2);
+  background: var(--modal-bg);
+  color: var(--text-1);
+  box-shadow: var(--modal-box-shadow);
+}
+[data-theme="comic"] .he-panel { border: 3px solid var(--ink); box-shadow: 6px 6px 0 var(--ink); }
+
+/* Header: title + subtitle, then Look and Close as quiet icon buttons. */
+.he-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 14px 14px 10px 16px;
+}
+.he-headtext { flex: 1; min-width: 0; }
+.he-panel .world-house-title {
+  margin: 0;
+  justify-content: flex-start;
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  font-size: 1.35rem;
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+  line-height: 1.1;
+}
+.he-panel .world-house-title .ui-icon { color: var(--highlight); }
+.he-panel .world-house-sub { margin: 3px 0 0; font-size: 0.78rem; color: var(--text-3); }
+.he-iconbtn {
+  position: static;
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin: 0;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-1);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 15px;
+  cursor: pointer;
+}
+.he-iconbtn:hover { background: var(--surface-2); color: var(--text-1); }
+.he-iconbtn:disabled { opacity: 0.4; cursor: default; }
+.he-iconbtn--sm { width: 30px; height: 30px; }
+.he-panel .popup-close { position: static; }
+
+/* Exterior / Interior: one segmented control. */
+.he-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin: 0 16px 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+}
+.he-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font: 600 0.86rem var(--font-ui);
+  cursor: pointer;
+  transition: background-color var(--dur-fast), color var(--dur-fast);
+}
+.he-tab:hover { color: var(--text-1); }
+.he-tab.active { background: var(--surface-3); color: var(--text-1); box-shadow: var(--shadow-1); }
+.he-tab.active .ui-icon { color: var(--highlight); }
+[data-theme="comic"] .he-tab.active { background: var(--highlight); color: var(--on-highlight); box-shadow: 2px 2px 0 var(--ink); }
+[data-theme="comic"] .he-tab.active .ui-icon { color: inherit; }
+.he-tab:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+.he-tabcount {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+.he-tabcount.over { background: var(--color-red); color: #fff; }
+
+/* The scrolling body of each tab. */
+.he-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 16px 14px;
+}
+.he-pane[hidden] { display: none; }
+
+/* Section labels: small caps with a hairline, no heavy boxes. */
+.he-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 8px;
+  color: var(--text-3);
+  font: 700 0.68rem var(--font-ui);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.he-label::after { content: ""; flex: 1; height: 1px; background: var(--border-1); }
+
+.he-panel .world-house-row,
+.he-panel .world-house-signrow,
+.he-panel .world-house-portraitrow { gap: 10px; margin-bottom: 10px; }
+.he-panel .world-house-label {
+  flex: 0 0 64px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+
+/* Shape chips. */
+.he-panel .world-house-chip {
+  min-height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border-2);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font: 500 0.78rem var(--font-ui);
+}
+.he-panel .world-house-chip:hover { border-color: var(--border-3); }
+.he-panel .world-house-chip.active {
+  border-color: var(--highlight);
+  background: rgba(var(--highlight-rgb), 0.16);
+  box-shadow: inset 0 0 0 1px var(--highlight);
+}
+.he-panel .world-house-chipsep { background: var(--border-2); }
+
+/* Paint chips: squares with soft corners; Auto is the same size, marked A. */
+.he-panel .world-house-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 26px);
+  gap: 6px;
+  flex: 1;
+}
+.he-panel .world-house-swatch,
+.he-panel .world-house-swatch.default {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  transition: transform var(--dur-fast);
+}
+.he-panel .world-house-swatch:hover { transform: translateY(-1px); }
+.he-panel .world-house-swatch.default {
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: 700 0.72rem var(--font-ui);
+}
+.he-panel .world-house-swatch.active {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--modal-bg, #111), 0 0 0 4px var(--highlight);
+}
+[data-theme="comic"] .he-panel .world-house-swatch { border: 2px solid var(--ink); box-shadow: none; }
+[data-theme="comic"] .he-panel .world-house-swatch.active { box-shadow: 0 0 0 2px var(--modal-bg, #fff), 0 0 0 4px var(--ink); }
+
+/* Details: sign + portrait. */
+.he-panel .world-house-signrow input {
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--border-2);
+  background: var(--surface-1);
+  color: var(--text-1);
+}
+.he-panel .world-house-portrait-thumb { border-color: var(--border-2); background-color: var(--surface-1); }
+.he-panel .world-house-portrait-hint { flex-basis: 100%; padding-left: 74px; color: var(--text-3); }
+.he-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border-2);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font: 600 0.78rem var(--font-ui);
+  cursor: pointer;
+}
+.he-btn:hover { border-color: var(--border-3); }
+
+/* Room tabs: icon over a small word, one segmented strip. */
+.he-panel .world-house-cats {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 2px;
+  margin: 12px 0 10px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+}
+.he-panel .world-house-cat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 6px 2px 5px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+  font: 600 0.66rem var(--font-ui);
+  cursor: pointer;
+}
+.he-panel .world-house-cat:hover { color: var(--text-1); }
+.he-panel .world-house-cat.active { background: var(--surface-3); color: var(--text-1); }
+.he-panel .world-house-cat.active .ui-icon { color: var(--highlight); }
+[data-theme="comic"] .he-panel .world-house-cat.active { background: var(--highlight); color: var(--on-highlight); }
+[data-theme="comic"] .he-panel .world-house-cat.active .ui-icon { color: inherit; }
+
+/* Catalogue tiles, themed. */
+.he-panel .world-house-kinds { margin: 0 0 8px; }
+.he-panel .world-house-kind {
+  border: 1px solid var(--border-2);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font: 500 0.76rem var(--font-ui);
+}
+.he-panel .world-house-kind:hover { border-color: var(--border-3); }
+.he-panel .world-house-kind.active {
+  border-color: var(--highlight);
+  background: rgba(var(--highlight-rgb), 0.16);
+  box-shadow: inset 0 0 0 1px var(--highlight);
+}
+.he-panel .world-house-kind-tool,
+.he-panel .world-house-kind-window { border-style: dashed; color: var(--text-2); }
+
+/* What a tap does now. */
+.he-hint {
+  margin: 2px 0 10px;
+  padding: 7px 10px;
+  border-left: 3px solid var(--highlight);
+  border-radius: 0 6px 6px 0;
+  background: var(--surface-1);
+  color: var(--text-2);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+/* Floor plan: warm wood, inset edge, the count above it. */
+.he-plan { position: relative; display: flex; flex-direction: column; align-items: center; }
+.he-planhead { align-self: stretch; display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.he-panel .world-house-count { font-size: 0.74rem; color: var(--text-3); margin: 0; }
+.he-panel .world-house-count.over { color: var(--color-red-light); font-weight: 700; }
+.he-panel .world-house-grid {
+  width: 100%;
+  max-width: 400px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #3a2e1e, #4a3f2c);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45), inset 0 8px 22px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.he-panel .world-house-floor { fill: transparent; }
+
+/* The bar that floats by the selected piece. */
+.he-float {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--border-2);
+  background: var(--modal-bg);
+  box-shadow: var(--shadow-2);
+  white-space: nowrap;
+}
+.he-float[hidden] { display: none; }
+[data-theme="comic"] .he-float { border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); }
+.he-floatname { padding: 0 6px 0 4px; color: var(--text-2); font: 600 0.74rem var(--font-ui); }
+.he-float .world-house-tool {
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: none;
+  background: var(--surface-2);
+  color: var(--text-1);
+  font: 600 0.76rem var(--font-ui);
+}
+.he-float .world-house-tool:hover { background: var(--surface-3); }
+.he-float .world-house-tool[hidden] { display: none; }
+.he-float .he-danger { color: var(--color-red-light); }
+
+/* The full rules, folded away. */
+.he-guide { margin-top: 12px; font-size: 0.78rem; color: var(--text-3); }
+.he-guide summary { cursor: pointer; color: var(--accent-text); font-weight: 600; width: max-content; }
+.he-guide p { margin: 8px 0 0; line-height: 1.5; }
+
+/* Footer: Cancel + Save, always visible. */
+.he-panel .world-house-actions {
+  margin: 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-1);
+  background: var(--surface-0, transparent);
+  justify-content: flex-end;
+  gap: 8px;
+}
+.he-panel .world-house-actions .btn { min-height: 38px; padding-inline: 18px; }
+.he-panel .world-house-save { box-shadow: var(--btn-shadow), 0 0 14px rgba(var(--highlight-rgb), 0.25); }
+
+/* Phones: full-height sheet. */
+@media (max-width: 560px) {
+  .he-panel { width: 100%; max-height: 100%; border-radius: 14px 14px 0 0; }
+  .he-panel .world-house-cats { grid-template-columns: repeat(3, 1fr); }
+  .he-panel .world-house-label { flex-basis: 54px; }
+  .he-panel .world-house-portrait-hint { padding-left: 64px; }
+}
+
+/* ======================
+   /home/edit — the room layout editor (js/views/home-edit.js), in the same
+   language: wood plan, selected room + floating Remove bar, count chip,
+   progress to the next room, section labels, one-line hint.
+====================== */
+.pg-edit-shell { background: var(--color-bg, #07080f); }
+.pg-edit-main { position: relative; }
+.pg-edit-grid {
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45), 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.pg-edit-bg { fill: #3a2e1e; }
+.pg-edit-line { stroke: rgba(255, 255, 255, 0.06); stroke-width: 1; }
+.pg-edit-room { cursor: pointer; }
+.pg-edit-roombox { fill: #241c12; stroke: rgba(0, 0, 0, 0.5); stroke-width: 1.5; }
+.pg-edit-roomchip { fill: rgba(0, 0, 0, 0.62); }
+.pg-edit-roomname { fill: #fff; font-family: var(--font-ui, system-ui, sans-serif); font-weight: 600; }
+.pg-edit-roomring { fill: none; stroke: transparent; stroke-width: 3; }
+.pg-edit-room:hover .pg-edit-roomring { stroke: rgba(var(--highlight-rgb), 0.5); }
+.pg-edit-room.selected .pg-edit-roomring { stroke: var(--highlight); }
+.pg-edit-room:focus-visible { outline: none; }
+.pg-edit-room:focus-visible .pg-edit-roomring { stroke: var(--accent-text); stroke-dasharray: 6 4; }
+.pg-edit-slot { cursor: pointer; }
+.pg-edit-slotbox { fill: rgba(var(--highlight-rgb), 0.08); stroke: rgba(var(--highlight-rgb), 0.6); stroke-width: 2; stroke-dasharray: 6 6; }
+.pg-edit-slotplus { stroke: var(--highlight); stroke-width: 3; stroke-linecap: round; }
+.pg-edit-slot:hover .pg-edit-slotbox { fill: rgba(var(--highlight-rgb), 0.16); }
+.pg-edit-float .world-house-tool:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.pg-edit-panel { display: flex; flex-direction: column; gap: 0; background: var(--modal-bg); }
+.pg-edit-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.pg-edit-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--display-weight);
+  font-size: 1.35rem;
+  letter-spacing: var(--display-tracking);
+  text-transform: var(--display-transform);
+}
+.pg-edit-title .ui-icon { color: var(--highlight); }
+.pg-edit-count { font-size: 0.78rem; padding: 2px 9px; }
+.pg-edit-panel .he-label { margin: 16px 0 8px; font-size: 0.68rem; }
+.pg-edit-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.pg-edit-progress span { display: block; height: 100%; border-radius: inherit; background: var(--highlight); transition: width var(--dur-base) var(--ease-out); }
+.pg-edit-panel .pg-edit-sub { margin: 6px 0 0; font-size: 0.76rem; color: var(--text-3); }
+.pg-edit-panel .pg-edit-empty { color: var(--text-3); font-size: 0.8rem; }
+.pg-edit-panel .pg-edit-available-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pg-edit-panel .pg-edit-avail-item { border-radius: 8px; border: 1px solid var(--border-1); background: var(--surface-1); }
+.pg-edit-panel .pg-edit-actions {
+  position: sticky;
+  bottom: -16px;
+  margin: auto -16px -16px;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--border-1);
+  background: var(--modal-bg);
+}
+.pg-edit-panel .pg-edit-actions .btn { min-height: 38px; padding-inline: 18px; }
+[data-theme="comic"] .pg-edit-panel { border-left: 3px solid var(--ink); }

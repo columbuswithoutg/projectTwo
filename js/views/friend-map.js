@@ -40,7 +40,7 @@ const FriendMapView = {
           </div>
         </div>
         <button id="world-view-btn" aria-label="Show world view" title="World view (W)">
-          <span aria-hidden="true">🌍</span>
+          ${iconSvg('globe', 22)}
         </button>
       </div>
     `;

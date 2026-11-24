@@ -275,6 +275,9 @@
 }
 
 #header-avatar-initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 1rem;
   color: var(--color-primary);
   pointer-events: none;
@@ -296,3 +299,6 @@
 #back-btn:hover {
   color: var(--color-primary-light);
 }
+
+/* Admin-panel gear on /profile: centre the line icon. */
+.admin-link-btn { display: inline-flex; align-items: center; justify-content: center; }

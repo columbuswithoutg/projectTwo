@@ -30,7 +30,7 @@ const WatchOrderView = {
         ${HelpCentre.buttonHtml()}
         <button id="header-profile-btn" title="Profile" aria-label="Profile">
           <img id="header-avatar" src="" alt="" style="display:none" />
-          <span id="header-avatar-initials">👤</span>
+          <span id="header-avatar-initials">${iconSvg('user', 20)}</span>
         </button>
       </header>
 

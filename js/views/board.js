@@ -160,7 +160,7 @@ const BoardView = (() => {
 
     const focused = document.activeElement?.dataset?.filter;
     const banner = state.atTimerCap()
-      ? `<p class="kb-banner" role="status">⏱ ${WatchState.MAX_RUNNING_TIMERS} timers are running — finish or cancel one to start something else.</p>`
+      ? `<p class="kb-banner" role="status">${iconSvg('timer', 18)}<span>${WatchState.MAX_RUNNING_TIMERS} timers are running — finish or cancel one to start something else.</span></p>`
       : '';
     board.innerHTML = banner + COLUMNS.map(c => {
       const total = groups[c.key].length;
@@ -365,7 +365,7 @@ const BoardView = (() => {
         ${HelpCentre.buttonHtml()}
         <button id="header-profile-btn" title="Profile" aria-label="Profile">
           <img id="header-avatar" src="" alt="" style="display:none" />
-          <span id="header-avatar-initials">👤</span>
+          <span id="header-avatar-initials">${iconSvg('user', 20)}</span>
         </button>
       </header>
       <main id="board-wrapper">

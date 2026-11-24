@@ -58,7 +58,8 @@ function setup() {
     location: { pathname: '/admin', search: '' },
     history: { state: null, replaceState() {} },
     Router: { go() {}, replaceUrl() { return true; } },
-    confirmDialog: async () => true
+    confirmDialog: async () => true,
+    iconSvg: (name) => `<svg class="ui-icon" data-icon="${name}"></svg>`   // js/utils.js global (line icons)
   };
   ctx.window = ctx; ctx.self = ctx;
   vm.createContext(ctx);

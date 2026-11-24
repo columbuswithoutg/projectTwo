@@ -27,7 +27,7 @@ const AppView = {
         ${HelpCentre.buttonHtml()}
         <button id="header-profile-btn" title="Profile" aria-label="Profile">
           <img id="header-avatar" src="" alt="" style="display:none" />
-          <span id="header-avatar-initials">👤</span>
+          <span id="header-avatar-initials">${iconSvg('user', 20)}</span>
         </button>
       </header>
 
@@ -49,7 +49,7 @@ const AppView = {
         </div>
 
         <button id="world-view-btn" aria-label="Show world view" title="World view (W)">
-          <span aria-hidden="true">🌍</span>
+          ${iconSvg('globe', 22)}
         </button>
       </div>
 

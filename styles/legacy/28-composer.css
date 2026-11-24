@@ -96,6 +96,9 @@ body.pc-open { overflow: hidden; }
   color: var(--text-2);
   font-size: var(--font-size-xs);
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .pc-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .pc-chip {
@@ -108,7 +111,11 @@ body.pc-open { overflow: hidden; }
   font-size: var(--font-size-sm);
   font-weight: 600;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
+.pc-chip .ui-icon { color: var(--text-2); }
 .pc-chip:hover, .pc-chip[aria-pressed="true"] { border-color: var(--gold-04); background: var(--gold-008); }
 .pc-caption-wrap {
   position: relative;

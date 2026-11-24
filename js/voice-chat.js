@@ -947,7 +947,7 @@ const VoiceManager = (() => {
         : '';
       rows.push(`
         <div class="pg3d-voice-debug-row mic">
-          <div class="pg3d-voice-debug-name">🎙 You <span class="pg3d-voice-badge ${micCls}">${escapeHtml(d.micState)}</span></div>
+          <div class="pg3d-voice-debug-name">${typeof iconSvg === 'function' ? iconSvg('mic', 14) : ''} You <span class="pg3d-voice-badge ${micCls}">${escapeHtml(d.micState)}</span></div>
           ${bar(d.localLevel)}
           <div class="pg3d-voice-debug-meta">
             audio: <span class="pg3d-voice-badge ${audioCls}">${escapeHtml(d.audioState || '?')}</span>

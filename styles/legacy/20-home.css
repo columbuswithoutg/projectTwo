@@ -244,3 +244,7 @@
   stroke: var(--highlight);
   stroke-width: 3;
 }
+
+/* Wave / mic line icons in the room chat row: sit centred in the round buttons. */
+.pg3d-emote .ui-icon,
+.pg3d-voice .ui-icon { display: block; margin: 0 auto; }

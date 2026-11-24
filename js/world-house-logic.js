@@ -102,12 +102,12 @@
 
   // The editor's kind picker, grouped by room. A kind can appear in several.
   const CATEGORIES = [
-    { id: 'living',  label: 'Living',  glyph: '🛋️', kinds: ['sofa', 'armchair', 'coffee_table', 'tv', 'fireplace', 'bookshelf', 'piano', 'rug', 'aquarium', 'plant', 'lamp'] },
-    { id: 'kitchen', label: 'Kitchen', glyph: '🍳', kinds: ['counter', 'sink', 'stove', 'fridge', 'table', 'chair', 'stool', 'bin', 'microwave', 'kettle', 'pots', 'toaster', 'fruitbowl', 'plates'] },
-    { id: 'bath',    label: 'Bath',    glyph: '🛁', kinds: ['toilet', 'bathtub', 'shower', 'sink', 'washer', 'towelrack', 'mirror', 'bin'] },
-    { id: 'bedroom', label: 'Bedroom', glyph: '🛏️', kinds: ['bed', 'wardrobe', 'dresser', 'nightstand', 'crib', 'petbed', 'mirror', 'rug'] },
-    { id: 'work',    label: 'Work',    glyph: '💻', kinds: ['desk', 'chair', 'laptop', 'console', 'books', 'bookshelf', 'workbench', 'treadmill', 'shoerack', 'crate'] },
-    { id: 'decor',   label: 'Decor',   glyph: '🖼️', kinds: ['frame', 'mirror', 'clock', 'curtains', 'stringlights', 'vase', 'plant', 'hangplant', 'fan', 'lamp'] }
+    { id: 'living',  label: 'Living',  kinds: ['sofa', 'armchair', 'coffee_table', 'tv', 'fireplace', 'bookshelf', 'piano', 'rug', 'aquarium', 'plant', 'lamp'] },
+    { id: 'kitchen', label: 'Kitchen', kinds: ['counter', 'sink', 'stove', 'fridge', 'table', 'chair', 'stool', 'bin', 'microwave', 'kettle', 'pots', 'toaster', 'fruitbowl', 'plates'] },
+    { id: 'bath',    label: 'Bath',    kinds: ['toilet', 'bathtub', 'shower', 'sink', 'washer', 'towelrack', 'mirror', 'bin'] },
+    { id: 'bedroom', label: 'Bedroom', kinds: ['bed', 'wardrobe', 'dresser', 'nightstand', 'crib', 'petbed', 'mirror', 'rug'] },
+    { id: 'work',    label: 'Work',    kinds: ['desk', 'chair', 'laptop', 'console', 'books', 'bookshelf', 'workbench', 'treadmill', 'shoerack', 'crate'] },
+    { id: 'decor',   label: 'Decor',   kinds: ['frame', 'mirror', 'clock', 'curtains', 'stringlights', 'vase', 'plant', 'hangplant', 'fan', 'lamp'] }
   ];
   const COLOR_SLOTS = ['wallColor', 'roofColor', 'trimColor', 'lampColor'];
 

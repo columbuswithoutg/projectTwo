@@ -22,6 +22,8 @@
  ************************************************/
 const SceneGuess = (() => {
   const L = () => window.SceneGuessLogic;
+  // A line icon (js/utils.js iconSvg) by name; '' when the helper isn't loaded (tests).
+  const ico = (name, size = 18) => (name && typeof iconSvg === 'function' ? iconSvg(name, size) : '');
   const COLORS = 6;            // .sg-c0 … .sg-c5 player colours (styles/hud/scene-guess.css)
   const ERRORS = {
     'not-here': 'Step onto the island to play.',
@@ -320,14 +322,14 @@ const SceneGuess = (() => {
 
   function onFanfare(p) {
     if (!p || p.kind !== 'record') return;
-    _postSystem(`🏆 ${p.username} set a new ${title(p.projectId)} record: ${fmt(p.score)}!`);
+    _postSystem(`New record: ${p.username} set a new ${title(p.projectId)} record: ${fmt(p.score)}!`);
     if (p.username === _me) _cfg.mine[p.projectId] = p.score;
     if (_engine && _engine.playConfetti) _engine.playConfetti(p.projectId);
   }
 
   function onArrived(p) {
     if (!p) return;
-    _postSystem(`👑 The champion of ${title(p.projectId)} has arrived — ${p.username}`);
+    _postSystem(`The champion of ${title(p.projectId)} has arrived — ${p.username}`);
     if (_engine && _engine.spotlight) _engine.spotlight(_socket && p.id === _socket.id ? 'local' : p.id, 6000);
   }
 
@@ -374,12 +376,13 @@ const SceneGuess = (() => {
     if (_engine.setSceneScreenState) for (const pid of islands) _engine.setSceneScreenState(pid, screenView(pid));
   }
 
-  // The extra line on an island's roof label (js/views/world.js _pushKeeperTags).
+  // The extra line on an island's roof label (js/views/world.js _pushKeeperTags):
+  // { sg: text, sgIcon: iconSvg name, live }.
   function tagFor(pid) {
     if (!_started || !liveIsland(pid)) return null;
     if (_cfg.live[pid] != null) return { sg: '● LIVE · Scene Guess', live: true };
     const r = _cfg.records[pid];
-    return { sg: r ? `🏆 ${fmt(r.score)} · ${r.username}` : '🎬 Scene Guess', live: false };
+    return { sg: r ? `${fmt(r.score)} · ${r.username}` : 'Scene Guess', sgIcon: r ? 'trophy' : 'film', live: false };
   }
 
   // ── the clock (4 Hz): countdowns + the auto lock-in ──
@@ -409,7 +412,7 @@ const SceneGuess = (() => {
   }
 
   // The header chip's model — only on a live island (or while I'm in a
-  // game): { text, cls, title, rank } (rank 3 my game, 2 a lobby / live game
+  // game): { text, icon, cls, title, rank } (icon: an iconSvg name) (rank 3 my game, 2 a lobby / live game
   // here, 1 idle), or null. js/island-games.js draws ONE chip for every
   // island game from these.
   function chipModel() {
@@ -418,13 +421,13 @@ const SceneGuess = (() => {
     const here = _zone ? _states.get(_zone) : null;
     if (!mine && !liveIsland(_zone)) return null;
     const title = 'Scene Guess — when in the film is this screenshot?';
-    if (mine && mine.phase === 'lobby') return { text: `🎬 Lobby · ${secsLeft(mine.deadline)}s`, cls: 'is-lobby', title, rank: 3 };
-    if (mine) return { text: '🎬 Back to your game', cls: 'is-live', title, rank: 3 };
+    if (mine && mine.phase === 'lobby') return { text: `Lobby · ${secsLeft(mine.deadline)}s`, icon: 'film', cls: 'is-lobby', title, rank: 3 };
+    if (mine) return { text: 'Back to your game', icon: 'film', cls: 'is-live', title, rank: 3 };
     if (here && here.phase === 'lobby') return { text: `● Lobby open · Join · ${secsLeft(here.deadline)}s`, cls: 'is-lobby', title, rank: 2 };
     if (here) return { text: `● LIVE · ${here.host || '…'} · ${Math.min(here.of, here.round + 1)}/${here.of} · Watch`, cls: 'is-live', title, rank: 2 };
     if (_cfg.live[_zone] != null) return { text: `● LIVE · ${_cfg.live[_zone] || '…'} · Watch`, cls: 'is-live', title, rank: 2 };
     const rec = _cfg.records[_zone];
-    return { text: rec ? `🎬 Scene Guess · 🏆 ${fmt(rec.score)}` : '🎬 Scene Guess', cls: '', title, rank: 1 };
+    return { text: rec ? `Scene Guess · record ${fmt(rec.score)}` : 'Scene Guess', icon: 'film', cls: '', title, rank: 1 };
   }
 
   // The chip itself — drawn here only when js/views/world.js passed a
@@ -442,7 +445,11 @@ const SceneGuess = (() => {
       _chip.addEventListener('click', onChip);
       _slot.appendChild(_chip);
     }
-    if (_chip.textContent !== m.text) _chip.textContent = m.text;
+    const key = (m.icon || '') + '|' + m.text;
+    if (_chip.dataset.key !== key) {
+      _chip.dataset.key = key;
+      _chip.innerHTML = `${ico(m.icon, 16)}<span>${esc(m.text)}</span>`;
+    }
     _chip.className = 'world-sg-chip ' + m.cls;
     _chip.title = m.title;
   }
@@ -543,7 +550,7 @@ const SceneGuess = (() => {
     el.innerHTML = `
       <div class="world-lb-panel sg-panel-box">
         <button class="popup-close" type="button" aria-label="Close">✕</button>
-        <h3>Scene Guess</h3>
+        <h3 class="sg-title-icon">${ico('film', 22)} Scene Guess</h3>
         <p class="world-lb-sub">${esc(title(pid))}</p>
         <p class="sg-how">10 screenshots from ${esc(title(pid))}. Mark on its timeline when each one happens — the closer you land, the more points (up to 1,000 each). Everyone on the island can join in the first ${Math.round(L().C.LOBBY_MS / 1000)} seconds.</p>
         <div class="sg-panel-record"></div>
@@ -588,8 +595,8 @@ const SceneGuess = (() => {
     const el = _panel.el;
     const rec = _cfg.records[pid];
     el.querySelector('.sg-panel-record').innerHTML = rec
-      ? `<div class="sg-record">🏆 Island record <b>${fmt(rec.score)}</b> · ${esc(rec.username)}${rec.username === _me ? ' (you — you wear the crown here)' : ''}</div>`
-      : '<div class="sg-record">🏆 No record yet — the first finished game sets it.</div>';
+      ? `<div class="sg-record">${ico('trophy', 16)} Island record <b>${fmt(rec.score)}</b> · ${esc(rec.username)}${rec.username === _me ? ' (you — you wear the crown here)' : ''}</div>`
+      : `<div class="sg-record">${ico('trophy', 16)} No record yet — the first finished game sets it.</div>`;
     const b = _panel.board;
     if (b) {
       el.querySelector('.sg-panel-board').innerHTML = b.top && b.top.length
@@ -925,7 +932,7 @@ const SceneGuess = (() => {
         return `<i style="--h:${Math.max(4, Math.round(pts / 10))}%" title="${fmt(pts)}"></i>`;
       }).join('');
       return `<li class="${p.username === _me ? 'you' : ''}">
-        <span class="sg-rank-n">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)}</span>
+        <span class="sg-rank-n${i < 3 ? ' sg-rank-' + (i + 1) : ''}">${i < 3 ? ['1st', '2nd', '3rd'][i] : '#' + (i + 1)}</span>
         <span class="sg-chip ${colorOf(st, p.username)}"><i>${esc(initials(p.username))}</i>${esc(p.username)}</span>
         <span class="sg-bars" aria-hidden="true">${bars}</span>
         <b>${fmt(p.total)}</b>
@@ -938,7 +945,7 @@ const SceneGuess = (() => {
       else beat = ` · beat ${fmt(rec.previous)}`;
     }
     const banner = rec
-      ? `<div class="sg-banner is-record">${mineRecord ? '👑 New island record — you wear the crown!' : `👑 New island record by ${esc(rec.username)}`}<span>${fmt(rec.score)}${beat}</span></div>`
+      ? `<div class="sg-banner is-record">${ico('crown', 20)} ${mineRecord ? 'New island record — you wear the crown!' : `New island record by ${esc(rec.username)}`}<span>${fmt(rec.score)}${beat}</span></div>`
       : `<div class="sg-banner">Final scores${_cfg.records[st.projectId] ? `<span>Island record ${fmt(_cfg.records[st.projectId].score)} · ${esc(_cfg.records[st.projectId].username)}</span>` : ''}</div>`;
     const island = _states.get(st.projectId);
     const canAgain = _overlay.mode === 'play' && liveIsland(st.projectId) && st.projectId === _zone;

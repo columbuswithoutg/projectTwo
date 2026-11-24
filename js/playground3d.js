@@ -3811,7 +3811,17 @@ const Playground3D = (() => {
     el.classList.toggle('unclaimed', !!tag.unclaimed);
     const l1 = el.querySelector('.pg3d-keeper-line1');
     const l2 = el.querySelector('.pg3d-keeper-line2');
-    if (l1) { l1.textContent = tag.line1 || ''; l1.style.display = tag.line1 ? '' : 'none'; }
+    if (l1) {
+      // tag.icon1: an iconSvg name before line 1 (the keeper's key). Text via
+      // textContent; only the icon markup (fixed, ours) goes through innerHTML.
+      const key = (tag.icon1 || '') + '|' + (tag.line1 || '');
+      if (l1.dataset.key !== key) {
+        l1.dataset.key = key;
+        l1.innerHTML = _hudIcon(tag.icon1, 12) + '<span></span>';
+        l1.lastChild.textContent = tag.line1 || '';
+      }
+      l1.style.display = tag.line1 ? '' : 'none';
+    }
     if (l2) { l2.textContent = tag.line2 || ''; l2.style.display = tag.line2 ? '' : 'none'; }
     // Island games, a line each: the record, or "● LIVE" while a game is on.
     // (Each keeps the .pg3d-keeper-sg look — styles/hud/scene-guess.css.)
@@ -3826,23 +3836,33 @@ const Playground3D = (() => {
     spans.forEach((sp, i) => {
       const g = games[i];
       if (!g) { sp.remove(); return; }
-      if (sp.textContent !== g.text) sp.textContent = g.text;
+      const key = (g.icon || '') + '|' + g.text;
+      if (sp.dataset.key !== key) {
+        sp.dataset.key = key;
+        sp.innerHTML = _hudIcon(g.icon, 12) + '<span></span>';
+        sp.lastChild.textContent = g.text;
+      }
       sp.classList.toggle('live', !!g.live);
       sp.dataset.kind = g.kind || '';
     });
   }
 
-  // A tag's game lines: tag.games [{ text, live, kind }], or the older single
-  // Scene Guess line (tag.sg, tag.live).
+  // A tag's game lines: tag.games [{ text, icon, live, kind }], or the older
+  // single Scene Guess line (tag.sg, tag.sgIcon, tag.live). icon: an iconSvg name.
   function _keeperGames(tag) {
     if (Array.isArray(tag.games) && tag.games.length) {
-      return tag.games.filter(g => g && g.text).map(g => ({ text: String(g.text), live: !!g.live, kind: g.kind || '' }));
+      return tag.games.filter(g => g && g.text).map(g => ({ text: String(g.text), icon: g.icon || '', live: !!g.live, kind: g.kind || '' }));
     }
-    return tag.sg ? [{ text: String(tag.sg), live: !!tag.live, kind: 'scene' }] : [];
+    return tag.sg ? [{ text: String(tag.sg), icon: tag.sgIcon || '', live: !!tag.live, kind: 'scene' }] : [];
   }
 
-  // Replace every keeper tag at once: { projectId: { line1, line2, mine,
-  // unclaimed, games: [{ text, live, kind }] (or sg + live) } }.
+  // A line icon for a HUD tag (js/utils.js iconSvg, loaded in the core chunk).
+  function _hudIcon(name, size) {
+    return name && typeof iconSvg === 'function' ? iconSvg(name, size) : '';
+  }
+
+  // Replace every keeper tag at once: { projectId: { line1, icon1, line2, mine,
+  // unclaimed, games: [{ text, icon, live, kind }] (or sg + sgIcon + live) } }.
   // Text is set via textContent, so usernames never reach innerHTML.
   function setHouseKeepers(tags) {
     _keeperTags = new Map();
@@ -4158,7 +4178,7 @@ const Playground3D = (() => {
       _seatPromptEl.style.display = 'none';
     }
     if (_input && _input.setInteractLabel) {
-      _input.setInteractLabel(_seat ? 'Stand up' : (label || null), (!_seat && target && target.sgY != null) ? (target.glyph || '🎬') : null);
+      _input.setInteractLabel(_seat ? 'Stand up' : (label || null), (!_seat && target && target.sgY != null) ? (target.glyph || 'film') : null);
     }
   }
 
@@ -5579,7 +5599,7 @@ const Playground3D = (() => {
   // games there with a handler, in order; live = the one that's on, or null;
   // call(kind) runs that game's handler. A null prompt = no prompt and no E.
   // Without a router E goes to the live game, else the first, under
-  // 'Scene Guess' / 🎬.
+  // 'Scene Guess' / the film icon.
   function setScreenRouter(router) {
     const r = router || null;
     _gs.router = r && (typeof r.interact === 'function' || typeof r.prompt === 'function') ? r : null;
@@ -5864,7 +5884,7 @@ const Playground3D = (() => {
     if (!entries.length) return;
     const kinds = entries.map(e => e.kind);
     const live = PG3DScene.liveScreenKind(entries);
-    let label = 'Scene Guess', glyph = '🎬';
+    let label = 'Scene Guess', glyph = 'film';   // glyph: an iconSvg name (js/utils.js)
     if (_gs.router && _gs.router.prompt) {
       let p;
       try { p = _gs.router.prompt(id, { kinds: kinds.slice(), live }); } catch (_) { p = undefined; }

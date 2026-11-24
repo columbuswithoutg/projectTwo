@@ -20,12 +20,12 @@ const FeedView = (() => {
   // Keys mirror REACTION_TYPES in routes/feed.js + the FeedPost enum.
   const REACTIONS = [
     // Mid-tone label colors so the text stays readable on light AND dark cards.
-    { type: 'like',  emoji: '👍', label: 'Like',  color: '#2f7ff0' },
-    { type: 'love',  emoji: '❤️', label: 'Love',  color: '#e8334f' },
-    { type: 'haha',  emoji: '😂', label: 'Haha',  color: '#c98a00' },
-    { type: 'wow',   emoji: '😮', label: 'Wow',   color: '#c98a00' },
-    { type: 'sad',   emoji: '😢', label: 'Sad',   color: '#c98a00' },
-    { type: 'angry', emoji: '😡', label: 'Angry', color: '#dd6a10' }
+    { type: 'like',  icon: 'like',  label: 'Like',  color: '#2f7ff0' },
+    { type: 'love',  icon: 'heart', label: 'Love',  color: '#e8334f' },
+    { type: 'haha',  icon: 'haha',  label: 'Haha',  color: '#c98a00' },
+    { type: 'wow',   icon: 'wow',   label: 'Wow',   color: '#c98a00' },
+    { type: 'sad',   icon: 'sad',   label: 'Sad',   color: '#c98a00' },
+    { type: 'angry', icon: 'angry', label: 'Angry', color: '#dd6a10' }
   ];
   const HOVER_OPEN_MS = 450;
   const LONG_PRESS_MS = 450;
@@ -175,9 +175,11 @@ const FeedView = (() => {
   /* ---------- Reactions ---------- */
 
   const reactionMeta = (type) => REACTIONS.find(r => r.type === type) || REACTIONS[0];
+  // A reaction's line icon, tinted with its colour.
+  const reactionIcon = (r, size) => `<span class="feed-reaction-icon" style="color:${r.color}">${iconSvg(r.icon, size)}</span>`;
 
   // "You and 3 others" / "elsid and 2 others" / "elsid" — plus the top three
-  // reaction emoji, most-used first.
+  // reaction icons, most-used first.
   function reactionSummaryHtml(post) {
     const list = post.reactions;
     if (!list.length) return '';
@@ -192,7 +194,7 @@ const FeedView = (() => {
     return `
       <button type="button" class="feed-reaction-summary" aria-label="Reactions: ${esc(label)}">
         <span class="feed-reaction-stack" aria-hidden="true">
-          ${top.map(t => `<span class="feed-reaction-bubble">${reactionMeta(t).emoji}</span>`).join('')}
+          ${top.map(t => `<span class="feed-reaction-bubble">${reactionIcon(reactionMeta(t), 13)}</span>`).join('')}
         </span>
         <span>${text}</span>
       </button>
@@ -210,10 +212,10 @@ const FeedView = (() => {
 
   function reactButtonHtml(post) {
     if (!post.myReaction) {
-      return `<span class="feed-react-emoji" aria-hidden="true">👍</span><span>Like</span>`;
+      return `<span class="feed-react-emoji" aria-hidden="true">${iconSvg('like', 18)}</span><span>Like</span>`;
     }
     const m = reactionMeta(post.myReaction);
-    return `<span class="feed-react-emoji" aria-hidden="true">${m.emoji}</span><span style="color:${m.color}">${m.label}</span>`;
+    return `<span class="feed-react-emoji" aria-hidden="true">${reactionIcon(m, 18)}</span><span style="color:${m.color}">${m.label}</span>`;
   }
 
   function showReactorsModal(post) {
@@ -235,7 +237,7 @@ const FeedView = (() => {
             <button type="button" role="tab" data-filter="all" aria-selected="${filter === 'all'}">All ${post.reactions.length}</button>
             ${types.map(t => `
               <button type="button" role="tab" data-filter="${t.type}" aria-selected="${filter === t.type}" aria-label="${t.label}">
-                ${t.emoji} ${post.reactions.filter(r => r.type === t.type).length}
+                ${reactionIcon(t, 16)} ${post.reactions.filter(r => r.type === t.type).length}
               </button>`).join('')}
           </div>
           <ul class="feed-reactors-list">
@@ -243,7 +245,7 @@ const FeedView = (() => {
               <li>
                 <span class="feed-reactor-avatar">
                   ${avatar(r.user, 'md')}
-                  <span class="feed-reactor-badge" aria-label="${reactionMeta(r.type).label}">${reactionMeta(r.type).emoji}</span>
+                  <span class="feed-reactor-badge" role="img" aria-label="${reactionMeta(r.type).label}">${reactionIcon(reactionMeta(r.type), 12)}</span>
                 </span>
                 ${r.user.username === me ? '<span class="feed-name">You</span>' : nameLink(r.user.username)}
               </li>`).join('')}
@@ -268,7 +270,7 @@ const FeedView = (() => {
     const project = projectFor(post.projectId);
     const rewatch = post.kind === 'watch' && post.count > 1 ? ` · ${ordinal(post.count)} watch` : '';
     const memoryBadge = post.kind === 'watch' && post.memories.length
-      ? ` · 📸 ${post.memories.length} ${post.memories.length > 1 ? 'memories' : 'memory'}` : '';
+      ? ` · ${post.memories.length} ${post.memories.length > 1 ? 'memories' : 'memory'}` : '';
     const n = post.comments.length;
     return `
       <article class="feed-card" data-post-id="${esc(post.id)}">
@@ -292,7 +294,7 @@ const FeedView = (() => {
             <div class="feed-reaction-picker" role="menu" aria-label="Reactions" hidden>
               ${REACTIONS.map(r => `
                 <button type="button" role="menuitem" class="feed-reaction-option" data-type="${r.type}" aria-label="${r.label}">
-                  <span class="feed-reaction-option-emoji">${r.emoji}</span>
+                  <span class="feed-reaction-option-emoji" aria-hidden="true">${reactionIcon(r, 24)}</span>
                   <span class="feed-reaction-option-label">${r.label}</span>
                 </button>`).join('')}
             </div>
@@ -570,7 +572,7 @@ const FeedView = (() => {
     const hasFriends = _friendNames.size > 0;
     _root.querySelector('.feed-list').innerHTML = `
       <div class="feed-empty">
-        <div class="feed-empty-icon" aria-hidden="true">🍿</div>
+        <div class="feed-empty-icon" aria-hidden="true">${iconSvg('film', 44)}</div>
         <h2>Your feed is quiet</h2>
         <p>${hasFriends
           ? "When you or your friends watch something, it'll show up here."
@@ -656,7 +658,7 @@ const FeedView = (() => {
         ${HelpCentre.buttonHtml()}
         <button id="header-profile-btn" title="Profile" aria-label="Profile">
           <img id="header-avatar" src="" alt="" style="display:none" />
-          <span id="header-avatar-initials">👤</span>
+          <span id="header-avatar-initials">${iconSvg('user', 20)}</span>
         </button>
       </header>
       <main id="feed-wrapper">

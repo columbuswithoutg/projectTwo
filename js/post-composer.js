@@ -130,12 +130,12 @@ const PostComposer = (() => {
               <div class="pc-who-text">
                 <strong>${esc(me)}</strong>
                 <span class="pc-watched">${mode === 'edit' ? 'Posted' : 'Watched'} <b>${watchedLine}</b></span>
-                <span class="pc-audience" title="Your friends see this in their feed">👥 Friends</span>
+                <span class="pc-audience" title="Your friends see this in their feed">${iconSvg('people', 14)}Friends</span>
               </div>
             </div>
             <div class="pc-chips" role="toolbar" aria-label="Add to your post">
-              <button type="button" class="pc-chip" data-act="tag" aria-pressed="false">👥 Tag friends</button>
-              <button type="button" class="pc-chip" data-act="media">🖼 Photo / video</button>
+              <button type="button" class="pc-chip" data-act="tag" aria-pressed="false">${iconSvg('user-plus', 16)}Tag friends</button>
+              <button type="button" class="pc-chip" data-act="media">${iconSvg('image', 16)}Photo / video</button>
             </div>
             <label class="pc-caption-wrap">
               <span class="pc-sr">Caption</span>

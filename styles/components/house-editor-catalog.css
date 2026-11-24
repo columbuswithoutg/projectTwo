@@ -1,0 +1,69 @@
+/* ======================
+   HOUSE EDITOR — catalogue tiles + line icons (js/house-editor.js)
+   The furniture picker shows names only, as a grid of text tiles; the
+   tools and the floor plan use iconSvg() line icons instead of emoji.
+   The base .world-house* rules live in legacy/18-world-hud.css; this
+   layer (components) wins over them. The panel is dark in both themes.
+====================== */
+
+/* Icon + word buttons. */
+.world-house-title,
+.world-house-peek,
+.world-house-peekpill,
+.world-house-tool,
+.world-house-kind-tool,
+.world-house-kind-window {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.world-house-peekpill { display: none; }
+.world-house.peeking .world-house-peekpill { display: inline-flex; }
+.world-house .ui-icon { flex-shrink: 0; }
+.world-house-title .ui-icon { color: #ffd740; }
+
+/* Catalogue: tidy grid of name tiles. */
+.world-house-kinds {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 6px;
+}
+.world-house-kind {
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  text-align: center;
+  text-transform: none;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.world-house-kind:hover { border-color: rgba(255, 215, 64, 0.55); }
+.world-house-kind:focus-visible { outline: 2px solid #ffd740; outline-offset: 1px; }
+
+/* Floor plan: short name labels on the pieces. */
+.world-house-proplabel {
+  fill: #fff;
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.6);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+/* Plan icons (door, game screen, windows) are nested line-icon SVGs. The
+   older cell rules style every `rect` in a cell, so the icon's own shapes
+   are reset here (!important also beats the hud layer's sg-screen rule). */
+.world-house-planicon { pointer-events: none; color: rgba(255, 255, 255, 0.85); }
+.world-house-wall.locked .world-house-planicon { color: #ffd740; }
+.world-house-window .world-house-planicon { color: #cfe6ff; }
+.world-house-window.selected .world-house-planicon { color: #ffd740; }
+.world-house-planicon rect,
+.world-house-planicon path {
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 1.8 !important;
+  stroke-dasharray: none !important;
+}

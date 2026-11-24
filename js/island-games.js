@@ -6,10 +6,10 @@
  *   - E / the touch button (Playground3D.setScreenRouter): a game that's on
  *     takes E straight away; with one game there E opens it; with both idle
  *     E opens the PICKER — two tiles, keys 1 / 2, Esc to close
- *   - the prompt: that game's name, or "Play a game" 🎮
+ *   - the prompt: that game's name, or "Play a game" (gamepad icon)
  *   - the ONE header chip (#world-sg-slot): each game offers a model
- *     (hud.chip(): text, rank); my game > a lobby / live game here > idle
- *     games (two idle games: "🎮 2 games here", which opens the picker)
+ *     (hud.chip(): text, icon, rank); my game > a lobby / live game here > idle
+ *     games (two idle games: "2 games here", which opens the picker)
  *   - the roof label's game lines (tagFor): only the live game's line while
  *     one runs, otherwise one line per game
  * One game per island at a time is enforced by the server
@@ -17,10 +17,11 @@
  ************************************************/
 const IslandGames = (() => {
   let _engine = null, _host = null, _chip = null, _ticker = null, _picker = null, _zone = null, _started = false;
-  let _games = [];      // [{ kind, name, icon, blurb, hud }]
+  let _games = [];      // [{ kind, name, icon, blurb, hud }] — icon: an iconSvg name (js/utils.js)
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const byKind = (kind) => _games.find(g => g.kind === kind) || null;
+  const ico = (name, size = 16) => (name && typeof iconSvg === 'function' ? iconSvg(name, size) : '');
 
   function start(opts) {
     stop();
@@ -64,7 +65,7 @@ const IslandGames = (() => {
     const kinds = (ctx && ctx.kinds) || [];
     const one = ctx && ctx.live ? byKind(ctx.live) : kinds.length === 1 ? byKind(kinds[0]) : null;
     if (one) return { label: one.name, glyph: one.icon };
-    if (kinds.length > 1) return { label: 'Play a game', glyph: '🎮' };
+    if (kinds.length > 1) return { label: 'Play a game', glyph: 'gamepad' };
     return null;
   }
 
@@ -89,10 +90,10 @@ const IslandGames = (() => {
           ${games.map((g, i) => {
             const rec = g.hud.record ? g.hud.record(pid) : null;
             return `<button type="button" class="ig-tile" data-kind="${esc(g.kind)}">
-              <span class="ig-tile-icon" aria-hidden="true">${esc(g.icon)}</span>
+              <span class="ig-tile-icon" aria-hidden="true">${ico(g.icon, 30)}</span>
               <b>${esc(g.name)}</b>
               <span>${esc(g.blurb)}</span>
-              <small>${rec ? `🏆 ${fmt(rec.score)} · ${esc(rec.username)}` : 'No record yet'}</small>
+              <small>${rec ? `${ico('trophy', 13)} ${fmt(rec.score)} · ${esc(rec.username)}` : 'No record yet'}</small>
               <kbd aria-hidden="true">${i + 1}</kbd>
             </button>`;
           }).join('')}
@@ -140,9 +141,10 @@ const IslandGames = (() => {
     models.sort((a, b) => b.m.rank - a.m.rank);
     const top = models[0];
     const idle = models.filter(x => x.m.rank === 1);
-    let text = top.m.text, cls = top.m.cls || '', title = top.m.title || '', onClick = () => top.g.hud.chipClick();
+    let text = top.m.text, icon = top.m.icon || '', cls = top.m.cls || '', title = top.m.title || '', onClick = () => top.g.hud.chipClick();
     if (top.m.rank === 1 && idle.length > 1) {
-      text = `🎮 ${idle.length} games here`;
+      text = `${idle.length} games here`;
+      icon = 'gamepad';
       cls = '';
       title = idle.map(x => x.g.name).join(' or ');
       onClick = () => openPicker(_zone, idle.map(x => x.g.kind), (kind) => byKind(kind).hud.chipClick());
@@ -154,28 +156,35 @@ const IslandGames = (() => {
       _host.appendChild(_chip);
     }
     _chip._go = onClick;
-    if (_chip.textContent !== text) _chip.textContent = text;
+    const key = icon + '|' + text;
+    if (_chip.dataset.key !== key) {
+      _chip.dataset.key = key;
+      _chip.innerHTML = `${ico(icon)}<span>${esc(text)}</span>`;
+    }
     _chip.className = 'world-sg-chip ' + cls;
     _chip.title = title;
   }
 
   // ── the roof label ──
 
-  // → { games: [{ text, live, kind }] } | null. While a game is on, only its line.
+  // → { games: [{ text, icon, live, kind }] } | null (icon: an iconSvg name). While a game is on, only its line.
   function tagFor(pid) {
     if (!_started) return null;
     const lines = [];
     for (const g of _games) {
       const t = g.hud.tagFor ? g.hud.tagFor(pid) : null;
       if (!t) continue;
-      lines.push(Object.assign(t.text != null ? Object.assign({}, t) : { text: t.sg, live: !!t.live, kind: g.kind }, { icon: g.icon }));
+      const line = t.text != null ? Object.assign({}, t) : { text: t.sg, icon: t.sgIcon, live: !!t.live, kind: g.kind };
+      line.icon = line.live ? '' : (line.icon || g.icon);   // "● LIVE" lines carry no icon
+      line.gameIcon = g.icon;
+      lines.push(line);
     }
     if (!lines.length) return null;
     const live = lines.filter(l => l.live);
     if (live.length) return { games: live };
     // Two records on one roof: each starts with its game's icon, so it's
-    // clear which record is whose (Scene Guess alone keeps its 🏆).
-    if (lines.length > 1) lines.forEach(l => { l.text = l.text.replace(/^🏆 /, l.icon + ' '); });
+    // clear which record is whose (Scene Guess alone keeps its trophy).
+    if (lines.length > 1) lines.forEach(l => { l.icon = l.gameIcon; });
     return { games: lines };
   }
 

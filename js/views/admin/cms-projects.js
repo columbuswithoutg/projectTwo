@@ -157,7 +157,7 @@
         const total = eps.reduce((a, b) => a + b, 0);
         return `${eps.length} eps · ${WatchControls.fmtRuntime(total)}`;
       }
-      return item.runtime > 0 ? WatchControls.fmtRuntime(item.runtime) : '⚠ not set';
+      return item.runtime > 0 ? WatchControls.fmtRuntime(item.runtime) : 'not set';
     },
 
     // "53, 55, 51" → [53, 55, 51]; null if any entry isn't a positive number.

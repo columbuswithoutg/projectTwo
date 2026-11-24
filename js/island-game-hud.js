@@ -27,6 +27,10 @@
  * own owner (Playground3D.setInputSuspended(on, kind)).
  ************************************************/
 const IslandGameHud = (() => {
+  // A line icon (js/utils.js iconSvg) by name; '' when the helper isn't loaded (tests).
+  const ico = (name, size = 18) => (name && typeof iconSvg === 'function' ? iconSvg(name, size) : '');
+  // 1st / 2nd / 3rd for the podium (.sg-rank-1 … 3 colour them), #4 after.
+  const rankLabel = (i) => (i < 3 ? ['1st', '2nd', '3rd'][i] : '#' + (i + 1));
   const COLORS = 6;            // .sg-c0 … .sg-c5 player colours (styles/hud/scene-guess.css)
   const BASE_ERRORS = {
     'not-here': 'Step onto the island to play.',
@@ -304,14 +308,14 @@ const IslandGameHud = (() => {
 
     function onFanfare(p) {
       if (!p || p.kind !== 'record') return;
-      _postSystem(`${spec.recordEmoji || '🏆'} ${p.username} set a new ${spec.name} record on ${title(p.projectId)}: ${fmt(p.score)}!`);
+      _postSystem(`New record: ${p.username} set a new ${spec.name} record on ${title(p.projectId)}: ${fmt(p.score)}!`);
       if (p.username === _me) _cfg.mine[p.projectId] = p.score;
       if (_engine && _engine.playConfetti) _engine.playConfetti(p.projectId);
     }
 
     function onArrived(p) {
       if (!p) return;
-      _postSystem(`${spec.crownEmoji || '👑'} The ${spec.name} champion of ${title(p.projectId)} has arrived — ${p.username}`);
+      _postSystem(`The ${spec.name} champion of ${title(p.projectId)} has arrived — ${p.username}`);
       if (_engine && _engine.spotlight) _engine.spotlight(_socket && p.id === _socket.id ? 'local' : p.id, 6000);
     }
 
@@ -357,12 +361,13 @@ const IslandGameHud = (() => {
       for (const pid of islands) _engine.setScreenState(spec.kind, pid, screenView(pid));
     }
 
-    // This game's line on an island's roof label: { text, live, kind } | null.
+    // This game's line on an island's roof label: { text, icon, live, kind } | null
+    // (icon: an iconSvg name drawn before the text).
     function tagFor(pid) {
       if (!_started || !liveIsland(pid)) return null;
       if (_cfg.live[pid] != null) return { text: `● LIVE · ${spec.name}`, live: true, kind: spec.kind };
       const r = _cfg.records[pid];
-      return { text: r ? `${spec.icon} ${fmt(r.score)} · ${r.username}` : `${spec.icon} ${spec.name}`, live: false, kind: spec.kind };
+      return { text: r ? `${fmt(r.score)} · ${r.username}` : spec.name, icon: spec.icon, live: false, kind: spec.kind };
     }
 
     // ── the clock (4 Hz) ──
@@ -387,22 +392,22 @@ const IslandGameHud = (() => {
       changed();
     }
 
-    // The header chip's model (js/island-games.js draws it): { text, cls,
-    // title, rank } — rank 3 my game, 2 a lobby / live game here, 1 this
+    // The header chip's model (js/island-games.js draws it): { text, icon, cls,
+    // title, rank } (icon: an iconSvg name drawn before the text) — rank 3 my game, 2 a lobby / live game here, 1 this
     // game is playable here, 0.5 the game's own extra (e.g. suggestions).
     function chip() {
       if (!_started) return null;
       const mine = myGame();
       const here = _zone ? _states.get(_zone) : null;
       const tip = spec.chipTitle || spec.name;
-      if (mine && mine.phase === 'lobby') return { text: `${spec.icon} Lobby · ${secsLeft(mine.deadline)}s`, cls: 'is-lobby', title: tip, rank: 3 };
-      if (mine) return { text: `${spec.icon} Back to your game`, cls: 'is-live', title: tip, rank: 3 };
+      if (mine && mine.phase === 'lobby') return { text: `Lobby · ${secsLeft(mine.deadline)}s`, icon: spec.icon, cls: 'is-lobby', title: tip, rank: 3 };
+      if (mine) return { text: 'Back to your game', icon: spec.icon, cls: 'is-live', title: tip, rank: 3 };
       if (here && here.phase === 'lobby') return { text: `● ${spec.name} lobby · Join · ${secsLeft(here.deadline)}s`, cls: 'is-lobby', title: tip, rank: 2 };
       if (here) return { text: `● LIVE · ${here.host || '…'} · ${Math.min(here.of, here.round + 1)}/${here.of} · Watch`, cls: 'is-live', title: tip, rank: 2 };
       if (liveIsland(_zone) && _cfg.live[_zone] != null) return { text: `● LIVE · ${_cfg.live[_zone] || '…'} · Watch`, cls: 'is-live', title: tip, rank: 2 };
       if (liveIsland(_zone)) {
         const rec = _cfg.records[_zone];
-        return { text: rec ? `${spec.icon} ${spec.name} · ${spec.recordEmoji || '🏆'} ${fmt(rec.score)}` : `${spec.icon} ${spec.name}`, cls: '', title: tip, rank: 1 };
+        return { text: rec ? `${spec.name} · record ${fmt(rec.score)}` : spec.name, icon: spec.icon, cls: '', title: tip, rank: 1 };
       }
       const extra = spec.extraChip ? spec.extraChip(_zone, h) : null;
       return extra ? Object.assign({ cls: '', title: tip, rank: 0.5 }, extra) : null;
@@ -513,7 +518,7 @@ const IslandGameHud = (() => {
       el.innerHTML = `
         <div class="world-lb-panel sg-panel-box">
           <button class="popup-close" type="button" aria-label="Close">✕</button>
-          <h3>${esc(spec.icon)} ${esc(spec.name)}</h3>
+          <h3 class="sg-title-icon">${ico(spec.icon, 22)} ${esc(spec.name)}</h3>
           <p class="world-lb-sub">${esc(title(pid))}</p>
           <div class="sg-how">${spec.howHtml(pid, h)}</div>
           <div class="sg-panel-record"></div>
@@ -559,8 +564,8 @@ const IslandGameHud = (() => {
       const rec = _cfg.records[pid];
       el.querySelector('.sg-panel-record').innerHTML = !live ? ''
         : rec
-          ? `<div class="sg-record">${spec.recordEmoji || '🏆'} Island record <b>${fmt(rec.score)}</b> · ${esc(rec.username)}${rec.username === _me ? ` (you — you wear the ${esc(spec.crownWord || 'crown')} here)` : ''}</div>`
-          : '<div class="sg-record">🏆 No record yet — the first finished game sets it.</div>';
+          ? `<div class="sg-record">${ico(spec.recordIcon || 'trophy', 16)} Island record <b>${fmt(rec.score)}</b> · ${esc(rec.username)}${rec.username === _me ? ` (you — you wear the ${esc(spec.crownWord || 'crown')} here)` : ''}</div>`
+          : `<div class="sg-record">${ico(spec.recordIcon || 'trophy', 16)} No record yet — the first finished game sets it.</div>`;
       const b = _panel.board;
       if (b && live) {
         el.querySelector('.sg-panel-board').innerHTML = b.top && b.top.length
@@ -746,7 +751,7 @@ const IslandGameHud = (() => {
           return `<i style="--h:${Math.max(4, Math.round(pts / 10))}%" title="${fmt(pts)}"></i>`;
         }).join('');
         return `<li class="${p.username === _me ? 'you' : ''}">
-          <span class="sg-rank-n">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)}</span>
+          <span class="sg-rank-n${i < 3 ? ' sg-rank-' + (i + 1) : ''}">${rankLabel(i)}</span>
           <span class="sg-chip ${colorOf(st, p.username)}"><i>${esc(initials(p.username))}</i>${esc(p.username)}</span>
           <span class="sg-bars" aria-hidden="true">${bars}</span>
           <b>${fmt(p.total)}</b>
@@ -760,7 +765,7 @@ const IslandGameHud = (() => {
       }
       const cw = spec.crownWord || 'crown';
       const banner = rec
-        ? `<div class="sg-banner is-record">${mineRecord ? `${spec.crownEmoji || '👑'} New island record — you wear the ${esc(cw)}!` : `${spec.crownEmoji || '👑'} New island record by ${esc(rec.username)}`}<span>${fmt(rec.score)}${beat}</span></div>`
+        ? `<div class="sg-banner is-record">${ico(spec.crownIcon || 'crown', 20)} ${mineRecord ? `New island record — you wear the ${esc(cw)}!` : `New island record by ${esc(rec.username)}`}<span>${fmt(rec.score)}${beat}</span></div>`
         : `<div class="sg-banner">Final scores${_cfg.records[st.projectId] ? `<span>Island record ${fmt(_cfg.records[st.projectId].score)} · ${esc(_cfg.records[st.projectId].username)}</span>` : ''}</div>`;
       const island = _states.get(st.projectId);
       const canAgain = _overlay.mode === 'play' && liveIsland(st.projectId) && st.projectId === _zone;

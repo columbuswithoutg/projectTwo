@@ -149,8 +149,8 @@ const HomeView = {
           <div class="world-chat-log" id="world-chat-log" aria-live="polite"></div>
           <div class="world-chat-inputrow">
             <input class="pg3d-chat" id="world-chat-input" placeholder="Say something…" maxlength="200" autocomplete="off" />
-            <button class="pg3d-emote" id="world-emote-btn" type="button" aria-label="Wave">👋</button>
-            <button class="pg3d-voice" id="world-voice-btn" type="button" aria-label="Toggle voice chat" aria-pressed="false" title="Voice chat (off)">🎙️</button>
+            <button class="pg3d-emote" id="world-emote-btn" type="button" aria-label="Wave">${iconSvg('wave', 20)}</button>
+            <button class="pg3d-voice" id="world-voice-btn" type="button" aria-label="Toggle voice chat" aria-pressed="false" title="Voice chat (off)">${iconSvg('mic', 20)}</button>
           </div>
         </div>
       `);

@@ -569,3 +569,22 @@ body.pg-input-suspended :is(.pg-joy, .pg-jump, .pg-punch, .pg-sit, .pg-fullscree
 .world-house-wall.sg-screen { cursor: not-allowed; }
 .world-house-wall.sg-screen rect { fill: #2a2236; stroke: rgba(214, 178, 94, 0.6); stroke-dasharray: 3 2; }
 .world-house-wall.sg-screen text { pointer-events: none; }
+
+/* ── Line icons (iconSvg) in the island-game HUD (Scene / Quote Guess) ── */
+.world-sg-chip { display: inline-flex; align-items: center; gap: 6px; }
+.world-sg-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.world-sg-chip .ui-icon,
+.sg-btn .ui-icon { flex-shrink: 0; }
+.sg-btn .ui-icon { vertical-align: -0.2em; margin-right: 4px; }
+.sg-title-icon { display: flex; align-items: center; gap: 8px; }
+.sg-title-icon .ui-icon { flex-shrink: 0; }
+:is(.sg-record, .qg-credit, .ig-tile small) .ui-icon { vertical-align: -0.2em; flex-shrink: 0; }
+.sg-banner .ui-icon { flex-shrink: 0; margin: 0 auto 2px; }   /* its own row above the title (the banner is a column) */
+/* Podium places as words (1st / 2nd / 3rd) instead of medal pictures. */
+.sg-rank-n { font: 800 13px/1 var(--font-ui); letter-spacing: 0.02em; color: var(--hud-muted); }
+.sg-rank-n.sg-rank-1 { color: #ffd23f; }
+.sg-rank-n.sg-rank-2 { color: #c9d1dc; }
+.sg-rank-n.sg-rank-3 { color: #d89a5b; }
+[data-theme="comic"] .sg-rank-n.sg-rank-1 { color: #9a6300; }
+[data-theme="comic"] .sg-rank-n.sg-rank-2 { color: #55606e; }
+[data-theme="comic"] .sg-rank-n.sg-rank-3 { color: #8a4a12; }

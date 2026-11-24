@@ -90,9 +90,9 @@ const WorldView = (() => {
           <button class="world-house-btn" id="world-house-btn" type="button" hidden
                   title="You keep this house — decorate it">Edit house</button>
           <button class="world-snap-btn" id="world-snap-btn" type="button" hidden
-                  title="Snap! (G)">✊ SNAP</button>
+                  title="Snap! (G)">${iconSvg('fist', 16)}<span>SNAP</span></button>
           <button class="world-stone-chip" id="world-stone-chip" type="button" hidden
-                  title="Infinity Stones you hold — tap for the snap leaderboard">💎 0/6</button>
+                  title="Infinity Stones you hold — tap for the snap leaderboard">${iconSvg('gem', 16)}<span class="world-stone-count">0/6</span></button>
           ${HelpCentre.buttonHtml('world')}
         </div>
       </header>
@@ -117,8 +117,8 @@ const WorldView = (() => {
             <button class="world-chat-clear" id="world-chat-clear" type="button" aria-label="Clear message">✕</button>
           </div>
           <button class="world-chat-send" id="world-chat-send" type="button" aria-label="Send message" title="Send (Enter)">➤</button>
-          <button class="pg3d-emote" id="world-emote-btn" type="button" aria-label="Wave">👋</button>
-          <button class="pg3d-voice" id="world-voice-btn" type="button" aria-label="Toggle voice chat" aria-pressed="false" title="Voice chat (off)">🎙️</button>
+          <button class="pg3d-emote" id="world-emote-btn" type="button" aria-label="Wave" title="Wave">${iconSvg('wave', 20)}</button>
+          <button class="pg3d-voice" id="world-voice-btn" type="button" aria-label="Toggle voice chat" aria-pressed="false" title="Voice chat (off)">${iconSvg('mic', 20)}</button>
         </div>
       </div>
     `;
@@ -265,8 +265,8 @@ const WorldView = (() => {
           engine: Playground3D,
           chipHost,
           games: [
-            { kind: 'scene', name: 'Scene Guess', icon: '🎬', blurb: 'When in the film is this screenshot?', hud: SceneGuess },
-            { kind: 'quote', name: 'Quote Guess', icon: '💬', blurb: "Who said it — and what's the reply?", hud: QuoteGuess }
+            { kind: 'scene', name: 'Scene Guess', icon: 'film', blurb: 'When in the film is this screenshot?', hud: SceneGuess },
+            { kind: 'quote', name: 'Quote Guess', icon: 'chat', blurb: "Who said it — and what's the reply?", hud: QuoteGuess }
           ]
         });
       }
@@ -333,7 +333,8 @@ const WorldView = (() => {
     const n = Playground3D.getLocalStoneCount ? Playground3D.getLocalStoneCount() : 0;
     const chip = document.getElementById('world-stone-chip');
     if (chip) {
-      chip.textContent = `💎 ${n}/6`;
+      const count = chip.querySelector('.world-stone-count');
+      if (count) count.textContent = `${n}/6`;
       chip.classList.toggle('complete', n >= 6);
     }
     const snapBtn = document.getElementById('world-snap-btn');
@@ -373,12 +374,12 @@ const WorldView = (() => {
     if (iSnapped && payload.scored === false) {
       // Server didn't add it to the leaderboard (routes/world-socket.js).
       toast(payload.unscoredReason === 'alone'
-        ? "✨ You snapped — but nobody else is here, so it doesn't count on the leaderboard."
-        : "✨ You snapped — too soon after the last round to count on the leaderboard (rounds need a minute).",
+        ? "You snapped — but nobody else is here, so it doesn't count on the leaderboard."
+        : "You snapped — too soon after the last round to count on the leaderboard (rounds need a minute).",
         { type: 'info', duration: 6000 });
-    } else if (iSnapped) toast('✨ You snapped! Half the world turned to dust.', { type: 'success', duration: 5000 });
-    else if (iDusted) toast(picking ? '💨 You were dusted — pick where to reassemble.' : '💨 You were dusted — reassembling at the start.', { type: 'warn', duration: 5000 });
-    else toast('✨ Someone snapped. You survived.', { type: 'info', duration: 4000 });
+    } else if (iSnapped) toast('You snapped! Half the world turned to dust.', { type: 'success', duration: 5000 });
+    else if (iDusted) toast(picking ? 'You were dusted — pick where to reassemble.' : 'You were dusted — reassembling at the start.', { type: 'warn', duration: 5000 });
+    else toast('Someone snapped. You survived.', { type: 'info', duration: 4000 });
   }
 
   let _snapHinted = false;
@@ -422,7 +423,7 @@ const WorldView = (() => {
     overlay.innerHTML = `
       <div class="world-lb-panel">
         <button class="popup-close" aria-label="Close">✕</button>
-        <h3>✊ Snap Leaderboard</h3>
+        <h3 class="world-lb-title">${iconSvg('fist', 22)} Snap Leaderboard</h3>
         <p class="world-lb-sub">Grab all six stones — punch to steal them — then snap to dust half the room.</p>
         <div class="world-lb-rows">Loading…</div>
       </div>
@@ -448,7 +449,7 @@ const WorldView = (() => {
         <div class="world-lb-row${r.you ? ' you' : ''}">
           <span class="world-lb-rank">${i + 1}</span>
           <span class="world-lb-name">${esc(r.username)}${r.you ? ' (you)' : ''}</span>
-          <span class="world-lb-score" title="Lifetime snaps">✊ ${r.snaps}</span>
+          <span class="world-lb-score" title="Lifetime snaps">${iconSvg('fist', 14)} ${r.snaps}</span>
         </div>
       `).join('');
     } catch (_) {
@@ -544,13 +545,13 @@ const WorldView = (() => {
       const here = p.id === _zone;
       const mineMs = _myStay(p.id);
       if (!k) {
-        if (here) tags[p.id] = { line1: '🔑 Unclaimed', line2: `you ${_fmtStay(mineMs)} · stay to claim it`, unclaimed: true };
+        if (here) tags[p.id] = { line1: 'Unclaimed', icon1: 'key', line2: `you ${_fmtStay(mineMs)} · stay to claim it`, unclaimed: true };
         continue;
       }
       const mine = !!(_houseMe && k.userId === _houseMe);
       tags[p.id] = mine
-        ? { line1: `🔑 You · ${_fmtStay(Math.max(k.ms, mineMs))}`, line2: 'you keep this house', mine: true }
-        : { line1: `🔑 ${k.username} · ${_fmtStay(k.ms)}`,
+        ? { line1: `You · ${_fmtStay(Math.max(k.ms, mineMs))}`, icon1: 'key', line2: 'you keep this house', mine: true }
+        : { line1: `${k.username} · ${_fmtStay(k.ms)}`, icon1: 'key',
             line2: (here || mineMs) ? `you ${_fmtStay(mineMs)}` : '' };
     }
     // The island games add their record (or "● LIVE") lines — on live
@@ -677,14 +678,14 @@ const WorldView = (() => {
       // toward taking the house) never does — with a fill showing how close.
       const my = _myStay(_zone);
       const pct = Math.min(1, my / Math.max(1, k.ms));
-      label.innerHTML = `<span class="world-house-keeper-name">🔑 ${esc(k.username)} · ${_fmtStay(k.ms)}</span>`
+      label.innerHTML = `<span class="world-house-keeper-name">${iconSvg('key', 14)} ${esc(k.username)} · ${_fmtStay(k.ms)}</span>`
         + `<span class="world-house-keeper-you" style="--pct:${pct.toFixed(3)}">you ${_fmtStay(my)}</span>`;
       label.title = `${k.username} keeps ${_projectTitle(_zone)} with ${_fmtStay(k.ms)} here · you ${_fmtStay(my)}. The longest stay (moving or chatting) keeps the house.`;
     } else {
       // Unclaimed: progress toward the minimum stay that claims it.
       const my = _myStay(_zone);
       const pct = Math.min(1, my / Math.max(1, _minKeeperMs));
-      label.innerHTML = `<span class="world-house-keeper-name">🔑 Unclaimed</span>`
+      label.innerHTML = `<span class="world-house-keeper-name">${iconSvg('key', 14)} Unclaimed</span>`
         + `<span class="world-house-keeper-you" style="--pct:${pct.toFixed(3)}">you ${_fmtStay(my)} / ${_fmtStay(_minKeeperMs)}</span>`;
       label.title = `Nobody keeps ${_projectTitle(_zone)} yet — stay ${_fmtStay(_minKeeperMs)} (moving or chatting) to claim it; the longest stay keeps it.`;
     }
@@ -766,7 +767,8 @@ const WorldView = (() => {
       overlay.setAttribute('aria-modal', 'true');
       overlay.setAttribute('aria-label', mode === 'respawn' ? 'Choose where to reassemble' : 'Choose where to start');
 
-      const heading = mode === 'respawn' ? '💨 Reassemble where?' : (houses.length ? '🏠 Where do you want to start?' : '🌍 Where to?');
+      const heading = mode === 'respawn' ? `${iconSvg('wind', 22)} Reassemble where?`
+        : (houses.length ? `${iconSvg('home', 22)} Where do you want to start?` : `${iconSvg('globe', 22)} Where to?`);
       const sub = mode === 'respawn'
         ? (houses.length ? 'Come back at a house you keep, or at the start of an island.' : 'Your islands aren’t connected by road — pick where to come back.')
         : (houses.length ? 'Start at a house you keep, or at the start of an island.' : 'Your watched locations aren’t all connected by road — pick where to start.');
@@ -778,7 +780,7 @@ const WorldView = (() => {
             <span class="world-spawn-name">${esc(title)}</span>
             <span class="world-spawn-count">${sub2}</span>
           </button>`;
-      const houseCards = houses.map(h => card(h.id, h.image, h.title, `🔑 you keep this · ${esc(WorldHouseLogic.formatStay(h.ms))}`, ' world-spawn-house')).join('');
+      const houseCards = houses.map(h => card(h.id, h.image, h.title, `${iconSvg('key', 13)} you keep this · ${esc(WorldHouseLogic.formatStay(h.ms))}`, ' world-spawn-house')).join('');
       const islandCards = islands.map((isl) => {
         const a = isl.anchor;
         const n = isl.nodes.length;
@@ -789,7 +791,7 @@ const WorldView = (() => {
       overlay.innerHTML = `
         <div class="world-spawn-panel">
           <button class="popup-close" aria-label="Close">✕</button>
-          <h3>${heading}</h3>
+          <h3 class="world-spawn-title">${heading}</h3>
           <p class="world-spawn-sub">${sub}</p>
           ${houses.length ? `<h4 class="world-spawn-section">Your houses</h4><div class="world-spawn-grid">${houseCards}</div><h4 class="world-spawn-section">Islands</h4>` : ''}
           <div class="world-spawn-grid">${islandCards}</div>
@@ -832,8 +834,8 @@ const WorldView = (() => {
     const hint = document.createElement('div');
     hint.className = 'world-hint';
     hint.innerHTML = coarse
-      ? `<span class="world-hint-icon">🕹️</span> Joystick to move · ⤒ jump · 👊 punch · 🪑 sit / lie down near a chair or bed · pinch to zoom · chat tabs for World / Project / Whisper`
-      : `<span class="world-hint-icon">⌨️</span> <b>WASD</b> to move · <b>Space</b> to jump · <b>F</b> to punch · <b>E</b> to sit / lie down · drag to look · <b>/w name</b> to whisper (offline players get it in Messages)`;
+      ? `<span class="world-hint-icon">${iconSvg('gamepad', 16)}</span> Joystick to move · ⤒ jump · ${iconSvg('fist', 14)} punch · ${iconSvg('chair', 14)} sit / lie down near a chair or bed · pinch to zoom · chat tabs for World / Project / Whisper`
+      : `<span class="world-hint-icon">${iconSvg('keyboard', 16)}</span> <b>WASD</b> to move · <b>Space</b> to jump · <b>F</b> to punch · <b>E</b> to sit / lie down · drag to look · <b>/w name</b> to whisper (offline players get it in Messages)`;
     _stage.appendChild(hint);
     requestAnimationFrame(() => hint.classList.add('show'));
 
@@ -873,7 +875,7 @@ const WorldView = (() => {
         _voiceBtn.classList.toggle('idle', !inZone);
         _voiceBtn.setAttribute('aria-label', `Voice on — ${where}. Click to mute; right-click or long-press for diagnostics.`);
         _voiceBtn.title = `Voice on — ${where} · click to mute · right-click for diagnostics`;
-        _voiceBtn.textContent = '🎙️';
+        _voiceBtn.innerHTML = iconSvg('mic', 20);
         break;
       case 'listen-only':
         _voiceBtn.setAttribute('aria-pressed', 'true');
@@ -881,21 +883,22 @@ const WorldView = (() => {
         _voiceBtn.classList.toggle('idle', !inZone);
         _voiceBtn.setAttribute('aria-label', `Listen-only — mic blocked, others can’t hear you (${where}). Right-click or long-press for diagnostics.`);
         _voiceBtn.title = (msg || 'Listen-only — mic blocked') + ` · ${where} · right-click for diagnostics`;
-        _voiceBtn.textContent = '🎧';
+        _voiceBtn.innerHTML = iconSvg('headphones', 20);
         break;
       case 'error':
         _voiceBtn.setAttribute('aria-pressed', 'false');
         _voiceBtn.classList.add('voice-error');
         _voiceBtn.setAttribute('aria-label', msg || 'Voice chat error');
         _voiceBtn.title = msg || 'Voice chat error';
-        _voiceBtn.textContent = '🎙️';
+        _voiceBtn.innerHTML = iconSvg('mic-off', 20);
         break;
       case 'off':
       default:
         _voiceBtn.setAttribute('aria-pressed', 'false');
         _voiceBtn.setAttribute('aria-label', 'Turn on voice chat');
         _voiceBtn.title = 'Voice chat (off)';
-        _voiceBtn.textContent = '🎙️';
+        // Plain mic like /home's button; aria-pressed styling shows it's off.
+        _voiceBtn.innerHTML = iconSvg('mic', 20);
     }
   }
 

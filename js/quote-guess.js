@@ -23,6 +23,8 @@ const QuoteGuess = (() => {
   const Q = () => window.QuoteGuessLogic;
   const S = () => window.SceneGuessLogic;
   const H = IslandGameHud;
+  // A line icon (js/utils.js iconSvg) by name; '' when the helper isn't loaded (tests).
+  const ico = (name, size = 16) => (typeof iconSvg === 'function' ? iconSvg(name, size) : '');
   const esc = H.esc, fmt = H.fmt;
   const KEYS = { 1: 'a', 2: 'b', 3: 'c', 4: 'd', a: 'a', b: 'b', c: 'c', d: 'd' };
 
@@ -230,7 +232,7 @@ const QuoteGuess = (() => {
       r.reveal.innerHTML = `
         <div class="qg-said">${face(rv.speaker, rv.characterId, 28)}<span>${reply ? 'Replied by' : 'Said by'} <b>${esc(rv.speaker || '')}</b>${rv.note ? ` · ${esc(rv.note)}` : ''}${Number.isInteger(rv.episode) ? ` · ${epLabel(rv.episode)}` : ''}</span></div>
         ${line}
-        ${rv.credit ? `<div class="qg-credit">💬 Line suggested by @${esc(rv.credit)}</div>` : ''}`;
+        ${rv.credit ? `<div class="qg-credit">${ico('chat', 14)} Line suggested by @${esc(rv.credit)}</div>` : ''}`;
     } else if (m && m.choice) {
       const waiting = st.players.filter(p => !p.locked && !(st.away || []).includes(p.username)).length;
       r.reveal.innerHTML = `<span class="qg-res">${m.sending ? 'Locking in…' : `Locked in ✓${waiting ? ` · waiting for ${waiting} more` : ''}`}</span>`;
@@ -284,7 +286,7 @@ const QuoteGuess = (() => {
 
   function panelExtras(pid, ctx, h) {
     let out = '';
-    if (canSuggest(pid, h)) out += '<button type="button" class="sg-btn" data-act="suggest">💬 Suggest a line</button>';
+    if (canSuggest(pid, h)) out += `<button type="button" class="sg-btn" data-act="suggest">${ico('chat')} Suggest a line</button>`;
     if (ctx.champion && ctx.idle) out += '<button type="button" class="sg-btn" data-act="featured">Change featured line</button>';
     return out;
   }
@@ -358,7 +360,7 @@ const QuoteGuess = (() => {
     el.innerHTML = `
       <div class="world-lb-panel qg-suggest-box">
         <button class="popup-close" type="button" aria-label="Close">✕</button>
-        <h3>💬 Suggest a line</h3>
+        <h3 class="sg-title-icon">${ico('chat', 22)} Suggest a line</h3>
         <p class="world-lb-sub">${esc(p.title)}</p>
         <form class="qg-sform" novalidate>
           <datalist id="qg-names">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
@@ -443,7 +445,7 @@ const QuoteGuess = (() => {
         if (!_sug || _sug.el !== el) return;
         if (res.ok) {
           el.querySelector('.qg-suggest-box').innerHTML = `
-            <h3>💬 Thanks!</h3>
+            <h3 class="sg-title-icon">${ico('chat', 22)} Thanks!</h3>
             <p class="qg-thanks">Your line from <b>${esc(p.title)}</b> is waiting for review. Once an admin approves it, it joins the game with your name on it.</p>
             <div class="qg-sactions">
               <button type="button" class="sg-btn" data-act="again">Suggest another</button>
@@ -469,12 +471,12 @@ const QuoteGuess = (() => {
   const hud = H.create({
     kind: 'quote',
     name: 'Quote Guess',
-    icon: '💬',
+    icon: 'chat',               // iconSvg names (js/utils.js)
     blurb: 'Who said it?',
     chipTitle: "Quote Guess — who said it, and what's the reply?",
     crownWord: 'laurels',
-    crownEmoji: '🌿',
-    recordEmoji: '🏆',
+    crownIcon: 'laurel',
+    recordIcon: 'trophy',
     api: 'quote',
     cssClass: 'is-quote',
     Logic: () => window.QuoteGuessLogic,
@@ -529,7 +531,7 @@ const QuoteGuess = (() => {
     panelAllowed: (pid, h) => canSuggest(pid, h),
     extraChip(pid, h) {
       if (!canSuggest(pid, h)) return null;
-      return { text: '💬 Suggest a quote', title: 'Suggest a line from this film or show for Quote Guess' };
+      return { text: 'Suggest a quote', icon: 'chat', title: 'Suggest a line from this film or show for Quote Guess' };
     },
     howHtml,
     panelExtras,
@@ -541,7 +543,7 @@ const QuoteGuess = (() => {
     onKey,
     pointsOf: (hh, username) => { const p = (hh.picks || []).find(x => x.username === username); return p ? p.points : 0; },
     renderPicks,
-    resultsActions: (st, h) => canSuggest(st.projectId, h) ? '<button type="button" class="sg-btn" data-act="suggest">💬 Suggest a line</button>' : '',
+    resultsActions: (st, h) => canSuggest(st.projectId, h) ? `<button type="button" class="sg-btn" data-act="suggest">${ico('chat')} Suggest a line</button>` : '',
     onResultsAction(act, st, h) {
       if (act === 'suggest') { h.closeOverlay(); openSuggest(st.projectId, h); }
     },

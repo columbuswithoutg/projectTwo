@@ -398,13 +398,13 @@
         const names = ids.map(id => (_itemById(id) || {}).title || id).map(esc).join(', ');
         return `cell (${gx}, ${gy}): ${names}`;
       }).join(' · ');
-      _shell.warn.innerHTML = `⚠ Overlapping projects — drag one apart before saving. ${cellList}`;
+      _shell.warn.innerHTML = `${iconSvg('warning', 16)} Overlapping projects — drag one apart before saving. ${cellList}`;
       _shell.warn.hidden = false;
     } else if (crowded.length) {
       // Not a blocker: the roads still route, they're just squeezed.
       const ids = [...new Set(crowded.flatMap(c => c.roads.flatMap(k => k.split('__'))))];
       const names = ids.slice(0, 6).map(id => (_itemById(id) || {}).title || id).map(esc).join(', ');
-      _shell.warn.innerHTML = `⚠ ${crowded.length} crowded gap${crowded.length > 1 ? 's' : ''} (red) — more than ${RoadRouter.MAX_LANES} roads side by side. Spreading these projects out gives the roads room: ${names}${ids.length > 6 ? '…' : ''}`;
+      _shell.warn.innerHTML = `${iconSvg('warning', 16)} ${crowded.length} crowded gap${crowded.length > 1 ? 's' : ''} (red) — more than ${RoadRouter.MAX_LANES} roads side by side. Spreading these projects out gives the roads room: ${names}${ids.length > 6 ? '…' : ''}`;
       _shell.warn.hidden = false;
     } else {
       _shell.warn.hidden = true;

@@ -46,18 +46,33 @@ const HouseEditor = (() => {
       for (const f of ROOF_FIELDS) draft[f] = r[f];
     }
     const hex = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
-    const GLYPH = {
-      chair: '🪑', table: '🍽️', frame: '🖼️', plant: '🪴', lamp: '💡', rug: '🟫', bookshelf: '📚', crate: '📦', bed: '🛏️',
-      sofa: '🛋️', armchair: '💺', stool: '⚪', coffee_table: '☕', desk: '🖥️', dresser: '🗄️', nightstand: '🕯️', workbench: '🔨',
-      counter: '🔪', sink: '🚰', stove: '🍳', fridge: '🧊', washer: '🧺', bin: '🗑️',
-      toilet: '🚽', bathtub: '🛁', shower: '🚿', wardrobe: '👔', crib: '🍼', petbed: '🐾',
-      tv: '📺', fireplace: '🔥', piano: '🎹', aquarium: '🐠', shoerack: '👟', treadmill: '🏃',
-      mirror: '🪞', clock: '🕐', curtains: '🎭', towelrack: '🧻', stringlights: '✨', fan: '🌀', hangplant: '🌿',
-      microwave: '📟', kettle: '🫖', pots: '🥘', fruitbowl: '🍎', plates: '🥣', toaster: '🍞', vase: '💐', laptop: '💻', console: '🎮', books: '📖',
-      select: '👆', window: '🪟'
+    // Display names for each prop kind: [catalogue name, short plan label].
+    // The plan's wall hangings, ceiling things and things on a surface are
+    // small badges, so their short label is two letters (the tooltip and the
+    // count line give the full name). The kinds themselves stay the stored ids.
+    const NAMES = {
+      chair: ['Chair', 'Chair'], table: ['Table', 'Table'], plant: ['Plant', 'Plant'], lamp: ['Lamp', 'Lamp'],
+      rug: ['Rug', 'Rug'], bookshelf: ['Bookshelf', 'Shelf'], crate: ['Crate', 'Crate'], bed: ['Bed', 'Bed'],
+      sofa: ['Sofa', 'Sofa'], armchair: ['Armchair', 'Armchr'], stool: ['Stool', 'Stool'], coffee_table: ['Coffee table', 'Coffee'],
+      desk: ['Desk', 'Desk'], dresser: ['Dresser', 'Dresser'], nightstand: ['Nightstand', 'Night'], workbench: ['Workbench', 'Bench'],
+      counter: ['Counter', 'Countr'], sink: ['Sink', 'Sink'], stove: ['Stove', 'Stove'], fridge: ['Fridge', 'Fridge'],
+      washer: ['Washer', 'Washer'], bin: ['Bin', 'Bin'], toilet: ['Toilet', 'Toilet'], bathtub: ['Bathtub', 'Bath'],
+      shower: ['Shower', 'Shower'], wardrobe: ['Wardrobe', 'Wardrb'], crib: ['Crib', 'Crib'], petbed: ['Pet bed', 'Pet'],
+      tv: ['TV', 'TV'], fireplace: ['Fireplace', 'Fire'], piano: ['Piano', 'Piano'], aquarium: ['Aquarium', 'Fish'],
+      shoerack: ['Shoe rack', 'Shoes'], treadmill: ['Treadmill', 'Tread'],
+      frame: ['Picture frame', 'Fr'], mirror: ['Mirror', 'Mi'], clock: ['Clock', 'Cl'], curtains: ['Curtains', 'Cu'],
+      towelrack: ['Towel rack', 'Tw'], stringlights: ['String lights', 'Li'],
+      fan: ['Ceiling fan', 'Fn'], hangplant: ['Hanging plant', 'Hp'],
+      microwave: ['Microwave', 'Mw'], kettle: ['Kettle', 'Kt'], pots: ['Pots', 'Po'], fruitbowl: ['Fruit bowl', 'Fb'],
+      plates: ['Plates', 'Pl'], toaster: ['Toaster', 'To'], vase: ['Vase', 'Va'], laptop: ['Laptop', 'Lp'],
+      console: ['Games console', 'Gc'], books: ['Books', 'Bk']
     };
-    const kindName = (k) => String(k).replace(/_/g, ' ');
+    const kindName = (k) => (NAMES[k] ? NAMES[k][0] : String(k).replace(/_/g, ' '));
+    const kindLower = (k) => (k === 'tv' ? 'TV' : kindName(k).toLowerCase());
+    const shortName = (k) => (NAMES[k] ? NAMES[k][1] : kindName(k).slice(0, 5));
     const maxProps = () => opts.maxProps();
+    // Room tab icons (iconSvg names).
+    const CAT_ICONS = { living: 'sofa', kitchen: 'pot', bath: 'bath', bedroom: 'bed', work: 'desk', decor: 'frame' };
     const roofLabel = sharedRoof ? 'Roof (whole home)' : 'Roof';
     const SLOTS = [['wallColor', 'Walls'], ['roofColor', roofLabel], ['trimColor', 'Trim'], ['lampColor', 'Lamps']];
     // Shape / finish rows: [field, label, [[value, caption, title], …]].
@@ -108,8 +123,8 @@ const HouseEditor = (() => {
       <div class="world-house-row" data-slot="${slot}">
         <span class="world-house-label">${name}</span>
         <div class="world-house-swatches">
-          <button type="button" class="world-house-swatch default" data-idx="" title="Default">Auto</button>
-          ${L.PALETTE.map((c, i) => `<button type="button" class="world-house-swatch" data-idx="${i}" style="background:${hex(c)}" title="Colour ${i + 1}"></button>`).join('')}
+          <button type="button" class="world-house-swatch default" data-idx="" title="Auto: the ${unit}'s own colour" aria-label="Auto colour">A</button>
+          ${L.PALETTE.map((c, i) => `<button type="button" class="world-house-swatch" data-idx="${i}" style="background:${hex(c)}" title="Colour ${i + 1}" aria-label="Colour ${i + 1}"></button>`).join('')}
         </div>
       </div>`).join('');
     const styleRows = STYLE_ROWS.map(([field, name, opts]) => `
@@ -127,44 +142,67 @@ const HouseEditor = (() => {
             <button type="button" class="world-house-chip" data-winauto title="Let the house pick: one window on each long stretch of wall">Auto</button>` : ''}
         </div>
       </div>`).join('');
+    // Two modes, like the big house builders: Exterior (shape, colours, sign)
+    // and Interior (furniture on the floor plan). A one-line hint follows the
+    // tool; the full rules sit behind "How it works".
     overlay.innerHTML = `
-      <div class="world-house-panel">
-        <button class="popup-close" aria-label="Close">✕</button>
-        <h3>🏠 ${esc(opts.title)}</h3>
-        <p class="world-house-sub">${esc(opts.subtitle)}</p>
-        <button type="button" class="world-house-tool world-house-peek" data-peek="on" title="Hide the panel to look at the ${unit}">👁 Look at the ${unit}</button>
-        <div class="world-house-styles">${styleRows}</div>
-        <div class="world-house-colors">${swatchRows}</div>
-        <label class="world-house-signrow">
-          <span class="world-house-label">Sign</span>
-          <input type="text" id="world-house-sign" maxlength="${L.C.SIGN_MAX}" placeholder="Name over the door" autocomplete="off" />
-        </label>
-        <div class="world-house-portraitrow">
-          <span class="world-house-label">Portrait</span>
-          <span class="world-house-portrait-thumb" id="world-house-portrait-thumb" aria-hidden="true"></span>
-          <label class="world-house-tool world-house-upload">
-            <span id="world-house-upload-text">Upload photo</span>
-            <input type="file" id="world-house-portrait-file" accept="image/*" hidden />
-          </label>
-          <button type="button" class="world-house-tool" id="world-house-portrait-remove" title="Remove the portrait">🗑</button>
-          <span class="world-house-portrait-hint" id="world-house-portrait-hint"></span>
+      <div class="world-house-panel he-panel">
+        <header class="he-head">
+          <div class="he-headtext">
+            <h3 class="world-house-title">${iconSvg('home', 18)}<span>${esc(opts.title)}</span></h3>
+            <p class="world-house-sub">${esc(opts.subtitle)}</p>
+          </div>
+          <button type="button" class="he-iconbtn world-house-peek" data-peek="on" title="Hide the panel to look at the ${unit}" aria-label="Look at the ${unit}">${iconSvg('eye', 18)}</button>
+          <button class="he-iconbtn popup-close" aria-label="Close">✕</button>
+        </header>
+        <div class="he-tabs" role="tablist" aria-label="Edit">
+          <button type="button" class="he-tab" role="tab" id="he-tab-exterior" data-pane="exterior" aria-controls="he-pane-exterior">${iconSvg('house', 16)}<span>Exterior</span></button>
+          <button type="button" class="he-tab" role="tab" id="he-tab-interior" data-pane="interior" aria-controls="he-pane-interior">${iconSvg('sofa', 16)}<span>Interior</span><span class="he-tabcount" id="he-tabcount"></span></button>
         </div>
-        <div class="world-house-props">
-          <div class="world-house-cats">
-            ${L.CATEGORIES.map(c => `<button type="button" class="world-house-cat" data-cat="${c.id}">${c.glyph} ${c.label}</button>`).join('')}
+        <section class="he-pane" id="he-pane-exterior" role="tabpanel" aria-labelledby="he-tab-exterior">
+          <h4 class="he-label">Shape</h4>
+          <div class="world-house-styles">${styleRows}</div>
+          <h4 class="he-label">Colours</h4>
+          <div class="world-house-colors">${swatchRows}</div>
+          <h4 class="he-label">Details</h4>
+          <label class="world-house-signrow">
+            <span class="world-house-label">Sign</span>
+            <input type="text" id="world-house-sign" maxlength="${L.C.SIGN_MAX}" placeholder="Name over the door" autocomplete="off" />
+          </label>
+          <div class="world-house-portraitrow">
+            <span class="world-house-label">Portrait</span>
+            <span class="world-house-portrait-thumb" id="world-house-portrait-thumb" aria-hidden="true"></span>
+            <label class="he-btn world-house-upload">
+              ${iconSvg('image', 15)}<span id="world-house-upload-text">Upload photo</span>
+              <input type="file" id="world-house-portrait-file" accept="image/*" hidden />
+            </label>
+            <button type="button" class="he-iconbtn he-iconbtn--sm" id="world-house-portrait-remove" title="Remove the portrait" aria-label="Remove the portrait">${iconSvg('trash', 15)}</button>
+            <span class="world-house-portrait-hint" id="world-house-portrait-hint"></span>
+          </div>
+        </section>
+        <section class="he-pane world-house-props" id="he-pane-interior" role="tabpanel" aria-labelledby="he-tab-interior" hidden>
+          <div class="world-house-cats" role="group" aria-label="Room">
+            ${L.CATEGORIES.map(c => `<button type="button" class="world-house-cat" data-cat="${c.id}">${iconSvg(CAT_ICONS[c.id] || 'house', 18)}<span>${c.label}</span></button>`).join('')}
           </div>
           <div class="world-house-kinds" id="world-house-kinds"></div>
-          <div class="world-house-tools">
-            <button type="button" class="world-house-tool" data-tool="rotate" title="Rotate the selected prop">↻ Rotate</button>
-            <button type="button" class="world-house-tool" data-tool="remove" title="Remove the selected prop or window">Remove</button>
-            <span class="world-house-count" id="world-house-count"></span>
+          <p class="he-hint" id="he-hint" aria-live="polite"></p>
+          <div class="he-plan">
+            <div class="he-planhead"><span class="world-house-count" id="world-house-count"></span></div>
+            <svg class="world-house-grid" viewBox="0 0 ${RING * CELL} ${RING * CELL}" role="img" aria-label="House floor plan with walls"></svg>
+            <div class="he-float world-house-tools" id="he-float" hidden>
+              <span class="he-floatname" id="he-floatname"></span>
+              <button type="button" class="world-house-tool" data-tool="rotate" title="Rotate the selected piece">${iconSvg('rotate-cw', 15)}<span>Rotate</span></button>
+              <button type="button" class="world-house-tool he-danger" data-tool="remove" title="Remove the selected piece or window">${iconSvg('trash', 15)}<span>Remove</span></button>
+            </div>
           </div>
-          <p class="world-house-hint">Pick a room, pick a piece, tap a floor cell to place it; tap a piece to select it (👆 Select always selects). Furniture on an edge cell stands against that wall. Pieces of one kind side by side <b>join</b> — tables, counters with a sink and stove, sofas (an L makes a sectional), beds, wardrobes, rugs. Rugs go under furniture, pictures and clocks hang on the nearest wall, fans and hanging plants go on the ceiling, and kitchenware, a laptop or a vase stand on a table, counter or desk — tap that cell. Beds, tubs and treadmills take two cells. The outer ring is the wall: pick 🪟 and tap it to place windows. 🚪 ${unit === 'room' ? 'marks a doorway to the next room' : 'is the door'} — it's fixed. Top of the plan is north. Tap a fridge, TV, fire, tap or wardrobe in the 3D view and press E to use it.</p>
-          <svg class="world-house-grid" viewBox="0 0 ${RING * CELL} ${RING * CELL}" role="img" aria-label="House floor plan with walls"></svg>
-        </div>
+          <details class="he-guide">
+            <summary>How it works</summary>
+            <p>Pick a room, pick a piece, tap a floor cell to place it; tap a piece to select it (<b>Select</b> always selects). Furniture on an edge cell stands against that wall. Pieces of one kind side by side <b>join</b> — tables, counters with a sink and stove, sofas (an L makes a sectional), beds, wardrobes, rugs. Rugs go under furniture, pictures and clocks hang on the nearest wall, fans and hanging plants go on the ceiling, and kitchenware, a laptop or a vase stand on a table, counter or desk — tap that cell. Beds, tubs and treadmills take two cells. The outer ring is the wall: pick <b>Window</b> and tap it to place windows. The door cell ${unit === 'room' ? 'marks a doorway to the next room' : 'is the door'} — it's fixed. Top of the plan is north. Tap a fridge, TV, fire, tap or wardrobe in the 3D view and press E to use it.</p>
+          </details>
+        </section>
         <div class="world-house-actions">
-          <button type="button" class="world-house-cancel">Cancel</button>
-          <button type="button" class="world-house-save">Save</button>
+          <button type="button" class="btn btn--secondary world-house-cancel">Cancel</button>
+          <button type="button" class="btn btn--primary world-house-save">Save</button>
         </div>
       </div>
     `;
@@ -172,7 +210,7 @@ const HouseEditor = (() => {
     peekPill.type = 'button';
     peekPill.className = 'world-house-peekpill';
     peekPill.setAttribute('data-peek', 'off');
-    peekPill.textContent = '✏️ Back to editing';
+    peekPill.innerHTML = `${iconSvg('pencil', 16)}<span>Back to editing</span>`;
     overlay.appendChild(peekPill);
     document.body.appendChild(overlay);
     // Show the house from outside while editing (the keeper is standing
@@ -180,6 +218,51 @@ const HouseEditor = (() => {
     if (Playground3D.setHouseShowcase) Playground3D.setHouseShowcase(projectId);
 
     const grid = overlay.querySelector('.world-house-grid');
+    const plan = overlay.querySelector('.he-plan');
+    const floatBar = overlay.querySelector('#he-float');
+    const floatName = overlay.querySelector('#he-floatname');
+    const hintEl = overlay.querySelector('#he-hint');
+    const tabCount = overlay.querySelector('#he-tabcount');
+    // The last tab used stays picked for the next open (this page visit).
+    let pane = HouseEditor._lastPane || (unit === 'room' ? 'interior' : 'exterior');
+    function renderPane() {
+      overlay.querySelectorAll('.he-tab').forEach((t) => {
+        const on = t.getAttribute('data-pane') === pane;
+        t.classList.toggle('active', on);
+        t.setAttribute('aria-selected', String(on));
+        t.tabIndex = on ? 0 : -1;
+      });
+      overlay.querySelectorAll('.he-pane').forEach((p) => { p.hidden = p.id !== 'he-pane-' + pane; });
+      placeFloat();
+    }
+    // One line on what a tap does right now.
+    function hintText() {
+      if (selectedProp >= 0 && draft.props[selectedProp]) return 'Rotate or remove it with the bar on the plan, or tap another piece.';
+      if (selectedWindow >= 0) return 'Remove it with the bar on the plan, or tap another window.';
+      if (selectedKind === 'select') return 'Tap a piece on the plan to select it.';
+      if (selectedKind === 'window') return draft.wallStyle === 'glass' ? 'Glass walls are see-through already. Pick another wall finish to add windows.' : 'Tap the outer wall ring to add a window. Top of the plan is north.';
+      const name = kindLower(selectedKind), layer = L.layerOf(selectedKind);
+      if (layer === 'hung') return `Tap near a wall to hang the ${name}.`;
+      if (layer === 'ceil') return `Tap a cell to put the ${name} on the ceiling.`;
+      if (layer === 'top') return `Tap a table, counter or desk to stand the ${name} on it.`;
+      if (layer === 'rug') return 'Tap a cell to lay the rug. Furniture can stand on it.';
+      if (L.PROP_SPAN && L.PROP_SPAN[selectedKind] > 1) return `Tap a floor cell to place the ${name}. It takes two cells.`;
+      return `Tap a floor cell to place the ${name}.`;
+    }
+    // The Rotate / Remove bar floats next to the selected piece on the plan.
+    function placeFloat() {
+      const el = grid.querySelector('.world-house-prop.selected, .world-house-window.selected');
+      if (!el || pane !== 'interior') { floatBar.hidden = true; return; }
+      floatBar.hidden = false;
+      const pr = plan.getBoundingClientRect(), r = el.getBoundingClientRect();
+      const fw = floatBar.offsetWidth, fh = floatBar.offsetHeight;
+      let top = r.top - pr.top - fh - 6;
+      if (top < 0) top = r.bottom - pr.top + 6;
+      const left = Math.max(0, Math.min(pr.width - fw, r.left - pr.left + r.width / 2 - fw / 2));
+      floatBar.style.top = top + 'px';
+      floatBar.style.left = left + 'px';
+    }
+    window.addEventListener('resize', placeFloat);
     const signInput = overlay.querySelector('#world-house-sign');
     const countEl = overlay.querySelector('#world-house-count');
     signInput.value = draft.sign || '';
@@ -227,11 +310,11 @@ const HouseEditor = (() => {
     function renderKindChips() {
       const cat = L.CATEGORIES.find(c => c.id === selectedCat) || L.CATEGORIES[0];
       overlay.querySelectorAll('.world-house-cat').forEach((b) => b.classList.toggle('active', b.getAttribute('data-cat') === cat.id));
-      const chip = (k, extra) => `<button type="button" class="world-house-kind${extra || ''}" data-kind="${k}" title="${kindName(k)}">${GLYPH[k] || '▪'} ${kindName(k)}</button>`;
+      const chip = (k) => `<button type="button" class="world-house-kind" data-kind="${k}" title="${esc(kindName(k))}">${esc(kindName(k))}</button>`;
       overlay.querySelector('#world-house-kinds').innerHTML =
         cat.kinds.map(k => chip(k)).join('') +
-        chip('select', ' world-house-kind-tool').replace('>👆 select<', '>👆 Select<') +
-        `<button type="button" class="world-house-kind world-house-kind-window" data-kind="window" title="Place a window on the wall ring">${GLYPH.window} window</button>`;
+        `<button type="button" class="world-house-kind world-house-kind-tool" data-kind="select" title="Tap pieces to select them without placing anything">${iconSvg('pointer', 15)}<span>Select</span></button>` +
+        `<button type="button" class="world-house-kind world-house-kind-window" data-kind="window" title="Place a window on the wall ring">${iconSvg('window', 15)}<span>Window</span></button>`;
       if (draft.wallStyle === 'glass') overlay.querySelector('.world-house-kind[data-kind="window"]').classList.add('dimmed');
     }
     function renderKinds() {
@@ -240,10 +323,15 @@ const HouseEditor = (() => {
       });
       const n = draft.props.length;
       const w = draft.windows == null ? 'auto' : `${draft.windows.length}/${L.C.MAX_WINDOWS}`;
-      countEl.textContent = `${n}/${maxProps()} props · ${w} windows`;
+      // Name the selected piece here too: touch screens show no tooltips.
+      const selName = selectedProp >= 0 && draft.props[selectedProp] ? kindName(draft.props[selectedProp].kind) : selectedWindow >= 0 ? 'Window' : '';
+      countEl.textContent = `${n}/${maxProps()} pieces · ${w} windows`;
       countEl.classList.toggle('over', n > maxProps());
-      const hasSel = selectedProp >= 0 || selectedWindow >= 0;
-      overlay.querySelectorAll('.world-house-tool').forEach((b) => { b.disabled = !hasSel; });
+      tabCount.textContent = `${n}/${maxProps()}`;
+      tabCount.classList.toggle('over', n > maxProps());
+      floatName.textContent = selName;
+      floatBar.querySelector('[data-tool="rotate"]').hidden = selectedWindow >= 0;   // windows face out from their wall
+      hintEl.textContent = hintText();
     }
     function renderGrid() {
       const cells = [];
@@ -262,13 +350,13 @@ const HouseEditor = (() => {
             cells.push(`<g class="world-house-wall locked" data-side="${rc.side}" data-pos="${rc.pos}">
               <title>${esc(opts.doorTitle)}</title>
               <rect x="${x}" y="${y}" width="${CELL}" height="${CELL}" />
-              <text x="${x + CELL / 2}" y="${y + CELL / 2 + 1}" text-anchor="middle" dominant-baseline="middle" font-size="16">🚪</text>
+              <g class="world-house-planicon" transform="translate(${x + CELL / 2 - 8} ${y + CELL / 2 - 8})">${iconSvg('door', 16)}</g>
             </g>`);
           } else if (onSgScreen(rc.side, rc.pos, rc.pos + 1)) {
             cells.push(`<g class="world-house-wall sg-screen" data-side="${rc.side}" data-pos="${rc.pos}">
               <title>Island game screen</title>
               <rect x="${x}" y="${y}" width="${CELL}" height="${CELL}" />
-              <text x="${x + CELL / 2}" y="${y + CELL / 2 + 1}" text-anchor="middle" dominant-baseline="middle" font-size="15">🎬</text>
+              <g class="world-house-planicon" transform="translate(${x + CELL / 2 - 8} ${y + CELL / 2 - 8})">${iconSvg('film', 16)}</g>
             </g>`);
           } else {
             cells.push(`<rect class="world-house-wall" data-side="${rc.side}" data-pos="${rc.pos}" x="${x}" y="${y}" width="${CELL}" height="${CELL}" />`);
@@ -284,7 +372,7 @@ const HouseEditor = (() => {
           const sel = i === selectedWindow ? ' selected' : '';
           return `<g class="world-house-window${sel}" data-w="${i}" transform="translate(${wx} ${wy})">
             <rect x="${-CELL / 2 + 2}" y="${-CELL / 2 + 2}" width="${CELL - 4}" height="${CELL - 4}" rx="5" />
-            <text x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-size="16">🪟</text>
+            <g class="world-house-planicon" transform="translate(${-8} ${-8})">${iconSvg('window', 16)}</g>
           </g>`;
         }).join('');
       } else if (layout) {
@@ -293,7 +381,7 @@ const HouseEditor = (() => {
             if (onSgScreen(side, c - 0.75, c + 0.75)) continue;   // the house skips it too
             const [wx, wy] = ringXY(side, c);
             windows += `<g class="world-house-window auto" transform="translate(${wx} ${wy})"><title>Auto window</title>
-              <text x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-size="16">🪟</text></g>`;
+              <g class="world-house-planicon" transform="translate(${-8} ${-8})">${iconSvg('window', 16)}</g></g>`;
           }
         }
       }
@@ -319,7 +407,7 @@ const HouseEditor = (() => {
         const sel = i === selectedProp ? ' selected' : '';
         const run = inRun.has(i) ? ' in-run' : '';
         const layer = L.layerOf(p.kind);
-        const glyph = GLYPH[p.kind] || '▪';
+        const label = esc(shortName(p.kind));
         const half = CELL / 2;
         if (layer === 'hung') {
           // A band on the wall side of the cell, so it reads as hanging over a piece of furniture.
@@ -330,18 +418,18 @@ const HouseEditor = (() => {
             : [half - 11, -half + 3, 10, CELL - 6, half - 6, 0];
           return `<g class="world-house-prop is-hung${sel}" data-i="${i}" transform="translate(${cx} ${cy})"><title>${esc(kindName(p.kind))}</title>
             <rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" rx="3" />
-            <text x="${gx}" y="${gy + 1}" text-anchor="middle" dominant-baseline="middle" font-size="9">${glyph}</text>
+            <text class="world-house-proplabel" x="${gx}" y="${gy + 1}" text-anchor="middle" dominant-baseline="middle" font-size="7">${label}</text>
           </g>`;
         }
         if (layer === 'ceil' || layer === 'top') {
           const [gx, gy] = layer === 'ceil' ? [half - 9, -half + 9] : [-half + 9, half - 9];
           return `<g class="world-house-prop is-${layer}${sel}" data-i="${i}" transform="translate(${cx} ${cy})"><title>${esc(kindName(p.kind))}${layer === 'ceil' ? ' (ceiling)' : ' (on the surface)'}</title>
             <rect x="${gx - 8}" y="${gy - 8}" width="16" height="16" rx="8" />
-            <text x="${gx}" y="${gy + 1}" text-anchor="middle" dominant-baseline="middle" font-size="11">${glyph}</text>
+            <text class="world-house-proplabel" x="${gx}" y="${gy + 1}" text-anchor="middle" dominant-baseline="middle" font-size="7">${label}</text>
           </g>`;
         }
         // Floor pieces and rugs. Multi-cell props: the box spans every cell,
-        // glyph + arrow on the anchor.
+        // label + arrow on the anchor.
         const cells = L.propCells(p);
         const xs = cells.map(c => c[0]), ys = cells.map(c => c[1]);
         const bx = (Math.min(...xs) - p.gx) * CELL - CELL / 2 + 2, by = (Math.min(...ys) - p.gy) * CELL - CELL / 2 + 2;
@@ -349,12 +437,13 @@ const HouseEditor = (() => {
         const arrow = layer === 'rug' ? '' : `<path d="M0,-${CELL / 2 - 3} l4,5 h-8 z" transform="rotate(${(p.rot || 0) * 90})" />`;
         return `<g class="world-house-prop${layer === 'rug' ? ' is-rug' : ''}${sel}${run}" data-i="${i}" transform="translate(${cx} ${cy})"><title>${esc(kindName(p.kind))}</title>
           <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="5" />
-          <text x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-size="18">${glyph}</text>
+          <text class="world-house-proplabel" x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-size="${label.length > 5 ? 7 : 8}">${label}</text>
           ${arrow}
         </g>`;
       }).join('');
       const propsSvg = runRects + props;
       grid.innerHTML = `<rect class="world-house-floor" x="${CELL}" y="${CELL}" width="${N * CELL}" height="${N * CELL}" />${cells.join('')}${windows}${propsSvg}`;
+      placeFloat();
     }
     // Portrait: a photo the keeper uploads (same /upload route as memories),
     // shown inside every Frame prop. Uploading auto-places a frame if there
@@ -413,7 +502,7 @@ const HouseEditor = (() => {
     });
     removeBtn.addEventListener('click', () => { draft.portrait = ''; renderPortrait(); preview(); });
 
-    function renderAll() { renderSwatches(); renderChips(); renderKindChips(); renderKinds(); renderGrid(); renderPortrait(); }
+    function renderAll() { renderSwatches(); renderChips(); renderKindChips(); renderKinds(); renderGrid(); renderPortrait(); renderPane(); }
     renderAll();
     preview();
 
@@ -433,6 +522,8 @@ const HouseEditor = (() => {
       // visible; the pill brings the panel back. Nothing else is dismissed.
       const peek = e.target.closest('[data-peek]');
       if (peek) { overlay.classList.toggle('peeking', peek.getAttribute('data-peek') === 'on'); return; }
+      const tab = e.target.closest('.he-tab');
+      if (tab) { pane = HouseEditor._lastPane = tab.getAttribute('data-pane'); renderPane(); return; }
       const sw = e.target.closest('.world-house-swatch');
       if (sw) {
         const slot = sw.closest('.world-house-row').getAttribute('data-slot');
@@ -477,12 +568,12 @@ const HouseEditor = (() => {
           // A frame's facing is fixed by the wall it hangs on.
           const sp = draft.props[selectedProp];
           if (L.layerOf(sp.kind) === 'hung') {
-            if (typeof toast === 'function') toast(`A ${kindName(sp.kind)} faces into the room from its wall — move it to another wall instead.`, 'info');
+            if (typeof toast === 'function') toast(`A ${kindLower(sp.kind)} faces into the room from its wall — move it to another wall instead.`, 'info');
             return;
           }
           // A bookshelf / chair / bed on an edge cell keeps its back to that wall.
           if (L.wallBackedRot(sp.kind, sp.gx, sp.gy) != null) {
-            if (typeof toast === 'function') toast(`A ${kindName(sp.kind)} against the wall keeps its back to it — place it a cell further in to turn it.`, 'info');
+            if (typeof toast === 'function') toast(`A ${kindLower(sp.kind)} against the wall keeps its back to it — place it a cell further in to turn it.`, 'info');
             return;
           }
           // Turn to the next facing whose cells are free (a bed needs the
@@ -530,7 +621,7 @@ const HouseEditor = (() => {
           return;
         }
         if (selectedKind !== 'window') {
-          if (typeof toast === 'function') toast('That\'s the wall — pick 🪟 window to put a window there.', 'info');
+          if (typeof toast === 'function') toast('That\'s the wall — pick Window to put a window there.', 'info');
           return;
         }
         if (draft.wallStyle === 'glass') {
@@ -582,7 +673,7 @@ const HouseEditor = (() => {
       // piece covers (a bed takes two) on ITS layer.
       const r = L.canPlaceProp(draft.props, { kind: selectedKind, gx, gy, rot: adoptRot(selectedKind, gx, gy) }, { maxProps: maxProps() });
       if (!r.ok) {
-        const name = kindName(selectedKind);
+        const name = kindLower(selectedKind);
         const msg = /share cell/.test(r.error) ? (L.layerOf(selectedKind) === 'hung' ? 'That wall spot is taken — tap nearer a free stretch of wall.' : 'That spot is taken.')
           : /cell in front/.test(r.error) ? `A ${name} needs the cell in front of it too — tap a spot with room.`
           : r.error;
@@ -618,6 +709,7 @@ const HouseEditor = (() => {
       closed = true;
       if (!didSave) restore();
       overlay.remove();
+      window.removeEventListener('resize', placeFloat);
       if (Playground3D.clearHouseShowcase) Playground3D.clearHouseShowcase();
       if (opts.onClose) opts.onClose();
     }, {

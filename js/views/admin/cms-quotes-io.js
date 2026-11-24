@@ -178,7 +178,7 @@
       const srcEl = host.querySelector('.qte-io-sources');
       srcEl.innerHTML = IO._sources.map((s, i) => `
         <div class="qte-io-src ${s.error ? 'is-bad' : ''}">
-          <span>📄 ${esc(s.name)}</span>
+          <span>${iconSvg('file', 14)} ${esc(s.name)}</span>
           <span>${s.error ? esc(s.error) : `${s.rows.length} line${s.rows.length === 1 ? '' : 's'}`}</span>
           <button type="button" class="admin-btn qte-io-drop" data-i="${i}" aria-label="Remove ${esc(s.name)}">✕</button>
         </div>`).join('');

@@ -46,7 +46,7 @@ const WatchControls = (() => {
     const capMsg = `${WatchState.MAX_RUNNING_TIMERS} timers are already running — finish or cancel one first`;
     const startAttr = capped ? `disabled title="${capMsg}"` : '';
     // opts.capHint: false where the host explains the cap once (the Board banner).
-    const capHint = capped && opts.capHint !== false ? `<div class="wc-hint">⏱ ${capMsg}.</div>` : '';
+    const capHint = capped && opts.capHint !== false ? `<div class="wc-hint">${iconSvg('timer', 16)}<span>${capMsg}.</span></div>` : '';
     if (status === 'progress') {
       const s = state.getSession(p.id);
       const epLabel = eps ? `Episode ${s.episode + 1} of ${eps.length}` : '';
@@ -92,7 +92,7 @@ const WatchControls = (() => {
           <button type="button" class="wc-btn wc-ghost" data-wc="cancel">Cancel</button>` : ''}
         </div>${capHint}`;
     }
-    return `<div class="wc-meta"><span>🔒 Watch its prerequisites first</span></div>`;
+    return `<div class="wc-meta"><span class="wc-locked">${iconSvg('lock', 16)}Watch its prerequisites first</span></div>`;
   }
 
   // Update the live countdown bits in place (no re-render every second).

@@ -80,7 +80,7 @@
       if (more) more.addEventListener('click', () => Queue.load(true));
       const list = host.querySelector('.qte-queue-list');
       if (!Queue._items.length) {
-        list.innerHTML = `<div class="admin-empty qte-queue-empty">🎉 Nothing to review${Queue._project ? ' on this island' : ''}.</div>`;
+        list.innerHTML = `<div class="admin-empty qte-queue-empty">${iconSvg('party', 18)} Nothing to review${Queue._project ? ' on this island' : ''}.</div>`;
         return;
       }
       // An open edit form goes back in place (Load more re-renders the list).
@@ -109,7 +109,7 @@
       el.innerHTML = `
         <header class="qte-sug-head">
           <span class="qte-sug-island">${esc(item.projectTitle)}</span>
-          <span class="qte-sug-by">💬 @${esc(item.suggestedByName || 'player')} · ${esc(AdminView.formatDate(item.createdAt))}</span>
+          <span class="qte-sug-by">${iconSvg('chat', 14)} @${esc(item.suggestedByName || 'player')} · ${esc(AdminView.formatDate(item.createdAt))}</span>
         </header>
         <div class="qte-sug-body">
           <div class="qte-sug-when" title="The time the player gave — check it on Disney+">

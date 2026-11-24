@@ -25,7 +25,7 @@
     // hold-space from auto-bouncing.
     let jumpRequested = false;
     let punchRequested = false;   // same one-shot edge-trigger pattern as jump
-    let interactRequested = false; // E / the 🪑 button: sit on a chair, lie in a bed, stand up
+    let interactRequested = false; // E / the chair button: sit on a chair, lie in a bed, stand up
 
     // Pure key decisions (js/playground3d-input-logic.js, unit-tested).
     const IL = root.PG3DInputLogic;
@@ -171,7 +171,7 @@
     punchEl.type = 'button';
     punchEl.className = 'pg-punch';
     punchEl.setAttribute('aria-label', 'Punch');
-    punchEl.textContent = '👊';
+    punchEl.innerHTML = typeof iconSvg === 'function' ? iconSvg('fist', 26) : 'Hit';
     punchEl.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -185,7 +185,8 @@
     sitEl.type = 'button';
     sitEl.className = 'pg-sit';
     sitEl.setAttribute('aria-label', 'Sit');
-    sitEl.textContent = '🪑';
+    let sitGlyph = 'chair';
+    sitEl.innerHTML = typeof iconSvg === 'function' ? iconSvg('chair', 26) : 'E';
     sitEl.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -193,10 +194,14 @@
     });
     document.body.appendChild(sitEl);
     let sitLabel = null;
-    // `glyph`: what the round button shows (🪑 by default; 🎬 at a Scene Guess screen).
+    // `glyph`: the iconSvg name the round button shows (the chair by default;
+    // the game's icon at an island screen).
     function setInteractLabel(label, glyph) {
-      const g = glyph || '🪑';
-      if (sitEl.textContent !== g) sitEl.textContent = g;
+      const g = glyph || 'chair';
+      if (sitGlyph !== g) {
+        sitGlyph = g;
+        sitEl.innerHTML = typeof iconSvg === 'function' ? iconSvg(g, 26) : 'E';
+      }
       if (label === sitLabel) return;
       sitLabel = label;
       sitEl.classList.toggle('pg-sit--on', !!label);

@@ -64,6 +64,8 @@
 @import "./components/help.css" layer(components);
 @import "./components/onboarding.css" layer(components);
 @import "./components/app-chrome.css" layer(components);
+@import "./components/house-editor-catalog.css" layer(components);
+@import "./components/house-editor.css" layer(components);
 
 @import "./pages/login.css" layer(pages);
 @import "./pages/profile.css" layer(pages);

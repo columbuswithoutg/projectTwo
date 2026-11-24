@@ -184,3 +184,19 @@
 .pg-joy { border: var(--hud-border-w) solid var(--hud-border); background: var(--hud-surface); }
 [data-theme="comic"] .pg-joy { border-width: 3px; box-shadow: 3px 3px 0 #111111; }
 [data-theme="comic"] .pg-joy-stick { border: 3px solid #111111; }
+
+/* ── Line icons (iconSvg, js/utils.js) in the /world HUD ──
+   They take the text colour (currentColor), so both themes and every state
+   colour carry over; these rules only seat them on the text. */
+:is(.world-stone-chip, .world-snap-btn) { display: inline-flex; align-items: center; gap: 5px; }
+:is(.world-house-keeper-name, .world-lb-score, .world-spawn-count, .world-hint, .pg-rotate-hint,
+    .pg3d-voice-debug-name) .ui-icon { vertical-align: -0.2em; flex-shrink: 0; }
+.world-house-keeper-name .ui-icon { margin-right: 2px; }
+:is(.world-lb-title, .world-spawn-title) { display: flex; align-items: center; justify-content: center; gap: 8px; }
+:is(.world-lb-title, .world-spawn-title) .ui-icon { flex-shrink: 0; }
+.world-hint-icon { display: inline-flex; vertical-align: -0.2em; }
+/* Round buttons: emote, voice, punch, sit, full screen — the icon centred. */
+:is(.pg3d-emote, .pg3d-voice, .pg-punch, .pg-sit, .pg-fullscreen) .ui-icon { display: block; margin: auto; }
+/* The keeper tag over a roof: the key before line 1, a game icon before each game line. */
+:is(.pg3d-keeper-line1, .pg3d-keeper-game) { display: inline-flex; align-items: center; gap: 4px; }
+:is(.pg3d-keeper-line1, .pg3d-keeper-game) .ui-icon { flex-shrink: 0; }

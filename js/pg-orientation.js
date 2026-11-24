@@ -54,7 +54,9 @@
       btn.setAttribute('aria-label', 'Full screen');
       btn.setAttribute('aria-pressed', 'false');
       btn.title = 'Full screen — locks landscape where your phone allows it';
-      btn.textContent = '⛶';
+      // Line icon (js/utils.js iconSvg); a word if the helper isn't loaded.
+      const FS_ICON = typeof iconSvg === 'function' ? iconSvg('fullscreen', 22) : 'Full';
+      btn.innerHTML = FS_ICON;
       // Body-appended like the joystick so z-index escapes .pg-stage.
       document.body.appendChild(btn);
 
@@ -83,7 +85,7 @@
       const sync = () => {
         const on = !!fsElement();
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-        btn.textContent = on ? '✕' : '⛶';
+        if (on) btn.textContent = '✕'; else btn.innerHTML = FS_ICON;
         btn.title = on ? 'Exit full screen' : 'Full screen — locks landscape where your phone allows it';
         if (!on) { enteredByUs = false; unlockOrientation(); }
       };
@@ -127,7 +129,7 @@
         try { localStorage.setItem(SEEN_KEY, '1'); } catch (_) {}
         hint = document.createElement('div');
         hint.className = 'pg-rotate-hint';
-        hint.innerHTML = '<span class="world-hint-icon">🔄</span> Turn your phone sideways for a wider view';
+        hint.innerHTML = `<span class="world-hint-icon">${typeof iconSvg === 'function' ? iconSvg('rotate', 16) : ''}</span> Turn your phone sideways for a wider view`;
         stage.appendChild(hint);
         requestAnimationFrame(() => { if (hint) hint.classList.add('show'); });
         offs.push(onMq(land, (e) => { if (e.matches) dismiss(); }));

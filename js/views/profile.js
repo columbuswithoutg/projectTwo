@@ -11,8 +11,8 @@ const ProfileView = {
     return characterPageEntries(characters).filter(c => isCharUnlocked(c, watchedIds)).length;
   },
 
-  // The island games: "🎬 Iron Man 1,773" for every island where this user
-  // holds the Scene Guess record, "💬 Iron Man 9,100" for Quote Guess, and
+  // The island games: "[film icon] Iron Man 1,773" for every island where this user
+  // holds the Scene Guess record, "[chat icon] Iron Man 9,100" for Quote Guess, and
   // how many of their suggested quotes made it into Quote Guess. Empty — and
   // hidden — while the games are switched off. Shared with the friend
   // profile (js/views/friend-profile.js).
@@ -28,15 +28,15 @@ const ProfileView = {
     const badge = (i, icon, game) => `
       <span class="profile-champion-badge" title="${game} island record">${icon} ${esc(i.title)} <b>${Number(i.score).toLocaleString()}</b></span>`;
     const items = [].concat(
-      ((scene && scene.items) || []).map(i => badge(i, '🎬', 'Scene Guess')),
-      ((quote && quote.items) || []).map(i => badge(i, '💬', 'Quote Guess')));
+      ((scene && scene.items) || []).map(i => badge(i, iconSvg('film', 15), 'Scene Guess')),
+      ((quote && quote.items) || []).map(i => badge(i, iconSvg('chat', 15), 'Quote Guess')));
     const lines = (quote && Number(quote.linesAdded)) || 0;
     if ((!items.length && !lines) || !el.isConnected) return;
     el.innerHTML = `
-      <p class="profile-section-label">${items.length ? '👑 Island champion' : '💬 Quote Guess'}</p>
+      <p class="profile-section-label">${items.length ? 'Island champion' : 'Quote Guess'}</p>
       <div class="profile-champion-list">
         ${items.join('')}
-        ${lines ? `<span class="profile-champion-badge is-lines" title="Quotes they suggested that are now in Quote Guess">💬 Lines added <b>${lines.toLocaleString()}</b></span>` : ''}
+        ${lines ? `<span class="profile-champion-badge is-lines" title="Quotes they suggested that are now in Quote Guess">${iconSvg('chat', 15)} Lines added <b>${lines.toLocaleString()}</b></span>` : ''}
       </div>`;
     el.hidden = false;
   },
@@ -48,7 +48,7 @@ const ProfileView = {
     }
 
     const adminLink = Auth.isAdmin()
-      ? `<button id="admin-link-btn" class="admin-link-btn" type="button" title="Admin panel" aria-label="Admin panel">⚙</button>`
+      ? `<button id="admin-link-btn" class="admin-link-btn" type="button" title="Admin panel" aria-label="Admin panel">${iconSvg('gear', 20)}</button>`
       : `<div style="width:48px"></div>`;
     container.innerHTML = `
       <header id="header">

@@ -48,7 +48,8 @@ function harness() {
     Router: { go(to, o) { calls.go.push(to); }, back() {}, confirmLeave: () => true },
     document: { getElementById: (id) => (attached ? el(id) : null), createElement: () => el('tmp'), body: { appendChild() {} } },
     activateOnKey() {},
-    PosterArt: { html: () => '' }
+    PosterArt: { html: () => '' },
+    iconSvg: () => ''
   };
   vm.runInNewContext(SRC + '\nthis.View = HomeEditView;', ctx);
   return {
